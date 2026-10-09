@@ -242,8 +242,9 @@ test("the collector reads the goods page shape found on the owner's saved pages 
           oldGroupPrice: 2290, price: 0, marketPrice: 0, weight: 0, priceDisplay: { prefix: "券后", price: "15.9" },
           thumbUrl: "https://img.pddpic.com/mms-material-img/synthetic-b.jpeg",
           specs: [{ spec_key: "颜色", spec_value: "粉色", spec_key_id: 1, spec_value_id: 11 }] },
-        { skuId: 7002, skuID: 7002, goodsId: Number(GOODS_ID), quantity: 3, isOnsale: 0, groupPrice: "21.90", normalPrice: "27.90",
-          specs: [{ spec_key: "颜色", spec_value: "蓝色", spec_key_id: 1, spec_value_id: 12 }] }
+        // Whole-yuan prices come as digit strings ("216"); the fen-valued skuPrice beside them is a promotion, not the 拼单价.
+        { skuId: 7002, skuID: 7002, goodsId: Number(GOODS_ID), quantity: 3, isOnsale: 0, groupPrice: "216", normalPrice: "240",
+          skuPrice: 21100, groupTip: "券前¥216", specs: [{ spec_key: "颜色", spec_value: "蓝色", spec_key_id: 1, spec_value_id: 12 }] }
       ] } } }
   };
   const script = `window.rawData=${JSON.stringify(model)};`;
@@ -252,7 +253,7 @@ test("the collector reads the goods page shape found on the owner's saved pages 
   const [pink, blue] = result.evidence.skus;
   assert.deepEqual([pink.sourceSkuId, pink.priceCny, pink.priceSource, pink.stock, pink.inStock, pink.weight],
     ["7001", 19.9, "rawData.goods.skus[0].groupPrice", 120, true, null]);
-  assert.deepEqual([blue.priceCny, blue.inStock], [21.9, false]);
+  assert.deepEqual([blue.priceCny, blue.inStock], [216, false]);
   assert.equal(result.evidence.title, "合成测试 三色背心");
   assert.deepEqual(result.evidence.supplierAttributes, { 面料: "牛津布" });
   const serialized = JSON.stringify(result);
