@@ -4,6 +4,64 @@ import { assertSelfContainedTestSource,assertIsolatedApiTestSource,assertLocalAp
 import { readFile } from 'node:fs/promises';
 import { API_PROCESS_TESTS } from '../scripts/ci-test-suites.mjs';
 
+test('the complete Seatbelt profile test remains self-contained without changing its expected policy', async () => {
+  const source = await readFile(new URL('./local-process-sandbox-profile.test.mjs', import.meta.url), 'utf8');
+  assert.doesNotThrow(() => assertSelfContainedTestSource({ file: 'local-process-sandbox-profile.test.mjs', source }));
+});
+
+test('child process call text in literals, templates, comments and regular expressions is data', () => {
+  for (const source of [
+    'const value = "(deny process-exec (";',
+    "const value = '(deny process-exec (';",
+    'const value = `(deny process-exec (`;',
+    'const value = "spawn( and execFileSync(";',
+    '// spawn("node"); exec("node");\nconst value = 1;',
+    '/* spawn("node"); exec("node"); */ const value = 1;',
+    'const pattern = /exec\\(/;',
+    'const value = `outer ${`literal exec( `}`;',
+    'const object = { exec(value) { return value; } };',
+  ]) assert.doesNotThrow(() => assertSelfContainedTestSource({ file: 'literal.test.mjs', source }), source);
+});
+
+test('real child process calls remain rejected across syntax and template boundaries', () => {
+  const names = ['spawn', 'spawnSync', 'exec', 'execFile', 'execFileSync', 'execSync'];
+  for (const name of names) {
+    for (const source of [
+      `${name}("node");`, `${name} /* comment */ ("node");`,
+      `cp.${name}("node");`, `cp["${name}"]("node");`, `cp[\`${name}\`]("node");`,
+      `cp?.${name}?.("node");`, `(0, ${name})("node");`, `new ${name}("node");`,
+      `const value = \`output \${${name}("node")}\`;`,
+      `const value = \`outer \${\`inner \${${name}("node")}\`}\`;`,
+    ]) assert.throws(() => assertSelfContainedTestSource({ file: 'call.test.mjs', source }), /CI_TEST_REQUIRES_CLASSIFICATION:child process/u, source);
+  }
+  for (const source of ['sp\\u0061wn("node");', 'cp["sp" + "awn"]("node");', 'cp[`ex${"ec"}`]("node");', 'process - exec("node");']) {
+    assert.throws(() => assertSelfContainedTestSource({ file: 'call.test.mjs', source }), /CI_TEST_REQUIRES_CLASSIFICATION:child process/u, source);
+  }
+});
+
+test('child process module loading preserves the existing marker and recognizes actual static imports', () => {
+  const moduleNames = ['node:' + 'child_process', 'child_process'];
+  for (const name of moduleNames) {
+    for (const source of [
+      `import {exec as command} from "${name}";`, `export * from "${name}";`,
+      `export {exec as command} from "${name}";`, `await import("${name}");`,
+      `require("${name}");`, `module.require("${name}");`, `require.resolve("${name}");`,
+      `createRequire(import.meta.url)("${name}");`,
+    ]) assert.throws(() => assertSelfContainedTestSource({ file: 'module.test.mjs', source }), /CI_TEST_REQUIRES_CLASSIFICATION:child process/u, source);
+  }
+  for (const source of [
+    "await import('node:' + 'child_process');", "require('node:' + 'child_process');",
+    "await import(`node:${'child_process'}`);", "require(`child_${'process'}`);",
+    "await import('node:child\\u005fprocess');",
+    `const dependencyMarker = "${moduleNames[0]}";`,
+  ]) assert.throws(() => assertSelfContainedTestSource({ file: 'module.test.mjs', source }), /CI_TEST_REQUIRES_CLASSIFICATION:child process/u, source);
+});
+
+test('invalid source fails explicitly with its parser cause', () => {
+  assert.throws(() => assertSelfContainedTestSource({ file: 'invalid.test.mjs', source: 'const value = ;' }),
+    error => error.message === 'CI_TEST_SOURCE_PARSE_FAILED:invalid.test.mjs' && error.cause.code === 'PARSE_ERROR');
+});
+
 test('local API preflight inspects the allocated port helper and shared fixture', async () => {
   const portFixtureSource = await readFile(new URL('./helpers/api-process-lifecycle.mjs', import.meta.url), 'utf8');
   const sharedFixtureSource = await readFile(new URL('./helpers/d-e-saved-api-'+'fixture.mjs', import.meta.url), 'utf8');
