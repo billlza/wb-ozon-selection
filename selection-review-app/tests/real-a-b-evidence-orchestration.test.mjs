@@ -5,6 +5,7 @@ import test from "node:test";
 import { createMusicBoxCandidate } from "./helpers/legacy-candidate-fixture.mjs";
 
 import { runRealAConfirmationWithSystemEvidence } from "../lib/real-a-b-evidence-orchestration.mjs";
+import { inspectLifecycleBInputReadiness } from "../lib/lifecycle-b-input-bundle.mjs";
 import { DEFAULT_GUOO_TARIFF_PATH } from "../lib/guoo-tariff-reader.mjs";
 import { compareGuooRoutes } from "../lib/guoo-route-comparison.mjs";
 import { GLOBAL_PRICING_POLICY_VERSION } from "../lib/global-pricing-policy.mjs";
@@ -311,6 +312,65 @@ test("已落盘的同一A/B结果重放时不再调用证据提供器或创建�
   assert.equal(replay.evidencePacksToCommit.length, 0);
   assert.equal(replay.result.skuPackage.dataRevision, first.result.skuPackage.dataRevision);
   assert.deepEqual(replay.result.c1Handoff, first.result.c1Handoff);
+});
+
+/**
+ * 2026-09-14，主人第一件真货（Miska 宠物雨衣）栽在这一条上。
+ *
+ * A确认把类目冻成平台身份（`ozon:<descriptionCategoryId>:<typeId>`）写进 lifecycleEvidenceContextV11，
+ * 可同一次事务提交的佣金和Schema证据还挂在读取时用的那条类目路径上。落盘那一刻这件商品的证据就和
+ * 它自己的适用范围对不上了：`inspectLifecycleBInputReadiness` 从此找不到佣金和Schema，
+ * 「用更好的费用证据重算」被 B_EXACT_RECALCULATION_EVIDENCE_UNAVAILABLE 永久挡住，而记录看上去毫无异常。
+ *
+ * 这一条钉的是那个不变量：服务端照它自己的写法落盘之后（context 存 evidenceContext、
+ * 证据存 evidencePacksToCommit），这件商品必须还能找齐它自己的四类证据。
+ */
+test('类目冻成平台身份之后，落盘的证据仍然属于这件商品自己的适用范围', async () => {
+  const candidate = structuredClone(await sourceCandidate());
+  // 主人那件真货的形状：页面读回来只有类目路径，description_category_id / type_id 要等平台自己回答。
+  // 固定件默认把这两个号预填好了，预填之下适用范围一开始就是平台身份键，这个 bug 根本不会显形。
+  for (const snapshot of [...candidate.salesSnapshotsV11, ...(candidate.lifecycleV11?.opportunityPackage?.salesSnapshots ?? [])]) {
+    const { description_category_id: _dropId, type_id: _dropType, ...rest } = snapshot.attributes ?? {};
+    snapshot.attributes = rest;
+  }
+  const providers = Object.fromEntries(["commission", "logistics_tariff", "exchange_rate", "schema"].map((kind) => [
+    kind,
+    async (request) => ({
+      id: `orchestration:frozen:${kind}`, kind, status: "active", scope: request.scope, checkedAt: confirmedAt,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      sourceType: "isolated_test",
+      sourceRef: kind === "logistics_tariff" ? "fixture:synthetic-complete-guoo:row-17" : `fixture:orchestration:frozen:${kind}`,
+      evidenceData: evidenceData(kind)
+    })
+  ]));
+  const run = await runRealAConfirmationWithSystemEvidence({
+    candidate, profitRule: currentCostRule(candidate), submission: confirmation(candidate),
+    evidencePacks: [], providers, confirmedAt,
+    guooFilePath: "/tmp/GUOO产品资费测算表【2026.7.20更新】.xlsx", ...syntheticGuooGate()
+  });
+  assert.equal(run.status, "completed");
+  assert.equal(run.evidenceContext.category, "ozon:17028743:971097529");
+
+  // 服务端的 a-confirm 路由就是这样落盘的：适用范围取 evidenceContext，证据取 evidencePacksToCommit。
+  const persisted = structuredClone(candidate);
+  persisted.dataRevision += 1;
+  persisted.lifecycleEvidenceContextV11 = structuredClone(run.evidenceContext);
+  const stored = structuredClone(run.evidencePacksToCommit);
+
+  for (const kind of ["commission", "schema"]) {
+    const pack = stored.find((item) => item.kind === kind);
+    assert.equal(pack.scope.category, run.evidenceContext.category,
+      `${kind}证据的类目必须和落盘的适用范围是同一个键`);
+  }
+  const readiness = inspectLifecycleBInputReadiness({
+    candidate: persisted, evidencePacks: stored, currentCommissionCatalogs: [],
+    asOf: run.evidencePreparation.finalReadiness.checkedAt
+  });
+  assert.equal(readiness.ready, true,
+    `落盘之后仍应找齐四类证据，实际缺：${readiness.missing.join("、")}`);
+
+  // 冻结后的输入包必须和落盘后的适用范围是同一件事，否则 assertCurrentBCommissionEvidence 会在下一次事务里翻脸。
+  assert.equal(run.result.systemEvidenceBundle.context.category, run.evidenceContext.category);
 });
 
 test('adopted August 19 workbook stops formal A before providers without inventing target price or cargo facts', async () => {

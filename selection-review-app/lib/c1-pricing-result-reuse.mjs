@@ -2,8 +2,10 @@ import { isDeepStrictEqual as equal } from "node:util";
 import { assertValidC1ProductPlan, verifyC1ProductFacts, collectC1UnknownManifest, validateC1ProductPlan } from "./c1-product-plan.mjs";
 import { mergeC1AiDraftReceipt } from "./c1-ai-draft-contract.mjs";
 import { assertC1SkuRightsReviewEvidence, projectC1SkuRightsReviewFacts, C1SkuRightsReviewError } from "./c1-sku-rights-review.mjs";
+import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
 
 export const C1_PRICING_REUSE_VERSION = "c1-pricing-result-reuse-v1";
+export const C1_PRICING_REUSE_REFERENCE_VERSION = "c1-pricing-result-reuse-reference-v1";
 export class C1PricingReuseError extends Error {
   constructor(code) { super(code); this.name = "C1PricingReuseError"; this.code = code; }
 }
@@ -44,6 +46,23 @@ export function assertC1PricingReuseRecordSource(record) {
   if (source.inputSnapshots.skuRightsReview.rights.status !== "verified") fail("C1_PRICING_REUSE_RIGHTS_UNVERIFIED");
 }
 
+/** The complete record remains in the sibling C1 snapshot of the frozen card. */
+export function createC1PricingReuseReference({ record, identity, resultSkuRevision, targetPlanId, targetProfitModelVersion }) {
+  assertC1PricingReuseRecordSource(record);
+  if (!equal(record.sourceIdentity, identity) || record.resultSkuRevision !== resultSkuRevision ||
+      record.targetPlanId !== targetPlanId || record.targetProfitModelVersion !== targetProfitModelVersion) {
+    fail("C1_PRICING_REUSE_REFERENCE_SOURCE_MISMATCH");
+  }
+  return {
+    schemaVersion: C1_PRICING_REUSE_REFERENCE_VERSION,
+    sourceIdentity: structuredClone(identity),
+    resultSkuRevision,
+    targetPlanId,
+    targetProfitModelVersion,
+    recordFingerprint: fingerprintCanonicalRecord(record)
+  };
+}
+
 function assertFactsUnchanged(source, target) {
   if (!equal(source.identity, target.identity) ||
       !equal(source.inputSnapshots.confirmedSupplierSkuSnapshot, target.inputSnapshots.confirmedSupplierSkuSnapshot)) fail("C1_PRICING_REUSE_SUPPLY_CHANGED");
@@ -63,7 +82,6 @@ function assertFactsUnchanged(source, target) {
   const oldProfit = `${source.inputRefs.profitModelVersion}#/result`, newProfit = `${target.inputRefs.profitModelVersion}#/result`;
   for (const field of ["status", "profitGate"]) expected.platformCompliance[field].sourceRefs = expected.platformCompliance[field].sourceRefs.map(ref => ref === oldProfit ? newProfit : ref);
   for (const key of FACTS) if (!equal(expected[key], target[key])) fail("C1_PRICING_REUSE_FACT_CHANGED");
-  if (!equal(source.mediaRequirements, target.mediaRequirements)) fail("C1_PRICING_REUSE_SCHEMA_CHANGED");
 }
 
 /** Pure replay validation of a historical result reuse record, including frozen C2 reads. */

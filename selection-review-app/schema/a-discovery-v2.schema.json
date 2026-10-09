@@ -83,6 +83,9 @@
         },
         "contractEvidenceRef": {
           "$ref": "#/$defs/reference"
+        },
+        "filters": {
+          "$ref": "#/$defs/queryFilters"
         }
       },
       "required": [
@@ -96,6 +99,73 @@
         "categoryEvidenceRef",
         "contractEvidenceRef"
       ]
+    },
+    "filterRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0
+            }
+          ]
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0
+            }
+          ]
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ],
+      "anyOf": [
+        {
+          "properties": {
+            "min": {
+              "type": "number"
+            }
+          }
+        },
+        {
+          "properties": {
+            "max": {
+              "type": "number"
+            }
+          }
+        }
+      ]
+    },
+    "queryFilters": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "priceRub": {
+          "$ref": "#/$defs/filterRange"
+        },
+        "weightGrams": {
+          "$ref": "#/$defs/filterRange"
+        },
+        "volumeLitres": {
+          "$ref": "#/$defs/filterRange"
+        },
+        "salesCount": {
+          "$ref": "#/$defs/filterRange"
+        }
+      }
     },
     "budget": {
       "type": "object",
@@ -1205,6 +1275,9 @@
         },
         {
           "$ref": "#/$defs/resultV2"
+        },
+        {
+          "$ref": "#/$defs/resultV3"
         }
       ]
     },
@@ -1640,6 +1713,139 @@
         "dateRange"
       ]
     },
+    "resultV3": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "seerfar-discovery-market-result-v3"
+        },
+        "provider": {
+          "const": "seerfar"
+        },
+        "contractVersion": {
+          "const": "seerfar-category-discovery-v1"
+        },
+        "requestId": {
+          "$ref": "#/$defs/reference"
+        },
+        "platform": {
+          "const": "ozon"
+        },
+        "categoryId": {
+          "type": "string",
+          "pattern": "^\\d+(?:_\\d+)+$",
+          "maxLength": 256
+        },
+        "fulfillment": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 32
+        },
+        "evidenceRef": {
+          "$ref": "#/$defs/reference"
+        },
+        "status": {
+          "enum": [
+            "candidates_found",
+            "true_empty"
+          ]
+        },
+        "products": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/productV3"
+          },
+          "minItems": 0,
+          "maxItems": 20
+        },
+        "collection": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pageNumber": {
+              "const": 1
+            },
+            "pageSize": {
+              "const": 20
+            },
+            "hasNextPage": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "pageNumber",
+            "pageSize",
+            "hasNextPage"
+          ]
+        },
+        "dateRange": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "startDate": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                }
+              ]
+            },
+            "endDate": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                }
+              ]
+            }
+          },
+          "required": [
+            "startDate",
+            "endDate"
+          ]
+        },
+        "appliedFilters": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/queryFilters"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "provider",
+        "contractVersion",
+        "requestId",
+        "platform",
+        "categoryId",
+        "fulfillment",
+        "observedAt",
+        "evidenceRef",
+        "status",
+        "products",
+        "collection",
+        "dateRange"
+      ]
+    },
     "productV2": {
       "type": "object",
       "additionalProperties": false,
@@ -1791,6 +1997,184 @@
         "reviewCount",
         "reviewRating",
         "rawSellerType"
+      ]
+    },
+    "productV3": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "productId": {
+          "type": "string",
+          "pattern": "^[1-9]\\d*$"
+        },
+        "platform": {
+          "const": "ozon"
+        },
+        "productUrl": {
+          "type": "string",
+          "pattern": "^https://www\\.ozon\\.ru/product/[1-9]\\d*$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "imageUrl": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2048,
+          "pattern": "^https://[^?#]+$"
+        },
+        "price": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "currency": {
+          "type": "null"
+        },
+        "salesCount": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revenue": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "categoryPath": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "fullCategoryId": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "minItems": 1,
+                  "maxItems": 20
+                },
+                "titlePath": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                },
+                "cnTitlePath": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                },
+                "enTitlePath": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                }
+              },
+              "required": [
+                "fullCategoryId",
+                "titlePath",
+                "cnTitlePath",
+                "enTitlePath"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sellerIdentity": {
+          "const": "unknown"
+        },
+        "providerRecordRef": {
+          "$ref": "#/$defs/reference"
+        },
+        "reviewCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "reviewRating": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "rawSellerType": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "weightGrams": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "volumeLitres": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "dimensionMm": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64,
+          "pattern": "^\\d+(?:\\.\\d+)?[x×]\\d+(?:\\.\\d+)?[x×]\\d+(?:\\.\\d+)?$"
+        }
+      },
+      "required": [
+        "productId",
+        "platform",
+        "productUrl",
+        "title",
+        "imageUrl",
+        "price",
+        "currency",
+        "salesCount",
+        "revenue",
+        "categoryPath",
+        "sellerIdentity",
+        "providerRecordRef",
+        "reviewCount",
+        "reviewRating",
+        "rawSellerType",
+        "weightGrams",
+        "volumeLitres",
+        "dimensionMm"
       ]
     }
   }

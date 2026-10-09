@@ -1,3 +1,5 @@
+import { createInternalEvidenceValidity } from "./lifecycle-evidence-validity.mjs";
+
 function normalized(value) {
   return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
 }
@@ -38,6 +40,7 @@ export async function readCurrentCbrExchangeRate({
     sourceRef: `cbr-xml-daily:R01375:${rateDate}`,
     checkedAt,
     expiresAt: new Date(Date.parse(checkedAt) + 24 * 60 * 60 * 1000).toISOString(),
+    validity: createInternalEvidenceValidity("exchange_rate"),
     evidenceData: {
       rubPerCny: Number((value / nominal).toFixed(6)),
       rateDate,

@@ -8,11 +8,14 @@ import {
 } from "../src/extensionStatus.js";
 
 test("extension handshake exposes bridge and background state separately", () => {
+  // Owner rule 2026-09-11: a background that answers is connected and waiting for work, not "unverified, unusable".
   assert.deepEqual(extensionConnectionStatus({ liveVersion: EXPECTED_EXTENSION_VERSION, backgroundReady: true }), {
-    code: "authentication_unverified",
-    label: `已检测到插件v${EXPECTED_EXTENSION_VERSION} · 后台认证/领取能力未核验，采集不可用`
+    code: "connected",
+    label: "插件已连接 · 等待采集任务"
   });
-  assert.equal(extensionConnectionStatus({ liveVersion: EXPECTED_EXTENSION_VERSION, backgroundReady: false }).code, "background_unavailable");
+  const silent = extensionConnectionStatus({ liveVersion: EXPECTED_EXTENSION_VERSION, backgroundReady: false });
+  assert.equal(silent.code, "background_unavailable");
+  assert.match(silent.label, /后台暂未响应/);
   assert.equal(extensionConnectionStatus({ cachedVersion: EXPECTED_EXTENSION_VERSION }).code, "page_refresh_required");
   assert.deepEqual(extensionConnectionStatus({ liveVersion: "1.2.6", backgroundReady: true }), {
     code: "reload_required",
@@ -25,8 +28,8 @@ test("extension handshake exposes bridge and background state separately", () =>
       backgroundReady: true
     }
   }), {
-    code: "authentication_unverified",
-    label: `已检测到插件v${EXPECTED_EXTENSION_VERSION} · 后台认证/领取能力未核验，采集不可用`
+    code: "connected",
+    label: "插件已连接 · 等待采集任务"
   });
   assert.equal(extensionConnectionStatus({
     serverHeartbeat: {

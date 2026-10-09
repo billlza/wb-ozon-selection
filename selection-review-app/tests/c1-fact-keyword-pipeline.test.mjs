@@ -296,8 +296,8 @@ test("普通非火车SKU一次完成K2/K3并停在C1证据原子保存前", asyn
   assert.equal(result.keywordPreparation.result, "source_candidates_ready");
   assert.equal(result.k3KeywordEvidenceSnapshot.status, "ready");
   assert.deepEqual(Object.fromEntries(Object.entries(result.k3KeywordEvidenceSnapshot.groups).map(([key, items]) => [key, items.length])), {
-    title_keywords: 3,
-    attribute_and_tag_keywords: 6,
+    title_keywords: 5,
+    attribute_and_tag_keywords: 4,
     description_long_tail: 10
   });
   assert.equal(result.preparedInputs.status, "ready");

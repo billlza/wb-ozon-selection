@@ -1,26 +1,29 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { sourceCaptureForDispatch } from "./source-capture.mjs";
 
 const DEFAULT_CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex";
+// Legacy local maintenance paths; configured catalogs retain their own directory.
+const LEGACY_LOCAL_HOME = os.homedir();
 
 const DISPATCH_SKILLS = Object.freeze({
   pricing: Object.freeze({
     name: "ozon-wb-pricing",
-    path: "/Users/shuaizhang/.codex/skills/ozon-wb-pricing/SKILL.md"
+    path: path.join(LEGACY_LOCAL_HOME, ".codex", "skills", "ozon-wb-pricing", "SKILL.md")
   }),
   ecommerceSeo: Object.freeze({
     name: "optimize-ecommerce-seo",
-    path: "/Users/shuaizhang/Documents/电商能力实验室/optimize-ecommerce-seo/SKILL.md"
+    path: path.join(LEGACY_LOCAL_HOME, "Documents", "电商能力实验室", "optimize-ecommerce-seo", "SKILL.md")
   }),
   wbListing: Object.freeze({
     name: "wb-listing-launch",
-    path: "/Users/shuaizhang/.codex/skills/wb-listing-launch/SKILL.md"
+    path: path.join(LEGACY_LOCAL_HOME, ".codex", "skills", "wb-listing-launch", "SKILL.md")
   }),
   wbSafeWrite: Object.freeze({
     name: "wb-safe-write",
-    path: "/Users/shuaizhang/.codex/skills/wb-safe-write/SKILL.md"
+    path: path.join(LEGACY_LOCAL_HOME, ".codex", "skills", "wb-safe-write", "SKILL.md")
   })
 });
 

@@ -1,4 +1,4 @@
-import { DEFAULT_PACKAGING_COST_RMB, businessDate } from "./workflow.mjs";
+import { businessDate } from "./workflow.mjs";
 import { resolveConfiguredStoreRef } from "./store-binding.mjs";
 import { createSoftwareExecutionRuntime } from "./software-execution-state.mjs";
 
@@ -53,7 +53,10 @@ export function createInitialCandidate({ input, source, id, timestamp, storeBind
     competitorUrl: input.competitorUrl?.trim() || "",
     purchasePriceRmb: input.purchasePriceRmb ?? null,
     domesticShippingRmb: input.domesticShippingRmb ?? null,
-    packagingCostRmb: input.packagingCostRmb ?? (discovery ? null : DEFAULT_PACKAGING_COST_RMB),
+    // 主人 2026-09-15：新候选不带任何他没声明过的钱。手工新增过去一出生就背着 ¥1.50 的包材默认值，
+    // 那是软件替他签的字。现在和 Seerfar 发现来的候选一样留空，由他在「算利润」里一键声明 ¥0 或写明细
+    // （lib/extra-handling-fees.mjs 把空值读成 'absent'）。已经存下来的候选一个数都不动。
+    packagingCostRmb: input.packagingCostRmb ?? null,
     moq: input.moq ?? null,
     netWeightKg: input.netWeightKg ?? null,
     packedWeightKg: input.packedWeightKg ?? null,

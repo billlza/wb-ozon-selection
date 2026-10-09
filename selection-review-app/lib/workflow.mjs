@@ -24,6 +24,12 @@ export const WORKFLOW_STATUSES = [
   "eliminated"
 ];
 
+/**
+ * 只剩一个用处：下面 purchaseCeilingSummary 读旧版 A 卡 `purchaseCeiling.packagingRmb` 时的兜底。
+ * 它不再给任何新候选签字——createInitialCandidate 自 2026-09-15 起把 packagingCostRmb 留空。
+ * 这里保留不动，是因为改它会挪动已经存下来的候选的钱；现存 20 份 estimated 上限自己都带着
+ * packagingRmb，兜底实际不生效，但不给历史数字留下任何一分的变数。
+ */
 export const DEFAULT_PACKAGING_COST_RMB = 1.5;
 export const PURCHASE_CEILING_SCOPE = "purchase_plus_domestic_shipping";
 export const DEFAULT_AUTOMATION_CONCURRENCY_LIMIT = 3;
@@ -1578,11 +1584,13 @@ export function dailySummary(candidates, rules = DEFAULT_RULES, date = businessD
     if (models.length !== 1) continue;
     const model = models[0];
     if (model.result !== "passed" || !validateProfitModel(model).valid || businessDate(model.calculatedAt) !== date) continue;
-    if (!["exact", "estimated"].includes(model.commissionMode)) {
+    // 正式B有两种来源：平台实收的精确费率，和主人已保存的官方费表版本命中的费率。两种都计入当日达标。
+    // 估算佣金算不进来（它的 result 本来就是 manual_review，走不到这里）；认不出来的模式仍然单独计数。
+    if (!["exact", "estimated", "official_reference"].includes(model.commissionMode)) {
       unclassifiedProfitPassed += 1;
       continue;
     }
-    if (model.commissionMode !== "exact") continue;
+    if (!["exact", "official_reference"].includes(model.commissionMode)) continue;
     bPassed.push(model);
   }
   const cCompleted = [...skus.values()].filter(sku => {

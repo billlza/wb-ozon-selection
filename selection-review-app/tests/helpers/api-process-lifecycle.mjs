@@ -1,3 +1,19 @@
+/** The isolated runner owns every port. Tests never choose another port or fall back to a PID. */
+export function allocatedTestPorts(env = process.env) {
+  const keys = ['SELECTION_REVIEW_TEST_PORT', 'SELECTION_REVIEW_TEST_SECOND_PORT', 'SELECTION_REVIEW_TEST_GATEWAY_PORT'];
+  const ports = keys.map(key => {
+    const text = env[key];
+    if (typeof text !== 'string' || !/^[1-9][0-9]*$/u.test(text)) throw new Error('TEST_REQUIRES_ISOLATED_PORT');
+    const port = Number(text);
+    if (!Number.isSafeInteger(port) || port > 65535 || [4317, 4318, 4173, 4319].includes(port)) {
+      throw new Error('TEST_REQUIRES_ISOLATED_PORT');
+    }
+    return port;
+  });
+  if (new Set(ports).size !== ports.length) throw new Error('TEST_REQUIRES_ISOLATED_PORT');
+  return Object.freeze({ api: ports[0], second: ports[1], gateway: ports[2] });
+}
+
 function exitError(code, signal) {
   if (code === 0 || (code === null && signal === "SIGTERM")) return null;
   return new Error(`API_PROCESS_EXIT_FAILED: code=${code}, signal=${signal}`);

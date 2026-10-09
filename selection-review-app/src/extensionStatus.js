@@ -19,8 +19,10 @@ export function extensionConnectionStatus({ liveVersion = "", cachedVersion = ""
     if (activeVersion !== EXPECTED_EXTENSION_VERSION) {
       return { code: "reload_required", label: `插件代码已更新 · 请重新加载（当前v${activeVersion}，需要v${EXPECTED_EXTENSION_VERSION}）` };
     }
+    // A background that answers the handshake is connected and waiting for work; only a silent background is a problem.
+    // Whether one capture then succeeds is reported by that capture's own result, never by this status line.
     return activeBackgroundReady
-      ? { code: "authentication_unverified", label: `已检测到插件v${activeVersion} · 后台认证/领取能力未核验，采集不可用` }
+      ? { code: "connected", label: "插件已连接 · 等待采集任务" }
       : { code: "background_unavailable", label: `插件已安装 · 后台暂未响应 · 请核对后台连接（v${activeVersion}）` };
   }
   if (cached === EXPECTED_EXTENSION_VERSION) {

@@ -28,6 +28,8 @@ import { harness, idle, message, startCapture, supplierJob, SUPPLIER_URL, PING, 
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+// A real querySelectorAll("script") returns typed scripts too, so the fixture answers the broad selector and
+// lets the collector read each node's own type attribute, exactly as it must on the page.
 function fakeDocument(json = null) {
   return {
     title: "机械发条木质火车",
@@ -36,7 +38,9 @@ function fakeDocument(json = null) {
       return selector === "h1" ? { textContent: "机械发条木质火车" } : null;
     },
     querySelectorAll(selector) {
-      if (selector === 'script[type="application/json"]' && json) return [{ textContent: JSON.stringify(json) }];
+      if (selector === "script" && json) {
+        return [{ textContent: JSON.stringify(json), getAttribute: (name) => (name === "type" ? "application/json" : null) }];
+      }
       return [];
     }
   };
@@ -175,6 +179,71 @@ test("capture prices require exact scalar decimals, stock requires nonnegative i
   const evidence = syntheticCapture();
   evidence.skus[0].stock = 1.5;
   assert.equal(sanitize1688Evidence(evidence, evidence.offerId).skus[0].stock, null);
+});
+
+// 每个规格自己的重量是它自己运费的唯一依据，所以它必须活着穿过脱敏边界，而不是在这里被丢掉。
+test("每个规格的发货重量按公斤保留下来，并带上页面里的来源", () => {
+  const evidence = syntheticCapture();
+  evidence.skus[0].weight = { value: 0.103, unit: "kg" };
+  evidence.skus[0].weightSource = "detailDescription.freightInfo.skuWeight";
+  const sanitized = sanitize1688Evidence(evidence, evidence.offerId);
+  assert.deepEqual(sanitized.skus[0].weight, { value: 0.103, unit: "kg" });
+  assert.equal(sanitized.skus[0].weightSource, "detailDescription.freightInfo.skuWeight");
+  // A bare number of kilograms is the same fact, normalized to the same shape. So is an exact scalar decimal in a
+  // string, which is exactly what the capture boundary already accepts for a price and for a stock count.
+  for (const raw of [0.24, "0.24", { value: "0.24", unit: "kg" }, { value: 0.24, unit: "KG" }]) {
+    const bare = syntheticCapture();
+    bare.skus[0].weight = raw;
+    bare.skus[0].weightSource = "freightModel.skuWeight";
+    assert.deepEqual(sanitize1688Evidence(bare, bare.offerId).skus[0].weight, { value: 0.24, unit: "kg" }, JSON.stringify(raw));
+  }
+});
+
+test("不合法的规格重量只被丢掉，不报错、不四舍五入、也不改写其他事实", () => {
+  for (const [weight, weightSource] of [
+    [{ value: 103, unit: "g" }, "page.grams"],
+    [{ value: 0, unit: "kg" }, "page.zero"],
+    [{ value: -1, unit: "kg" }, "page.negative"],
+    [{ value: 1001, unit: "kg" }, "page.absurd"],
+    [{ value: 0.103 }, "page.unitless"],
+    [{ value: "0.1公斤", unit: "kg" }, "page.text"],
+    [{ value: "0.10-0.15", unit: "kg" }, "page.range"],
+    [{ value: Infinity, unit: "kg" }, "page.infinite"],
+    [[0.103], "page.array"],
+    [true, "page.boolean"],
+    ["1e-1", "page.exponent"],
+    // A weight the page never told us where it came from is not evidence either.
+    [{ value: 0.103, unit: "kg" }, ""],
+    [{ value: 0.103, unit: "kg" }, undefined]
+  ]) {
+    const evidence = syntheticCapture();
+    evidence.skus[0].weight = weight;
+    evidence.skus[0].weightSource = weightSource;
+    const sanitized = sanitize1688Evidence(evidence, evidence.offerId);
+    assert.equal(sanitized.skus[0].weight, null, JSON.stringify(weight));
+    assert.equal(sanitized.skus[0].weightSource, null, JSON.stringify(weight));
+    // The specification is still a specification: its price and stock are untouched.
+    assert.equal(sanitized.skus[0].priceCny, 20);
+    assert.equal(sanitized.skus[0].stock, 1000);
+  }
+  // No weight at all is the normal case for a page that never declares one.
+  const plain = sanitize1688Evidence(syntheticCapture(), "712421624571");
+  assert.equal(plain.skus[0].weight, null);
+  assert.equal(plain.skus[0].weightSource, null);
+});
+
+test("采到的重量能直接接上供货方案的重量字段", async () => {
+  const { adapt1688CaptureToSupplierOption } = await import("../lib/supplier-option.mjs");
+  const evidence = syntheticCapture();
+  evidence.skus[0].weight = { value: 0.103, unit: "kg" };
+  evidence.skus[0].weightSource = "detailDescription.freightInfo.skuWeight";
+  const option = adapt1688CaptureToSupplierOption(sanitize1688Evidence(evidence, evidence.offerId),
+    { evidenceRef: "source-capture:SCJ-synthetic" });
+  assert.deepEqual(option.supplierSkus[0].weight, { value: 0.103, unit: "kg" });
+  // A specification without a declared weight stays explicitly unknown; nothing is filled in for it.
+  const missing = adapt1688CaptureToSupplierOption(sanitize1688Evidence(syntheticCapture(), "712421624571"),
+    { evidenceRef: "source-capture:SCJ-synthetic" });
+  assert.equal(missing.supplierSkus[0].weight, "unknown");
 });
 
 test("automatic SKU matching retains ambiguity across different supplier SKUs", () => {

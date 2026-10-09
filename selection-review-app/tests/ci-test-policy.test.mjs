@@ -1,8 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertSelfContainedTestSource,assertIsolatedApiTestSource } from "../scripts/ci-test-policy.mjs";
+import { assertSelfContainedTestSource,assertIsolatedApiTestSource,assertLocalApiTestPortsSource } from "../scripts/ci-test-policy.mjs";
 import { readFile } from 'node:fs/promises';
 import { API_PROCESS_TESTS } from '../scripts/ci-test-suites.mjs';
+
+test('local API preflight inspects the allocated port helper and shared fixture', async () => {
+  const portFixtureSource = await readFile(new URL('./helpers/api-process-lifecycle.mjs', import.meta.url), 'utf8');
+  const sharedFixtureSource = await readFile(new URL('./helpers/d-e-saved-api-'+'fixture.mjs', import.meta.url), 'utf8');
+  const source = "import { allocatedTestPorts } from './helpers/api-process-lifecycle.mjs'; "
+    + "import { startSavedDEApi } from './helpers/d-e-saved-api-" + "fixture.mjs'; const {api:port}=allocatedTestPorts();";
+  const input = { file: 'synthetic.test.mjs', source, portFixtureSource, sharedFixtureSource };
+  assert.equal(assertLocalApiTestPortsSource(input), 'allocated_fixture');
+  for (const broken of [undefined, 'export function allocatedTestPorts() { return {api: 4317}; }',
+    portFixtureSource.replace('SELECTION_REVIEW_TEST_SECOND_PORT', 'OTHER_PORT')]) {
+    assert.throws(() => assertLocalApiTestPortsSource({ ...input, portFixtureSource: broken }), /LOCAL_API_TEST_PORT_BOUNDARY_MISSING/);
+  }
+  assert.throws(() => assertLocalApiTestPortsSource({ ...input, sharedFixtureSource: 'uninspected fixture' }), /LOCAL_API_TEST_PORT_BOUNDARY_MISSING/);
+  for (const dynamic of ['await free'+'Port()', 'probe.lis'+'ten(0)', 'process.pid % 30000']) {
+    assert.throws(() => assertLocalApiTestPortsSource({ ...input, source: source + dynamic }), /LOCAL_API_TEST_PORT_BOUNDARY_MISSING/);
+  }
+  assert.throws(() => assertLocalApiTestPortsSource({ ...input, source: source.replace('allocatedTestPorts();', 'otherPorts();') }), /LOCAL_API_TEST_PORT_BOUNDARY_MISSING/);
+});
 
 test('classified API tests prove direct, shared or packaged isolated server construction',async()=>{
   const sharedFixtureSource=await readFile(new URL('./helpers/d-e-saved-api-'+'fixture.mjs',import.meta.url),'utf8');

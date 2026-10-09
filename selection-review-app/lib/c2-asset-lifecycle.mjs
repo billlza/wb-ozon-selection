@@ -1,8 +1,11 @@
+import { C1_FACT_DEFINITIONS_VERSION } from "./c1-ai-draft-contract.mjs";
+import { assertC1SupplierFactRevisionProjection, ConfirmedSupplierInputError } from "./confirmed-supplier-inputs.mjs";
+import { createC1EditorialDraftReference, assertC1EditorialSource, assertC1EditorialPlan, assertC1EditorialSnapshot, C1EditorialSourceError } from "./c1-editorial-review-contract.mjs";
 import { sameStoreRef } from "./store-binding.mjs";
 import { isDeepStrictEqual } from "node:util";
-import { assertC1PricingResultReuse, assertC1PricingReuseRecordSource, C1PricingReuseError } from "./c1-pricing-result-reuse.mjs";
+import { assertC1PricingResultReuse, assertC1PricingReuseRecordSource, createC1PricingReuseReference, C1_PRICING_REUSE_REFERENCE_VERSION, C1PricingReuseError } from "./c1-pricing-result-reuse.mjs";
+import { assertC1SiblingFormalReuse, createC1SiblingFormalReference, C1_SIBLING_FORMAL_REFERENCE_VERSION } from "./c1-sibling-formal-draft-reuse.mjs";
 import { assertCurrentC1SkuRightsReview, C1SkuRightsReviewError } from "./c1-sku-rights-review.mjs";
-import { assertC2MediaContentRules, assertC2FinalMediaContent } from "./c2-media-content-rules.mjs";
 import {
   assertValidLifecyclePackage,
   validateLifecycleTransition
@@ -27,18 +30,18 @@ import {
   isCanonicalC1AuthorizationId,
   isCanonicalStableHttpsAssetRef
 } from "./production-contract-primitives.mjs";
-import { assertValidC1ProductPlan, C1_CANONICAL_CONTRACT_VERSION, normalizeC1SourceIdentity as normalizeC2G1IdentityValue, normalizePlatformMediaSlot as normalizeSlot } from "./c1-product-plan.mjs";
+import { assertValidC1ProductPlan, C1_CANONICAL_CONTRACT_VERSION, normalizeC1SourceIdentity as normalizeC2G1IdentityValue } from "./c1-product-plan.mjs";
 import {
   PRODUCTION_AUTHORIZATION_FINAL_CARD_INPUT_SNAPSHOT_VERSION as C2_FINAL_CARD_INPUT_SNAPSHOT_VERSION,
   PRODUCTION_AUTHORIZATION_FINAL_MANIFEST_VERSION as C2_FINAL_MANIFEST_VERSION,
   PRODUCTION_AUTHORIZATION_PENDING_INPUTS_VERSION as C2_AUTHORIZATION_PENDING_INPUTS_VERSION,
   PRODUCTION_AUTHORIZATION_PREPARATION_VERSION as C2_AUTHORIZATION_PREPARATION_VERSION,
   createPendingProductionAuthorizationInputs,
+  fingerprintAuthorizedMedia,
   fingerprintC1Snapshot,
   fingerprintFinalCardInputSnapshot,
   fingerprintFinalManifest,
   fingerprintFinalUploads,
-  fingerprintMediaRequirements,
   fingerprintProductionAuthorizationPreparation as fingerprintC2AuthorizationPreparation,
   validateProductionAuthorizationPreparation
 } from "./production-authorization-preparation.mjs";
@@ -47,7 +50,7 @@ export const C2_ASSET_LIFECYCLE_VERSION = "c2-asset-lifecycle-v1.1";
 export const COLLECTED_ASSET_PLATFORMS = Object.freeze(["ozon", "wb", "1688", "pinduoduo"]);
 export const ASSET_MEDIA_TYPES = Object.freeze(["image", "video"]);
 export const C2_SOFTWARE_STATE_VERSION = "c2-software-state-v1";
-export const C2_MEDIA_REQUIREMENTS_VERSION = "c2-media-requirements-v1";
+export const C2_TARGET_CONTEXT_VERSION = "c2-target-context-v1";
 export const C2_UNKNOWN_MANIFEST_VERSION = "c1-unknown-manifest-v1";
 export const C2_STABLE_ASSET_TRANSPORT_VERSION = "c2-stable-asset-transport-v1";
 export const C2_STAGED_ASSET_MANIFEST_VERSION = "c2-staged-asset-manifest-v1";
@@ -97,14 +100,14 @@ function sha256(value) {
 }
 
 export function fingerprintC2FinalManifest({
-  mediaRequirementsFingerprint,
+  authorizedMediaFingerprint,
   effectiveVideoRequirement,
   mainImageAssetId,
   videoDisposition,
   assets
 }) {
   return fingerprintFinalManifest({
-    mediaRequirementsFingerprint,
+    authorizedMediaFingerprint,
     effectiveVideoRequirement,
     mainImageAssetId,
     videoDisposition,
@@ -112,22 +115,19 @@ export function fingerprintC2FinalManifest({
   });
 }
 
+/**
+ * 「主人授权的那批图」的唯一身份：按主人给的顺序取实际公网地址，第一张就是主图。
+ * 授权之后任何一张地址被换掉、顺序被动过、多一张少一张，这个值都会变，
+ * 所以从主人确认一直到 D 真正发出去的那一刻都用它对照。
+ */
+export function fingerprintC2AuthorizedMedia(assets) {
+  return fingerprintAuthorizedMedia(assets);
+}
+
 function assertSha256(value, field) {
   if (!/^[a-f0-9]{64}$/.test(String(value || ""))) {
     throw new Error(`C2_ASSET_INPUT_GAP: ${field}必须是SHA256`);
   }
-}
-
-function confirmedStringFact(fact, field) {
-  if (!isObject(fact) || fact.verificationStatus !== "confirmed" || !nonEmptyString(fact.value)) {
-    throw new Error(`C2_MEDIA_REQUIREMENTS_INVALID: ${field}必须是已确认事实`);
-  }
-  return fact.value;
-}
-
-
-function mediaRequirementsFingerprintValue(requirements) {
-  return fingerprintMediaRequirements(requirements);
 }
 
 function isOpaqueEvidenceRef(value) {
@@ -161,21 +161,6 @@ function normalizeC2G1Binding(skuPackage) {
   return deepFreeze({ identity, variantKey: skuPackage.variantKey });
 }
 
-function normalizedRequiredSlotKeys(requiredSlots) {
-  if (!Array.isArray(requiredSlots)) return null;
-  const keys = requiredSlots.map((slot) => {
-    if (!isObject(slot) || !sameJson(Object.keys(slot).sort(), ["mediaType", "required", "slotId"]) ||
-        !nonEmptyString(slot.slotId) || !ASSET_MEDIA_TYPES.includes(slot.mediaType) || slot.required !== true) {
-      throw new Error("C2_C1_CANONICAL_GATE_BLOCKED: 顶层mediaRequirements.requiredSlots必须是正式必填槽位");
-    }
-    return `${slot.mediaType}:${slot.slotId}`;
-  });
-  if (new Set(keys).size !== keys.length) {
-    throw new Error("C2_C1_CANONICAL_GATE_BLOCKED: 顶层mediaRequirements.requiredSlots不得重复");
-  }
-  return [...keys].sort();
-}
-
 function canonicalDraftKeywordRefs(draft, path) {
   if (!isObject(draft) || draft.status !== "draft_only" || !nonEmptyString(draft.text) ||
       draft.productionApproved !== false || !Array.isArray(draft.factRefs) || draft.factRefs.length === 0 ||
@@ -188,6 +173,52 @@ function canonicalDraftKeywordRefs(draft, path) {
   return draft.keywordEvidenceRefs;
 }
 
+const C1_EDITORIAL_REFERENCE_VERSION = "c1-editorial-source-reference-v1";
+
+function isEditorialDraftReference(draft) {
+  return draft?.editorialSource?.schemaVersion === C1_EDITORIAL_REFERENCE_VERSION;
+}
+
+/** Canonical handoffs carry a projection; only the sibling C1 snapshot owns the full source. */
+function editorialDraftMatchesSnapshot(draft, sourceDraft, identity, resultSkuRevision) {
+  if (!isEditorialDraftReference(draft)) return sameJson(draft, sourceDraft);
+  if (sourceDraft?.editorialSource?.schemaVersion !== "c1-editorial-source-v2") return false;
+  try {
+    return sameJson(draft, createC1EditorialDraftReference({ draftOnlySeo: sourceDraft, identity, resultSkuRevision }));
+  } catch (error) {
+    if (!(error instanceof C1EditorialSourceError) && !/^C1_AI_/.test(error.message)) throw error;
+    return false;
+  }
+}
+
+function pricingDraftMatchesSnapshot(draft, sourcePlan, identity, resultSkuRevision, targetProfitModelVersion) {
+  const sourceDraft = sourcePlan?.draftOnlySeo;
+  if (draft?.pricingReuseRecord?.schemaVersion !== C1_PRICING_REUSE_REFERENCE_VERSION) return sameJson(draft, sourceDraft);
+  if (sourceDraft?.pricingReuseRecord?.schemaVersion !== "c1-pricing-result-reuse-v1") return false;
+  try {
+    const reference = createC1PricingReuseReference({ record: sourceDraft.pricingReuseRecord, identity,
+      resultSkuRevision, targetPlanId: sourcePlan.c1PlanId, targetProfitModelVersion });
+    return sameJson(draft, { ...sourceDraft, pricingReuseRecord: reference });
+  } catch (error) {
+    if (!(error instanceof C1PricingReuseError) && !(error instanceof C1SkuRightsReviewError) && !/^C1_AI_/.test(error.message)) throw error;
+    return false;
+  }
+}
+
+function canonicalDraftMatchesSnapshot(draft, sourcePlan, identity, resultSkuRevision, targetProfitModelVersion) {
+  if (draft?.sourceType === 'sibling_shared_formal_provider') {
+    const sourceDraft = sourcePlan?.draftOnlySeo;
+    if (!['c1-sibling-formal-reuse-v1', 'c1-sibling-neutral-reuse-v2'].includes(
+      sourceDraft?.siblingFormalReuseRecord?.schemaVersion)) return false;
+    const record = sourceDraft.siblingFormalReuseRecord;
+    return sameJson(draft, { ...sourceDraft, siblingFormalReuseRecord:
+      createC1SiblingFormalReference({ record, identity, resultSkuRevision }) });
+  }
+  return draft?.sourceType === "owner_confirmed_editorial"
+    ? editorialDraftMatchesSnapshot(draft, sourcePlan?.draftOnlySeo, identity, resultSkuRevision)
+    : pricingDraftMatchesSnapshot(draft, sourcePlan, identity, resultSkuRevision, targetProfitModelVersion);
+}
+
 export function normalizeC1CanonicalHandoffContract(skuPackage) {
   const plan = skuPackage?.c1ProductPlan;
   assertValidC1ProductPlan(plan);
@@ -197,7 +228,6 @@ export function normalizeC1CanonicalHandoffContract(skuPackage) {
     keywordEvidenceRefs: plan.keywordEvidenceRefs,
     revisionRefs: plan.revisionRefs,
     frozenInputRefs: plan.frozenInputRefs,
-    mediaRequirements: plan.mediaRequirements,
     unknownManifest: plan.unknownManifest
   };
   assertNoRawPersistenceKeys(canonicalContract, "c1CanonicalContract");
@@ -238,70 +268,76 @@ export function normalizeC1CanonicalHandoffContract(skuPackage) {
     assertCanonicalFrozenRef(frozen[field], `frozenInputRefs.${field}`);
   }
   const draft = plan.draftOnlySeo;
-  const job = draft?.providerJobRef;
-  const pricingReuse = draft?.pricingReuseRecord === undefined ? null : assertC1PricingResultReuse({ plan, resultSkuRevision: expectedC1Revision });
-  const allowedDraftKeys = new Set([
-    "status", "formalProviderResultAccepted", "reason", "aiRequestId", "aiRequestFingerprint",
-    "inputFingerprint", "sourceRevision", "receiptRef", "providerJobRef", "pricingReuseRecord"
-  ]);
-  if (!isObject(draft) || draft.status !== "draft_only" || draft.formalProviderResultAccepted !== true ||
-      Object.keys(draft).some((key) => !allowedDraftKeys.has(key)) || draft.reason !== null || !isObject(job)) {
-    throw new Error("C2_C1_FORMAL_PROVIDER_REQUIRED: draft_only草稿必须已接受正式provider作业结果");
-  }
-  assertOpaqueEvidenceRef(draft.aiRequestId, "draftOnlySeo.aiRequestId");
-  assertOpaqueEvidenceRef(draft.receiptRef, "draftOnlySeo.receiptRef");
-  if (!/^[a-f0-9]{64}$/.test(String(draft.aiRequestFingerprint || ""))) {
-    throw new Error("C2_C1_FORMAL_PROVIDER_REQUIRED: draftOnlySeo.aiRequestFingerprint必须是SHA-256");
-  }
-  const allowedJobKeys = new Set([
-    "jobId", "jobType", "providerId", "providerVersion", "candidateId", "skuPackageId", "platform",
-    "storeRef", "authorizationRef", "inputFingerprint", "sourceRevision", "receiptRef", "terminalStatus",
-    "requestSubmitted", "responseVerified"
-  ]);
-  if (Object.keys(job).some((key) => !allowedJobKeys.has(key)) || job.jobType !== "c1_ai_draft" ||
-      !nonEmptyString(job.jobId) || !nonEmptyString(job.providerId) || job.providerId === "unknown" ||
-      !nonEmptyString(job.providerVersion) || job.providerVersion === "unknown" ||
-      job.candidateId !== g1.identity.candidateId || job.skuPackageId !== g1.identity.skuPackageId ||
-      job.platform !== g1.identity.platform || job.storeRef !== g1.identity.storeRef.stableStoreId ||
-      !/^[a-f0-9]{64}$/.test(String(job.inputFingerprint || "")) ||
-      (pricingReuse === null && (job.sourceRevision !== expectedC1Revision - 1 || job.sourceRevision < revisionRefs.resultRevision)) ||
-      job.terminalStatus !== "completed" ||
-      job.requestSubmitted !== true || job.responseVerified !== true) {
-    throw new Error("C2_C1_FORMAL_PROVIDER_REQUIRED: 正式provider作业身份、revision、终态或回执状态无效");
-  }
-  for (const field of ["providerId", "providerVersion", "candidateId", "skuPackageId", "platform", "storeRef"]) {
-    assertCanonicalFrozenRef(job[field], `draftOnlySeo.providerJobRef.${field}`);
-  }
-  assertOpaqueEvidenceRef(job.receiptRef, "draftOnlySeo.providerJobRef.receiptRef");
-  const authorization = job.authorizationRef;
-  const authorizationKeys = new Set(["authorizationId", "authorizationType", "scope"]);
-  const authorizationScopeKeys = new Set(["candidateId", "skuPackageId", "platform", "storeRef", "sourceRevision", "jobType"]);
-  if (!isObject(authorization) || Object.keys(authorization).some((key) => !authorizationKeys.has(key)) ||
-      !nonEmptyString(authorization.authorizationId) ||
-      authorization.authorizationType !== "paid_ai_draft" || !isObject(authorization.scope) ||
-      Object.keys(authorization.scope).some((key) => !authorizationScopeKeys.has(key)) ||
-      authorization.scope.candidateId !== job.candidateId || authorization.scope.skuPackageId !== job.skuPackageId ||
-      authorization.scope.platform !== job.platform || authorization.scope.storeRef !== job.storeRef ||
-      authorization.scope.sourceRevision !== job.sourceRevision || authorization.scope.jobType !== job.jobType) {
-    throw new Error("C2_C1_FORMAL_PROVIDER_REQUIRED: 正式provider作业缺少完整付费授权作用域");
-  }
-  for (const field of ["candidateId", "skuPackageId", "platform", "storeRef"]) {
-    assertCanonicalFrozenRef(authorization.scope[field], `draftOnlySeo.providerJobRef.authorizationRef.scope.${field}`);
-  }
-  assertCanonicalC1AuthorizationId(
-    authorization.authorizationId,
-    "draftOnlySeo.providerJobRef.authorizationRef.authorizationId"
-  );
-  if (!isObject(plan.seoEvidenceLayer) || !sameJson(plan.seoEvidenceLayer.providerJobRef, job)) {
-    throw new Error("C2_C1_FORMAL_PROVIDER_REQUIRED: SEO证据层必须锁定同一正式provider作业引用");
-  }
-  if (draft.inputFingerprint !== job.inputFingerprint || draft.sourceRevision !== job.sourceRevision ||
-      plan.seoEvidenceLayer.inputFingerprint !== job.inputFingerprint ||
-      plan.seoEvidenceLayer.sourceRevision !== job.sourceRevision ||
-      plan.seoEvidenceLayer.aiRequestId !== draft.aiRequestId ||
-      plan.seoEvidenceLayer.aiRequestFingerprint !== draft.aiRequestFingerprint ||
-      plan.seoEvidenceLayer.aiReceiptId !== draft.receiptRef) {
-    throw new Error("C2_C1_FORMAL_PROVIDER_REQUIRED: 草稿、SEO证据层与正式provider作业输入或revision不一致");
+  if (draft?.sourceType === "owner_confirmed_editorial") {
+    assertC1EditorialPlan({ plan, identity: g1.identity, resultSkuRevision: expectedC1Revision });
+  } else if (draft?.sourceType === 'sibling_shared_formal_provider') {
+    assertC1SiblingFormalReuse({ plan, resultSkuRevision: expectedC1Revision });
+  } else {
+    const job = draft?.providerJobRef;
+    const pricingReuse = draft?.pricingReuseRecord === undefined ? null : assertC1PricingResultReuse({ plan, resultSkuRevision: expectedC1Revision });
+    const allowedDraftKeys = new Set([
+      "status", "formalProviderResultAccepted", "reason", "aiRequestId", "aiRequestFingerprint",
+      "inputFingerprint", "sourceRevision", "receiptRef", "providerJobRef", "pricingReuseRecord"
+    ]);
+    if (!isObject(draft) || draft.status !== "draft_only" || draft.formalProviderResultAccepted !== true ||
+        Object.keys(draft).some((key) => !allowedDraftKeys.has(key)) || draft.reason !== null || !isObject(job)) {
+      throw new Error("C2_C1_FORMAL_PROVIDER_REQUIRED: draft_only草稿必须已接受正式provider作业结果");
+    }
+    assertOpaqueEvidenceRef(draft.aiRequestId, "draftOnlySeo.aiRequestId");
+    assertOpaqueEvidenceRef(draft.receiptRef, "draftOnlySeo.receiptRef");
+    if (!/^[a-f0-9]{64}$/.test(String(draft.aiRequestFingerprint || ""))) {
+      throw new Error("C2_C1_FORMAL_PROVIDER_REQUIRED: draftOnlySeo.aiRequestFingerprint必须是SHA-256");
+    }
+    const allowedJobKeys = new Set([
+      "jobId", "jobType", "providerId", "providerVersion", "candidateId", "skuPackageId", "platform",
+      "storeRef", "authorizationRef", "inputFingerprint", "sourceRevision", "receiptRef", "terminalStatus",
+      "requestSubmitted", "responseVerified"
+    ]);
+    if (Object.keys(job).some((key) => !allowedJobKeys.has(key)) || job.jobType !== "c1_ai_draft" ||
+        !nonEmptyString(job.jobId) || !nonEmptyString(job.providerId) || job.providerId === "unknown" ||
+        !nonEmptyString(job.providerVersion) || job.providerVersion === "unknown" ||
+        job.candidateId !== g1.identity.candidateId || job.skuPackageId !== g1.identity.skuPackageId ||
+        job.platform !== g1.identity.platform || job.storeRef !== g1.identity.storeRef.stableStoreId ||
+        !/^[a-f0-9]{64}$/.test(String(job.inputFingerprint || "")) ||
+        (pricingReuse === null && (job.sourceRevision !== expectedC1Revision - 1 || job.sourceRevision < revisionRefs.resultRevision)) ||
+        job.terminalStatus !== "completed" ||
+        job.requestSubmitted !== true || job.responseVerified !== true) {
+      throw new Error("C2_C1_FORMAL_PROVIDER_REQUIRED: 正式provider作业身份、revision、终态或回执状态无效");
+    }
+    for (const field of ["providerId", "providerVersion", "candidateId", "skuPackageId", "platform", "storeRef"]) {
+      assertCanonicalFrozenRef(job[field], `draftOnlySeo.providerJobRef.${field}`);
+    }
+    assertOpaqueEvidenceRef(job.receiptRef, "draftOnlySeo.providerJobRef.receiptRef");
+    const authorization = job.authorizationRef;
+    const authorizationKeys = new Set(["authorizationId", "authorizationType", "scope"]);
+    const authorizationScopeKeys = new Set(["candidateId", "skuPackageId", "platform", "storeRef", "sourceRevision", "jobType"]);
+    if (!isObject(authorization) || Object.keys(authorization).some((key) => !authorizationKeys.has(key)) ||
+        !nonEmptyString(authorization.authorizationId) ||
+        authorization.authorizationType !== "paid_ai_draft" || !isObject(authorization.scope) ||
+        Object.keys(authorization.scope).some((key) => !authorizationScopeKeys.has(key)) ||
+        authorization.scope.candidateId !== job.candidateId || authorization.scope.skuPackageId !== job.skuPackageId ||
+        authorization.scope.platform !== job.platform || authorization.scope.storeRef !== job.storeRef ||
+        authorization.scope.sourceRevision !== job.sourceRevision || authorization.scope.jobType !== job.jobType) {
+      throw new Error("C2_C1_FORMAL_PROVIDER_REQUIRED: 正式provider作业缺少完整付费授权作用域");
+    }
+    for (const field of ["candidateId", "skuPackageId", "platform", "storeRef"]) {
+      assertCanonicalFrozenRef(authorization.scope[field], `draftOnlySeo.providerJobRef.authorizationRef.scope.${field}`);
+    }
+    assertCanonicalC1AuthorizationId(
+      authorization.authorizationId,
+      "draftOnlySeo.providerJobRef.authorizationRef.authorizationId"
+    );
+    if (!isObject(plan.seoEvidenceLayer) || !sameJson(plan.seoEvidenceLayer.providerJobRef, job)) {
+      throw new Error("C2_C1_FORMAL_PROVIDER_REQUIRED: SEO证据层必须锁定同一正式provider作业引用");
+    }
+    if (draft.inputFingerprint !== job.inputFingerprint || draft.sourceRevision !== job.sourceRevision ||
+        plan.seoEvidenceLayer.inputFingerprint !== job.inputFingerprint ||
+        plan.seoEvidenceLayer.sourceRevision !== job.sourceRevision ||
+        plan.seoEvidenceLayer.aiRequestId !== draft.aiRequestId ||
+        plan.seoEvidenceLayer.aiRequestFingerprint !== draft.aiRequestFingerprint ||
+        plan.seoEvidenceLayer.aiReceiptId !== draft.receiptRef) {
+      throw new Error("C2_C1_FORMAL_PROVIDER_REQUIRED: 草稿、SEO证据层与正式provider作业输入或revision不一致");
+    }
   }
   if (!Array.isArray(plan.keywordEvidenceRefs) || plan.keywordEvidenceRefs.length === 0 ||
       plan.keywordEvidenceRefs.some((ref) => !nonEmptyString(ref)) ||
@@ -309,7 +345,7 @@ export function normalizeC1CanonicalHandoffContract(skuPackage) {
     throw new Error("C2_C1_FORMAL_KEYWORDS_REQUIRED: 必须提供去重后的正式keywordEvidenceRefs");
   }
   plan.keywordEvidenceRefs.forEach((ref, index) => assertOpaqueEvidenceRef(ref, `keywordEvidenceRefs[${index}]`));
-  if (!Array.isArray(plan.bulletPointsDraft) || plan.bulletPointsDraft.length === 0 ||
+  if (!Array.isArray(plan.bulletPointsDraft) || (plan.bulletPointsDraft.length === 0 && plan.seoEvidenceLayer?.factDefinitionsVersion !== C1_FACT_DEFINITIONS_VERSION) ||
       !isObject(plan.searchKeywordsDraft) || plan.searchKeywordsDraft.status !== "draft_only" ||
       plan.searchKeywordsDraft.productionApproved !== false || !Array.isArray(plan.searchKeywordsDraft.keywords) ||
       plan.searchKeywordsDraft.keywords.length === 0) {
@@ -332,17 +368,12 @@ export function normalizeC1CanonicalHandoffContract(skuPackage) {
   if (adoptedKeywordRefs.length === 0 || adoptedKeywordRefs.some((ref) => !plan.keywordEvidenceRefs.includes(ref))) {
     throw new Error("C2_C1_FORMAL_KEYWORDS_REQUIRED: 顶层正式关键词引用必须覆盖全部已采用SEO草稿关键词证据");
   }
-  const media = plan.mediaRequirements;
-  const allowedMediaKeys = new Set(["status", "schemaSnapshotRef", "sourceRefs", "requiredSlots", "videoRequirement", "reason"]);
-  if (!isObject(media) || Object.keys(media).some((key) => !allowedMediaKeys.has(key)) || media.status !== "confirmed" ||
-      media.schemaSnapshotRef !== plan.inputRefs.platformSchemaEvidenceId ||
-      !Array.isArray(media.sourceRefs) || !media.sourceRefs.includes(plan.inputRefs.platformSchemaEvidenceId) ||
-      new Set(media.sourceRefs).size !== media.sourceRefs.length ||
-      !["required", "not_required"].includes(media.videoRequirement) || media.reason !== null) {
-    throw new Error("C2_C1_CANONICAL_GATE_BLOCKED: 顶层mediaRequirements未绑定冻结Schema");
+  // 槽位合同已废止：C1 不再交出任何媒体摘要，这里也不再要求它。
+  // 哪些图上架、按什么顺序，全部由主人在 C2 逐张确认（见 confirmFinalUploads）。
+  // 更早写下的记录里那个 mediaRequirements: null 的空壳没有任何槽位主张，放行；非 null 一律拒收。
+  if (Object.hasOwn(plan, "mediaRequirements") && plan.mediaRequirements !== null) {
+    throw new Error("C2_C1_CANONICAL_GATE_BLOCKED: 槽位合同已废止，C1不得再交出平台媒体槽位摘要");
   }
-  media.sourceRefs.forEach((ref, index) => assertOpaqueEvidenceRef(ref, `mediaRequirements.sourceRefs[${index}]`));
-  normalizedRequiredSlotKeys(media.requiredSlots);
   if (!Array.isArray(plan.unknownManifest)) {
     throw new Error("C2_C1_CANONICAL_GATE_BLOCKED: 顶层unknownManifest必须是数组");
   }
@@ -353,8 +384,8 @@ export function normalizeC1CanonicalHandoffContract(skuPackage) {
         !Array.isArray(entry.sourceRefs) || entry.sourceRefs.length === 0 ||
         entry.sourceRefs.some((ref) => !nonEmptyString(ref)) ||
         new Set(entry.sourceRefs).size !== entry.sourceRefs.length ||
-        !["informational", "required_field", "compliance", "media_slot"].includes(entry.blockingScope) ||
-        entry.blocksC2Handoff !== ["required_field", "compliance", "media_slot"].includes(entry.blockingScope)) {
+        !["informational", "required_field", "compliance"].includes(entry.blockingScope) ||
+        entry.blocksC2Handoff !== ["required_field", "compliance"].includes(entry.blockingScope)) {
       throw new Error(`C2_C1_CANONICAL_GATE_BLOCKED: unknownManifest[${index}]无效`);
     }
     entry.sourceRefs.forEach((ref, refIndex) => assertOpaqueEvidenceRef(ref, `unknownManifest[${index}].sourceRefs[${refIndex}]`));
@@ -369,117 +400,78 @@ export function normalizeC1CanonicalHandoffContract(skuPackage) {
     handoffRevisionRefs: { sourceRevision: expectedC1Revision, resultRevision: expectedC1Revision + 1 },
     frozenInputRefs: structuredClone(frozen),
     schemaSnapshotRef: plan.schemaSnapshotRef,
-    draftOnlySeo: structuredClone(draft),
+    // Previously completed full v2 handoffs retain their exact historical shape.
+    // New handoffs share the complete source kept in finalCardInputSnapshot.c1Snapshot.
+    draftOnlySeo: ['c1-sibling-formal-reuse-v1', 'c1-sibling-neutral-reuse-v2'].includes(
+      draft?.siblingFormalReuseRecord?.schemaVersion)
+      ? { ...structuredClone(draft), siblingFormalReuseRecord: createC1SiblingFormalReference({
+        record: draft.siblingFormalReuseRecord, identity: g1.identity, resultSkuRevision: expectedC1Revision }) }
+      : draft?.pricingReuseRecord?.schemaVersion === "c1-pricing-result-reuse-v1" &&
+      !(skuPackage.c2FinalAssets?.status === "completed" &&
+        skuPackage.c2FinalAssets.productionAuthorizationPreparation?.frozenC1Handoff?.draftOnlySeo?.pricingReuseRecord?.schemaVersion === "c1-pricing-result-reuse-v1")
+      ? { ...structuredClone(draft), pricingReuseRecord: createC1PricingReuseReference({ record: draft.pricingReuseRecord,
+        identity: g1.identity, resultSkuRevision: expectedC1Revision, targetPlanId: plan.c1PlanId,
+        targetProfitModelVersion: plan.inputRefs.profitModelVersion }) }
+      : draft?.editorialSource?.schemaVersion === "c1-editorial-source-v2" &&
+      !(skuPackage.c2FinalAssets?.status === "completed" &&
+        skuPackage.c2FinalAssets.productionAuthorizationPreparation?.frozenC1Handoff?.draftOnlySeo?.editorialSource?.schemaVersion === "c1-editorial-source-v2")
+      ? createC1EditorialDraftReference({ draftOnlySeo: draft, identity: g1.identity, resultSkuRevision: expectedC1Revision })
+      : structuredClone(draft),
     keywordEvidenceRefs: structuredClone(plan.keywordEvidenceRefs),
-    mediaRequirements: structuredClone(media),
     unknownManifest: []
   });
 }
 
-export function normalizeC2MediaContract(skuPackage) {
+/**
+ * C2 的目标绑定：平台、店铺、冻结 Schema 修订与证据。全部取自 Ozon 证据服务真实返回的字段
+ * （evidenceId / platform / store / storeRef / schemaRevision），不再经过那份从没人赋过值的
+ * platformSchemaRules.mediaRequirements。槽位、内容规则、视频槽位一律不存在。
+ */
+export function normalizeC2TargetContract(skuPackage) {
   const plan = skuPackage?.c1ProductPlan;
   assertValidC1ProductPlan(plan);
   const canonicalC1 = normalizeC1CanonicalHandoffContract(skuPackage);
   const g1Identity = canonicalC1.identity;
   const schemaRules = plan.inputSnapshots?.platformSchemaRules;
-  const requirements = schemaRules?.mediaRequirements;
-  if (!isObject(requirements) || requirements.schemaVersion !== C2_MEDIA_REQUIREMENTS_VERSION) {
-    throw new Error(`C2_MEDIA_REQUIREMENTS_INVALID: 必须提供${C2_MEDIA_REQUIREMENTS_VERSION}`);
+  if (!isObject(schemaRules)) {
+    throw new Error("C2_TARGET_CONTEXT_INVALID: 缺少冻结平台Schema证据");
   }
-  const categoryId = confirmedStringFact(plan.platformCategory?.categoryId, "platformCategory.categoryId");
-  const schemaRevision = confirmedStringFact(plan.schemaSnapshot?.schemaRevision, "schemaSnapshot.schemaRevision");
+  if (Object.hasOwn(schemaRules, "mediaRequirements") && schemaRules.mediaRequirements !== null) {
+    throw new Error("C2_TARGET_CONTEXT_INVALID: 槽位合同已废止，冻结Schema不得再携带媒体槽位");
+  }
   const expectedEvidenceRef = plan.inputRefs?.platformSchemaEvidenceId;
+  const confirmedSchemaRevision = plan.schemaSnapshot?.schemaRevision;
   for (const [field, value] of Object.entries({
-    evidenceRef: requirements.evidenceRef,
-    evidenceVersion: requirements.evidenceVersion,
-    platform: requirements.platform,
-    targetStore: requirements.targetStore,
-    categoryId: requirements.categoryId,
-    schemaRevision: requirements.schemaRevision
+    evidenceId: schemaRules.evidenceId,
+    platform: schemaRules.platform,
+    store: schemaRules.store,
+    schemaRevision: schemaRules.schemaRevision
   })) {
-    if (!nonEmptyString(value)) throw new Error(`C2_MEDIA_REQUIREMENTS_INVALID: ${field}必须是非空字符串`);
+    if (!nonEmptyString(value)) throw new Error(`C2_TARGET_CONTEXT_INVALID: platformSchemaRules.${field}必须是非空字符串`);
   }
   const expectedSourceDataRevision = skuPackage.c2FinalAssets?.softwareState?.sourceDataRevision ?? skuPackage.dataRevision;
-  if (Object.hasOwn(requirements, "sourceDataRevision")) {
-    throw new Error("C2_MEDIA_REQUIREMENTS_INVALID: 原始平台媒体证据不得预写本地SKU修订");
-  }
-  if (requirements.platform !== g1Identity.platform || requirements.platform !== skuPackage.targetPlatform ||
-      requirements.platform !== plan.identity.targetPlatform ||
-      requirements.platform !== schemaRules.platform ||
-      requirements.targetStore !== g1Identity.storeRef.stableStoreId ||
-      requirements.targetStore !== skuPackage.targetStore || requirements.targetStore !== plan.identity.targetStore ||
-      requirements.targetStore !== schemaRules.store ||
-      !sameStoreRef(requirements.storeRef, g1Identity.storeRef) ||
+  if (schemaRules.platform !== g1Identity.platform || schemaRules.platform !== skuPackage.targetPlatform ||
+      schemaRules.platform !== plan.identity.targetPlatform ||
+      schemaRules.store !== g1Identity.storeRef.stableStoreId ||
+      schemaRules.store !== skuPackage.targetStore || schemaRules.store !== plan.identity.targetStore ||
       !sameStoreRef(schemaRules.storeRef, g1Identity.storeRef) ||
-      requirements.categoryId !== categoryId || requirements.categoryId !== schemaRules.categoryId ||
-      requirements.schemaRevision !== schemaRevision || requirements.schemaRevision !== schemaRules.schemaRevision ||
-      requirements.evidenceRef !== expectedEvidenceRef || requirements.evidenceRef !== schemaRules.evidenceId) {
-    throw new Error("C2_MEDIA_REQUIREMENTS_INVALID: platform/storeRef/category/schema证据与当前C1不一致");
+      schemaRules.evidenceId !== expectedEvidenceRef || schemaRules.evidenceId !== canonicalC1.schemaSnapshotRef ||
+      confirmedSchemaRevision?.verificationStatus !== "confirmed" ||
+      confirmedSchemaRevision.value !== schemaRules.schemaRevision) {
+    throw new Error("C2_TARGET_CONTEXT_INVALID: platform/storeRef/Schema修订或证据与当前C1不一致");
   }
-  if (!Array.isArray(requirements.imageSlots) || requirements.imageSlots.length === 0 ||
-      !Array.isArray(requirements.videoSlots || [])) {
-    throw new Error("C2_MEDIA_REQUIREMENTS_INVALID: 必须由Schema证据给出图片槽位和视频槽位数组");
-  }
-  const imageSlots = requirements.imageSlots.map((slot, index) => normalizeSlot(slot, "image", index));
-  const videoSlots = (requirements.videoSlots || []).map((slot, index) => normalizeSlot(slot, "video", index));
-  assertC2MediaContentRules(requirements.contentRules, [...imageSlots, ...videoSlots]);
-  const requiredSlotKeys = [...imageSlots, ...videoSlots]
-    .filter((slot) => slot.minCount > 0)
-    .map((slot) => `${slot.mediaType}:${slot.slotId}`)
-    .sort();
-  if (!sameJson(requiredSlotKeys, normalizedRequiredSlotKeys(canonicalC1.mediaRequirements.requiredSlots))) {
-    throw new Error("C2_C1_CANONICAL_GATE_BLOCKED: 顶层mediaRequirements与Schema必填槽位不一致");
-  }
-  const allSlotIds = [...imageSlots, ...videoSlots].map((slot) => slot.slotId);
-  if (new Set(allSlotIds).size !== allSlotIds.length) {
-    throw new Error("C2_MEDIA_REQUIREMENTS_INVALID: 媒体slotId必须唯一");
-  }
-  const mainSlots = imageSlots.filter((slot) => slot.role === "main_image");
-  if (mainSlots.length !== 1 || mainSlots[0].minCount !== 1 || mainSlots[0].maxCount !== 1) {
-    throw new Error("C2_MEDIA_REQUIREMENTS_INVALID: Schema必须且只能定义一个1对1主图槽位");
-  }
-  const rawVideoRequirement = requirements.schemaVideoRequirement;
-  if (!isObject(rawVideoRequirement) || !["required", "not_required"].includes(rawVideoRequirement.status)) {
-    throw new Error("C2_MEDIA_REQUIREMENTS_INVALID: Schema视频要求无效");
-  }
-  let schemaVideoRequirement;
-  if (rawVideoRequirement.status === "required") {
-    if (rawVideoRequirement.requiredBy !== "schema" || rawVideoRequirement.evidenceRef !== requirements.evidenceRef || videoSlots.length === 0) {
-      throw new Error("C2_MEDIA_REQUIREMENTS_INVALID: required视频必须有当前Schema证据和视频槽位");
-    }
-    schemaVideoRequirement = {
-      status: "required",
-      requiredBy: "schema",
-      evidenceRef: rawVideoRequirement.evidenceRef
-    };
-  } else {
-    if (videoSlots.some((slot) => slot.minCount !== 0)) {
-      throw new Error("C2_MEDIA_REQUIREMENTS_INVALID: not_required视频合同不得包含必填视频槽位");
-    }
-    schemaVideoRequirement = { status: "not_required", requiredBy: "default", evidenceRef: null };
-  }
-  if (canonicalC1.mediaRequirements.videoRequirement !== schemaVideoRequirement.status) {
-    throw new Error("C2_C1_CANONICAL_GATE_BLOCKED: 顶层视频要求与冻结Schema不一致");
-  }
-  const sourceC1Fingerprint = fingerprintC2SourceC1(skuPackage);
-  const normalized = {
-    schemaVersion: C2_MEDIA_REQUIREMENTS_VERSION,
-    evidenceRef: requirements.evidenceRef,
-    evidenceVersion: requirements.evidenceVersion,
-    platform: requirements.platform,
-    targetStore: requirements.targetStore,
+  const targetContext = {
+    schemaVersion: C2_TARGET_CONTEXT_VERSION,
+    platform: schemaRules.platform,
+    targetStore: schemaRules.store,
     storeRef: g1Identity.storeRef.stableStoreId,
-    categoryId: requirements.categoryId,
-    schemaRevision: requirements.schemaRevision,
+    schemaRevision: schemaRules.schemaRevision,
+    schemaEvidenceRef: schemaRules.evidenceId,
     sourceDataRevision: expectedSourceDataRevision,
-    sourceC1Fingerprint,
-    imageSlots,
-    videoSlots,
-    schemaVideoRequirement
+    sourceC1Fingerprint: fingerprintC2SourceC1(skuPackage)
   };
-  if (Object.hasOwn(requirements, "contentRules")) normalized.contentRules = structuredClone(requirements.contentRules);
   return deepFreeze({
-    mediaRequirements: { ...normalized, requirementsFingerprint: mediaRequirementsFingerprintValue(normalized) },
+    targetContext,
     unknownManifest: {
       schemaVersion: C2_UNKNOWN_MANIFEST_VERSION,
       sourceDataRevision: expectedSourceDataRevision,
@@ -491,19 +483,13 @@ export function normalizeC2MediaContract(skuPackage) {
   });
 }
 
-function bindC2MediaContractToSourceRevision(mediaContract, sourceDataRevision) {
+function bindC2TargetContractToSourceRevision(targetContract, sourceDataRevision) {
   if (!Number.isInteger(sourceDataRevision)) {
-    throw new Error("C2_MEDIA_REQUIREMENTS_INVALID: 最终确认sourceRevision必须是整数");
+    throw new Error("C2_TARGET_CONTEXT_INVALID: 最终确认sourceRevision必须是整数");
   }
-  const { requirementsFingerprint: _ignored, ...mediaCore } = mediaContract.mediaRequirements;
-  const mediaRequirements = {
-    ...structuredClone(mediaCore),
-    sourceDataRevision
-  };
-  mediaRequirements.requirementsFingerprint = fingerprintMediaRequirements(mediaRequirements);
   return deepFreeze({
-    ...structuredClone(mediaContract),
-    mediaRequirements
+    ...structuredClone(targetContract),
+    targetContext: { ...structuredClone(targetContract.targetContext), sourceDataRevision }
   });
 }
 
@@ -540,20 +526,14 @@ export function normalizeC2OwnerVideoRequirement(ownerVideoRequirement, skuPacka
   });
 }
 
-export function resolveC2EffectiveVideoRequirement({ mediaRequirements, skuPackage, ownerVideoRequirement = null }) {
+/**
+ * 冻结 Schema 从来没有交出过视频要求（那份 schemaVideoRequirement 挂在已废止的槽位合同上），
+ * 所以「这个商品要不要视频」现在只有一个来源：主人自己说。没说就是不要。
+ */
+export function resolveC2EffectiveVideoRequirement({ skuPackage, ownerVideoRequirement = null }) {
   const normalizedOwnerRequirement = normalizeC2OwnerVideoRequirement(ownerVideoRequirement, skuPackage);
-  if (mediaRequirements.schemaVideoRequirement.status === "required") {
-    return deepFreeze({
-      status: "required",
-      requiredBy: "schema",
-      evidenceRefs: [mediaRequirements.schemaVideoRequirement.evidenceRef]
-    });
-  }
   if (normalizedOwnerRequirement === null) {
     return deepFreeze({ status: "not_required", requiredBy: "default", evidenceRefs: [] });
-  }
-  if (mediaRequirements.videoSlots.length === 0) {
-    throw new Error("C2_VIDEO_REQUIREMENT_INVALID: 当前Schema没有可用视频槽位");
   }
   return deepFreeze({
     status: "required",
@@ -611,15 +591,12 @@ function stableAssetIdentity(asset) {
 export function normalizeC2FinalUploads({
   finalUploadAssets,
   existingAssets,
-  mediaRequirements,
   effectiveVideoRequirement,
   addedAt
 }) {
   if (!Array.isArray(finalUploadAssets) || finalUploadAssets.length === 0 || !isoDateTime(addedAt)) {
     throw new Error("C2_FINAL_ASSET_INVALID: 最终素材和时间必须有效");
   }
-  const slots = new Map([...mediaRequirements.imageSlots, ...mediaRequirements.videoSlots]
-    .map((slot) => [slot.slotId, slot]));
   const existing = [...(existingAssets?.collected || []), ...(existingAssets?.aiDrafts || [])];
   const existingIds = new Set(existing.map((asset) => asset.assetId));
   const existingIdentities = new Set(existing.map(stableAssetIdentity));
@@ -646,8 +623,8 @@ export function normalizeC2FinalUploads({
     assertNoRawPersistenceKeys(asset, path);
     if (!isObject(asset) || !nonEmptyString(asset.assetId) || !ASSET_MEDIA_TYPES.includes(asset.mediaType) ||
         !nonEmptyString(asset.assetRef) || !nonEmptyString(asset.assetVersion) || !nonEmptyString(asset.fileName) ||
-        !nonEmptyString(asset.sourceEvidenceRef) || !nonEmptyString(asset.slotId) || !nonEmptyString(asset.role)) {
-      throw new Error(`C2_FINAL_ASSET_INVALID: ${path}缺少文件身份、槽位、来源或稳定地址`);
+        !nonEmptyString(asset.sourceEvidenceRef)) {
+      throw new Error(`C2_FINAL_ASSET_INVALID: ${path}缺少文件身份、来源或稳定地址`);
     }
     if (asset.fileName === "." || asset.fileName === ".." || /[\\/\u0000-\u001f]/.test(asset.fileName)) {
       throw new Error(`C2_FINAL_ASSET_INVALID: ${path}.fileName必须是安全文件名而不是路径`);
@@ -668,9 +645,10 @@ export function normalizeC2FinalUploads({
     if (asset.sourceType !== "owner_provided_final_upload") {
       throw new Error("C2_OWNER_CONFIRMATION_REQUIRED: collected或aiDrafts不得原地改名为finalUploads");
     }
-    const slot = slots.get(asset.slotId);
-    if (!slot || slot.mediaType !== asset.mediaType || slot.role !== asset.role) {
-      throw new Error(`C2_MEDIA_SLOT_MISMATCH: ${path}不属于当前Schema媒体槽位`);
+    // 角色由主人给的顺序定死：第一张就是主图，其余按序进图库。软件不重排、不改选。
+    const derivedRole = index === 0 ? "main_image" : "gallery_image";
+    if (asset.role !== undefined && asset.role !== derivedRole) {
+      throw new Error(`C2_FINAL_ASSET_INVALID: ${path}.role只能是主人顺序推出的${derivedRole}`);
     }
     const item = {
       assetId: asset.assetId,
@@ -684,8 +662,7 @@ export function normalizeC2FinalUploads({
       usageAuthorization: normalizeListingAuthorization(asset.usageAuthorization, `${path}.usageAuthorization`),
       sourceType: "owner_provided_final_upload",
       order: asset.order,
-      role: asset.role,
-      slotId: asset.slotId,
+      role: derivedRole,
       byteSize: Number.isFinite(asset.byteSize) ? asset.byteSize : null,
       width: Number.isFinite(asset.width) ? asset.width : null,
       height: Number.isFinite(asset.height) ? asset.height : null,
@@ -711,24 +688,18 @@ export function normalizeC2FinalUploads({
   if (new Set(ids).size !== ids.length || new Set(identities).size !== identities.length || new Set(hashes).size !== hashes.length) {
     throw new Error("C2_FINAL_ASSET_INVALID: 最终素材文件身份不得重复");
   }
-  for (const slot of slots.values()) {
-    const count = normalized.filter((asset) => asset.slotId === slot.slotId).length;
-    if (count < slot.minCount || count > slot.maxCount) {
-      throw new Error(`C2_MEDIA_SLOT_MISMATCH: ${slot.slotId}数量必须在${slot.minCount}-${slot.maxCount}之间`);
-    }
-  }
   const mainImages = normalized.filter((asset) => asset.role === "main_image");
   if (mainImages.length !== 1 || mainImages[0].order !== 1 || mainImages[0].mediaType !== "image") {
     throw new Error("C2_FINAL_ASSET_INVALID: 必须且只能有一个排第1的图片首图");
   }
   const videoCount = normalized.filter((asset) => asset.mediaType === "video").length;
   if (effectiveVideoRequirement.status === "required" && videoCount === 0) {
-    throw new Error("C2_VIDEO_REQUIRED: 当前Schema或主人要求视频，缺失时禁止准备授权");
+    throw new Error("C2_VIDEO_REQUIRED: 主人要求视频，缺失时禁止准备授权");
   }
-  assertC2FinalMediaContent({ mediaRequirements, assets: normalized, checkedAt: addedAt });
   return deepFreeze({
     assets: normalized,
     mainImageAssetId: mainImages[0].assetId,
+    authorizedMediaFingerprint: fingerprintAuthorizedMedia(normalized),
     videoDisposition: videoCount > 0 ? "includes_video" : "excludes_video"
   });
 }
@@ -736,6 +707,7 @@ export function normalizeC2FinalUploads({
 function c1SourceSnapshot(plan) {
   return {
     c1PlanId: plan.c1PlanId,
+    ...(plan.sourceFactsRevision === undefined ? {} : { sourceFactsRevision: structuredClone(plan.sourceFactsRevision), supersedes: structuredClone(plan.supersedes) }),
     status: plan.status,
     contractVersion: plan.contractVersion,
     revisionRefs: structuredClone(plan.revisionRefs),
@@ -760,7 +732,6 @@ function c1SourceSnapshot(plan) {
     seoEvidenceLayer: structuredClone(plan.seoEvidenceLayer),
     draftOnlySeo: structuredClone(plan.draftOnlySeo),
     keywordEvidenceRefs: structuredClone(plan.keywordEvidenceRefs),
-    mediaRequirements: structuredClone(plan.mediaRequirements),
     unknownManifest: structuredClone(plan.unknownManifest)
   };
 }
@@ -864,7 +835,7 @@ export function fingerprintC2AssetManifest(assets) {
   const fields = [
     "assetId", "mediaType", "assetRef", "assetVersion", "sha256", "sourcePlatform",
     "sourceEvidenceRef", "usageAuthorization", "sourceType", "generatorRef", "fileName",
-    "byteSize", "width", "height", "order", "role", "slotId", "stableUrlEvidenceRef",
+    "byteSize", "width", "height", "order", "role", "stableUrlEvidenceRef",
     "ownerConfirmed", "productionEligible"
   ];
   const view = Object.fromEntries(["collected", "aiDrafts", "finalUploads"].map((region) => [
@@ -876,8 +847,9 @@ export function fingerprintC2AssetManifest(assets) {
   return sha256(view);
 }
 
+/** 上传之前还没有公网地址，所以 staging 清单只锁文件身份、顺序、首图和视频处置。 */
 export function fingerprintC2StagedAssetManifest({
-  mediaRequirementsFingerprint,
+  sourceC1Fingerprint,
   effectiveVideoRequirement,
   mainImageAssetId,
   videoDisposition,
@@ -885,7 +857,7 @@ export function fingerprintC2StagedAssetManifest({
 }) {
   return sha256({
     schemaVersion: C2_STAGED_ASSET_MANIFEST_VERSION,
-    mediaRequirementsFingerprint,
+    sourceC1Fingerprint,
     effectiveVideoRequirement,
     mainImageAssetId,
     videoDisposition,
@@ -1003,15 +975,16 @@ function validateAssetRegions(assets, errors) {
     validateFinalAssetRef(asset, path, errors);
     validateAllowedKeys(asset, [
       "assetId", "mediaType", "assetRef", "fileName", "assetVersion", "sha256", "sourceEvidenceRef",
-      "stableUrlEvidenceRef", "usageAuthorization", "sourceType", "order", "role", "slotId", "byteSize",
+      "stableUrlEvidenceRef", "usageAuthorization", "sourceType", "order", "role", "byteSize",
       "width", "height", "addedAt", "lifecycleArea", "ownerConfirmed", "productionEligible"
     ], path, errors);
     if (asset.lifecycleArea !== "finalUploads") push(errors, `${path}.lifecycleArea`, "必须是finalUploads");
     if (asset.sourceType !== "owner_provided_final_upload") push(errors, `${path}.sourceType`, "最终素材必须由主人提供并确认");
     if (asset.ownerConfirmed !== true) push(errors, `${path}.ownerConfirmed`, "最终素材必须由主人确认");
     if (asset.productionEligible !== true) push(errors, `${path}.productionEligible`, "确认后的最终素材才可成为未来D输入");
-    if (!nonEmptyString(asset.fileName) || !nonEmptyString(asset.slotId) || !nonEmptyString(asset.role)) {
-      push(errors, path, "最终素材必须锁定文件名、槽位和角色");
+    if (!nonEmptyString(asset.fileName) || asset.role !== (index === 0 ? "main_image" : "gallery_image") ||
+        asset.order !== index + 1) {
+      push(errors, path, "最终素材必须锁定文件名，并保持主人给的顺序（第一张即主图）");
     }
     if (!nonEmptyString(asset.sourceEvidenceRef) || !nonEmptyString(asset.stableUrlEvidenceRef)) {
       push(errors, path, "最终素材必须锁定来源与稳定地址证据");
@@ -1025,41 +998,20 @@ function validateAssetRegions(assets, errors) {
   });
 }
 
-function validateStoredMediaContract(requirements, unknownManifest, errors) {
-  if (!isObject(requirements) || requirements.schemaVersion !== C2_MEDIA_REQUIREMENTS_VERSION) {
-    push(errors, "mediaRequirements", `必须是${C2_MEDIA_REQUIREMENTS_VERSION}`);
+function validateStoredTargetContext(targetContext, unknownManifest, errors) {
+  if (!isObject(targetContext) || targetContext.schemaVersion !== C2_TARGET_CONTEXT_VERSION) {
+    push(errors, "targetContext", `必须是${C2_TARGET_CONTEXT_VERSION}`);
     return;
   }
-  validateAllowedKeys(requirements, [
-    "schemaVersion", "evidenceRef", "evidenceVersion", "platform", "targetStore", "storeRef", "categoryId",
-    "schemaRevision", "sourceDataRevision", "sourceC1Fingerprint", "imageSlots", "videoSlots",
-    "schemaVideoRequirement", "requirementsFingerprint", "contentRules"
-  ], "mediaRequirements", errors);
-  try { assertC2MediaContentRules(requirements.contentRules, [...(requirements.imageSlots || []), ...(requirements.videoSlots || [])]); }
-  catch (error) { push(errors, "mediaRequirements.contentRules", error.message); }
-  for (const field of ["evidenceRef", "evidenceVersion", "platform", "targetStore", "storeRef", "categoryId", "schemaRevision", "sourceC1Fingerprint"]) {
-    if (!nonEmptyString(requirements[field])) push(errors, `mediaRequirements.${field}`, "必须是非空字符串");
+  validateAllowedKeys(targetContext, [
+    "schemaVersion", "platform", "targetStore", "storeRef", "schemaRevision",
+    "schemaEvidenceRef", "sourceDataRevision", "sourceC1Fingerprint"
+  ], "targetContext", errors);
+  for (const field of ["platform", "targetStore", "storeRef", "schemaRevision", "schemaEvidenceRef", "sourceC1Fingerprint"]) {
+    if (!nonEmptyString(targetContext[field])) push(errors, `targetContext.${field}`, "必须是非空字符串");
   }
-  if (!Number.isInteger(requirements.sourceDataRevision) || requirements.sourceDataRevision < 0) {
-    push(errors, "mediaRequirements.sourceDataRevision", "必须锁定源修订号");
-  }
-  if (!Array.isArray(requirements.imageSlots) || requirements.imageSlots.length === 0 || !Array.isArray(requirements.videoSlots)) {
-    push(errors, "mediaRequirements", "必须冻结图片和视频槽位");
-  }
-  if (!isObject(requirements.schemaVideoRequirement) || !["required", "not_required"].includes(requirements.schemaVideoRequirement.status)) {
-    push(errors, "mediaRequirements.schemaVideoRequirement", "视频要求无效");
-  } else if (requirements.schemaVideoRequirement.status === "required" &&
-      (requirements.schemaVideoRequirement.requiredBy !== "schema" ||
-       requirements.schemaVideoRequirement.evidenceRef !== requirements.evidenceRef || requirements.videoSlots.length === 0)) {
-    push(errors, "mediaRequirements.schemaVideoRequirement", "required视频必须绑定当前Schema证据和视频槽位");
-  } else if (requirements.schemaVideoRequirement.status === "not_required" &&
-      (requirements.schemaVideoRequirement.requiredBy !== "default" || requirements.schemaVideoRequirement.evidenceRef !== null ||
-       requirements.videoSlots.some((slot) => slot.minCount !== 0))) {
-    push(errors, "mediaRequirements.videoSlots", "not_required视频合同不得包含必填视频槽位");
-  }
-  if (!/^[a-f0-9]{64}$/.test(String(requirements.requirementsFingerprint || "")) ||
-      requirements.requirementsFingerprint !== mediaRequirementsFingerprintValue(requirements)) {
-    push(errors, "mediaRequirements.requirementsFingerprint", "媒体要求指纹无效或内容漂移");
+  if (!Number.isInteger(targetContext.sourceDataRevision) || targetContext.sourceDataRevision < 0) {
+    push(errors, "targetContext.sourceDataRevision", "必须锁定源修订号");
   }
   if (!isObject(unknownManifest) || unknownManifest.schemaVersion !== C2_UNKNOWN_MANIFEST_VERSION ||
       !Number.isInteger(unknownManifest.sourceDataRevision) || !Array.isArray(unknownManifest.blockingItems) ||
@@ -1069,10 +1021,10 @@ function validateStoredMediaContract(requirements, unknownManifest, errors) {
   validateAllowedKeys(unknownManifest, ["schemaVersion", "sourceDataRevision", "blockingItems"], "unknownManifest", errors);
 }
 
-function validateStoredCanonicalC1Handoff(value, path, storedMediaRequirements, errors) {
+function validateStoredCanonicalC1Handoff(value, path, storedTargetContext, errors, sourcePlan) {
   validateAllowedKeys(value, [
     "contractVersion", "identity", "frozenInputRevisionRefs", "handoffRevisionRefs", "frozenInputRefs", "schemaSnapshotRef",
-    "draftOnlySeo", "keywordEvidenceRefs", "mediaRequirements", "unknownManifest"
+    "draftOnlySeo", "keywordEvidenceRefs", "unknownManifest"
   ], path, errors);
   if (!isObject(value) || value.contractVersion !== C1_CANONICAL_CONTRACT_VERSION) {
     push(errors, path, "必须是严格的G1 C1 canonical冻结交接");
@@ -1116,65 +1068,94 @@ function validateStoredCanonicalC1Handoff(value, path, storedMediaRequirements, 
     }
   }
   const draft = value.draftOnlySeo;
-  const job = draft?.providerJobRef;
-  const authorization = job?.authorizationRef;
-  const scope = authorization?.scope;
-  if (draft?.pricingReuseRecord !== undefined) {
+  if (draft?.sourceType === "owner_confirmed_editorial") {
     try {
-      const reuse = draft.pricingReuseRecord;
-      assertC1PricingReuseRecordSource(reuse);
-      if (reuse.resultSkuRevision !== handoffRevisions?.sourceRevision ||
-          reuse.targetProfitModelVersion !== value.frozenInputRefs?.profitModelVersion ||
-          !sameJson(reuse.sourceIdentity, g1Identity)) throw new C1PricingReuseError("C1_PRICING_REUSE_TARGET_CONFLICT");
+      if (isEditorialDraftReference(draft)) {
+        if (!editorialDraftMatchesSnapshot(draft, sourcePlan?.draftOnlySeo, g1Identity, handoffRevisions?.sourceRevision)) {
+          push(errors, `${path}.draftOnlySeo.editorialSource`, "C2_EDITORIAL_REFERENCE_SOURCE_MISMATCH");
+        }
+      } else {
+        assertC1EditorialSource({ draftOnlySeo: draft, identity: g1Identity, resultSkuRevision: handoffRevisions?.sourceRevision });
+      }
     } catch (error) {
-      if (!(error instanceof C1PricingReuseError) && !(error instanceof C1SkuRightsReviewError) && !/^C1_AI_/.test(error.message)) throw error;
-      push(errors, `${path}.draftOnlySeo.pricingReuseRecord`, error.message);
+      if (!(error instanceof C1EditorialSourceError) && !/^C1_AI_/.test(error.message)) throw error;
+      push(errors, `${path}.draftOnlySeo.editorialSource`, error.message);
     }
-  }
-  validateAllowedKeys(draft, [
-    "status", "formalProviderResultAccepted", "reason", "aiRequestId", "aiRequestFingerprint",
-    "inputFingerprint", "sourceRevision", "receiptRef", "providerJobRef", "pricingReuseRecord"
-  ], `${path}.draftOnlySeo`, errors);
-  validateAllowedKeys(job, [
-    "jobId", "jobType", "providerId", "providerVersion", "candidateId", "skuPackageId", "platform",
-    "storeRef", "authorizationRef", "inputFingerprint", "sourceRevision", "receiptRef", "terminalStatus",
-    "requestSubmitted", "responseVerified"
-  ], `${path}.draftOnlySeo.providerJobRef`, errors);
-  validateAllowedKeys(authorization, ["authorizationId", "authorizationType", "scope"], `${path}.draftOnlySeo.providerJobRef.authorizationRef`, errors);
-  validateAllowedKeys(scope, [
-    "candidateId", "skuPackageId", "platform", "storeRef", "sourceRevision", "jobType"
-  ], `${path}.draftOnlySeo.providerJobRef.authorizationRef.scope`, errors);
-  if (!isObject(draft) || draft.status !== "draft_only" || draft.formalProviderResultAccepted !== true ||
-      draft.reason !== null || !isOpaqueEvidenceRef(draft.aiRequestId) ||
-      !/^[a-f0-9]{64}$/.test(String(draft.aiRequestFingerprint || "")) ||
-      !isOpaqueEvidenceRef(draft.receiptRef) || !isObject(job) ||
-      !isOpaqueEvidenceRef(job.jobId) || job.jobType !== "c1_ai_draft" ||
-      !nonEmptyString(job.providerId) || job.providerId === "unknown" ||
-      !nonEmptyString(job.providerVersion) || job.providerVersion === "unknown" ||
-      !/^[a-f0-9]{64}$/.test(String(job.inputFingerprint || "")) ||
-      !isOpaqueEvidenceRef(job.receiptRef) || job.terminalStatus !== "completed" ||
-      job.requestSubmitted !== true || job.responseVerified !== true || !isObject(authorization) ||
-      !isCanonicalC1AuthorizationId(authorization.authorizationId) ||
-      authorization.authorizationType !== "paid_ai_draft" || !isObject(scope) ||
-      draft.inputFingerprint !== job.inputFingerprint || draft.sourceRevision !== job.sourceRevision ||
-      (draft?.pricingReuseRecord === undefined && job.sourceRevision !== handoffRevisions?.sourceRevision - 1) ||
-      job.candidateId !== g1Identity?.candidateId || job.skuPackageId !== g1Identity?.skuPackageId ||
-      job.platform !== g1Identity?.platform || job.storeRef !== g1Identity?.storeRef?.stableStoreId ||
-      scope.candidateId !== job.candidateId || scope.skuPackageId !== job.skuPackageId ||
-      scope.platform !== job.platform || scope.storeRef !== job.storeRef ||
-      scope.sourceRevision !== job.sourceRevision || scope.jobType !== job.jobType) {
-    push(errors, `${path}.draftOnlySeo`, "必须冻结正式provider完成、回执核验和授权引用");
-  }
-  for (const [fieldPath, fieldValue] of [
-    ...["providerId", "providerVersion", "candidateId", "skuPackageId", "platform", "storeRef"]
-      .map((field) => [`${path}.draftOnlySeo.providerJobRef.${field}`, job?.[field]]),
-    ...["candidateId", "skuPackageId", "platform", "storeRef"]
-      .map((field) => [`${path}.draftOnlySeo.providerJobRef.authorizationRef.scope.${field}`, scope?.[field]])
-  ]) {
+  } else if (draft?.sourceType === 'sibling_shared_formal_provider') {
     try {
-      assertCanonicalFrozenRef(fieldValue, fieldPath);
-    } catch (error) {
-      push(errors, fieldPath, error.message);
+      if (draft.siblingFormalReuseRecord?.schemaVersion === C1_SIBLING_FORMAL_REFERENCE_VERSION) {
+        if (!canonicalDraftMatchesSnapshot(draft, sourcePlan, g1Identity, handoffRevisions?.sourceRevision,
+          value.frozenInputRefs?.profitModelVersion)) throw new Error('C1_SIBLING_SHARED_REFERENCE_SOURCE_MISMATCH');
+      } else {
+        assertC1SiblingFormalReuse({ plan: sourcePlan, resultSkuRevision: handoffRevisions?.sourceRevision });
+      }
+    } catch (error) { push(errors, `${path}.draftOnlySeo.siblingFormalReuseRecord`, error.message); }
+  } else {
+    const job = draft?.providerJobRef;
+    const authorization = job?.authorizationRef;
+    const scope = authorization?.scope;
+    if (draft?.pricingReuseRecord !== undefined) {
+      try {
+        const reuse = draft.pricingReuseRecord;
+        if (reuse.schemaVersion === C1_PRICING_REUSE_REFERENCE_VERSION) {
+          if (!pricingDraftMatchesSnapshot(draft, sourcePlan, g1Identity, handoffRevisions?.sourceRevision,
+            value.frozenInputRefs?.profitModelVersion)) throw new C1PricingReuseError("C1_PRICING_REUSE_REFERENCE_SOURCE_MISMATCH");
+        } else {
+          assertC1PricingReuseRecordSource(reuse);
+          if (reuse.resultSkuRevision !== handoffRevisions?.sourceRevision ||
+              reuse.targetProfitModelVersion !== value.frozenInputRefs?.profitModelVersion ||
+              !sameJson(reuse.sourceIdentity, g1Identity)) throw new C1PricingReuseError("C1_PRICING_REUSE_TARGET_CONFLICT");
+        }
+      } catch (error) {
+        if (!(error instanceof C1PricingReuseError) && !(error instanceof C1SkuRightsReviewError) && !/^C1_AI_/.test(error.message)) throw error;
+        push(errors, `${path}.draftOnlySeo.pricingReuseRecord`, error.message);
+      }
+    }
+    validateAllowedKeys(draft, [
+      "status", "formalProviderResultAccepted", "reason", "aiRequestId", "aiRequestFingerprint",
+      "inputFingerprint", "sourceRevision", "receiptRef", "providerJobRef", "pricingReuseRecord"
+    ], `${path}.draftOnlySeo`, errors);
+    validateAllowedKeys(job, [
+      "jobId", "jobType", "providerId", "providerVersion", "candidateId", "skuPackageId", "platform",
+      "storeRef", "authorizationRef", "inputFingerprint", "sourceRevision", "receiptRef", "terminalStatus",
+      "requestSubmitted", "responseVerified"
+    ], `${path}.draftOnlySeo.providerJobRef`, errors);
+    validateAllowedKeys(authorization, ["authorizationId", "authorizationType", "scope"], `${path}.draftOnlySeo.providerJobRef.authorizationRef`, errors);
+    validateAllowedKeys(scope, [
+      "candidateId", "skuPackageId", "platform", "storeRef", "sourceRevision", "jobType"
+    ], `${path}.draftOnlySeo.providerJobRef.authorizationRef.scope`, errors);
+    if (!isObject(draft) || draft.status !== "draft_only" || draft.formalProviderResultAccepted !== true ||
+        draft.reason !== null || !isOpaqueEvidenceRef(draft.aiRequestId) ||
+        !/^[a-f0-9]{64}$/.test(String(draft.aiRequestFingerprint || "")) ||
+        !isOpaqueEvidenceRef(draft.receiptRef) || !isObject(job) ||
+        !isOpaqueEvidenceRef(job.jobId) || job.jobType !== "c1_ai_draft" ||
+        !nonEmptyString(job.providerId) || job.providerId === "unknown" ||
+        !nonEmptyString(job.providerVersion) || job.providerVersion === "unknown" ||
+        !/^[a-f0-9]{64}$/.test(String(job.inputFingerprint || "")) ||
+        !isOpaqueEvidenceRef(job.receiptRef) || job.terminalStatus !== "completed" ||
+        job.requestSubmitted !== true || job.responseVerified !== true || !isObject(authorization) ||
+        !isCanonicalC1AuthorizationId(authorization.authorizationId) ||
+        authorization.authorizationType !== "paid_ai_draft" || !isObject(scope) ||
+        draft.inputFingerprint !== job.inputFingerprint || draft.sourceRevision !== job.sourceRevision ||
+        (draft?.pricingReuseRecord === undefined && job.sourceRevision !== handoffRevisions?.sourceRevision - 1) ||
+        job.candidateId !== g1Identity?.candidateId || job.skuPackageId !== g1Identity?.skuPackageId ||
+        job.platform !== g1Identity?.platform || job.storeRef !== g1Identity?.storeRef?.stableStoreId ||
+        scope.candidateId !== job.candidateId || scope.skuPackageId !== job.skuPackageId ||
+        scope.platform !== job.platform || scope.storeRef !== job.storeRef ||
+        scope.sourceRevision !== job.sourceRevision || scope.jobType !== job.jobType) {
+      push(errors, `${path}.draftOnlySeo`, "必须冻结正式provider完成、回执核验和授权引用");
+    }
+    for (const [fieldPath, fieldValue] of [
+      ...["providerId", "providerVersion", "candidateId", "skuPackageId", "platform", "storeRef"]
+        .map((field) => [`${path}.draftOnlySeo.providerJobRef.${field}`, job?.[field]]),
+      ...["candidateId", "skuPackageId", "platform", "storeRef"]
+        .map((field) => [`${path}.draftOnlySeo.providerJobRef.authorizationRef.scope.${field}`, scope?.[field]])
+    ]) {
+      try {
+        assertCanonicalFrozenRef(fieldValue, fieldPath);
+      } catch (error) {
+        push(errors, fieldPath, error.message);
+      }
     }
   }
   if (!Array.isArray(value.keywordEvidenceRefs) || value.keywordEvidenceRefs.length === 0 ||
@@ -1182,31 +1163,11 @@ function validateStoredCanonicalC1Handoff(value, path, storedMediaRequirements, 
       new Set(value.keywordEvidenceRefs).size !== value.keywordEvidenceRefs.length) {
     push(errors, `${path}.keywordEvidenceRefs`, "必须冻结非空去重正式关键词证据引用");
   }
-  if (!isObject(value.mediaRequirements) || value.mediaRequirements.status !== "confirmed" ||
-      value.mediaRequirements.schemaSnapshotRef !== value.schemaSnapshotRef ||
-      !Array.isArray(value.mediaRequirements.requiredSlots) ||
-      !["required", "not_required"].includes(value.mediaRequirements.videoRequirement)) {
-    push(errors, `${path}.mediaRequirements`, "必须冻结与Schema一致的canonical媒体摘要");
-  } else {
-    try {
-      const summarySlots = normalizedRequiredSlotKeys(value.mediaRequirements.requiredSlots);
-      const detailedSlots = [
-        ...(storedMediaRequirements?.imageSlots || []),
-        ...(storedMediaRequirements?.videoSlots || [])
-      ].filter((slot) => slot.minCount > 0)
-        .map((slot) => `${slot.mediaType}:${slot.slotId}`)
-        .sort();
-      if (!sameJson(summarySlots, detailedSlots) ||
-          value.mediaRequirements.videoRequirement !== storedMediaRequirements?.schemaVideoRequirement?.status ||
-          value.mediaRequirements.schemaSnapshotRef !== storedMediaRequirements?.evidenceRef ||
-          storedMediaRequirements?.platform !== g1Identity?.platform ||
-          storedMediaRequirements?.targetStore !== g1Identity?.storeRef?.stableStoreId ||
-          storedMediaRequirements?.storeRef !== g1Identity?.storeRef?.stableStoreId) {
-        push(errors, `${path}.mediaRequirements`, "canonical媒体摘要必须与冻结详细媒体Schema一致");
-      }
-    } catch (error) {
-      push(errors, `${path}.mediaRequirements.requiredSlots`, error.message);
-    }
+  if (value.schemaSnapshotRef !== storedTargetContext?.schemaEvidenceRef ||
+      storedTargetContext?.platform !== g1Identity?.platform ||
+      storedTargetContext?.targetStore !== g1Identity?.storeRef?.stableStoreId ||
+      storedTargetContext?.storeRef !== g1Identity?.storeRef?.stableStoreId) {
+    push(errors, `${path}.schemaSnapshotRef`, "canonical交接必须与冻结目标绑定同一Schema证据和店铺");
   }
   if (!Array.isArray(value.unknownManifest) || value.unknownManifest.length !== 0) {
     push(errors, `${path}.unknownManifest`, "进入C2的canonical阻断unknown必须为空");
@@ -1267,42 +1228,12 @@ function validateStoredC1FactSections(c1, errors) {
 function validateStoredC1PlatformSchemaRules(c1, preparation, errors) {
   const path = "productionAuthorizationPreparation.finalCardInputSnapshot.c1Snapshot.inputSnapshots.platformSchemaRules";
   const rules = c1?.inputSnapshots?.platformSchemaRules;
-  const rawMedia = rules?.mediaRequirements;
   const target = preparation?.targetContext;
-  const storedMedia = preparation?.mediaRequirements;
-  if (!isObject(rules) || !isObject(rawMedia) ||
-      rawMedia.schemaVersion !== C2_MEDIA_REQUIREMENTS_VERSION ||
-      !["required", "not_required"].includes(rawMedia.schemaVideoRequirement?.status) ||
-      (rawMedia.schemaVideoRequirement?.status === "required" &&
-        rawMedia.schemaVideoRequirement.evidenceRef !== rawMedia.evidenceRef) ||
-      rules.evidenceId !== target?.schemaEvidenceRef || rawMedia.evidenceRef !== target?.schemaEvidenceRef ||
-      rawMedia.evidenceVersion !== target?.schemaEvidenceVersion || rules.platform !== target?.platform ||
+  if (!isObject(rules) || (Object.hasOwn(rules, "mediaRequirements") && rules.mediaRequirements !== null) ||
+      rules.evidenceId !== target?.schemaEvidenceRef || rules.platform !== target?.platform ||
       rules.store !== target?.targetStore || !sameStoreRef(rules.storeRef, preparation?.frozenC1Handoff?.identity?.storeRef) ||
-      rules.categoryId !== target?.categoryId || rules.schemaRevision !== target?.schemaRevision ||
-      rawMedia.platform !== target?.platform || rawMedia.targetStore !== target?.targetStore ||
-      !sameStoreRef(rawMedia.storeRef, preparation?.frozenC1Handoff?.identity?.storeRef) || rawMedia.categoryId !== target?.categoryId ||
-      rawMedia.schemaRevision !== target?.schemaRevision ||
-      Object.hasOwn(rawMedia, "sourceDataRevision") ||
-      storedMedia?.sourceDataRevision !== preparation?.sourceDataRevision) {
-    push(errors, path, "冻结platformSchemaRules身份、版本和目标范围必须与授权准备上下文一致");
-    return;
-  }
-  const projectedImages = Array.isArray(rawMedia.imageSlots)
-    ? rawMedia.imageSlots.map((slot) => ({
-      slotId: slot.slotId, mediaType: "image", role: slot.role, minCount: slot.minCount, maxCount: slot.maxCount
-    }))
-    : null;
-  const projectedVideos = Array.isArray(rawMedia.videoSlots)
-    ? rawMedia.videoSlots.map((slot) => ({
-      slotId: slot.slotId, mediaType: "video", role: slot.role, minCount: slot.minCount, maxCount: slot.maxCount
-    }))
-    : null;
-  const projectedVideoRequirement = rawMedia.schemaVideoRequirement?.status === "required"
-    ? { status: "required", requiredBy: "schema", evidenceRef: rawMedia.schemaVideoRequirement.evidenceRef }
-    : { status: "not_required", requiredBy: "default", evidenceRef: null };
-  if (!sameJson(projectedImages, storedMedia?.imageSlots) || !sameJson(projectedVideos, storedMedia?.videoSlots) ||
-      !sameJson(projectedVideoRequirement, storedMedia?.schemaVideoRequirement) || !sameJson(rawMedia.contentRules, storedMedia?.contentRules)) {
-    push(errors, `${path}.mediaRequirements`, "原始平台媒体Schema必须完整映射到冻结详细媒体合同");
+      rules.schemaRevision !== target?.schemaRevision) {
+    push(errors, path, "冻结platformSchemaRules身份、Schema修订和目标范围必须与授权准备上下文一致");
   }
 }
 
@@ -1334,6 +1265,13 @@ function validateStoredFinalCardInputSnapshot(snapshot, preparation, errors) {
   const salesSnapshot = c1?.inputSnapshots?.salesSnapshot;
   const c1Identity = c1?.identity;
 
+  if (c1?.sourceFactsRevision !== undefined) {
+    try { assertC1SupplierFactRevisionProjection({ plan: c1, sourceIdentity: identity }); }
+    catch (error) {
+      if (!(error instanceof ConfirmedSupplierInputError)) throw error;
+      push(errors, "productionAuthorizationPreparation.finalCardInputSnapshot.c1Snapshot.sourceFactsRevision", error.code);
+    }
+  }
   validateStoredC1FactSections(c1, errors);
   validateStoredC1PlatformSchemaRules(c1, preparation, errors);
 
@@ -1422,16 +1360,29 @@ function validateStoredFinalCardInputSnapshot(snapshot, preparation, errors) {
   }
   const evidenceLayer = c1?.seoEvidenceLayer;
   const draft = c1?.draftOnlySeo;
-  const job = draft?.providerJobRef;
-  if (!isObject(evidenceLayer) || !sameJson(evidenceLayer?.providerJobRef, job) ||
-      evidenceLayer?.inputFingerprint !== job?.inputFingerprint ||
-      evidenceLayer?.sourceRevision !== job?.sourceRevision || evidenceLayer?.aiRequestId !== draft?.aiRequestId ||
-      evidenceLayer?.aiRequestFingerprint !== draft?.aiRequestFingerprint || evidenceLayer?.aiReceiptId !== draft?.receiptRef) {
-    push(errors, "productionAuthorizationPreparation.finalCardInputSnapshot.c1Snapshot.seoEvidenceLayer", "必须冻结与canonical草稿一致的正式SEO作业证据层");
+  if (draft?.sourceType === "owner_confirmed_editorial") {
+    try {
+      assertC1EditorialSnapshot({ plan: c1, identity: snapshot.identity, resultSkuRevision: canonical?.handoffRevisionRefs?.sourceRevision });
+    } catch (error) {
+      if (!(error instanceof C1EditorialSourceError) && !/^C1_AI_/.test(error.message)) throw error;
+      push(errors, "productionAuthorizationPreparation.finalCardInputSnapshot.c1Snapshot.seoEvidenceLayer", error.message);
+    }
+  } else if (draft?.sourceType === 'sibling_shared_formal_provider') {
+    try { assertC1SiblingFormalReuse({ plan: c1, resultSkuRevision: canonical?.handoffRevisionRefs?.sourceRevision }); }
+    catch (error) { push(errors, 'productionAuthorizationPreparation.finalCardInputSnapshot.c1Snapshot.draftOnlySeo.siblingFormalReuseRecord', error.message); }
+  } else {
+    const job = draft?.providerJobRef;
+    if (!isObject(evidenceLayer) || !sameJson(evidenceLayer?.providerJobRef, job) ||
+        evidenceLayer?.inputFingerprint !== job?.inputFingerprint ||
+        evidenceLayer?.sourceRevision !== job?.sourceRevision || evidenceLayer?.aiRequestId !== draft?.aiRequestId ||
+        evidenceLayer?.aiRequestFingerprint !== draft?.aiRequestFingerprint || evidenceLayer?.aiReceiptId !== draft?.receiptRef) {
+      push(errors, "productionAuthorizationPreparation.finalCardInputSnapshot.c1Snapshot.seoEvidenceLayer", "必须冻结与canonical草稿一致的正式SEO作业证据层");
+    }
+
   }
 
   try {
-    if (!Array.isArray(c1?.bulletPointsDraft) || c1.bulletPointsDraft.length === 0 ||
+    if (!Array.isArray(c1?.bulletPointsDraft) || (c1.bulletPointsDraft.length === 0 && evidenceLayer?.factDefinitionsVersion !== C1_FACT_DEFINITIONS_VERSION) ||
         !isObject(c1?.searchKeywordsDraft) || c1.searchKeywordsDraft.status !== "draft_only" ||
         c1.searchKeywordsDraft.productionApproved !== false ||
         !Array.isArray(c1.searchKeywordsDraft.keywords) || c1.searchKeywordsDraft.keywords.length === 0) {
@@ -1495,29 +1446,18 @@ function validateStoredOwnerVideoRequirement(value, effectiveVideoRequirement, e
   }
 }
 
-function validateEffectiveVideoRequirement(value, errors, mediaRequirements = null) {
+function validateEffectiveVideoRequirement(value, errors) {
   validateAllowedKeys(value, ["status", "requiredBy", "evidenceRefs"], "effectiveVideoRequirement", errors);
   if (!isObject(value) || !["required", "not_required"].includes(value.status) ||
-      !["schema", "owner", "default"].includes(value.requiredBy) || !Array.isArray(value.evidenceRefs)) {
+      !["owner", "default"].includes(value.requiredBy) || !Array.isArray(value.evidenceRefs)) {
     push(errors, "effectiveVideoRequirement", "最终视频要求无效");
     return;
   }
-  if (value.status === "not_required" && (value.requiredBy !== "default" || value.evidenceRefs.length !== 0 ||
-      mediaRequirements?.schemaVideoRequirement?.status === "required")) {
-    push(errors, "effectiveVideoRequirement", "not_required只能来自默认规则且不得降低Schema要求");
+  if (value.status === "not_required" && (value.requiredBy !== "default" || value.evidenceRefs.length !== 0)) {
+    push(errors, "effectiveVideoRequirement", "not_required只能来自默认规则");
   }
-  if (value.status === "required" && value.evidenceRefs.length === 0) {
-    push(errors, "effectiveVideoRequirement.evidenceRefs", "required视频必须保留证据");
-  }
-  if (value.status === "required" && !["schema", "owner"].includes(value.requiredBy)) {
-    push(errors, "effectiveVideoRequirement.requiredBy", "required视频只能来自Schema或当前SKU主人决定");
-  }
-  if (value.requiredBy === "schema" && (mediaRequirements?.schemaVideoRequirement?.status !== "required" ||
-      !sameJson(value.evidenceRefs, [mediaRequirements.schemaVideoRequirement.evidenceRef]))) {
-    push(errors, "effectiveVideoRequirement", "Schema视频要求必须绑定当前Schema证据");
-  }
-  if (value.requiredBy === "owner" && mediaRequirements?.schemaVideoRequirement?.status === "required") {
-    push(errors, "effectiveVideoRequirement", "Schema已要求视频时不得改写为主人来源");
+  if (value.status === "required" && (value.requiredBy !== "owner" || value.evidenceRefs.length === 0)) {
+    push(errors, "effectiveVideoRequirement", "required视频只能来自当前SKU主人决定并保留证据");
   }
 }
 
@@ -1528,7 +1468,7 @@ function validateSoftwareState(state, errors) {
   }
   validateAllowedKeys(state, [
     "schemaVersion", "lifecycleStatus", "sourceDataRevision", "sourceC1Fingerprint",
-    "mediaRequirementsFingerprint", "assetManifestFingerprint", "executionPolicy", "technicalState"
+    "assetManifestFingerprint", "executionPolicy", "technicalState"
   ], "softwareState", errors);
   validateAllowedKeys(state.executionPolicy, [
     "externalAccessAllowed", "imageGenerationAllowed", "codexDispatchAllowed", "productionAllowed", "automaticRetry"
@@ -1542,9 +1482,6 @@ function validateSoftwareState(state, errors) {
   if (!Number.isInteger(state.sourceDataRevision) || state.sourceDataRevision < 0) push(errors, "softwareState.sourceDataRevision", "必须锁定源修订号");
   for (const field of ["sourceC1Fingerprint", "assetManifestFingerprint"]) {
     if (!/^[a-f0-9]{64}$/.test(String(state[field] || ""))) push(errors, `softwareState.${field}`, "必须是SHA256");
-  }
-  if (!/^[a-f0-9]{64}$/.test(String(state.mediaRequirementsFingerprint || ""))) {
-    push(errors, "softwareState.mediaRequirementsFingerprint", "必须锁定媒体要求SHA256");
   }
   if (!isObject(state.executionPolicy) || state.executionPolicy.externalAccessAllowed !== false ||
       state.executionPolicy.imageGenerationAllowed !== false || state.executionPolicy.codexDispatchAllowed !== false ||
@@ -1591,7 +1528,7 @@ function validateStableAssetTransport(value, lifecycle, errors) {
   const confirmation = value.ownerStagingConfirmation;
   validateAllowedKeys(confirmation, [
     "schemaVersion", "status", "confirmedBy", "confirmedByUserId", "confirmedAt", "confirmationRef",
-    "approvedStagedAssetManifestFingerprint", "approvedMediaRequirementsFingerprint", "approvedAssetIds",
+    "approvedStagedAssetManifestFingerprint", "approvedSourceC1Fingerprint", "approvedAssetIds",
     "approvedMainImageAssetId", "approvedVideoDisposition"
   ], `${path}.ownerStagingConfirmation`, errors);
   if (!isObject(confirmation) || confirmation.schemaVersion !== "c2-owner-staging-confirmation-v1" ||
@@ -1605,18 +1542,18 @@ function validateStableAssetTransport(value, lifecycle, errors) {
     const assetPath = `${path}.stagedAssets[${index}]`;
     validateAllowedKeys(asset, [
       "assetId", "mediaType", "fileName", "assetVersion", "sha256", "sourceEvidenceRef", "usageAuthorization",
-      "sourceType", "order", "role", "slotId", "byteSize", "width", "height"
+      "sourceType", "order", "role", "byteSize", "width", "height"
     ], assetPath, errors);
     if (!isObject(asset) || !nonEmptyString(asset.assetId) || !ASSET_MEDIA_TYPES.includes(asset.mediaType) ||
         !nonEmptyString(asset.fileName) || !nonEmptyString(asset.assetVersion) || !/^[a-f0-9]{64}$/.test(String(asset.sha256 || "")) ||
         !nonEmptyString(asset.sourceEvidenceRef) || !Number.isInteger(asset.order) || asset.order !== index + 1 ||
-        !nonEmptyString(asset.role) || !nonEmptyString(asset.slotId) || Object.hasOwn(asset, "assetRef")) {
-      push(errors, assetPath, "staging素材必须只保存文件身份，不得保存路径或地址");
+        asset.role !== (index === 0 ? "main_image" : "gallery_image") || Object.hasOwn(asset, "assetRef")) {
+      push(errors, assetPath, "staging素材必须只保存文件身份和主人给的顺序，不得保存路径或地址");
     }
   }
   if (isObject(confirmation) && Array.isArray(value.stagedAssets) && value.stagedAssets.length > 0 &&
       fingerprintC2StagedAssetManifest({
-        mediaRequirementsFingerprint: confirmation.approvedMediaRequirementsFingerprint,
+        sourceC1Fingerprint: confirmation.approvedSourceC1Fingerprint,
         effectiveVideoRequirement: lifecycle.effectiveVideoRequirement,
         mainImageAssetId: confirmation.approvedMainImageAssetId,
         videoDisposition: confirmation.approvedVideoDisposition,
@@ -1651,7 +1588,7 @@ function validateStableAssetTransport(value, lifecycle, errors) {
     for (const [index, asset] of (payload?.assets || []).entries()) {
       const staged = value.stagedAssets[index];
       const assetPath = `${path}.transportResult.assets[${index}]`;
-      validateAllowedKeys(asset, ["assetId", "sha256", "order", "role", "slotId", "stableUrl", "stableUrlEvidenceRef"], assetPath, errors);
+      validateAllowedKeys(asset, ["assetId", "sha256", "order", "role", "stableUrl", "stableUrlEvidenceRef"], assetPath, errors);
       let stableUrlValid = false;
       try {
         assertVerifiedStableUrl(asset?.stableUrl, [new URL(asset?.stableUrl).hostname.toLowerCase()], `${assetPath}.stableUrl`);
@@ -1660,9 +1597,9 @@ function validateStableAssetTransport(value, lifecycle, errors) {
         stableUrlValid = false;
       }
       if (!staged || asset?.assetId !== staged.assetId || asset?.sha256 !== staged.sha256 || asset?.order !== staged.order ||
-          asset?.role !== staged.role || asset?.slotId !== staged.slotId || !stableUrlValid ||
+          asset?.role !== staged.role || !stableUrlValid ||
           !isOpaqueEvidenceRef(asset?.stableUrlEvidenceRef)) {
-        push(errors, assetPath, "verified地址必须逐项保留staged文件身份、顺序、角色和槽位");
+        push(errors, assetPath, "verified地址必须逐项保留staged文件身份、顺序和角色");
       }
     }
   }
@@ -1683,7 +1620,7 @@ export function validateC2AssetLifecycle(value) {
     push(errors, "$", error.message);
   }
   validateAllowedKeys(value, [
-    "schemaVersion", "assetPackageId", "status", "createdAt", "updatedAt", "assets", "mediaRequirements",
+    "schemaVersion", "assetPackageId", "status", "createdAt", "updatedAt", "assets", "targetContext",
     "unknownManifest", "effectiveVideoRequirement", "ownerVideoRequirement", "ownerFinalUploadConfirmation",
     "productionAuthorizationPreparation", "dReadPolicy", "generationIntegrations", "platformUploads",
     "productionStarted", "softwareState", "stableAssetTransport"
@@ -1693,15 +1630,15 @@ export function validateC2AssetLifecycle(value) {
   if (!["awaiting_final_uploads", "completed"].includes(value.status)) push(errors, "status", "状态无效");
   if (!isoDateTime(value.createdAt) || !isoDateTime(value.updatedAt)) push(errors, "createdAt", "必须保存有效时间");
   validateAssetRegions(value.assets, errors);
-  validateStoredMediaContract(value.mediaRequirements, value.unknownManifest, errors);
+  validateStoredTargetContext(value.targetContext, value.unknownManifest, errors);
   if (value.softwareState === undefined) {
     push(errors, "softwareState", "必须提供冻结软件状态；旧记录需显式迁移");
   } else {
     validateSoftwareState(value.softwareState, errors);
   }
   if (value.softwareState !== undefined &&
-      value.softwareState.mediaRequirementsFingerprint !== value.mediaRequirements?.requirementsFingerprint) {
-    push(errors, "softwareState.mediaRequirementsFingerprint", "必须与冻结媒体要求一致");
+      value.softwareState.sourceC1Fingerprint !== value.targetContext?.sourceC1Fingerprint) {
+    push(errors, "softwareState.sourceC1Fingerprint", "必须与冻结目标绑定一致");
   }
   validateStableAssetTransport(value.stableAssetTransport, value, errors);
   if (!isObject(value.dReadPolicy)) {
@@ -1740,7 +1677,7 @@ export function validateC2AssetLifecycle(value) {
     const confirmation = value.ownerFinalUploadConfirmation;
     validateAllowedKeys(confirmation, [
       "status", "confirmedBy", "confirmedAt", "approvedManifestVersion", "approvedManifestSha256",
-      "approvedMediaRequirementsFingerprint", "approvedAssetIds", "approvedMainImageAssetId",
+      "approvedAuthorizedMediaFingerprint", "approvedAssetIds", "approvedMainImageAssetId",
       "approvedVideoDisposition", "confirmationNote"
     ], "ownerFinalUploadConfirmation", errors);
     if (!isObject(confirmation) || confirmation.status !== "confirmed" || confirmation.confirmedBy !== "owner" || !isoDateTime(confirmation.confirmedAt)) {
@@ -1754,19 +1691,26 @@ export function validateC2AssetLifecycle(value) {
     if (!Array.isArray(confirmation?.approvedAssetIds) || !sameJson(confirmation.approvedAssetIds, finalIds)) {
       push(errors, "ownerFinalUploadConfirmation.approvedAssetIds", "确认清单必须与最终上传素材完全一致且顺序一致");
     }
-    const mainImageId = value.assets?.finalUploads?.find((asset) => asset.role === "main_image")?.assetId;
-    if (confirmation?.approvedMainImageAssetId !== mainImageId ||
-        confirmation?.approvedMediaRequirementsFingerprint !== value.mediaRequirements?.requirementsFingerprint ||
-        !["includes_video", "excludes_video"].includes(confirmation?.approvedVideoDisposition)) {
-      push(errors, "ownerFinalUploadConfirmation", "主人确认必须锁定首图、媒体要求和视频处置");
+    // 主人确认的就是这批地址、这个顺序。第一张是主图，指纹按这批地址算。
+    const mainImageId = value.assets?.finalUploads?.[0]?.assetId;
+    let approvedMediaFingerprint = null;
+    try {
+      approvedMediaFingerprint = fingerprintAuthorizedMedia(value.assets?.finalUploads || []);
+    } catch (error) {
+      push(errors, "assets.finalUploads", error.message);
     }
-    validateEffectiveVideoRequirement(value.effectiveVideoRequirement, errors, value.mediaRequirements);
+    if (confirmation?.approvedMainImageAssetId !== mainImageId ||
+        confirmation?.approvedAuthorizedMediaFingerprint !== approvedMediaFingerprint ||
+        !["includes_video", "excludes_video"].includes(confirmation?.approvedVideoDisposition)) {
+      push(errors, "ownerFinalUploadConfirmation", "主人确认必须锁定首图、实际授权图片地址清单和视频处置");
+    }
+    validateEffectiveVideoRequirement(value.effectiveVideoRequirement, errors);
     validateStoredOwnerVideoRequirement(value.ownerVideoRequirement, value.effectiveVideoRequirement, errors);
     validateAllowedKeys(value.productionAuthorizationPreparation, [
       "schemaVersion", "status", "skuPackageId", "sourceDataRevision", "resultDataRevision", "sourceC1Fingerprint",
-      "mediaRequirementsFingerprint", "finalManifestVersion", "finalManifestSha256", "finalUploadsFingerprint",
+      "authorizedMediaFingerprint", "finalManifestVersion", "finalManifestSha256", "finalUploadsFingerprint",
       "mainImageAssetId", "videoDisposition", "ownerConfirmationAt", "targetContext", "frozenC1Handoff",
-      "mediaRequirements", "finalUploads", "effectiveVideoRequirement", "ownerVideoRequirement", "ownerFinalUploadConfirmation",
+      "finalUploads", "effectiveVideoRequirement", "ownerVideoRequirement", "ownerFinalUploadConfirmation",
       "finalCardInputSnapshot", "finalCardInputFingerprint", "ownerFinalCardAuthorizationDecision",
       "pendingAuthorizationInputs", "preparationFingerprint",
       "productionAuthorizationCreated", "dHandoffCreated"
@@ -1775,19 +1719,20 @@ export function validateC2AssetLifecycle(value) {
     validateStoredCanonicalC1Handoff(
       preparation?.frozenC1Handoff,
       "productionAuthorizationPreparation.frozenC1Handoff",
-      value.mediaRequirements,
-      errors
+      value.targetContext,
+      errors,
+      preparation?.finalCardInputSnapshot?.c1Snapshot
     );
     validateStoredCanonicalC1Handoff(
       preparation?.finalCardInputSnapshot?.canonicalC1,
       "productionAuthorizationPreparation.finalCardInputSnapshot.canonicalC1",
-      value.mediaRequirements,
-      errors
+      value.targetContext,
+      errors,
+      preparation?.finalCardInputSnapshot?.c1Snapshot
     );
     validateStoredFinalCardInputSnapshot(preparation?.finalCardInputSnapshot, preparation, errors);
     validateAllowedKeys(preparation?.targetContext, [
-      "platform", "targetStore", "storeRef", "categoryId", "schemaRevision", "schemaEvidenceRef",
-      "schemaEvidenceVersion", "mediaRequirementsFingerprint"
+      "platform", "targetStore", "storeRef", "schemaRevision", "schemaEvidenceRef"
     ], "productionAuthorizationPreparation.targetContext", errors);
     if (!isObject(preparation) ||
         preparation.schemaVersion !== C2_AUTHORIZATION_PREPARATION_VERSION ||
@@ -1795,18 +1740,14 @@ export function validateC2AssetLifecycle(value) {
         !Number.isInteger(preparation.sourceDataRevision) ||
         preparation.resultDataRevision !== preparation.sourceDataRevision + 1 ||
         preparation.sourceC1Fingerprint !== value.softwareState?.sourceC1Fingerprint ||
-        preparation.mediaRequirementsFingerprint !== value.mediaRequirements?.requirementsFingerprint ||
+        preparation.authorizedMediaFingerprint !== approvedMediaFingerprint ||
         !sameJson(preparation.targetContext, {
-          platform: value.mediaRequirements?.platform,
-          targetStore: value.mediaRequirements?.targetStore,
-          storeRef: value.mediaRequirements?.storeRef,
-          categoryId: value.mediaRequirements?.categoryId,
-          schemaRevision: value.mediaRequirements?.schemaRevision,
-          schemaEvidenceRef: value.mediaRequirements?.evidenceRef,
-          schemaEvidenceVersion: value.mediaRequirements?.evidenceVersion,
-          mediaRequirementsFingerprint: value.mediaRequirements?.requirementsFingerprint
+          platform: value.targetContext?.platform,
+          targetStore: value.targetContext?.targetStore,
+          storeRef: value.targetContext?.storeRef,
+          schemaRevision: value.targetContext?.schemaRevision,
+          schemaEvidenceRef: value.targetContext?.schemaEvidenceRef
         }) ||
-        !sameJson(preparation.mediaRequirements, value.mediaRequirements) ||
         preparation.finalManifestSha256 !== confirmation?.approvedManifestSha256 ||
         preparation.mainImageAssetId !== confirmation?.approvedMainImageAssetId ||
         preparation.videoDisposition !== confirmation?.approvedVideoDisposition ||
@@ -1831,9 +1772,11 @@ export function validateC2AssetLifecycle(value) {
         ) !== preparation.sourceC1Fingerprint ||
         !sameJson(preparation.finalCardInputSnapshot.identity, preparation.frozenC1Handoff.identity) ||
         !sameJson(preparation.finalCardInputSnapshot.canonicalC1, preparation.frozenC1Handoff) ||
-        !sameJson(preparation.finalCardInputSnapshot.c1Snapshot.draftOnlySeo, preparation.frozenC1Handoff.draftOnlySeo) ||
+        !canonicalDraftMatchesSnapshot(preparation.frozenC1Handoff.draftOnlySeo,
+          preparation.finalCardInputSnapshot.c1Snapshot,
+          preparation.finalCardInputSnapshot.identity, preparation.frozenC1Handoff.handoffRevisionRefs?.sourceRevision,
+          preparation.frozenC1Handoff.frozenInputRefs?.profitModelVersion) ||
         !sameJson(preparation.finalCardInputSnapshot.c1Snapshot.keywordEvidenceRefs, preparation.frozenC1Handoff.keywordEvidenceRefs) ||
-        !sameJson(preparation.finalCardInputSnapshot.c1Snapshot.mediaRequirements, preparation.frozenC1Handoff.mediaRequirements) ||
         preparation.frozenC1Handoff.handoffRevisionRefs?.sourceRevision !== value.softwareState?.sourceDataRevision ||
         preparation.frozenC1Handoff.handoffRevisionRefs?.resultRevision !== value.softwareState?.sourceDataRevision + 1 ||
         preparation.sourceDataRevision < preparation.frozenC1Handoff.handoffRevisionRefs?.resultRevision ||
@@ -1842,7 +1785,7 @@ export function validateC2AssetLifecycle(value) {
         !isObject(preparation.frozenC1Handoff) ||
         preparation.finalUploadsFingerprint !== fingerprintFinalUploads(value.assets?.finalUploads || []) ||
         preparation.finalManifestSha256 !== fingerprintC2FinalManifest({
-          mediaRequirementsFingerprint: value.mediaRequirements?.requirementsFingerprint,
+          authorizedMediaFingerprint: approvedMediaFingerprint,
           effectiveVideoRequirement: value.effectiveVideoRequirement,
           mainImageAssetId: confirmation?.approvedMainImageAssetId,
           videoDisposition: confirmation?.approvedVideoDisposition,
@@ -1857,12 +1800,13 @@ export function validateC2AssetLifecycle(value) {
       const normalized = normalizeC2FinalUploads({
         finalUploadAssets: value.assets.finalUploads,
         existingAssets: value.assets,
-        mediaRequirements: value.mediaRequirements,
         effectiveVideoRequirement: value.effectiveVideoRequirement,
         addedAt: confirmation?.confirmedAt
       });
-      if (!sameJson(normalized.assets, value.assets.finalUploads) || normalized.videoDisposition !== confirmation?.approvedVideoDisposition) {
-        push(errors, "assets.finalUploads", "最终素材与冻结媒体合同不一致");
+      if (!sameJson(normalized.assets, value.assets.finalUploads) ||
+          normalized.videoDisposition !== confirmation?.approvedVideoDisposition ||
+          normalized.authorizedMediaFingerprint !== confirmation?.approvedAuthorizedMediaFingerprint) {
+        push(errors, "assets.finalUploads", "最终素材与主人确认的地址清单、顺序或视频处置不一致");
       }
     } catch (error) {
       push(errors, "assets.finalUploads", error.message);
@@ -1918,14 +1862,13 @@ export function assertC2FrozenContractCurrent(skuPackage) {
   if (sourceC1Fingerprint !== lifecycle.softwareState.sourceC1Fingerprint) {
     throw new Error("C2_SOFTWARE_SOURCE_DRIFT: 当前C1事实、媒体要求或unknown清单已漂移");
   }
-  const sourceContract = normalizeC2MediaContract(skuPackage);
+  const sourceContract = normalizeC2TargetContract(skuPackage);
   const currentContract = lifecycle.status === "completed"
-    ? bindC2MediaContractToSourceRevision(sourceContract, skuPackage.dataRevision - 1)
+    ? bindC2TargetContractToSourceRevision(sourceContract, skuPackage.dataRevision - 1)
     : sourceContract;
-  if (currentContract.mediaRequirements.requirementsFingerprint !== lifecycle.softwareState.mediaRequirementsFingerprint ||
-      !sameJson(currentContract.mediaRequirements, lifecycle.mediaRequirements) ||
+  if (!sameJson(currentContract.targetContext, lifecycle.targetContext) ||
       !sameJson(currentContract.unknownManifest, lifecycle.unknownManifest)) {
-    throw new Error("C2_MEDIA_REQUIREMENTS_DRIFT: 当前平台、storeRef、类目、Schema或媒体要求已漂移");
+    throw new Error("C2_TARGET_CONTEXT_DRIFT: 当前平台、storeRef或冻结Schema证据已漂移");
   }
   if (fingerprintC2AssetManifest(lifecycle.assets) !== lifecycle.softwareState.assetManifestFingerprint) {
     throw new Error("C2_SOFTWARE_ASSET_MANIFEST_CONFLICT: 已冻结素材身份或版本已漂移");
@@ -1954,11 +1897,11 @@ export function assertC2FrozenContractCurrent(skuPackage) {
   return currentContract;
 }
 
-export function resolveC2FinalConfirmationMediaContract(skuPackage) {
+export function resolveC2FinalConfirmationTargetContract(skuPackage) {
   const currentContract = assertC2FrozenContractCurrent(skuPackage);
   return skuPackage.c2FinalAssets.status === "completed"
     ? currentContract
-    : bindC2MediaContractToSourceRevision(currentContract, skuPackage.dataRevision);
+    : bindC2TargetContractToSourceRevision(currentContract, skuPackage.dataRevision);
 }
 
 function assertCanonicalNewAnalysisAssetReferences(asset, path, referenceFields) {
@@ -2041,7 +1984,7 @@ export function createC2AssetLifecycle({ skuPackage, collectedAssets = [], aiDra
   if (!isoDateTime(createdAt)) throw new Error("C2_ASSET_INPUT_GAP: 创建时间无效");
   if (!Array.isArray(collectedAssets) || !Array.isArray(aiDraftAssets)) throw new Error("C2_ASSET_INPUT_GAP: 素材区域必须是数组");
 
-  const mediaContract = normalizeC2MediaContract(skuPackage);
+  const targetContract = normalizeC2TargetContract(skuPackage);
   const normalizedCollected = collectedAssets.map((asset) => normalizeCollectedAsset(asset, createdAt));
   const normalizedAiDrafts = aiDraftAssets.map((asset) => normalizeAiDraftAsset(asset, createdAt));
   const sourceC1Fingerprint = fingerprintC2SourceC1(skuPackage);
@@ -2057,8 +2000,8 @@ export function createC2AssetLifecycle({ skuPackage, collectedAssets = [], aiDra
       aiDrafts: normalizedAiDrafts,
       finalUploads: []
     },
-    mediaRequirements: structuredClone(mediaContract.mediaRequirements),
-    unknownManifest: structuredClone(mediaContract.unknownManifest),
+    targetContext: structuredClone(targetContract.targetContext),
+    unknownManifest: structuredClone(targetContract.unknownManifest),
     effectiveVideoRequirement: null,
     ownerVideoRequirement: null,
     ownerFinalUploadConfirmation: null,
@@ -2081,7 +2024,6 @@ export function createC2AssetLifecycle({ skuPackage, collectedAssets = [], aiDra
       lifecycleStatus: "c2_waiting_final_uploads",
       sourceDataRevision: skuPackage.dataRevision,
       sourceC1Fingerprint,
-      mediaRequirementsFingerprint: mediaContract.mediaRequirements.requirementsFingerprint,
       assetManifestFingerprint: fingerprintC2AssetManifest({ collected: normalizedCollected, aiDrafts: normalizedAiDrafts, finalUploads: [] }),
       executionPolicy: {
         externalAccessAllowed: false,
@@ -2168,43 +2110,41 @@ export function confirmFinalUploads({
     throw new Error("C2_SENSITIVE_INPUT_REJECTED: 主人确认不得持久化自由文本备注");
   }
   if (!isoDateTime(confirmedAt)) throw new Error("C2_ASSET_INPUT_GAP: 确认时间无效");
-  const mediaContract = resolveC2FinalConfirmationMediaContract(skuPackage);
+  const targetContract = resolveC2FinalConfirmationTargetContract(skuPackage);
   const normalizedOwnerVideoRequirement = normalizeC2OwnerVideoRequirement(ownerVideoRequirement, skuPackage);
   const effectiveVideoRequirement = resolveC2EffectiveVideoRequirement({
-    mediaRequirements: mediaContract.mediaRequirements,
     skuPackage,
     ownerVideoRequirement: normalizedOwnerVideoRequirement
   });
   const videoErrors = [];
-  validateEffectiveVideoRequirement(effectiveVideoRequirement, videoErrors, mediaContract.mediaRequirements);
+  validateEffectiveVideoRequirement(effectiveVideoRequirement, videoErrors);
   if (videoErrors.length > 0) throw new Error("C2_VIDEO_REQUIREMENT_INVALID: 最终视频要求无效");
   const normalized = normalizeC2FinalUploads({
     finalUploadAssets,
     existingAssets: skuPackage.c2FinalAssets.assets,
-    mediaRequirements: mediaContract.mediaRequirements,
     effectiveVideoRequirement,
     addedAt: observedAt
   });
   const approvedAssetIds = normalized.assets.map((asset) => asset.assetId);
   const expectedManifestSha256 = fingerprintC2FinalManifest({
-    mediaRequirementsFingerprint: mediaContract.mediaRequirements.requirementsFingerprint,
+    authorizedMediaFingerprint: normalized.authorizedMediaFingerprint,
     effectiveVideoRequirement,
     mainImageAssetId: normalized.mainImageAssetId,
     videoDisposition: normalized.videoDisposition,
     assets: normalized.assets
   });
+  // 主人确认的是这一批公网地址、这个顺序：地址清单指纹必须由主人自己带过来对上。
   if (!sameJson(ownerDecision.approvedAssetIds, approvedAssetIds) ||
       ownerDecision.approvedMainImageAssetId !== normalized.mainImageAssetId ||
-      ownerDecision.approvedMediaRequirementsFingerprint !== mediaContract.mediaRequirements.requirementsFingerprint ||
+      ownerDecision.approvedAuthorizedMediaFingerprint !== normalized.authorizedMediaFingerprint ||
       ownerDecision.approvedVideoDisposition !== normalized.videoDisposition ||
       ownerDecision.approvedManifestVersion !== C2_FINAL_MANIFEST_VERSION ||
       ownerDecision.approvedManifestSha256 !== expectedManifestSha256) {
-    throw new Error("C2_OWNER_CONFIRMATION_REQUIRED: 主人确认必须锁定清单、首图、顺序、媒体要求和视频处置");
+    throw new Error("C2_OWNER_CONFIRMATION_REQUIRED: 主人确认必须锁定图片地址清单、首图、顺序和视频处置");
   }
 
   const next = structuredClone(skuPackage);
-  next.c2FinalAssets.mediaRequirements = structuredClone(mediaContract.mediaRequirements);
-  next.c2FinalAssets.softwareState.mediaRequirementsFingerprint = mediaContract.mediaRequirements.requirementsFingerprint;
+  next.c2FinalAssets.targetContext = structuredClone(targetContract.targetContext);
   next.c2FinalAssets.assets.finalUploads = structuredClone(normalized.assets);
   next.c2FinalAssets.effectiveVideoRequirement = structuredClone(effectiveVideoRequirement);
   next.c2FinalAssets.ownerVideoRequirement = structuredClone(normalizedOwnerVideoRequirement);
@@ -2214,22 +2154,22 @@ export function confirmFinalUploads({
     confirmedAt,
     approvedManifestVersion: ownerDecision.approvedManifestVersion,
     approvedManifestSha256: ownerDecision.approvedManifestSha256,
-    approvedMediaRequirementsFingerprint: ownerDecision.approvedMediaRequirementsFingerprint,
+    approvedAuthorizedMediaFingerprint: ownerDecision.approvedAuthorizedMediaFingerprint,
     approvedAssetIds,
     approvedMainImageAssetId: normalized.mainImageAssetId,
     approvedVideoDisposition: normalized.videoDisposition,
     confirmationNote: null
   };
   next.c2FinalAssets.ownerFinalUploadConfirmation = structuredClone(frozenOwnerConfirmation);
-  const finalCardInputSnapshot = buildFinalCardInputSnapshot(skuPackage, mediaContract.canonicalC1);
+  const finalCardInputSnapshot = buildFinalCardInputSnapshot(skuPackage, targetContract.canonicalC1);
   const preparation = {
     schemaVersion: C2_AUTHORIZATION_PREPARATION_VERSION,
     status: "awaiting_final_card_approval",
     skuPackageId: skuPackage.skuPackageId,
     sourceDataRevision: skuPackage.dataRevision,
     resultDataRevision: skuPackage.dataRevision + 1,
-    sourceC1Fingerprint: mediaContract.mediaRequirements.sourceC1Fingerprint,
-    mediaRequirementsFingerprint: mediaContract.mediaRequirements.requirementsFingerprint,
+    sourceC1Fingerprint: targetContract.targetContext.sourceC1Fingerprint,
+    authorizedMediaFingerprint: normalized.authorizedMediaFingerprint,
     finalManifestVersion: ownerDecision.approvedManifestVersion,
     finalManifestSha256: ownerDecision.approvedManifestSha256,
     finalUploadsFingerprint: fingerprintFinalUploads(normalized.assets),
@@ -2237,17 +2177,13 @@ export function confirmFinalUploads({
     videoDisposition: normalized.videoDisposition,
     ownerConfirmationAt: confirmedAt,
     targetContext: {
-      platform: mediaContract.mediaRequirements.platform,
-      targetStore: mediaContract.mediaRequirements.targetStore,
-      storeRef: mediaContract.mediaRequirements.storeRef,
-      categoryId: mediaContract.mediaRequirements.categoryId,
-      schemaRevision: mediaContract.mediaRequirements.schemaRevision,
-      schemaEvidenceRef: mediaContract.mediaRequirements.evidenceRef,
-      schemaEvidenceVersion: mediaContract.mediaRequirements.evidenceVersion,
-      mediaRequirementsFingerprint: mediaContract.mediaRequirements.requirementsFingerprint
+      platform: targetContract.targetContext.platform,
+      targetStore: targetContract.targetContext.targetStore,
+      storeRef: targetContract.targetContext.storeRef,
+      schemaRevision: targetContract.targetContext.schemaRevision,
+      schemaEvidenceRef: targetContract.targetContext.schemaEvidenceRef
     },
-    frozenC1Handoff: structuredClone(mediaContract.canonicalC1),
-    mediaRequirements: structuredClone(mediaContract.mediaRequirements),
+    frozenC1Handoff: structuredClone(targetContract.canonicalC1),
     finalUploads: structuredClone(normalized.assets),
     effectiveVideoRequirement: structuredClone(effectiveVideoRequirement),
     ownerVideoRequirement: structuredClone(normalizedOwnerVideoRequirement),
@@ -2295,29 +2231,28 @@ export function confirmFinalUploads({
   return deepFreeze({ flowVersion: "c2-final-upload-confirmation-flow-v1.1", skuPackage: next, c2AssetLifecycle: next.c2FinalAssets });
 }
 
-function normalizeStagedAssets({ stagedAssets, mediaRequirements, effectiveVideoRequirement }) {
+function normalizeStagedAssets({ stagedAssets, effectiveVideoRequirement }) {
   if (!Array.isArray(stagedAssets) || stagedAssets.length === 0) throw new Error("C2_STAGED_ASSET_INVALID: stagedAssets不能为空");
-  const slots = new Map([...mediaRequirements.imageSlots, ...mediaRequirements.videoSlots].map((slot) => [slot.slotId, slot]));
   const normalized = stagedAssets.map((asset, index) => {
     const path = `stagedAssets[${index}]`;
     assertNoRawPersistenceKeys(asset, path);
     assertNoProductionSecrets(asset, path);
     const allowed = new Set([
       "assetId", "mediaType", "fileName", "assetVersion", "sha256", "sourceEvidenceRef", "usageAuthorization",
-      "sourceType", "order", "role", "slotId", "byteSize", "width", "height"
+      "sourceType", "order", "role", "byteSize", "width", "height"
     ]);
+    const derivedRole = index === 0 ? "main_image" : "gallery_image";
     if (!isObject(asset) || Object.keys(asset).some((key) => !allowed.has(key)) || Object.hasOwn(asset, "assetRef") ||
         !nonEmptyString(asset.assetId) || !ASSET_MEDIA_TYPES.includes(asset.mediaType) || !nonEmptyString(asset.fileName) ||
         asset.fileName === "." || asset.fileName === ".." || /[\\/\u0000-\u001f]/.test(asset.fileName) ||
         !nonEmptyString(asset.assetVersion) || !/^[a-f0-9]{64}$/.test(String(asset.sha256 || "")) ||
         !nonEmptyString(asset.sourceEvidenceRef) || asset.sourceType !== "owner_provided_final_upload" ||
-        !Number.isInteger(asset.order) || asset.order !== index + 1 || !nonEmptyString(asset.role) || !nonEmptyString(asset.slotId)) {
+        !Number.isInteger(asset.order) || asset.order !== index + 1 ||
+        (asset.role !== undefined && asset.role !== derivedRole)) {
       throw new Error(`C2_STAGED_ASSET_INVALID: ${path}文件身份或顺序无效`);
     }
     assertFinalUploadEvidenceRef(asset.sourceEvidenceRef, `${path}.sourceEvidenceRef`);
     const usageAuthorization = normalizeListingAuthorization(asset.usageAuthorization, `${path}.usageAuthorization`);
-    const slot = slots.get(asset.slotId);
-    if (!slot || slot.mediaType !== asset.mediaType || slot.role !== asset.role) throw new Error(`C2_MEDIA_SLOT_MISMATCH: ${path}槽位无效`);
     for (const field of ["byteSize", "width", "height"]) {
       if (asset[field] !== undefined && asset[field] !== null && (!Number.isFinite(asset[field]) || asset[field] < 0)) {
         throw new Error(`C2_STAGED_ASSET_INVALID: ${path}.${field}无效`);
@@ -2326,7 +2261,7 @@ function normalizeStagedAssets({ stagedAssets, mediaRequirements, effectiveVideo
     return {
       assetId: asset.assetId, mediaType: asset.mediaType, fileName: asset.fileName, assetVersion: asset.assetVersion,
       sha256: asset.sha256, sourceEvidenceRef: asset.sourceEvidenceRef, usageAuthorization,
-      sourceType: "owner_provided_final_upload", order: asset.order, role: asset.role, slotId: asset.slotId,
+      sourceType: "owner_provided_final_upload", order: asset.order, role: derivedRole,
       byteSize: Number.isFinite(asset.byteSize) ? asset.byteSize : null,
       width: Number.isFinite(asset.width) ? asset.width : null,
       height: Number.isFinite(asset.height) ? asset.height : null
@@ -2334,10 +2269,6 @@ function normalizeStagedAssets({ stagedAssets, mediaRequirements, effectiveVideo
   });
   if (new Set(normalized.map((asset) => asset.assetId)).size !== normalized.length ||
       new Set(normalized.map((asset) => asset.sha256)).size !== normalized.length) throw new Error("C2_STAGED_ASSET_INVALID: 文件身份不得重复");
-  for (const slot of slots.values()) {
-    const count = normalized.filter((asset) => asset.slotId === slot.slotId).length;
-    if (count < slot.minCount || count > slot.maxCount) throw new Error(`C2_MEDIA_SLOT_MISMATCH: ${slot.slotId}数量无效`);
-  }
   const main = normalized.filter((asset) => asset.role === "main_image");
   if (main.length !== 1 || main[0].order !== 1 || main[0].mediaType !== "image") throw new Error("C2_STAGED_ASSET_INVALID: 首图无效");
   const hasVideo = normalized.some((asset) => asset.mediaType === "video");
@@ -2366,7 +2297,7 @@ export function stageC2StableAssetTransport({
       jobRef.candidateId !== skuPackage.g1Identity.candidateId || jobRef.resultRevision !== jobRef.sourceRevision + 1 ||
       !/^[a-f0-9]{64}$/.test(String(jobRef.inputFingerprint || ""))) throw new Error("C2_STABLE_TRANSPORT_JOB_REF_INVALID");
   const prepared = prepareC2StableAssetTransportManifest({ skuPackage, stagedAssets, ownerVideoRequirement });
-  const { mediaContract, normalizedOwnerVideoRequirement, effectiveVideoRequirement, staged, stagedAssetManifestFingerprint: fingerprint } = prepared;
+  const { targetContract, normalizedOwnerVideoRequirement, effectiveVideoRequirement, staged, stagedAssetManifestFingerprint: fingerprint } = prepared;
   assertNoRawPersistenceKeys(ownerStagingConfirmation, "ownerStagingConfirmation");
   assertNoProductionSecrets(ownerStagingConfirmation, "ownerStagingConfirmation");
   if (!isObject(ownerStagingConfirmation) || ownerStagingConfirmation.schemaVersion !== "c2-owner-staging-confirmation-v1" ||
@@ -2378,7 +2309,7 @@ export function stageC2StableAssetTransport({
     throw new Error("C2_OWNER_STAGING_CONFIRMATION_REQUIRED: confirmationRef无效");
   }
   if (ownerStagingConfirmation.approvedStagedAssetManifestFingerprint !== fingerprint ||
-      ownerStagingConfirmation.approvedMediaRequirementsFingerprint !== mediaContract.mediaRequirements.requirementsFingerprint ||
+      ownerStagingConfirmation.approvedSourceC1Fingerprint !== targetContract.targetContext.sourceC1Fingerprint ||
       !sameJson(ownerStagingConfirmation.approvedAssetIds, staged.assets.map((asset) => asset.assetId)) ||
       ownerStagingConfirmation.approvedMainImageAssetId !== staged.mainImageAssetId ||
       ownerStagingConfirmation.approvedVideoDisposition !== staged.videoDisposition) {
@@ -2414,20 +2345,20 @@ export function prepareC2StableAssetTransportManifest({ skuPackage, stagedAssets
   assertValidLifecyclePackage(skuPackage);
   assertValidC2AssetLifecycle(skuPackage.c2FinalAssets);
   assertC2FrozenContractCurrent(skuPackage);
-  const mediaContract = resolveC2FinalConfirmationMediaContract(skuPackage);
+  const targetContract = resolveC2FinalConfirmationTargetContract(skuPackage);
   const normalizedOwnerVideoRequirement = normalizeC2OwnerVideoRequirement(ownerVideoRequirement, skuPackage);
   const effectiveVideoRequirement = resolveC2EffectiveVideoRequirement({
-    mediaRequirements: mediaContract.mediaRequirements, skuPackage, ownerVideoRequirement: normalizedOwnerVideoRequirement
+    skuPackage, ownerVideoRequirement: normalizedOwnerVideoRequirement
   });
-  const staged = normalizeStagedAssets({ stagedAssets, mediaRequirements: mediaContract.mediaRequirements, effectiveVideoRequirement });
+  const staged = normalizeStagedAssets({ stagedAssets, effectiveVideoRequirement });
   const stagedAssetManifestFingerprint = fingerprintC2StagedAssetManifest({
-    mediaRequirementsFingerprint: mediaContract.mediaRequirements.requirementsFingerprint,
+    sourceC1Fingerprint: targetContract.targetContext.sourceC1Fingerprint,
     effectiveVideoRequirement,
     mainImageAssetId: staged.mainImageAssetId,
     videoDisposition: staged.videoDisposition,
     assets: staged.assets
   });
-  return deepFreeze({ mediaContract, normalizedOwnerVideoRequirement, effectiveVideoRequirement, staged, stagedAssetManifestFingerprint });
+  return deepFreeze({ targetContract, normalizedOwnerVideoRequirement, effectiveVideoRequirement, staged, stagedAssetManifestFingerprint });
 }
 
 function assertVerifiedStableUrl(value, allowedHosts, path) {
@@ -2485,10 +2416,10 @@ export function validateC2StableAssetTransportResult({ skuPackage, jobRef, trans
   const finalAssets = transportResult.assets.map((asset, index) => {
     const staged = state.stagedAssets[index];
     const path = `transportResult.assets[${index}]`;
-    const allowed = ["assetId", "sha256", "order", "role", "slotId", "stableUrl", "stableUrlEvidenceRef"];
+    const allowed = ["assetId", "sha256", "order", "role", "stableUrl", "stableUrlEvidenceRef"];
     if (!isObject(asset) || Object.keys(asset).some((key) => !allowed.includes(key)) ||
         asset.assetId !== staged.assetId || asset.sha256 !== staged.sha256 || asset.order !== staged.order ||
-        asset.role !== staged.role || asset.slotId !== staged.slotId || !nonEmptyString(asset.stableUrlEvidenceRef)) {
+        asset.role !== staged.role || !nonEmptyString(asset.stableUrlEvidenceRef)) {
       throw new Error(`C2_STABLE_TRANSPORT_RESULT_INVALID: ${path}与staging身份不一致`);
     }
     assertVerifiedStableUrl(asset.stableUrl, allowedStableAssetHosts, `${path}.stableUrl`);
@@ -2497,24 +2428,22 @@ export function validateC2StableAssetTransportResult({ skuPackage, jobRef, trans
       ...structuredClone(staged), assetRef: asset.stableUrl, stableUrlEvidenceRef: asset.stableUrlEvidenceRef
     };
   });
-  const media = bindC2MediaContractToSourceRevision(
-    normalizeC2MediaContract(skuPackage),
+  const target = bindC2TargetContractToSourceRevision(
+    normalizeC2TargetContract(skuPackage),
     skuPackage.dataRevision
-  ).mediaRequirements;
+  ).targetContext;
   const effective = resolveC2EffectiveVideoRequirement({
-    mediaRequirements: media,
     skuPackage,
     ownerVideoRequirement: skuPackage.c2FinalAssets.ownerVideoRequirement
   });
   const normalized = normalizeC2FinalUploads({
     finalUploadAssets: finalAssets,
     existingAssets: skuPackage.c2FinalAssets.assets,
-    mediaRequirements: media,
     effectiveVideoRequirement: effective,
     addedAt: transportResult.verifiedAt
   });
   const finalManifestSha256 = fingerprintC2FinalManifest({
-    mediaRequirementsFingerprint: media.requirementsFingerprint,
+    authorizedMediaFingerprint: normalized.authorizedMediaFingerprint,
     effectiveVideoRequirement: effective,
     mainImageAssetId: normalized.mainImageAssetId,
     videoDisposition: normalized.videoDisposition,
@@ -2527,7 +2456,7 @@ export function validateC2StableAssetTransportResult({ skuPackage, jobRef, trans
     state,
     transportResult,
     finalAssets,
-    media,
+    target,
     effective,
     normalized,
     finalManifestSha256
@@ -2553,7 +2482,6 @@ export function settleC2StableAssetTransport({ skuPackage, jobRef, transportResu
   assertCurrentC1SkuRightsReview({ plan: skuPackage.c1ProductPlan, sourceIdentity: skuPackage.g1Identity, observedAt: settledAt });
   const {
     state,
-    media,
     normalized,
     finalManifestSha256
   } = validateC2StableAssetTransportResult({ skuPackage, jobRef, transportResultEnvelope, allowedStableAssetHosts, settledAt });
@@ -2562,7 +2490,7 @@ export function settleC2StableAssetTransport({ skuPackage, jobRef, transportResu
     confirmedBy: "owner",
     approvedManifestVersion: C2_FINAL_MANIFEST_VERSION,
     approvedManifestSha256: finalManifestSha256,
-    approvedMediaRequirementsFingerprint: media.requirementsFingerprint,
+    approvedAuthorizedMediaFingerprint: normalized.authorizedMediaFingerprint,
     approvedAssetIds: normalized.assets.map((asset) => asset.assetId),
     approvedMainImageAssetId: normalized.mainImageAssetId,
     approvedVideoDisposition: normalized.videoDisposition
@@ -2573,10 +2501,9 @@ export function settleC2StableAssetTransport({ skuPackage, jobRef, transportResu
   transientPackage.c2FinalAssets.effectiveVideoRequirement = null;
   transientPackage.c2FinalAssets.ownerVideoRequirement = null;
   transientPackage.c2FinalAssets.softwareState.lifecycleStatus = "c2_waiting_final_uploads";
-  const transientMediaContract = normalizeC2MediaContract(transientPackage);
-  transientPackage.c2FinalAssets.mediaRequirements = structuredClone(transientMediaContract.mediaRequirements);
-  transientPackage.c2FinalAssets.unknownManifest = structuredClone(transientMediaContract.unknownManifest);
-  transientPackage.c2FinalAssets.softwareState.mediaRequirementsFingerprint = transientMediaContract.mediaRequirements.requirementsFingerprint;
+  const transientTargetContract = normalizeC2TargetContract(transientPackage);
+  transientPackage.c2FinalAssets.targetContext = structuredClone(transientTargetContract.targetContext);
+  transientPackage.c2FinalAssets.unknownManifest = structuredClone(transientTargetContract.unknownManifest);
   const completed = confirmFinalUploads({
     skuPackage: transientPackage,
     finalUploadAssets: normalized.assets,

@@ -104,6 +104,12 @@ test("the prepared package serves built UI and preserves both historical runtime
     const health = await (await fetch(`${base}/api/health`)).json();
     assert.equal(health.ok, true);
     assert.equal(health.dataVersion, 2);
+    assert.equal(health.ready, true);
+    assert.equal(health.readiness.fresh, true);
+    const live = await (await fetch(`${base}/api/live`)).json();
+    assert.equal(live.live, true);
+    const ready = await (await fetch(`${base}/api/ready`)).json();
+    assert.equal(ready.ready, true);
     const ownerAccess = await (await fetch(`${base}/api/owner-access`)).json();
     assert.equal(ownerAccess.status, "setup_required");
     assert.equal(ownerAccess.user, null);

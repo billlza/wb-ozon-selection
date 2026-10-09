@@ -1,9 +1,9 @@
+import { allocatedTestPorts } from './helpers/api-process-lifecycle.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, rm, rename } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { productionOwnerDecisionHttpFixture, startSavedDEApi } from './helpers/d-e-saved-api-fixture.mjs';
 import { c1PaidKeywordSettlementCandidate } from './fixtures/c1-paid-keyword-settlement-fixture.mjs';
@@ -14,13 +14,6 @@ import { createLocalDevelopmentWorkerRegistry } from '../lib/worker-registry.mjs
 import { createLocalDevelopmentActor } from '../lib/runtime-identity.mjs';
 import { enqueueC1PaidKeywordEvidenceJob } from '../lib/c1-keyword-software-use-case.mjs';
 
-async function freePort() {
-  const server=http.createServer();
-  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
-  const port=server.address().port;
-  await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
-  assert.ok(![4317,4318,4173].includes(port));return port;
-}
 async function historicalJobs() {
   const candidates=await Promise.all(['CLAIMED','WAITING'].map(name=>c1PaidKeywordSettlementCandidate({candidateId:`CX-HTTP-${name}`,supplierSkuId:`SKU-${name}`})));
   const repository=createMemoryBusinessStateRepository({candidates,runtime:{softwareJobs:[],softwareJobAuthorizationRecords:[],
@@ -47,11 +40,11 @@ test('configured idle HTTP consumer does not touch credentials or network and ne
   await writeFile(preload,`import childProcess from 'node:child_process';\nimport {syncBuiltinESMExports} from 'node:module';\nimport {writeFileSync} from 'node:fs';\nconst counts={credentials:0,network:0};\nfunction reject(kind){counts[kind]++;writeFileSync(${JSON.stringify(probeFile)},JSON.stringify(counts));throw new Error('UNEXPECTED_TEST_EXTERNAL_ACTION');}\nchildProcess.execFile=()=>reject('credentials');syncBuiltinESMExports();\nglobalThis.fetch=async()=>reject('network');\n`);
   const fixture=await productionOwnerDecisionHttpFixture();
   const document={...fixture.document,candidates:[],runtime:{softwareJobs:[],softwareJobAuthorizationRecords:[],softwareJobCredentialBindings:[],operationAudit:[],idempotencyRecords:[]}};
-  const port=await freePort();let dependencyPort=await freePort();while(dependencyPort===port)dependencyPort=await freePort();
+  const { api: port, gateway: dependencyPort } = allocatedTestPorts();
   const binding={schemaVersion:'c1-keyword-service-binding-v1',serviceId:'service:keyword:http',configurationVersion:'1',provider:'seerfar_open_api',
     workerId:'worker-seerfar-open-api-1',workerVersion:'1.0.0',leaseDurationMs:60000,pumpIntervalMs:1,requestTimeoutMs:1000};
   const overrides={SELECTION_REVIEW_TEST_GATEWAY_PORT:String(dependencyPort),SELECTION_REVIEW_C1_KEYWORD_SERVICE_BINDINGS_JSON:JSON.stringify([binding]),
-    NODE_OPTIONS:`--import=${pathToFileURL(preload).href}`};
+    NODE_OPTIONS:`${process.env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(preload).href}`};
   const previous=Object.fromEntries(Object.keys(overrides).map(key=>[key,process.env[key]]));
   let api;
   try {Object.assign(process.env,overrides);api=await startSavedDEApi(t,{directory,port,document,binding:fixture.binding});}

@@ -23,6 +23,25 @@ function nonEmpty(value) {
   return typeof value === "string" && value.trim().length > 0 && value !== "unknown";
 }
 
+/**
+ * 履约模式。`skuPackage.fulfillmentMode` 这个字段**生产代码里从来没有人写过**——只有读、没有写，
+ * `product-lifecycle-schema.mjs` 也没定义它，62 个真实候选一个都不带，唯一赋值的是几个测试夹具。
+ * 结果是这道门在 CI 里永远绿、在生产里谁都过不去（2026-09-17 查实）。
+ *
+ * 但这件事本来就冻在与 C1 绑定的那份利润模型里：成本口径的 `salesScheme`。这里从**已冻结的数据**
+ * 里把它读出来，不是替主人现造一个值。包上真写了字段就以字段为准；两处口径不一致就照实返回读不准，
+ * 绝不挑一个用——含糊的地方不替主人签字。
+ */
+export function resolveFrozenFulfillmentMode(skuPackage, profitModel) {
+  if (nonEmpty(skuPackage?.fulfillmentMode)) return skuPackage.fulfillmentMode.trim();
+  const costs = profitModel?.otherCosts;
+  const fromSnapshot = costs?.costPolicySnapshot?.scope?.salesScheme;
+  const fromContext = costs?.costPolicyContext?.salesScheme;
+  if (!nonEmpty(fromSnapshot) || !nonEmpty(fromContext)) return null;
+  return fromSnapshot.trim() === fromContext.trim() ? fromSnapshot.trim() : null;
+}
+
+
 function iso(value) {
   return nonEmpty(value) && !Number.isNaN(Date.parse(value));
 }
@@ -131,7 +150,8 @@ function resolveCore(candidate, expectedRevision, plannedAt) {
   if (factFields.some((field) => !isObject(plan[field]))) {
     return { status: "not_ready", sku, gaps: [gap("verified_facts_incomplete", "c1ProductPlan", "C1事实核验字段不完整，不能构造关键词作业")] };
   }
-  if (!nonEmpty(sku.fulfillmentMode)) {
+  const fulfillmentMode = resolveFrozenFulfillmentMode(sku, profit);
+  if (fulfillmentMode === null) {
     return { status: "not_ready", sku, gaps: [gap("fulfillment_missing", "skuPackage.fulfillmentMode", "SKU生命周期包未冻结履约模式")] };
   }
   const salesBinding = versionAndFingerprint(sales, null);
@@ -154,7 +174,7 @@ function resolveCore(candidate, expectedRevision, plannedAt) {
       targetStore: identity.targetStore,
       exactSupplierSkuId: identity.supplierSkuId,
       variantKey: identity.variantKey,
-      fulfillment: sku.fulfillmentMode,
+      fulfillment: fulfillmentMode,
       profitModelVersion: profit.profitModelVersion,
       profitModelFingerprint: digest(profit),
       salesSnapshotId: sales.snapshotId,

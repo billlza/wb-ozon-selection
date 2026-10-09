@@ -2,6 +2,10 @@
 
 面向选品评审、利润核算和上架准备协作的本地应用源码，采用 [MIT 许可证](LICENSE)。前端使用 React/Vite，服务端使用 Node.js；业务模型、数据校验和状态流位于 `selection-review-app/lib/`。
 
+## 最新工程进度
+
+[三色工作台健康与草稿安全验证](docs/current/三色工作台健康与草稿安全验证-2026-10-08.md)记录本轮修改、实际测试及未部署边界；历史交接不代表当前代码或业务状态。
+
 ## 查看与参与修改
 
 项目地址：[zhangdashuai1016-ui/wb-ozon-selection](https://github.com/zhangdashuai1016-ui/wb-ozon-selection)。公开后可直接浏览代码，无需申请查看权限。

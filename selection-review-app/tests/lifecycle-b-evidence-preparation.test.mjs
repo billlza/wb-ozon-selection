@@ -1,3 +1,4 @@
+import { createInternalEvidenceValidity } from "../lib/lifecycle-evidence-validity.mjs";
 import { SYNTHETIC_STORE_REF } from "./fixtures/store-binding-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -298,4 +299,106 @@ test('WB prepared references survive success but invalidation before final readi
     if(invalidate){assert.equal(result.failure.layer,'final_readiness');assert.deepEqual(result.evidencePacksToCommit,[]);}
     else{assert.equal(result.evidencePacksToCommit[0].expiresAt,null);assert.deepEqual(result.evidencePacksToCommit[0].commissionCatalogRef,f.commission.commissionCatalogRef);}
   }
+});
+
+function frozenAOpportunity(price) {
+  return {
+    lifecycleV11: {
+      opportunityPackage: {
+        marketAssessment: price === null ? null : { recommendedSalePrice: { amount: price, currency: "RUB", method: "median_of_comparable_primary_samples" } },
+        salesSnapshots: []
+      }
+    }
+  };
+}
+
+/**
+ * 一份能通过 validateSalesSnapshot 的销售快照，只为把 categoryPath 摆到正确的地方：
+ * 官方费表的类型名称取的是**这件商品自己保存的销售快照**里那条中文类目树路径，
+ * 不是 opportunityPackage 里挑出来做价格判断的市场样本（首次确认时它还不存在）。
+ */
+function snapshotWithCategory(categoryPath, collectedAt = "2026-08-17T06:30:00.000Z", snapshotId = "SNAP-1") {
+  return {
+    schemaVersion: "sales-snapshot-v1.1", snapshotId, platform: "ozon", marketScope: "ozon_general_market",
+    sellerType: "unknown", sellerIdentityEvidence: { status: "unverified", signals: [], evidenceRef: "fixture:seller" },
+    productUrl: "https://www.ozon.ru/product/1234567/", title: "Лежанка", imageRefs: [],
+    currentPrice: 2490, currency: "RUB", categoryPath, attributes: {}, collectedAt,
+    evidenceRef: "fixture:snapshot", collectorVersion: "real-ozon-sales-snapshot-v1",
+    collectorMode: "real_page_read_only", readOnly: true
+  };
+}
+
+test("官方费表所需的成交价与类型名称只取已冻结结果，未冻结或形状不对时留空不猜测", async () => {
+  const chinese = [snapshotWithCategory("宠物用品 > 携带和睡眠配件 > 宠物躺床")];
+  const russian = [snapshotWithCategory("Товары для животных > Для кошек > Лежанки")];
+  const cases = [
+    // 本轮提交带着主人填的成交价时用它；类型名称取中文类目树末段，平台大类一起带上。
+    { snapshots: chinese, frozen: {}, submission: { targetSalePriceRub: 2490 },
+      expected: { priceRub: 2490, typeName: "宠物躺床", mpCategoryZh: "宠物用品" } },
+    // 没有本轮提交时退回A阶段已冻结的建议成交价。
+    { snapshots: chinese, frozen: frozenAOpportunity(2490), submission: null,
+      expected: { priceRub: 2490, typeName: "宠物躺床", mpCategoryZh: "宠物用品" } },
+    // 页面面包屑不是类型树：不拿它去撞表，留空记缺口。
+    { snapshots: russian, frozen: frozenAOpportunity(2490), submission: null,
+      expected: { priceRub: 2490, typeName: null, mpCategoryZh: null } },
+    // 中文类目树必须正好三级，多一级少一级都不算。
+    { snapshots: [snapshotWithCategory("宠物用品 > 宠物躺床")], frozen: frozenAOpportunity(2490), submission: null,
+      expected: { priceRub: 2490, typeName: null, mpCategoryZh: null } },
+    // 两份都在时按 collectedAt 取最新的那份中文类目树快照。
+    { snapshots: [snapshotWithCategory("宠物用品 > 旧的分法 > 旧躺床", "2026-08-10T06:30:00.000Z", "SNAP-OLD"), ...chinese],
+      frozen: frozenAOpportunity(2490), submission: null,
+      expected: { priceRub: 2490, typeName: "宠物躺床", mpCategoryZh: "宠物用品" } },
+    // 价格与类型名称都取不到时整份留空。
+    { snapshots: [], frozen: {}, submission: null, expected: null },
+    { snapshots: [], frozen: frozenAOpportunity(0), submission: null, expected: null },
+    { snapshots: [], frozen: {}, submission: { targetSalePriceRub: 0 }, expected: null },
+    // 建议成交价不是卢布时不采用。
+    { snapshots: [], submission: null, expected: null,
+      frozen: { lifecycleV11: { opportunityPackage: { marketAssessment: { recommendedSalePrice: { amount: 2490, currency: "CNY" } }, salesSnapshots: [] } } } }
+  ];
+  for (const item of cases) {
+    const observed = [];
+    const providers = Object.fromEntries(allPacks().map((entry) => [
+      entry.kind,
+      async (request) => { observed.push({ kind: entry.kind, commissionReferenceScope: request.commissionReferenceScope }); return pack(entry.kind); }
+    ]));
+    const result = await runLifecycleBEvidencePreparation({
+      candidate: { ...candidate(), salesSnapshotsV11: item.snapshots, ...item.frozen },
+      evidencePacks: [],
+      providers,
+      plannedAt,
+      preparedAt,
+      submission: item.submission
+    });
+    assert.equal(result.status, "completed");
+    assert.deepEqual(observed.find((entry) => entry.kind === "commission").commissionReferenceScope, item.expected);
+    for (const entry of observed.filter((value) => value.kind !== "commission")) {
+      assert.equal(entry.commissionReferenceScope, null, "只有佣金请求携带官方费表查询输入");
+    }
+  }
+});
+
+
+test("内部24小时提示不触发重复采集，未知来源过期仍需刷新且不改历史", async () => {
+  const packs = allPacks();
+  for (const value of packs) value.expiresAt = "2026-10-01T06:30:00.000Z";
+  const fx = packs.find(value => value.kind === "exchange_rate");
+  Object.assign(fx, { checkedAt: plannedAt, expiresAt, sourceType: "bank_of_russia_official_daily_xml",
+    sourceRef: "cbr-xml-daily:R01375:2026-08-18", validity: createInternalEvidenceValidity("exchange_rate"),
+    evidenceData: { rubPerCny: 12.3, rateDate: "2026-08-18", nominal: 1, officialValueRub: 12.3 } });
+  const afterHint = "2026-09-21T08:00:00.000Z";
+  const before = structuredClone(packs);
+  const plan = buildLifecycleBEvidencePreparationPlan({ candidate: candidate(), evidencePacks: packs, plannedAt: afterHint });
+  assert.equal(plan.status, "ready_from_reuse");
+  assert.equal(plan.actions.find(value => value.kind === "exchange_rate").currentStatus, "refresh_due");
+  let calls = 0;
+  const result = await runLifecycleBEvidencePreparation({ candidate: candidate(), evidencePacks: packs, plannedAt: afterHint,
+    preparedAt: afterHint, providers: Object.fromEntries(packs.map(value => [value.kind, async () => { calls += 1; throw new Error("must not collect"); }])) });
+  assert.equal(result.status, "completed");
+  assert.equal(calls, 0);
+  assert.deepEqual(packs, before);
+  delete fx.validity;
+  fx.sourceType = "unknown";
+  const blocked = buildLifecycleBEvidencePreparationPlan({ candidate: candidate(), evidencePacks: packs, plannedAt: afterHint });
+  assert.equal(blocked.actions.find(value => value.kind === "exchange_rate").action, "prepare_once");
 });

@@ -6,7 +6,9 @@ import path from "node:path";
 export const RUNTIME_PACKAGE_FILES = Object.freeze([
   "server.mjs", "package.json", "scripts/launch-server.sh", "启动今日选品评审台.command"
 ]);
-export const RUNTIME_PACKAGE_DIRECTORIES = Object.freeze(["lib", "schema", "dist"]);
+// docs/contracts 是运行期真要读的官方合同证据：lib/ozon-de-protocol-catalog.mjs 在服务启动时就 readFile 它们，
+// 漏打包会让新版本根本起不来。r64 是靠手工补拷进去才活着的，这里把它纳入正式包。
+export const RUNTIME_PACKAGE_DIRECTORIES = Object.freeze(["lib", "schema", "dist", "docs/contracts"]);
 const dependencyName = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i;
 
 function failure(code, details) {

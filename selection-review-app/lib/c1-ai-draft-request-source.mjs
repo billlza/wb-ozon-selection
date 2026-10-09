@@ -1,8 +1,13 @@
-import { assertCurrentC1AiDraftRequest, validateC1AiDraftRequest, buildC1AiDraftRequest } from "./c1-ai-draft-contract.mjs";
+import { assertCurrentC1AiDraftRequest, validateC1AiDraftRequest, buildC1AiDraftRequest, C1_FACT_DEFINITIONS_VERSION, C1_GATEWAY_INPUT_ENCODING_VERSION } from "./c1-ai-draft-contract.mjs";
 import { assertCanonicalFrozenRef, fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
 import { prepareC1SoftwareInputs } from "./c1-software-input-preparation.mjs";
 import { createC1SoftwareEvidenceStage } from "./c1-software-evidence-stage.mjs";
 import { assertCurrentC1SkuRightsReview } from "./c1-sku-rights-review.mjs";
+import { resolveC1LocalDraftInputs } from "./c1-local-draft-source.mjs";
+import { C1_SEO_REVIEW_OUTPUT_VERSION } from "./c1-seo-review-contract.mjs";
+import { C1_SEO_REFERENCE_CONTEXT_VERSION, C1_SUPPLIER_REFERENCE_CONTEXT_VERSION, createC1SeoReferenceContext, resolveC1ImageTextEvidenceForRequest,
+  savedC1CompetitorDescriptions } from "./c1-seo-reference-context.mjs";
+import { readConfirmedSupplierTextReferences } from "./confirmed-supplier-inputs.mjs";
 
 function closed(value, keys, code) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
@@ -12,9 +17,18 @@ function assertRequest(request) {
   if (!validateC1AiDraftRequest(request).valid) throw new Error("C1_DRAFT_REQUEST_INVALID");
 }
 
-export function prepareCurrentC1AiDraftRequest(candidate, observedAt) {
+export function prepareCurrentC1AiDraftRequest(candidate, observedAt, contractOptions = {}) {
+  const options = { gatewayInputEncodingVersion: C1_GATEWAY_INPUT_ENCODING_VERSION, factDefinitionsVersion: C1_FACT_DEFINITIONS_VERSION, outputContractVersion: C1_SEO_REVIEW_OUTPUT_VERSION, ...contractOptions };
+  if (options.referenceContextVersion === undefined && options.factDefinitionsVersion === C1_FACT_DEFINITIONS_VERSION) {
+    options.referenceContextVersion = C1_SUPPLIER_REFERENCE_CONTEXT_VERSION;
+  }
   const lifecycle = candidate.lifecycleV11;
   const sku = lifecycle?.skuPackage;
+  if (lifecycle?.c1LocalDraftSourceV1 !== undefined) {
+    const inputs = resolveC1LocalDraftInputs(candidate, observedAt, { includeReferenceContext: options.outputContractVersion === C1_SEO_REVIEW_OUTPUT_VERSION,
+      referenceContextVersion: options.referenceContextVersion });
+    return buildC1AiDraftRequest({ skuPackage: sku, ...inputs, requestedAt: observedAt, ...options });
+  }
   const evidence = lifecycle?.c1SoftwareEvidenceV1;
   if (!evidence || !lifecycle.k3KeywordEvidenceSnapshotV1 || !lifecycle.k3CurrentBindingV1 ||
       evidence.candidateId !== candidate.id || evidence.skuPackageId !== sku?.skuPackageId ||
@@ -29,16 +43,24 @@ export function prepareCurrentC1AiDraftRequest(candidate, observedAt) {
   assertCurrentC1SkuRightsReview({ plan: sku.c1ProductPlan, sourceIdentity: sku.g1Identity, observedAt });
   const prepared = prepareC1SoftwareInputs({ ...inputs, preparedAt: observedAt });
   if (prepared.status !== "ready") throw new Error("C1_DRAFT_EVIDENCE_NOT_CURRENT");
-  return buildC1AiDraftRequest({ skuPackage: sku, ...prepared.inputs, requestedAt: observedAt });
+  const contextVersion = options.referenceContextVersion ?? C1_SEO_REFERENCE_CONTEXT_VERSION;
+  const referenceContext = options.outputContractVersion === C1_SEO_REVIEW_OUTPUT_VERSION ? createC1SeoReferenceContext({
+    competitorTextSnapshot: prepared.inputs.competitorTextSnapshot, categoryPathFact: sku.c1ProductPlan.platformCategory.categoryPath, contextVersion,
+    ...([C1_SEO_REFERENCE_CONTEXT_VERSION, C1_SUPPLIER_REFERENCE_CONTEXT_VERSION].includes(contextVersion) ? { imageTextEvidence: resolveC1ImageTextEvidenceForRequest(candidate, observedAt),
+      additionalDescriptions: savedC1CompetitorDescriptions(candidate, sku.c1ProductPlan, { competitorTextSnapshots: [] }) } : {}),
+    ...(contextVersion === C1_SUPPLIER_REFERENCE_CONTEXT_VERSION ? { supplierTexts: readConfirmedSupplierTextReferences(candidate) } : {}) }) : undefined;
+  return buildC1AiDraftRequest({ skuPackage: sku, ...prepared.inputs, ...(referenceContext ? { referenceContext } : {}), requestedAt: observedAt, ...options });
 }
 
 /** Validate current evidence at admission only; historical receipt settlement does not call this gate. */
 export function assertCurrentC1AiDraftRequestSources({ candidate, request, observedAt }) {
   assertRequest(request);
   assertCurrentC1AiDraftRequest({ skuPackage: candidate.lifecycleV11.skuPackage, request });
-  const expected = prepareCurrentC1AiDraftRequest(candidate, request.requestedAt);
+  const options = { gatewayInputEncodingVersion: request.gatewayInputEncodingVersion ?? null, factDefinitionsVersion: request.factDefinitionsVersion ?? null, outputContractVersion: request.outputContractVersion ?? null,
+    ...(request.referenceContext ? { referenceContextVersion: request.referenceContext.schemaVersion } : {}) };
+  const expected = prepareCurrentC1AiDraftRequest(candidate, request.requestedAt, options);
   if (fingerprintCanonicalRecord(expected) !== fingerprintCanonicalRecord(request)) throw new Error("C1_DRAFT_REQUEST_SOURCE_CONFLICT");
-  prepareCurrentC1AiDraftRequest(candidate, observedAt);
+  prepareCurrentC1AiDraftRequest(candidate, observedAt, options);
   return Object.freeze(structuredClone(request));
 }
 

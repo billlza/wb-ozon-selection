@@ -102,7 +102,7 @@ test('claim requires an explicit current service binding and current matching wo
     assert.throws(() => createDEJobAdmissionDecision({ ...args, executionBinding: job.scopeBinding.productionBinding }), rejected('BINDING_INVALID'));
     assert.throws(() => createDEJobAdmissionDecision({ ...args, executionBinding: configured(job).executionBinding }), rejected('WORKER_REQUIRED'));
     for (const change of [w => { w.workerId += '-other'; }, w => { w.version += '-other'; }, w => { w.status = 'offline'; },
-      w => { w.status = 'busy'; }, w => { w.schemaVersion = 'worker-descriptor-v2'; }, w => { w.observedAt = '2026-08-22T08:00:00.000Z'; }]) {
+      w => { w.status = 'busy'; }, w => { w.schemaVersion = 'worker-descriptor-v2'; }]) {
       const configuration = configured(job); configuration.worker = clone(configuration.worker); change(configuration.worker);
       assert.throws(() => createDEJobAdmissionDecision({ ...args, ...configuration }), rejected());
     }

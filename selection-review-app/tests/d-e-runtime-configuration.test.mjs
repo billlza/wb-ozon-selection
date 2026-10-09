@@ -147,3 +147,103 @@ test("环境变量无效JSON或非数组显式失败，不回落空配置，不�
   const unexpected = new TypeError("synthetic conversion error");
   assert.throws(() => configuration({ ...baseEnv, SELECTION_REVIEW_DE_SERVICE_BINDINGS_JSON: { toString() { throw unexpected; } } }), error => error === unexpected);
 });
+
+// r70 ④：店铺级默认观察策略。
+// 由来：r69 那道严格门（没有可用策略就拒绝上架）的代价是——**每上架一个新品，
+// 都要先在 plist 里给它加一条策略并重启服务**（见 r69 卡 3.3）。
+// 加一层按「生产绑定 + 配置版本」匹配的默认值，新品就不必逐个配；
+// 想给某个品特殊窗口，配一条逐品策略即可盖过默认。
+test("④ 店铺级默认策略：新品无逐品配置时可用，逐品配置优先，旧配置照常加载", async () => {
+  const { normalizeDPlatformObservationConfiguration, createDPlatformObservationPolicyResolver } =
+    await import("../lib/runtime-configuration.mjs");
+  const policy = (ref, maxQueries) => ({ schemaVersion: "d-platform-observation-policy-v1",
+    policyRef: ref, version: "version:1", maxQueries, intervalMs: 30_000,
+    requestTimeoutMs: 30_000, expiresAt: "2099-01-01T00:00:00.000Z" });
+  const job = { skuPackageId: "sku:synthetic:new", scopeBinding: { productionBinding:
+    { bindingId: "binding:synthetic:0", configurationVersion: "production-config-v3" } } };
+  const candidate = { id: "candidate:synthetic:new" };
+
+  // a) 旧配置（没有 defaults 键）照常加载——不能因为新增可选键就判旧配置无效
+  const legacy = normalizeDPlatformObservationConfiguration({ policies: [], pumpIntervalMs: 1000 }, productionBindings);
+  assert.deepEqual(legacy.defaults, []);
+  assert.equal(createDPlatformObservationPolicyResolver({ dPlatformObservation: legacy })({ candidate, job }), null);
+
+  // b) 只有店铺级默认：新品直接可用，不必逐个配
+  const withDefault = normalizeDPlatformObservationConfiguration({ policies: [], pumpIntervalMs: 1000,
+    defaults: [{ productionBindingId: "binding:synthetic:0", productionConfigurationVersion: "production-config-v3",
+      policy: policy("policy:store-default", 50) }] }, productionBindings);
+  const resolved = createDPlatformObservationPolicyResolver({ dPlatformObservation: withDefault })({ candidate, job });
+  assert.equal(resolved.policyRef, "policy:store-default");
+  assert.equal(resolved.maxQueries, 50);
+
+  // c) 逐品配置优先于默认
+  const both = normalizeDPlatformObservationConfiguration({ pumpIntervalMs: 1000,
+    policies: [{ candidateId: candidate.id, skuPackageId: job.skuPackageId,
+      authorizationRef: "production-auth:synthetic:one", productionBindingId: "binding:synthetic:0",
+      productionConfigurationVersion: "production-config-v3", revision: 3, policy: policy("policy:per-sku", 7) }],
+    defaults: [{ productionBindingId: "binding:synthetic:0", productionConfigurationVersion: "production-config-v3",
+      policy: policy("policy:store-default", 50) }] }, productionBindings);
+  assert.equal(createDPlatformObservationPolicyResolver({ dPlatformObservation: both })({ candidate, job }).policyRef,
+    "policy:per-sku");
+
+  // d) 另一个绑定的默认不会被错用
+  const otherJob = { ...job, scopeBinding: { productionBinding:
+    { bindingId: "binding:synthetic:1", configurationVersion: "production-config-v3" } } };
+  assert.equal(createDPlatformObservationPolicyResolver({ dPlatformObservation: withDefault })({ candidate, job: otherJob }), null);
+
+  // e) 同一绑定两条默认：按歧义失败停，不随便挑一条
+  assert.throws(() => normalizeDPlatformObservationConfiguration({ policies: [], pumpIntervalMs: 1000,
+    defaults: [
+      { productionBindingId: "binding:synthetic:0", productionConfigurationVersion: "production-config-v3", policy: policy("a", 5) },
+      { productionBindingId: "binding:synthetic:0", productionConfigurationVersion: "production-config-v3", policy: policy("b", 5) }
+    ] }, productionBindings), /AMBIGUOUS/);
+
+  // f) 默认也要求绑定真实存在
+  assert.throws(() => normalizeDPlatformObservationConfiguration({ policies: [], pumpIntervalMs: 1000,
+    defaults: [{ productionBindingId: "binding:synthetic:missing",
+      productionConfigurationVersion: "production-config-v3", policy: policy("c", 5) }] }, productionBindings),
+    /BINDING_CONFLICT/);
+
+  // g) 有默认却没配泵节拍：照旧拒绝
+  assert.throws(() => normalizeDPlatformObservationConfiguration({ policies: [], pumpIntervalMs: null,
+    defaults: [{ productionBindingId: "binding:synthetic:0",
+      productionConfigurationVersion: "production-config-v3", policy: policy("d", 5) }] }, productionBindings),
+    /PUMP_CONFIGURATION_REQUIRED/);
+});
+
+// r70 部署失败的那一条：④ 只放宽了 normalizeDPlatformObservationConfiguration 里的键校验，
+// 却漏了 createSelectionReviewRuntimeConfiguration 里**重复的一份**——
+// 服务带着 defaults 启动即抛 D_OBSERVATION_CONFIGURATION_INVALID，反复重启、端口不监听。
+//
+// 当时的用例只直接调 normalize，**根本走不到那道重复校验**。
+// 这一条必须从**真正的配置入口**（读环境变量那条路）进，否则同样的漏改还会发生。
+test("④ 带 defaults 的环境变量必须能从真正的配置入口加载（r70 部署失败的那一条）", () => {
+  const storeRef = { stableStoreId: "miska", platformStoreId: "p-miska", mappingVersion: "stores-v1" };
+  const policy = { schemaVersion: "d-platform-observation-policy-v1", policyRef: "policy:store-default",
+    version: "version:1", maxQueries: 100, intervalMs: 30_000, requestTimeoutMs: 30_000,
+    expiresAt: "2099-01-01T00:00:00.000Z" };
+  const env = {
+    SELECTION_REVIEW_STORE_BINDINGS_JSON: JSON.stringify([{ targetStore: "miska", platform: "ozon", storeRef }]),
+    SELECTION_REVIEW_PRODUCTION_BINDINGS_JSON: JSON.stringify([{ bindingId: "binding:x", configurationVersion: "config:x",
+      platform: "ozon", storeRef, storeName: "店", warehouseName: "仓", warehouseRef: "warehouse:x",
+      warehouseId: "70001", credentialAlias: "alias:x",
+      verification: { evidenceRef: "evidence:x", checkedAt: "2026-08-22T07:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z" } }]),
+    SELECTION_REVIEW_D_PLATFORM_OBSERVATION_JSON: JSON.stringify({ policies: [], pumpIntervalMs: 1000,
+      defaults: [{ productionBindingId: "binding:x", productionConfigurationVersion: "config:x", policy }] })
+  };
+  const configuration = createSelectionReviewRuntimeConfiguration({ env, appDir: APP_DIR, argv: [] });
+  assert.equal(configuration.dPlatformObservation.defaults.length, 1);
+  assert.equal(configuration.dPlatformObservation.defaults[0].policy.policyRef, "policy:store-default");
+
+  // 没有 defaults 的旧形状同样要能从这条入口加载
+  const legacyEnv = { ...env,
+    SELECTION_REVIEW_D_PLATFORM_OBSERVATION_JSON: JSON.stringify({ policies: [], pumpIntervalMs: 1000 }) };
+  assert.deepEqual(createSelectionReviewRuntimeConfiguration({ env: legacyEnv, appDir: APP_DIR, argv: [] })
+    .dPlatformObservation.defaults, []);
+
+  // 表外的键仍须拒绝——删掉重复校验不等于放行任意键
+  const badEnv = { ...env,
+    SELECTION_REVIEW_D_PLATFORM_OBSERVATION_JSON: JSON.stringify({ policies: [], pumpIntervalMs: 1000, whatever: 1 }) };
+  assert.throws(() => createSelectionReviewRuntimeConfiguration({ env: badEnv, appDir: APP_DIR, argv: [] }),
+    /D_OBSERVATION_CONFIGURATION_INVALID/);
+});

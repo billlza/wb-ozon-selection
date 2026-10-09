@@ -2,6 +2,72 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { finalPricingC1ReuseFixture } from './fixtures/final-pricing-c1-reuse-fixture.mjs';
 import { assertSafeRuntimeRecord, assertSafeBusinessMutationCandidate } from '../lib/runtime-identity.mjs';
+import { validateC2AssetLifecycle, fingerprintC2FinalCardInputSnapshot, fingerprintC2AuthorizationPreparation } from '../lib/c2-asset-lifecycle.mjs';
+import { fingerprintCanonicalRecord } from '../lib/production-contract-primitives.mjs';
+
+test('C2 pricing reuse freezes one complete record and rejects rebound or altered references', async () => {
+  const { prepareC2FinalUploadManifest, confirmC2SoftwareFinalUploads } = await import('../lib/c2-software-orchestrator.mjs');
+  const { finalAssets, ownerDecision } = await import('./helpers/c2-software-fixture.mjs');
+  const f = finalPricingC1ReuseFixture();
+  await f.usecase.review({ actor: f.actor, input: f.input });
+  const source = (await f.repository.readSnapshot()).candidates[0].lifecycleV11.skuPackage;
+  const manifest = prepareC2FinalUploadManifest({ skuPackage: source, expectedDataRevision: source.dataRevision, finalUploadAssets: finalAssets(), preparedAt: f.observedAt });
+  const confirmed = confirmC2SoftwareFinalUploads({ skuPackage: source, expectedDataRevision: source.dataRevision, finalManifest: manifest, ownerDecision: ownerDecision(manifest), confirmedAt: f.observedAt });
+  const frozen = confirmed.skuPackage.c2FinalAssets;
+  const preparation = frozen.productionAuthorizationPreparation;
+  const complete = preparation.finalCardInputSnapshot.c1Snapshot.draftOnlySeo.pricingReuseRecord;
+  const references = [preparation.frozenC1Handoff.draftOnlySeo.pricingReuseRecord, preparation.finalCardInputSnapshot.canonicalC1.draftOnlySeo.pricingReuseRecord];
+  assert.equal(complete.schemaVersion, 'c1-pricing-result-reuse-v1');
+  assert.deepEqual(confirmed.skuPackage.c1ProductPlan.draftOnlySeo.pricingReuseRecord, complete);
+  assert.equal(references[0].schemaVersion, 'c1-pricing-result-reuse-reference-v1');
+  assert.deepEqual(references[0], references[1]);
+  assert.equal(references[0].recordFingerprint, fingerprintCanonicalRecord(complete));
+  assert.deepEqual(references[0].sourceIdentity, complete.sourceIdentity);
+  assert.equal(references[0].resultSkuRevision, complete.resultSkuRevision);
+  assert.equal(references[0].targetProfitModelVersion, complete.targetProfitModelVersion);
+  for (const change of [
+    reference => { reference.sourceIdentity.candidateId = 'foreign'; },
+    reference => { reference.resultSkuRevision += 1; },
+    reference => { reference.targetPlanId = 'foreign-plan'; },
+    reference => { reference.targetProfitModelVersion = 'foreign-profit'; },
+    reference => { reference.recordFingerprint = '0'.repeat(64); },
+    reference => { reference.extra = true; }
+  ]) {
+    const altered = structuredClone(frozen);
+    for (const reference of [altered.productionAuthorizationPreparation.frozenC1Handoff.draftOnlySeo.pricingReuseRecord,
+      altered.productionAuthorizationPreparation.finalCardInputSnapshot.canonicalC1.draftOnlySeo.pricingReuseRecord]) change(reference);
+    const changedPreparation = altered.productionAuthorizationPreparation;
+    changedPreparation.finalCardInputFingerprint = fingerprintC2FinalCardInputSnapshot(changedPreparation.finalCardInputSnapshot);
+    changedPreparation.preparationFingerprint = fingerprintC2AuthorizationPreparation(changedPreparation);
+    assert.ok(validateC2AssetLifecycle(altered).errors.some(error => error.path.includes('draftOnlySeo.pricingReuseRecord')));
+  }
+  const alteredSource = structuredClone(frozen);
+  alteredSource.productionAuthorizationPreparation.finalCardInputSnapshot.c1Snapshot.draftOnlySeo.pricingReuseRecord.request.requestId = 'changed-source';
+  assert.ok(validateC2AssetLifecycle(alteredSource).errors.some(error => error.path.includes('draftOnlySeo.pricingReuseRecord')));
+});
+
+test('published C2 handoff schemas accept the new reference and preserve legacy complete handoffs', async () => {
+  const { normalizeC1CanonicalHandoffContract } = await import('../lib/c2-asset-lifecycle.mjs');
+  const { loadPublishedSchemaValidator } = await import('./helpers/published-schema-validator.mjs');
+  const f = finalPricingC1ReuseFixture();
+  await f.usecase.review({ actor: f.actor, input: f.input });
+  const sku = (await f.repository.readSnapshot()).candidates[0].lifecycleV11.skuPackage;
+  const referenceHandoff = normalizeC1CanonicalHandoffContract(sku);
+  const legacy = structuredClone(sku);
+  legacy.c2FinalAssets.status = 'completed';
+  legacy.c2FinalAssets.productionAuthorizationPreparation = { frozenC1Handoff: {
+    draftOnlySeo: { pricingReuseRecord: structuredClone(sku.c1ProductPlan.draftOnlySeo.pricingReuseRecord) }
+  } };
+  const fullHandoff = normalizeC1CanonicalHandoffContract(legacy);
+  assert.equal(referenceHandoff.draftOnlySeo.pricingReuseRecord.schemaVersion, 'c1-pricing-result-reuse-reference-v1');
+  assert.equal(fullHandoff.draftOnlySeo.pricingReuseRecord.schemaVersion, 'c1-pricing-result-reuse-v1');
+  const validator = await loadPublishedSchemaValidator();
+  for (const schemaId of ['c2-asset-lifecycle-v1.1#/$defs/canonicalC1Handoff', 'c2-software-input-v1#/$defs/canonicalHandoff']) {
+    const validate = validator.getSchema(schemaId);
+    assert.equal(validate(referenceHandoff), true, `${schemaId}: ${JSON.stringify(validate.errors)}`);
+    assert.equal(validate(fullHandoff), true, `${schemaId}: ${JSON.stringify(validate.errors)}`);
+  }
+});
 
 test('final repricing reuses the completed C1 result and returns to C2 without another AI job or accounting charge', async () => {
   const f = finalPricingC1ReuseFixture(), before = await f.repository.readSnapshot();
@@ -108,9 +174,8 @@ test('repricing rebinds a ready registered upload draft while preserving files s
       uploadId, fileName: asset.fileName, mediaType: asset.mediaType, contentType: 'image/jpeg', startedAt: f.observedAt });
     source.lifecycleV11.c2UploadDraft = settleC2Upload(draft, { uploadId, asset: { ...asset, stagedAt: f.observedAt }, settledAt: f.observedAt });
   }
-  const slots = source.lifecycleV11.skuPackage.c2FinalAssets.mediaRequirements.imageSlots;
   source.lifecycleV11.c2UploadDraft = saveC2UploadSelection(source, { dataRevision: source.dataRevision, draftRevision: source.lifecycleV11.c2UploadDraft.revision,
-    selection: assets.map((asset, index) => ({ assetId: asset.assetId, slotId: slots.find(slot => slot.role === asset.role).slotId, order: index + 1 })) });
+    selection: assets.map((asset, index) => ({ assetId: asset.assetId, order: index + 1 })) });
   const originalDraft = JSON.stringify(source.lifecycleV11.c2UploadDraft);
   await f.repository.transact(document => { document.candidates[0] = source; return { changed: true, document, result: null }; });
   await f.usecase.review({ actor: f.actor, input: f.input });

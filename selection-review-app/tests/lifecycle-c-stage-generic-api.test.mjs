@@ -9,6 +9,8 @@ import { DEFAULT_RULES } from "../lib/workflow.mjs";
 import { validateProductionAuthorizationRecord } from "../lib/product-lifecycle-schema.mjs";
 import { createTrainCandidate } from "./helpers/legacy-candidate-fixture.mjs";
 import { createFinalPricingRevalidationFixture } from "./fixtures/final-pricing-revalidation-fixture.mjs";
+import { assertProductionProfitPriceCurrent } from "../lib/final-pricing-review.mjs";
+import { createJsonBusinessStateRepository } from "../lib/business-state-repository.mjs";
 import { stopApiProcess } from "./helpers/api-process-lifecycle.mjs";
 
 const appDir = fileURLToPath(new URL("..", import.meta.url));
@@ -55,7 +57,9 @@ test("非火车SKU从正式C1回执经HTTP持久素材确认和单主人授权�
     checkedAt: "2026-08-01T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z", evidenceData: { rubPerCny: conversion.rubPerCny } };
   // The server uses its actual clock: the synthetic B evidence packs are declared current, not renewed real evidence.
   const evidencePacks = [exchangePack, ...pricing.evidencePacks.filter(pack => pack.id !== exchangePack.id)
-    .map(pack => ({ ...pack, expiresAt: "2099-01-01T00:00:00.000Z" }))];
+    .map(pack => ({ ...pack, checkedAt: pack.kind === "schema"
+      ? sourceSku.c1ProductPlan.inputSnapshots.platformSchemaRules.collectedAt : pack.checkedAt,
+    expiresAt: "2099-01-01T00:00:00.000Z" }))];
   const rules = { ...structuredClone(DEFAULT_RULES), ozonDandanshu: { ...structuredClone(DEFAULT_RULES.ozonDandanshu), ...structuredClone(pricing.rules.ozonDandanshu) } };
   await writeFile(dataFile, JSON.stringify({ meta: { version: 2, automationStarted: false }, rules,
     candidates: [fireTrain, candidate], dispatches: [], evidencePacks, currentCommissionCatalogs: [] }));
@@ -90,7 +94,10 @@ test("非火车SKU从正式C1回执经HTTP持久素材确认和单主人授权�
     assert.equal(response.status, 200);
     return response.json();
   }
-  async function savedCandidate() { return JSON.parse(await readFile(dataFile, "utf8")).candidates.find(item => item.id === TEST_ID); }
+  async function savedCandidate() {
+    const snapshot = await createJsonBusinessStateRepository({ filePath: dataFile }).readSnapshot();
+    return snapshot.candidates.find(item => item.id === TEST_ID);
+  }
   const route = `/api/candidates/${TEST_ID}/lifecycle`;
   const initialBytes = await readFile(dataFile, "utf8");
   const anonymous = await post(`${route}/c1/complete`, { dataRevision: 1, confirmed: true });
@@ -126,7 +133,7 @@ test("非火车SKU从正式C1回执经HTTP持久素材确认和单主人授权�
   const afterUpload = await savedCandidate();
   assert.equal(afterUpload.dataRevision, 1);
   assert.deepEqual(afterUpload.lifecycleV11.skuPackage, sourceSku);
-  const selection = [{ assetId: main.body.asset.assetId, slotId: "main", order: 1 }, { assetId: detail.body.asset.assetId, slotId: "detail", order: 2 }];
+  const selection = [{ assetId: main.body.asset.assetId, order: 1 }, { assetId: detail.body.asset.assetId, order: 2 }];
   const selected = await post(`${route}/c2/upload-draft`, { dataRevision: 1, draftRevision: detail.body.draft.revision, selection });
   assert.equal(selected.status, 200, selected.body.message);
   const draftRevision = selected.body.draft.revision;
@@ -149,22 +156,16 @@ test("非火车SKU从正式C1回执经HTTP持久素材确认和单主人授权�
     confirmed: true, cardId: finalSku.productionConfirmationCard.cardId });
   assert.equal(oldAuthorization.status, 409); assert.equal(oldAuthorization.body.code, "production_authorization_reconfirmation_required");
   assert.equal(await readFile(dataFile, "utf8"), beforeAuthorization);
-  // Production authorization requires the owner's multi-sample final pricing review; the B reference price stays the selected price.
+  // An unchanged formal B price remains usable without a saved final pricing review.
+  // Once a review exists, a malformed or stale one must be rejected rather than bypassed.
   const blockedPreparation = await get(`${route}/production-owner-preparation`);
-  assert.equal(blockedPreparation.ready, false);
-  assert.ok(blockedPreparation.gaps.some(item => item.code === "FINAL_PRICING_REVIEW_REQUIRED"), JSON.stringify(blockedPreparation.gaps));
-  const windowEnd = new Date(), windowStart = new Date(windowEnd.getTime() - 29 * 86400000);
-  const reviews = pricing.assessmentInput.reviews.map(review => ({ ...review, salesWindow: { ...review.salesWindow,
-    startDate: windowStart.toISOString().slice(0, 10), endDate: windowEnd.toISOString().slice(0, 10) } }));
-  const finalPricing = await post(`${route}/final-pricing/review`, { candidateId: TEST_ID, expectedRevision: c2.body.candidate.dataRevision,
-    skuPackageId: sourceSku.skuPackageId, selectedPriceRub: pricing.assessmentInput.selectedPriceRub, reviews,
-    idempotencyKey: "generic:final-pricing:1", auditEventId: "audit:generic:final-pricing:1" });
-  assert.equal(finalPricing.status, 200, JSON.stringify(finalPricing.body));
-  assert.equal(finalPricing.body.transactionStatus, "committed");
-  const reviewed = await savedCandidate();
-  assert.equal(reviewed.lifecycleV11.skuPackage.finalPricingReview.profitModelVersion, sourceSku.activeProfitModelVersion);
-  assert.deepEqual(reviewed.lifecycleV11.skuPackage.profitModels, sourceSku.profitModels, "同价复核不得改写B利润版本");
-  assert.equal(reviewed.lifecycleV11.skuPackage.productionAuthorization, null);
+  assert.equal(blockedPreparation.ready, true, JSON.stringify(blockedPreparation.gaps));
+  assert.equal(blockedPreparation.gaps.some(item => item.code === "FINAL_PRICING_REVIEW_REQUIRED"), false);
+  const invalidReviewCandidate = structuredClone(await savedCandidate());
+  invalidReviewCandidate.lifecycleV11.skuPackage.finalPricingReview = { schemaVersion: "final-pricing-review-v1" };
+  assert.throws(() => assertProductionProfitPriceCurrent({ candidate: invalidReviewCandidate,
+    skuPackage: invalidReviewCandidate.lifecycleV11.skuPackage, evidencePacks,
+    observedAt: new Date().toISOString() }), error => error.code === "FINAL_PRICING_REVIEW_INVALID");
   const beforeDecision = await readFile(dataFile, "utf8");
   const preparation = await get(`${route}/production-owner-preparation`);
   assert.equal(preparation.ready, true, preparation.gaps.map(item => item.code).join(","));
@@ -189,6 +190,11 @@ test("非火车SKU从正式C1回执经HTTP持久素材确认和单主人授权�
     skuPackage: authorizedSku, lifecycleState: "persisted" }).valid, true);
   assert.equal(authorizedSku.productionRecord, null); assert.equal(saved.lifecycleV11.platformWrites, 0);
   const persisted = JSON.parse(await readFile(dataFile, "utf8"));
+  const authorizationRef = persisted.candidates.find(item => item.id === TEST_ID).lifecycleV11.skuPackage.productionAuthorization;
+  assert.equal(authorizationRef.schemaVersion, "production-entity-reference-v1");
+  assert.equal(authorizationRef.entityId, pa.authorizationId);
+  assert.equal(persisted.productionEntityRecords.filter(record => record.kind === "production_authorization" &&
+    record.entityId === pa.authorizationId).length, 1);
   assert.deepEqual(persisted.candidates.find(item => item.id === fireTrain.id), originalFireTrain);
   const serialized = JSON.stringify(authorizedSku);
   for (const unrelated of [fireTrain.id, "4993364145574", "豪华小火车", "Паровоз", "DVP", "282件"]) assert.equal(serialized.includes(unrelated), false, unrelated);

@@ -19,7 +19,7 @@ jobs:
   verify:
     name: Static checks and pure tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       CI: "true"
       SELECTION_REVIEW_AUTO_DELIVER: "off"

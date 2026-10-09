@@ -103,7 +103,8 @@ function assertWorker(worker, binding, observedAt) {
   safe(worker);
   requireCondition(worker.schemaVersion === 'worker-descriptor-v1' && ref(worker.workerId) && ref(worker.version) &&
     worker.workerId === binding.workerId && worker.version === binding.workerVersion && worker.status === 'online', 'WORKER_CONFLICT');
-  requireCondition(time(worker.observedAt) <= time(observedAt), 'WORKER_TIME_CONFLICT');
+  // 2026-09-22 主人决定删除“打卡时间不得晚于检查时间”的比较：单机上工人与检查方是同一进程，
+  // 该比较无业务意义，且与领取后的心跳刷新顺序冲突，曾把 D 任务卡死在 claimed。
 }
 
 function stableBinding(binding) {

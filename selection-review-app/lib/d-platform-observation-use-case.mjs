@@ -59,6 +59,7 @@ export function createDPlatformObservationRuntime({repository,jobStore,serverClo
     if(error instanceof ObservationDeadlineError) result={schemaVersion:'d-platform-observation-failure-v1',status:'unknown_outcome',failureClass:'request_timeout',requestSent};
     else if(error instanceof OzonDEHttpTransportError) result={schemaVersion:'d-platform-observation-failure-v1',status:'unknown_outcome',failureClass:'transport_failure',requestSent};
     else if(error?.message === 'OZON_DE_INVENTORY_POLICY_NOT_VERIFIED') result={schemaVersion:'d-platform-observation-failure-v1',status:'blocked',failureClass:'inventory_policy_missing',requestSent:false};
+    else if(error?.message === 'OZON_DE_INVENTORY_POLICY_OUTDATED' && !requestSent) result={schemaVersion:'d-platform-observation-failure-v1',status:'blocked',failureClass:'inventory_policy_outdated',requestSent:false};
     else throw error;
    }
    const outcome=await repository.transact(document=>{

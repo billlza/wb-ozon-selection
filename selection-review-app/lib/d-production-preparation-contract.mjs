@@ -38,7 +38,9 @@ function preflightShape(value) {
   const keys = ['schemaVersion','preflightId','sourceProductionPlanId','sourceProductionPlanFingerprint','targetPlatform','storeIdentity','permission','connectionStatus','authorizedWriteFields','platformWritableFields','effectiveWritableFields','imagePermission','priceCurrency','risks','technicalStatus','businessStateEffect','checkedAt','readyForPlatformWrite','productCreated','imagesUploaded','inventoryModified','storeDataModified','productionRecordCreated','platformWrites'];
   if (value?.schemaVersion === PLATFORM_WRITE_PREFLIGHT_VERSION) keys.push('connectionRequirements');
   requireValue(closed(value, keys) && boundedStrings(value) && validatePlatformWritePreflight(value).valid, 'PREFLIGHT_INVALID');
-  requireValue(closed(value.storeIdentity, ['expectedStore','observedStore','status','evidenceRef','expectedStoreRef','observedStoreRef']) &&
+  // verifiedVia names the anchor the identity stands on; results written before owner decision 2026-09-16 omit it.
+  const identityKeys = ['expectedStore','observedStore','status','evidenceRef','expectedStoreRef','observedStoreRef'];
+  requireValue((closed(value.storeIdentity, identityKeys) || closed(value.storeIdentity, [...identityKeys, 'verifiedVia'])) &&
     [value.storeIdentity.expectedStoreRef,value.storeIdentity.observedStoreRef].every(store=>store===null || closed(store,['stableStoreId','platformStoreId','mappingVersion'])) &&
     closed(value.permission, ['status','evidenceRef']) && closed(value.imagePermission, ['status','evidenceRef']) &&
     closed(value.priceCurrency, ['expected','observed','status','evidenceRef']) && closed(value.connectionStatus, ['api','sellerBackend']) &&
@@ -61,7 +63,20 @@ export function assertDProductionPreparation(evidence, { job } = {}) {
     time(evidence.startedAt) && typeof evidence.continuationBlocked === 'boolean' && preparationId(evidence) === evidence.preparationId, 'SOURCE_INVALID');
   safe(evidence);
   if (job !== undefined) {
-    requireValue(job.jobType === 'd_production_execution' && ['jobId','candidateId','skuPackageId','revision','workerId','leaseId'].every(key => evidence[key] === job[key]) &&
+    // 这份证据记的是「当初是谁、用哪个租约做的前检」，是历史事实：workerId/leaseId 都在
+    // immutableFields 里、参与 preparationId 指纹，改一个字节 preparationId 就对不上（见上面 SOURCE_INVALID）。
+    // 只有**库存续写**这一档允许持有者与当初不同：续写会重新领取、铸出新租约
+    // （lease:d-inventory:* vs 准备时的 lease:de:*，前缀由构造决定，永不相等）。
+    // 在那一档仍拿历史租约去比当前租约，会让失败档结算整体抛错、事务回滚，失败反而落不了盘。
+    // 非续写档照旧逐项比对——parked 作业（leaseId 为 null）若被人删掉 platformContinuation 标记，
+    // 必须在这里被挡住。当前持有者另有两道独立断言盯着，闸不放松：
+    //   1) d-e-software-job-results.mjs:148 —— state.softwareJobRef 必须逐字段等于作业当前持有者；
+    //   2) settleSoftwareJobCore → issuedRequestTerminalTime —— 结算方的 workerId/leaseId
+    //      必须等于作业当前持有者，否则 SOFTWARE_JOB_LEASE_REJECTED。
+    const continuation = job.platformContinuation?.schemaVersion === 'd-platform-continuation-v1';
+    const holderKeys = continuation ? [] : ['workerId', 'leaseId'];
+    requireValue(job.jobType === 'd_production_execution' &&
+      ['jobId','candidateId','skuPackageId','revision',...holderKeys].every(key => evidence[key] === job[key]) &&
       evidence.sourceAuthorizationFingerprint === job.scopeBinding.authorizationFingerprint, 'JOB_CONFLICT');
   }
   if (evidence.status === 'in_flight') requireValue(evidence.completedAt === null && evidence.result === null && evidence.continuationBlocked === false, 'STATE_INVALID');

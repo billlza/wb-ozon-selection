@@ -68,7 +68,7 @@ test('real transport checks the remaining-write authorization after credentials 
   credentialAlias:request.credentialAlias,clientId:'123456',keychainService:'synthetic.ozon',keychainAccount:'synthetic.account'}],
   readSecret:async()=>{order.push('credential');return 'synthetic-key';},fetchImpl:async(url)=>{
    const endpoint=new URL(url).pathname;calls.push(endpoint);order.push('fetch');
-   if(endpoint==='/v3/product/info/list')return new Response(JSON.stringify({items:[{offer_id:request.merchantSku,id:910001,statuses:{status:capabilities.inventoryWrite.prerequisitePolicy.priceSent.acceptedValues[0]},errors:[]}]}));
+   if(endpoint==='/v3/product/info/list')return new Response(JSON.stringify({items:[{offer_id:request.merchantSku,id:910001,is_archived:false,is_autoarchived:false,statuses:{status:capabilities.inventoryWrite.prerequisitePolicy.priceSent.acceptedValues[0]},errors:[]}]}));
    if(endpoint==='/v2/product/info/stocks-by-warehouse/fbs')return new Response(JSON.stringify({has_next:false,products:[{offer_id:request.merchantSku,product_id:910001,sku:1910001,warehouse_id:Number(request.inventoryWrite.warehouseId),free_stock:100,present:103,reserved:3}]}));
    return new Response(JSON.stringify({result:[{offer_id:request.merchantSku,product_id:910001,warehouse_id:Number(request.inventoryWrite.warehouseId),updated:true,errors:[]}]}));
   }});

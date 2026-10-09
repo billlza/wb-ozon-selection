@@ -98,53 +98,236 @@
       "const": 0
     },
     "output": {
-      "type": "object",
-      "required": [
-        "status",
-        "locale",
-        "claimCoverage",
-        "unsupportedClaims",
-        "title",
-        "description",
-        "bulletPoints",
-        "searchKeywords"
-      ],
-      "properties": {
-        "status": {
-          "const": "draft_only"
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "status",
+            "locale",
+            "claimCoverage",
+            "unsupportedClaims",
+            "title",
+            "description",
+            "bulletPoints",
+            "searchKeywords"
+          ],
+          "properties": {
+            "status": {
+              "const": "draft_only"
+            },
+            "locale": {
+              "const": "ru-RU"
+            },
+            "claimCoverage": {
+              "const": "complete"
+            },
+            "unsupportedClaims": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "title": {
+              "$ref": "#/$defs/citedText"
+            },
+            "description": {
+              "$ref": "#/$defs/citedText"
+            },
+            "bulletPoints": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/citedText"
+              }
+            },
+            "searchKeywords": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/citedText"
+              }
+            }
+          },
+          "additionalProperties": false
         },
-        "locale": {
-          "const": "ru-RU"
+        {
+          "type": "object",
+          "required": [
+            "status",
+            "locale",
+            "claimCoverage",
+            "unsupportedClaims",
+            "title",
+            "description",
+            "bulletPoints",
+            "searchKeywords",
+            "russianAttributes"
+          ],
+          "properties": {
+            "status": {
+              "const": "draft_only"
+            },
+            "locale": {
+              "const": "ru-RU"
+            },
+            "claimCoverage": {
+              "const": "complete"
+            },
+            "unsupportedClaims": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "title": {
+              "$ref": "#/$defs/reviewText"
+            },
+            "description": {
+              "$ref": "#/$defs/reviewText"
+            },
+            "bulletPoints": {
+              "type": "array",
+              "minItems": 0,
+              "items": {
+                "$ref": "#/$defs/reviewText"
+              }
+            },
+            "searchKeywords": {
+              "type": "array",
+              "minItems": 0,
+              "items": {
+                "$ref": "#/$defs/reviewKeyword"
+              }
+            },
+            "russianAttributes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "factPath",
+                  "valueRu",
+                  "reviewZh"
+                ],
+                "properties": {
+                  "factPath": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "valueRu": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reviewZh": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          },
+          "additionalProperties": false
         },
-        "claimCoverage": {
-          "const": "complete"
-        },
-        "unsupportedClaims": {
-          "type": "array",
-          "maxItems": 0
-        },
-        "title": {
-          "$ref": "#/$defs/citedText"
-        },
-        "description": {
-          "$ref": "#/$defs/citedText"
-        },
-        "bulletPoints": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/$defs/citedText"
-          }
-        },
-        "searchKeywords": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/$defs/citedText"
-          }
+        {
+          "type": "object",
+          "required": [
+            "status",
+            "locale",
+            "claimCoverage",
+            "unsupportedClaims",
+            "title",
+            "description",
+            "bulletPoints",
+            "searchKeywords",
+            "russianAttributes",
+            "categoryPathReview"
+          ],
+          "properties": {
+            "status": {
+              "const": "draft_only"
+            },
+            "locale": {
+              "const": "ru-RU"
+            },
+            "claimCoverage": {
+              "const": "complete"
+            },
+            "unsupportedClaims": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "title": {
+              "$ref": "#/$defs/reviewText"
+            },
+            "description": {
+              "$ref": "#/$defs/reviewText"
+            },
+            "bulletPoints": {
+              "type": "array",
+              "minItems": 0,
+              "items": {
+                "$ref": "#/$defs/reviewText"
+              }
+            },
+            "searchKeywords": {
+              "type": "array",
+              "minItems": 0,
+              "items": {
+                "$ref": "#/$defs/reviewKeyword"
+              }
+            },
+            "russianAttributes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "factPath",
+                  "valueRu",
+                  "reviewZh"
+                ],
+                "properties": {
+                  "factPath": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "valueRu": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reviewZh": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            },
+            "categoryPathReview": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "factPath",
+                  "valueRu",
+                  "reviewZh"
+                ],
+                "properties": {
+                  "factPath": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "valueRu": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reviewZh": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          },
+          "additionalProperties": false
         }
-      },
-      "additionalProperties": false
+      ]
     },
     "softwareJobId": {
       "$ref": "#/$defs/opaqueEvidenceRef"
@@ -297,6 +480,128 @@
           }
         }
       }
+    },
+    "reviewText": {
+      "type": "object",
+      "required": [
+        "text",
+        "factRefs",
+        "keywordRefs",
+        "assertions",
+        "reviewZh"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "factRefs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "keywordRefs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "assertions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "factPath",
+              "value"
+            ],
+            "properties": {
+              "factPath": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {}
+            },
+            "additionalProperties": false
+          }
+        },
+        "reviewZh": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 6000
+        }
+      },
+      "additionalProperties": false
+    },
+    "reviewKeyword": {
+      "type": "object",
+      "required": [
+        "text",
+        "factRefs",
+        "keywordRefs",
+        "assertions",
+        "reviewZh",
+        "keywordRole"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "factRefs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "keywordRefs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "assertions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "factPath",
+              "value"
+            ],
+            "properties": {
+              "factPath": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {}
+            },
+            "additionalProperties": false
+          }
+        },
+        "reviewZh": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 6000
+        },
+        "keywordRole": {
+          "enum": [
+            "core_product",
+            "attribute",
+            "long_tail"
+          ]
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

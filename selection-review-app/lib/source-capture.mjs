@@ -2,6 +2,9 @@ import { captureNumber, captureText, cleanCaptureAttributes, canonicalSupplierIm
 
 const MAX_SKUS = 200;
 const MAX_ATTRIBUTES = 120;
+// Same ceiling the collector already applies to the page's own kilogram field; a heavier number is a parsing
+// accident, not a parcel this shop ships.
+const MAX_SKU_WEIGHT_KG = 1000;
 
 function text(value, limit = 500) {
   return captureText(value, limit);
@@ -23,6 +26,23 @@ function positive(value) {
 
 function cleanObject(value, limit = MAX_ATTRIBUTES) {
   return cleanCaptureAttributes(value, limit);
+}
+
+/**
+ * The shipping weight the page declares for one SKU, in kilograms.
+ *
+ * It is the only per-SKU fact that decides that SKU's own freight, so it must survive the DTO boundary instead of
+ * being rebuilt later from the owner's single packed weight. The discipline is the one price and stock already use:
+ * a closed shape ({value, unit:"kg"} or a bare number of kilograms), a positive value inside a sane range, and a
+ * named source. Anything else is dropped — a page that ships no usable weight is a page with one fewer fact, never
+ * a rejected capture, because the other 23 specifications on the same page are still true.
+ */
+function skuWeightKg(value) {
+  const raw = value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (text(value.unit, 20).toLowerCase() === "kg" ? value.value : null)
+    : value;
+  const number = positive(raw);
+  return number !== null && number <= MAX_SKU_WEIGHT_KG ? number : null;
 }
 
 export function extract1688OfferId(value) {
@@ -204,6 +224,8 @@ export function sourceCaptureFailureMessage(code, detail = "") {
     extension_version_mismatch: "1688采集扩展版本与当前作业要求不一致",
     extension_job_unclaimed: "1688采集作业等待插件领取超时",
     service_restarted_before_claim: "评审台服务重启前，1688采集作业尚未被插件领取",
+    // Capture sessions live only in the process that created them, so a restart ends any job that had not answered yet.
+    capture_job_lost: "服务已重启，这次采集不会再有结果，请重新申请采集",
     unknown_outcome: "插件领取作业后中断，当前采集结果未知",
     request_origin_invalid: "1688采集请求不是来自本机评审台",
     request_payload_missing: "1688采集请求缺少必要字段",
@@ -254,6 +276,9 @@ export function sanitize1688Evidence(input, expectedOfferId) {
     const stockSource = text(item?.stockSource, 180);
     if (priceCny !== null && !priceSource) throw new Error("invalid_capture");
     if (stock !== null && !stockSource) throw new Error("invalid_capture");
+    const weightKg = skuWeightKg(item?.weight);
+    const weightSource = text(item?.weightSource, 180);
+    const weightKept = weightKg !== null && weightSource !== "";
     return {
       sourceSkuId,
       propPath: text(item?.propPath, 600) || null,
@@ -263,6 +288,8 @@ export function sanitize1688Evidence(input, expectedOfferId) {
       stock,
       stockSource: stock === null ? null : stockSource,
       inStock: typeof item?.inStock === "boolean" ? item.inStock : stock === null ? null : stock > 0,
+      weight: weightKept ? { value: weightKg, unit: "kg" } : null,
+      weightSource: weightKept ? weightSource : null,
       imageUrl: canonicalSupplierImageUrl(item?.imageUrl)
     };
   });
@@ -396,16 +423,21 @@ export function sourceCaptureForDispatch(sourceCapture) {
     observedAt: text(sourceCapture.observedAt, 80),
     collectionMethod: text(sourceCapture.collectionMethod, 120),
     matchTerms: Array.isArray(sourceCapture.matchTerms) ? sourceCapture.matchTerms.map((item) => text(item, 100)).slice(0, 20) : [],
-    selectedSkus: selectedSkus.map((sku) => ({
-      sourceSkuId: text(sku.sourceSkuId, 160),
-      propPath: text(sku.propPath, 600) || null,
-      attributes: cleanObject(sku.attributes, 30),
-      priceCny: positive(sku.priceCny),
-      priceSource: text(sku.priceSource, 180) || null,
-      stock: nonNegative(sku.stock),
-      stockSource: text(sku.stockSource, 180) || null,
-      inStock: sku.inStock ?? null
-    })),
+    selectedSkus: selectedSkus.map((sku) => {
+      const weightKg = skuWeightKg(sku.weight);
+      return {
+        sourceSkuId: text(sku.sourceSkuId, 160),
+        propPath: text(sku.propPath, 600) || null,
+        attributes: cleanObject(sku.attributes, 30),
+        priceCny: positive(sku.priceCny),
+        priceSource: text(sku.priceSource, 180) || null,
+        stock: nonNegative(sku.stock),
+        stockSource: text(sku.stockSource, 180) || null,
+        inStock: sku.inStock ?? null,
+        weight: weightKg === null ? null : { value: weightKg, unit: "kg" },
+        weightSource: weightKg === null ? null : text(sku.weightSource, 180) || null
+      };
+    }),
     missingDirectPriceSkuIds: selectedSkus.filter((sku) => !(sku.priceCny > 0)).map((sku) => text(sku.sourceSkuId, 160)),
     priceRanges: Array.isArray(sourceCapture.priceRanges) ? sourceCapture.priceRanges.slice(0, 50) : [],
     supplierAttributes: cleanObject(sourceCapture.supplierAttributes)

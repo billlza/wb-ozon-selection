@@ -12,8 +12,7 @@ import { createStoreIsolatedOzonSellerApiDEAdapter } from "../../lib/ozon-seller
 
 const clone = value => structuredClone(value);
 
-export async function savedDProductionJobFixture() {
-  const owner = productionOwnerDecisionFixture();
+export async function savedDProductionJobFixture({owner = productionOwnerDecisionFixture()} = {}) {
   await commitSingleOwnerProductionAuthorization(owner.args);
   const repository = owner.repository;
   const candidate = (await repository.readSnapshot()).candidates[0], sku = candidate.lifecycleV11.skuPackage;

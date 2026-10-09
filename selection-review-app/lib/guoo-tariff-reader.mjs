@@ -189,12 +189,6 @@ function numeric(value, label) {
   return number;
 }
 
-function lowerWeightLimit(value) {
-  const match = String(value || "").match(/(\d+(?:\.\d+)?)\s*-/);
-  if (!match) throw new Error("GUOO_TARIFF_WEIGHT_LIMIT_MISSING: 当前线路没有明确重量下限");
-  return Number(match[1]);
-}
-
 const MAX_ARCHIVE_ENTRY_BYTES = 16 * 1024 * 1024;
 
 // The workbook is a plain ZIP container. Reading it with Node's own zlib keeps the reader identical on every host
@@ -383,16 +377,16 @@ async function resolveSelectedSizeReference({ filePath, parts, worksheet, reques
   return sources;
 }
 
-function projectTariffFields(selected, sizeSources, { legacyCalculationRules }) {
+function projectTariffFields(selected, sizeSources) {
   const chargeableWeightRule = chargeableWeightRuleForProductType(selected.productType);
   const sizeLimitSources = sizeSources.get(selected.rowNumber) ?? [];
   return {
     chargeableWeightRule,
     perKgRmb: numeric(selected.row[11], "每公斤资费"),
     perParcelRmb: numeric(selected.row[12], "每票资费"),
-    // The adopted main-sheet quote has no minimum billing weight or rounding.
-    // The historical single-row API remains a separate, unverified projection.
-    minimumChargeableWeightKg: legacyCalculationRules ? lowerWeightLimit(selected.weightLimit) : 0,
+    // The adopted main-sheet quote has no minimum billing weight and no rounding: the
+    // cell-checked E-column expression bills F5 (the chargeable weight) straight at K/L.
+    minimumChargeableWeightKg: 0,
     weightRoundingRule: "none",
     weightRoundingKg: null,
     ...(chargeableWeightRule === "max_actual_volume" ? { volumeDivisorCm3PerKg: 12000 } : {}),
@@ -443,6 +437,10 @@ function catalogUnresolvedRules(worksheet, selected) {
   return rules;
 }
 
+// Stamped on a reading only after assertMainSheetQuoteFormula has checked that row's own
+// quote cells. An evidence pack without it was projected by a reader that never checked them.
+export const GUOO_MAIN_QUOTE_CALCULATION_RULE_STATUS = "main_sheet_quote_verified";
+
 // This is a finite contract for the adopted 8/19 main sheet, not a formula evaluator.
 const MAIN_WEIGHT_FORMULA = 'IF(OR(AND(D5>=2.001,D5<=30,D7>1501,D7<7000,SUM(H5:H7)<=310,H5<=150,H6<=80,H7<=80),AND(D5>=5.001,D5<=30,D7>7001,D7<250000,SUM(H5:H7)<=310,H5<=150,H6<=80,H7<=80)),MAX(H5*H6*H7/12000,D5),D5)';
 function assertMainSheetQuoteFormula(worksheet, rowNumber) {
@@ -481,7 +479,7 @@ export async function readGuooTariffCatalog({ filePath = DEFAULT_GUOO_TARIFF_PAT
     if (selected.rowNumber !== rowNumber) throw new Error("GUOO_TARIFF_ROUTE_AMBIGUOUS: 线路与表行不一致");
     const calculation = assertMainSheetQuoteFormula(worksheet, rowNumber);
     rows.push({ rowNumber, route: deliveryMethods[0].replace(/ PUDO$/u, ""), deliveryMethods, routeText: row[3],
-      evidenceData: projectTariffFields(selected, sizeSources, { legacyCalculationRules: false }),
+      evidenceData: projectTariffFields(selected, sizeSources),
       sourceRefs: { ...catalogRowSources(worksheet, rowNumber, sizeSources), calculation }, unresolvedRules: catalogUnresolvedRules(worksheet, selected),
       feeCoverage: { status: "complete", additionalPerParcelRmb: 0, evidenceRef: `${sourceRef}:realfbs-main-quote:E${rowNumber}` } });
   }
@@ -497,6 +495,11 @@ export async function readGuooTariffCatalog({ filePath = DEFAULT_GUOO_TARIFF_PAT
     observedAt: now().toISOString(), sourceNotes, rows, unresolvedRules: [] };
 }
 
+/**
+ * One adopted main-sheet row, for the B evidence pack. "Current" means exactly this: the
+ * file named by the scope's rule version, that row's quote cells checked, K/L read literally.
+ * It is not a claim that GUOO has published no newer table, nor a total procurement cost.
+ */
 export async function readCurrentGuooTariff({
   scope,
   filePath = DEFAULT_GUOO_TARIFF_PATH,
@@ -515,17 +518,20 @@ export async function readCurrentGuooTariff({
   const worksheet = await worksheetData(filePath, parts, SHEET_NAME, execFileImpl);
   const sizeSources = await resolveSelectedSizeReference({ filePath, parts, worksheet, requestedRoute: scope?.route, execFileImpl });
   const selected = selectGuooTariffRow(worksheet.rows, scope?.route);
+  // Same cell-by-cell check the catalog runs: this row's own quote expression must be the
+  // adopted five-input contract billing F5 at K/L. A row whose formula reads otherwise is
+  // refused here rather than projected into a formal profit number.
+  assertMainSheetQuoteFormula(worksheet, selected.rowNumber);
   const checkedAt = now().toISOString();
   const fileHash = createHash("sha256").update(bytes).digest("hex");
   return {
-    current: false,
-    reasonCode: "guoo_settlement_rules_unverified",
+    current: true,
     scope: { route: String(scope.route).trim(), ruleVersion: String(scope.ruleVersion).trim() },
     sourceType: "guoo_current_tariff_xlsx",
     sourceRef: `guoo-xlsx:${path.basename(filePath)}:sha256:${fileHash}:row-${selected.rowNumber}`,
     checkedAt,
     expiresAt: new Date(Date.parse(checkedAt) + 7 * 24 * 60 * 60 * 1000).toISOString(),
-    evidenceData: { ...projectTariffFields(selected, sizeSources, { legacyCalculationRules: true }),
-      calculationRuleStatus: "legacy_unverified" },
+    evidenceData: { ...projectTariffFields(selected, sizeSources),
+      calculationRuleStatus: GUOO_MAIN_QUOTE_CALCULATION_RULE_STATUS },
   };
 }

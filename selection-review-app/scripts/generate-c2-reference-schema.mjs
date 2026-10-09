@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PRODUCTION_EXECUTION_BINDING_SCHEMA } from "../lib/production-authorization-preparation.mjs";
-import { C2_MEDIA_CONTENT_RULES_SCHEMA } from "../lib/c2-media-content-rules.mjs";
 
 import {
   C2_ASSET_LIFECYCLE_REFERENCE_SCHEMA_DEFS,
@@ -30,9 +29,15 @@ function clone(value) {
 
 function generateProductionAuthorizationReferenceSchema(schema) {
   const generated = clone(schema);
-  if (schema.$id === "production-authorization-v1.2") generated.$defs.executionBinding = clone(PRODUCTION_EXECUTION_BINDING_SCHEMA);
+  if (!["production-authorization-v1.1", "production-authorization-v1.2"].includes(schema.$id)) {
+    throw new Error(`UNSUPPORTED_PRODUCTION_AUTHORIZATION_SCHEMA:${schema.$id}`);
+  }
+  const currentVersion = schema.$id === "production-authorization-v1.2";
+  if (currentVersion) generated.$defs.executionBinding = clone(PRODUCTION_EXECUTION_BINDING_SCHEMA);
   const trie = {};
-  for (const segments of C1_OPAQUE_AUTHORIZATION_ID_SEMANTICS.runtimePaths.filter(segments => segments[0] === "lockedScope")) {
+  const paths = C1_OPAQUE_AUTHORIZATION_ID_SEMANTICS.runtimePaths.filter(segments =>
+    segments[0] === "lockedScope" && (currentVersion || !segments.includes("siblingFormalReuseRecord")));
+  for (const segments of paths) {
     let node = trie;
     for (const segment of segments) node = node[segment] ??= {};
   }
@@ -180,9 +185,6 @@ export function generateC2ReferenceSchema(schema) {
     generated.$defs.referenceValue.oneOf[0] = { $ref: "#/$defs/c2SecretCheckedContractString" };
   }
   applyExplicitSemanticContracts(generated, semanticKey);
-  const media = semanticKey === "c2AssetLifecycle" ? generated.properties.mediaRequirements : generated.$defs.detailedMediaRequirements;
-  if (!media?.properties) throw new Error("C2_MEDIA_SCHEMA_PATH_MISSING");
-  media.properties.contentRules = clone(C2_MEDIA_CONTENT_RULES_SCHEMA);
   return generated;
 }
 

@@ -247,20 +247,34 @@ test("已保存记录格式错误不能被作为有效重放或成功读取", as
   }
 });
 
-test("E逐项复用完整G1合同，缺版本、额外字段及跨SKU全部零读取", async () => {
+test("E逐项复用完整G1合同，缺版本、额外字段及跨SKU全部零读取", async t => {
   const f = await fixture();
-  for (const alter of [
-    identity => { delete identity.schemaVersion; },
-    identity => { identity.extra = "not_allowed"; },
-    identity => { identity.supplierSkuId = "another-sku"; },
-    identity => { identity.storeRef.mappingVersion = "another-version"; }
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "e-invalid-g1-"));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  for (const [alter, expectedError, rejectAtStorageRead] of [
+    [identity => { delete identity.schemaVersion; }, error =>
+      error.message.startsWith("RUNTIME_IDENTITY_INVALID:") &&
+      error.cause?.message.startsWith("PRODUCTION_AUTHORIZATION_SECRET_REJECTED:"), true],
+    [identity => { identity.extra = "not_allowed"; }, /C1_G1_IDENTITY_REQUIRED|E_READBACK_SOURCE_SCOPE_CONFLICT/],
+    [identity => { identity.supplierSkuId = "another-sku"; }, /C1_G1_IDENTITY_REQUIRED|E_READBACK_SOURCE_SCOPE_CONFLICT/],
+    [identity => { identity.storeRef.mappingVersion = "another-version"; }, /C1_G1_IDENTITY_REQUIRED|E_READBACK_SOURCE_SCOPE_CONFLICT/]
   ]) {
     const document = structuredClone(f.document);
     alter(document.candidates[0].lifecycleV11.skuPackage.g1Identity);
     let reads = 0;
-    const repository = createMemoryBusinessStateRepository(document);
-    await assert.rejects(() => runtime(repository, async () => { reads += 1; return f.observation; }).run({ actor, input: f.input }), /C1_G1_IDENTITY_REQUIRED|E_READBACK_SOURCE_SCOPE_CONFLICT/);
-    assert.deepEqual(await repository.readSnapshot(), document);
+    let writes = 0;
+    const filePath = path.join(directory, "state.json");
+    const originalBytes = JSON.stringify(document);
+    if (rejectAtStorageRead) await fs.writeFile(filePath, originalBytes);
+    const repository = rejectAtStorageRead
+      ? createJsonBusinessStateRepository({ filePath, atomicWriter: async () => { writes += 1; throw new Error("unexpected E test write"); } })
+      : createMemoryBusinessStateRepository(document);
+    await assert.rejects(() => runtime(repository, async () => { reads += 1; return f.observation; }).run({ actor, input: f.input }), expectedError);
+    if (rejectAtStorageRead) {
+      await assert.rejects(() => repository.readSnapshot(), expectedError);
+      assert.equal(await fs.readFile(filePath, "utf8"), originalBytes);
+      assert.equal(writes, 0);
+    } else assert.deepEqual(await repository.readSnapshot(), document);
     assert.equal(reads, 0);
   }
 });

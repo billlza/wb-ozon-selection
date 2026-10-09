@@ -1,26 +1,29 @@
+import { createJsonBusinessStateRepository } from "../lib/business-state-repository.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { stopApiProcess } from "./helpers/api-process-lifecycle.mjs";
+import { stopApiProcess, allocatedTestPorts } from "./helpers/api-process-lifecycle.mjs";
 import { createFormalC1C2Fixture } from "./fixtures/formal-c1-flow-fixture.mjs";
 import { validateProductionAuthorizationPreparation } from "../lib/production-authorization-preparation.mjs";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const port = Number(process.env.SELECTION_REVIEW_TEST_PORT || 28000 + process.pid % 10000);
+const { api: port } = allocatedTestPorts();
 const base = `http://127.0.0.1:${port}`;
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAIAAAA2iEnWAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVQImWP4z8DwnwGMERQARNAF+661WskAAAAASUVORK5CYII=", "base64");
 const DETAIL_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAIAAAA2iEnWAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAD0lEQVQImWNgYPgPRsgUADjcBfvDPgM9AAAAAElFTkSuQmCC", "base64");
 const headers = { Origin: base, "Sec-Fetch-Site": "same-origin" };
 
-async function startServer(t, dataFile, uploadDirectory) {
+async function startServer(t, dataFile, uploadDirectory, ownerIdentityFile = null) {
   const stderr = [];
   const child = spawn(process.execPath, [path.join(appDir, "server.mjs"), "--api-only"], {
     cwd: appDir, env: { ...process.env, SELECTION_REVIEW_API_PORT: String(port), SELECTION_REVIEW_DATA_FILE: dataFile,
       SELECTION_REVIEW_C2_UPLOAD_DIR: uploadDirectory, SELECTION_REVIEW_ALLOWED_ORIGINS: base,
+      ...(ownerIdentityFile ? { SELECTION_REVIEW_IDENTITY_PROVIDER: 'local_owner_password',
+        SELECTION_REVIEW_OWNER_IDENTITY_FILE: ownerIdentityFile, SELECTION_REVIEW_PUBLIC_ORIGIN: base } : {}),
       SELECTION_REVIEW_CODEX_DISPATCH: "off", SELECTION_REVIEW_AUTO_DELIVER: "off" }, stdio: ["ignore", "ignore", "pipe"]
   });
   child.stderr.on("data", chunk => stderr.push(String(chunk)));
@@ -71,8 +74,8 @@ test("C2 upload and saved order survive restart, then local confirmation produce
   assert.deepEqual(Buffer.from(await preview.arrayBuffer()), PNG);
   const detail = await upload(2, "detail.png", DETAIL_PNG);
   const selection = [
-    { assetId: uploaded.asset.assetId, slotId: "main", order: 1 },
-    { assetId: detail.asset.assetId, slotId: "detail", order: 2 }
+    { assetId: uploaded.asset.assetId, order: 1 },
+    { assetId: detail.asset.assetId, order: 2 }
   ];
   const save = await fetch(`${base}${route}/upload-draft`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" },
     body: JSON.stringify({ dataRevision: 12, draftRevision: 4, selection }) });
@@ -87,7 +90,7 @@ test("C2 upload and saved order survive restart, then local confirmation produce
       approvedAssetIds: selection.map(asset => asset.assetId), approvedMainImageAssetId: uploaded.asset.assetId, approvedVideoDisposition: "excludes_video" }) });
   const result = await confirm.json();
   assert.equal(confirm.status, 200, JSON.stringify(result));
-  const after = JSON.parse(await readFile(dataFile, "utf8"));
+  const after = await createJsonBusinessStateRepository({ filePath: dataFile }).readSnapshot();
   const final = after.candidates[0].lifecycleV11.skuPackage;
   assert.equal(final.c2FinalAssets.status, "completed");
   assert.equal(final.productionAuthorization, null);
@@ -121,4 +124,75 @@ test("C2 upload and saved order survive restart, then local confirmation produce
   assert.equal(first.stderr.join(""), "");
   assert.equal(second.stderr.join(""), "");
   assert.equal(third.stderr.join(""), "");
+});
+
+test("sibling gallery link keeps independent registrations and rejects another color main image", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "c2-sibling-link-api-"));
+  await mkdir(path.join(directory, 'business'));
+  await mkdir(path.join(directory, 'private'), { mode: 0o700 });
+  const dataFile = path.join(directory, 'business', "state.json");
+  function child(id, supplierSkuId, color) {
+    const formal = createFormalC1C2Fixture({ candidateId: id, supplierSkuId, variantKey: `颜色:${color}` });
+    return { ...formal.candidate, dataRevision: 12, source: "user", workflowStatus: "listing_preparation",
+      comments: [], history: [], processing: { state: "idle" },
+      sourceCapture: { skuChoices: [{ sourceSkuId: supplierSkuId, attributes: { 颜色: color } }] },
+      siblingSourceV1: { parentCandidateId: "candidate:synthetic-family", supplierSkuId },
+      lifecycleV11: { ...formal.candidate.lifecycleV11, status: "awaiting_final_assets" } };
+  }
+  const source = child("candidate:synthetic-black", "synthetic-black", "黑色");
+  const target = child("candidate:synthetic-green", "synthetic-green", "绿色");
+  const parent = { id: 'candidate:synthetic-family', dataRevision: 7,
+    sourceCapture: { selectedSkuIds: ['synthetic-first', 'synthetic-black', 'synthetic-green'] },
+    lifecycleV11: { skuPackage: { supplierSkuId: 'synthetic-first', technicalStatus: 'unknown_outcome' } } };
+  await writeFile(dataFile, JSON.stringify({ meta: { version: 2, automationStarted: false }, rules: {},
+    candidates: [parent, source, target], dispatches: [], evidencePacks: [] }));
+  await startServer(t, dataFile, path.join(directory, "uploads"), path.join(directory, 'private', 'owner.json'));
+  const setup = await fetch(`${base}/api/owner-access/setup`, { method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: 'synthetic gallery link password' }) });
+  assert.equal(setup.status, 200, await setup.clone().text());
+  const cookie = setup.headers.get('set-cookie')?.split(';')[0];
+  assert.ok(cookie);
+  async function upload(id, revision, fileName, bytes) {
+    const response = await fetch(`${base}/api/candidates/${id}/lifecycle/c2/final-assets/upload?dataRevision=12&draftRevision=${revision}&fileName=${fileName}`,
+      { method: "POST", headers: { ...headers, "Content-Type": "image/png", Cookie: cookie }, body: bytes });
+    const body = await response.json();
+    assert.equal(response.status, 201, JSON.stringify(body));
+    return body;
+  }
+  const blackMain = await upload(source.id, 0, "black.png", PNG);
+  const greenMain = await upload(target.id, 0, "green.png", DETAIL_PNG);
+  async function link(sourceAssetId, draftRevision) {
+    const response = await fetch(`${base}/api/candidates/${target.id}/lifecycle/c2/final-assets/link`, {
+      method: "POST", headers: { ...headers, "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ dataRevision: 12, draftRevision, role: "gallery_image",
+        sourceCandidateId: source.id, sourceDataRevision: 12, sourceAssetId }) });
+    return { response, body: await response.json() };
+  }
+  const rejected = await link(blackMain.asset.assetId, greenMain.draft.revision);
+  assert.equal(rejected.response.status, 409);
+  assert.equal(rejected.body.code, "c2_link_main_color_mismatch");
+  const detail = await upload(source.id, blackMain.draft.revision, "shared.png", DETAIL_PNG);
+  const linked = await link(detail.asset.assetId, greenMain.draft.revision);
+  assert.equal(linked.response.status, 201, JSON.stringify(linked.body));
+  assert.notEqual(linked.body.asset.assetId, detail.asset.assetId);
+  assert.equal(linked.body.asset.sha256, detail.asset.sha256);
+  assert.equal(linked.body.draft.selection[0].assetId, greenMain.asset.assetId);
+  assert.equal(linked.body.draft.selection[1].assetId, linked.body.asset.assetId);
+  const saved = await createJsonBusinessStateRepository({ filePath: dataFile }).readSnapshot();
+  assert.equal(saved.candidates[2].lifecycleV11.c2UploadDraft.uploads[1].assetRef, linked.body.asset.assetRef);
+  assert.equal(saved.candidates[1].lifecycleV11.c2UploadDraft.uploads.length, 2);
+  const beforeFinal = await readFile(dataFile, 'utf8');
+  const c2Decision = await fetch(`${base}/api/candidates/${parent.id}/sibling-batch-c2-confirm`, {
+    method: 'POST', headers: { ...headers, 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ parentCandidateId: parent.id, parentRevision: parent.dataRevision, confirmed: true,
+      members: [
+        { candidateId: source.id, candidateRevision: 12, draftRevision: detail.draft.revision,
+          approvedAssetIds: detail.draft.selection.map(item => item.assetId) },
+        { candidateId: target.id, candidateRevision: 12, draftRevision: linked.body.draft.revision,
+          approvedAssetIds: linked.body.draft.selection.map(item => item.assetId) }
+      ] }) });
+  assert.equal(c2Decision.status, 409, await c2Decision.clone().text());
+  assert.match(JSON.stringify(await c2Decision.json()), /C1_|C2_|SIBLING_/);
+  assert.equal(await readFile(dataFile, 'utf8'), beforeFinal);
 });

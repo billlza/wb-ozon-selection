@@ -34,9 +34,9 @@ async function fixture(t) {
     skuPackage: source.skuPackage,
     c2UploadDraft: { schemaVersion: "c2-upload-draft-v1", candidateId: source.candidateId,
       skuPackageId: source.skuPackage.skuPackageId, sourceC1Fingerprint: authorization.sourceC1Fingerprint,
-      requirementsFingerprint: authorization.lockedScope.mediaRequirementsFingerprint,
+      schemaEvidenceRef: authorization.lockedScope.schemaEvidenceRef,
       uploads: registrations.map(asset => ({ ...asset, status: "ready" })),
-      selection: registrations.map(({ assetId, slotId, order }) => ({ assetId, slotId, order })) }
+      selection: registrations.map(({ assetId, order }) => ({ assetId, order })) }
   } };
   return { store, candidate, assets: authorization.lockedScope.finalUploads };
 }
@@ -136,7 +136,6 @@ test("wrong candidate, changed registrations and opaque path forgery fail before
   await assert.rejects(provider.resolveLocalAsset(f.assets[0]), /最终素材登记/);
   for (const mutate of [
     value => { value.id = "foreign"; },
-    value => { value.lifecycleV11.c2UploadDraft.sourceC1Fingerprint = "changed"; },
     value => { value.lifecycleV11.c2UploadDraft.uploads[0].sha256 = "changed"; },
     value => { value.lifecycleV11.c2UploadDraft.uploads[0].status = "failed"; }
   ]) {
@@ -145,6 +144,24 @@ test("wrong candidate, changed registrations and opaque path forgery fail before
   }
   await assert.rejects(provider.resolveLocalAsset({ ...f.assets[0], assetRef: "/etc/passwd" }, { candidate: f.candidate }), /最终素材/);
   assert.deepEqual(dependency.events, []);
+});
+
+// 2026-09-23 主人决定：C1 改版后复用原素材确认是正常路径（审计事件 c2_final_uploads_confirmation_reused），
+// 上传登记仍指向旧 C1，不再据此拒绝；文件身份由 sha256、上传状态、商品身份三条继续兜底。
+test("C1改版后复用的素材确认仍可读出，文件身份三条兜底不受影响", async t => {
+  const f = await fixture(t), dependency = syntheticDependencies(f), provider = createAliyunOssRuntimeProvider(dependency.options);
+  const reused = structuredClone(f.candidate);
+  reused.lifecycleV11.c2UploadDraft.sourceC1Fingerprint = "changed-after-c1-revision";
+  const resolved = await provider.resolveLocalAsset(f.assets[0], { candidate: reused });
+  assert.equal(Buffer.isBuffer(resolved.body), true);
+  for (const mutate of [
+    value => { value.lifecycleV11.c2UploadDraft.uploads[0].sha256 = "changed"; },
+    value => { value.lifecycleV11.c2UploadDraft.uploads[0].status = "failed"; },
+    value => { value.id = "foreign"; }
+  ]) {
+    const candidate = structuredClone(reused); mutate(candidate);
+    await assert.rejects(provider.resolveLocalAsset(f.assets[0], { candidate }), /最终素材|未完成的文件/);
+  }
 });
 
 test("missing gate, local-file errors and missing secrets produce no writes and preserve error identity", async t => {

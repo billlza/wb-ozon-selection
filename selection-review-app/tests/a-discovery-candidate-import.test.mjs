@@ -88,3 +88,22 @@ test('unknown local import errors including null persist failure before original
     assert.deepEqual(f.counts(),{secrets:3,requests:3});
   }
 });
+
+test('owner-selected products import from a completed batch with the same duplicate rules and one record per product',async()=>{
+  const f=await completed({products:[market(3100000001),market(3100000002),market(3100000003)]});
+  const first=await f.usecase.importBatch(f.input); assert.equal(first.marketProductId,'3100000001');
+  const ownerId=(await f.repository.readSnapshot()).runtime.aDiscoveryBatches[f.input.batchId].ownerUserId;
+  const pick=id=>f.usecase.importSelectedProduct({...f.input,marketProductId:id,selectedByUserId:ownerId});
+  const second=await pick('3100000002'); assert.equal(second.status,'imported'); assert.match(second.candidateId,/^candidate:/);
+  const saved=await f.repository.readSnapshot(); assert.equal(saved.candidates.length,2);
+  assert.equal(saved.candidates[0].aDiscoveryEvidenceV1.marketProductId,'3100000002'); assert.equal(saved.candidates[0].source,'software');
+  assert.match(saved.candidates[0].history.at(-1).detail,/主人从已批准发现批次/);
+  for(const key of ['purchasePriceRmb','domesticShippingRmb','packagingCostRmb','expectedPriceRub','sellerRevenueCny']) assert.equal(saved.candidates[0][key],null,key);
+  const bytes=JSON.stringify(saved); assert.deepEqual(await pick('3100000002'),second); assert.equal(JSON.stringify(await f.repository.readSnapshot()),bytes);
+  const duplicate=await pick('3100000001'); assert.equal(duplicate.status,'all_duplicates'); assert.equal(duplicate.candidateId,null);
+  await assert.rejects(pick('3100000009'),error=>error.code==='IMPORT_INPUT_INVALID');
+  await assert.rejects(f.usecase.importSelectedProduct({...f.input,marketProductId:'3100000003',selectedByUserId:'user:someone-else'}),error=>error.code==='OWNER_CONFLICT');
+  const after=await f.repository.readSnapshot();
+  assert.deepEqual(Object.keys(after.runtime.aDiscoveryCandidateSelections).map(key=>key.split(':').at(-1)).sort(),['3100000001','3100000002']);
+  assert.equal(after.candidates.length,2);
+});

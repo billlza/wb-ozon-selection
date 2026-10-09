@@ -1,22 +1,27 @@
 import { createSoftwareExecutionRuntime, openExceptionCase } from './software-execution-state.mjs';
 import { createDPlatformObservationRuntime } from './d-platform-observation-use-case.mjs';
-import { assertDPlatformObservationAdmission, assertDRemainingInventorySend } from './d-platform-observation-contract.mjs';
+import { assertDPlatformObservationAdmission, assertDRemainingInventorySend, readOwnerStockDecision } from './d-platform-observation-contract.mjs';
 import { randomUUID } from 'node:crypto';
+import { assertCurrentDExecutionContext } from './platform-write-preflight.mjs';
+import { decodeAttempt } from './d-execution-request-codec.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { normalizeDEServiceBindings } from './runtime-configuration.mjs';
 import { assertBusinessStateRepositoryBoundary } from './business-state-repository.mjs';
 import { assertWorkerRegistryBoundary } from './worker-registry.mjs';
 import { createActorContext } from './runtime-identity.mjs';
 import { createRepositoryBackedSoftwareJobStore } from './software-job-repository.mjs';
-import { findSoftwareJobInDocument, softwareJobsInDocument, bindSoftwareJobAdmissionDecision, markSoftwareJobExternalRequestStarted } from './software-job-contract.mjs';
+import { findSoftwareJobInDocument, softwareJobsInDocument, bindSoftwareJobAdmissionDecision, markSoftwareJobExternalRequestStarted,
+  settleDProductionPreSendStopInDocument } from './software-job-contract.mjs';
 import { assertDProductionJobReference, settleDPreparationJobInDocument } from './d-e-software-job-handoff.mjs';
+import { resolveRegisteredC2FinalAsset } from './c2-upload-draft.mjs';
 import { assertDEJobAdmissionDecision } from './d-e-software-job-admission.mjs';
 import { createProductionPlan } from './production-plan.mjs';
 import { runPlatformWritePreflight, assertCurrentProductionExecutionBinding } from './platform-write-preflight.mjs';
-import { productionJobPrewriteCode } from './production-execution-failure.mjs';
+import { productionJobPrewriteCode, AliyunOssLocalPreparationError } from './production-execution-failure.mjs';
 import { prepareSingleSkuDExecution } from './d-e-software-closure.mjs';
 import { runPersistedDExecution, runPersistedDRemainingInventory } from './d-e-software-integration.mjs';
 import { createStoreIsolatedOzonSellerApiDEAdapter } from './ozon-seller-api-de-adapter.mjs';
+import { createDBatchImportSoftwareService } from './d-batch-import-software-service.mjs';
 import { createSystemEReadbackSoftwareRuntime } from './e-readback-software-use-case.mjs';
 import { createDAssetTransportSoftwareRuntime } from './d-asset-transport-software-use-case.mjs';
 import { createDProductionPreparationIntent, completeDProductionPreparation, markDProductionPreparationUnknown,
@@ -60,12 +65,14 @@ function replaceJob(document, job) {
 }
 /** Construct routing and registered capabilities only. No candidate/job read, credential resolution or provider invocation. */
 export function createDEProductionRuntimeServices({ repository, runtimeMode, serverClock, workerRegistry,
-  deServiceBindings=[],productionBindings=[],requestJson=null,inspectPlatform=null,loadAdapterCapabilities=null,
+  deServiceBindings=[],productionBindings=[],requestJson=null,inspectPlatform=null,loadAdapterCapabilities=null,loadBatchMemberEvidence=null,loadBatchEReadEvidence=null,
   upload=null,resolveLocalAsset=null,loadCurrentProductionBinding=null,preflightRequestMode='external_read',loadDPlatformObservationPolicy=null,verifyInventoryPrerequisiteSource=null,
   observationPumpIntervalMs=null,onObservationError=null,eReadbackPumpIntervalMs=null,onReadbackError=null }={}) {
   assertBusinessStateRepositoryBoundary(repository); assertWorkerRegistryBoundary(workerRegistry);
-  if(typeof serverClock!=='function' || [requestJson,inspectPlatform,loadAdapterCapabilities,upload,resolveLocalAsset,loadCurrentProductionBinding,loadDPlatformObservationPolicy,verifyInventoryPrerequisiteSource,onObservationError,onReadbackError]
+  if(typeof serverClock!=='function' || [requestJson,inspectPlatform,loadAdapterCapabilities,loadBatchMemberEvidence,loadBatchEReadEvidence,upload,resolveLocalAsset,loadCurrentProductionBinding,loadDPlatformObservationPolicy,verifyInventoryPrerequisiteSource,onObservationError,onReadbackError]
     .some(value=>value!==null&&typeof value!=='function')) throw new Error('DE_RUNTIME_DEPENDENCY_INVALID');
+  if((loadBatchMemberEvidence===null)!==(loadBatchEReadEvidence===null))
+    throw new Error('DE_RUNTIME_BATCH_EVIDENCE_DEPENDENCY_INCOMPLETE');
   if(!['external_read','persisted_evidence_only'].includes(preflightRequestMode)) throw new Error('DE_RUNTIME_PREFLIGHT_REQUEST_MODE_INVALID');
   if(eReadbackPumpIntervalMs!==null && (!Number.isSafeInteger(eReadbackPumpIntervalMs)||eReadbackPumpIntervalMs<1000||eReadbackPumpIntervalMs>2147483647)) throw new Error('DE_RUNTIME_E_PUMP_INTERVAL_INVALID');
   const bindings=normalizeDEServiceBindings(deServiceBindings,productionBindings), services=new Map();
@@ -79,6 +86,55 @@ export function createDEProductionRuntimeServices({ repository, runtimeMode, ser
     if(binding && typeof binding.then==='function') throw new TypeError('DE_RUNTIME_CURRENT_BINDING_MUST_BE_SYNCHRONOUS');
     return binding;
   }
+  const batchImportService = requestJson !== null && loadBatchMemberEvidence !== null && loadBatchEReadEvidence !== null
+    ? createDBatchImportSoftwareService({ repository, runtimeMode, workerRegistry, serverClock, services,
+      loadCurrentProductionBinding: production, loadBatchMemberEvidence, loadBatchEReadEvidence,
+      loadBatchObservationPolicy: ({candidate,productionBinding}) => loadDPlatformObservationPolicy?.({candidate,
+        job:{skuPackageId:candidate.lifecycleV11.skuPackage.skuPackageId,
+          scopeBinding:{productionBinding:{bindingId:productionBinding.bindingId,
+            configurationVersion:productionBinding.configurationVersion}}}}) ?? null,
+      requestJson }) : null;
+  const localWorkerHeartbeatIntervalMs=workerRegistry.persistenceClass==='local_development_ephemeral'
+    ? Math.floor(workerRegistry.heartbeatTtlMs/3) : null;
+  if(batchImportService!==null && observationPumpIntervalMs!==null &&
+    localWorkerHeartbeatIntervalMs!==null &&
+    (!Number.isSafeInteger(localWorkerHeartbeatIntervalMs)||localWorkerHeartbeatIntervalMs<250))
+    throw new Error('DE_RUNTIME_LOCAL_WORKER_HEARTBEAT_INTERVAL_INVALID');
+  let batchObservationPumpStarted=false,batchObservationTimer=null,batchObservationActive=null;
+  let localWorkerHeartbeatStarted=false,localWorkerHeartbeatTimer=null;
+  function scheduleLocalWorkerHeartbeat() {
+    if(!localWorkerHeartbeatStarted)return;
+    localWorkerHeartbeatTimer=setTimeout(()=>{
+      try{
+        for(const service of services.values()){
+          const eligible=workerRegistry.findEligible(['ozon-production-execution'])
+            .find(worker=>worker.workerId===service.worker.workerId);
+          if(!eligible || eligible.version!==service.worker.version ||
+            !isDeepStrictEqual(eligible.capabilities,service.worker.capabilities))
+            throw new Error('DE_RUNTIME_LOCAL_WORKER_HEARTBEAT_EXPIRED');
+          workerRegistry.heartbeat({workerId:eligible.workerId,version:eligible.version,
+            capabilities:eligible.capabilities,status:eligible.status});
+        }
+      }catch(error){
+        localWorkerHeartbeatStarted=false;
+        batchObservationPumpStarted=false;clearTimeout(batchObservationTimer);
+        onObservationError(error);
+        return;
+      }
+      scheduleLocalWorkerHeartbeat();
+    },localWorkerHeartbeatIntervalMs);
+  }
+  function scheduleBatchObservation() {
+    if(!batchObservationPumpStarted)return;
+    batchObservationTimer=setTimeout(()=>{
+      batchObservationActive=batchImportService.runDueBatchContinuations();
+      batchObservationActive.then(()=>{batchObservationActive=null;scheduleBatchObservation();},error=>{
+        batchObservationActive=null;
+        batchObservationPumpStarted=false;
+        onObservationError(error);
+      });
+    },observationPumpIntervalMs);
+  }
   function resolveBinding({candidate,job}) {
     const service=services.get(job.scopeBinding.productionBinding.bindingId);
     if(!service) throw new DERuntimeUnavailableError('SERVICE');
@@ -89,11 +145,36 @@ export function createDEProductionRuntimeServices({ repository, runtimeMode, ser
       platform:current.platform,storeRef:clone(current.storeRef),warehouseRef:current.warehouseRef,credentialAlias:current.credentialAlias,
       workerId:service.worker.workerId,workerVersion:service.worker.version,configurationEvidence:clone(current.verification)};
   }
+  function refreshActiveWorker(service, expectedVersion=service.worker.version) {
+    const current=workerRegistry.get(service.worker.workerId);
+    if(current?.status!=='online' || current.version!==expectedVersion || current.version!==service.worker.version ||
+      !isDeepStrictEqual(current.capabilities,service.worker.capabilities)) throw new Error('WORKER_REGISTRY_WORKER_NOT_CURRENT');
+    // A running checkpoint proves local liveness, never a renewed lease or permission to revive a changed worker.
+    workerRegistry.heartbeat({workerId:current.workerId,version:current.version,capabilities:current.capabilities,status:current.status});
+  }
+  function refreshJobWorker({document,jobId,workerId,leaseId,observedAt}) {
+    const job=findSoftwareJobInDocument(document,jobId);
+    if(!job || job.workerId!==workerId || job.leaseId!==leaseId || Date.parse(observedAt)>=Date.parse(job.leaseExpiresAt)) return;
+    const service=services.get(job.scopeBinding.productionBinding.bindingId);
+    if(!service || service.worker.workerId!==workerId) throw new Error('WORKER_REGISTRY_WORKER_NOT_CURRENT');
+    refreshActiveWorker(service,job.workerVersion);
+  }
   const activeReadbacks=new Map();
   const eExecutions=new Map(),eControllers=new Map();
   let ePumpStarted=false,ePumpTimer=null,ePumpActive=null,stopping=false;
   const historyReadback=createSystemEReadbackSoftwareRuntime({repository,runtimeMode,serverClock,readPlatform:null});
-  const jobStore=createRepositoryBackedSoftwareJobStore({businessStateRepository:repository,serverClock,workerRegistry,resolveDEExecutionBinding:resolveBinding});
+  const persistedJobStore=createRepositoryBackedSoftwareJobStore({businessStateRepository:repository,serverClock,workerRegistry,resolveDEExecutionBinding:resolveBinding});
+  // Keep liveness in the runtime; the repository still owns every source, authorization and lease check.
+  const jobStore=Object.freeze({...persistedJobStore,
+    assertDEExecutionInDocument(context) {
+      refreshJobWorker(context);
+      return persistedJobStore.assertDEExecutionInDocument(context);
+    },
+    assertDPlatformObservationExecutionInDocument(context) {
+      refreshJobWorker(context);
+      return persistedJobStore.assertDPlatformObservationExecutionInDocument(context);
+    }
+  });
   async function snapshot(input) {
     const document=await repository.readSnapshot(),candidate=candidateIn(document,input.candidateId),job=findSoftwareJobInDocument(document,input.jobId);
     if(!job) throw new Error('DE_RUNTIME_JOB_NOT_FOUND');
@@ -184,6 +265,37 @@ export function createDEProductionRuntimeServices({ repository, runtimeMode, ser
       return {changed:true,document,result:{proceed:evidence.status==='ready'&&!evidence.continuationBlocked&&!terminal(resulting),evidence,settled}};
     });
   }
+  /**
+   * 纯元数据检查，不读一个字节、不发一个请求：每张已授权素材在上传登记里都找得到、且逐字段对得上。
+   * 2026-09-23 背心就是死在这一条上——而它是在执行意图落盘之后才被发现的，那一下已经把候选
+   * revision 推过了授权那一版，这个授权就再也建不出新一轮。能在动候选之前查的，就必须在那之前查。
+   * 文件字节仍由上传器在建立凭据、发出第一个 put 之前逐张核验，这里不重复读 36 MB。
+   */
+  function assertFinalUploadsRegistered({candidate,finalUploads}) {
+    if(!candidate.lifecycleV11?.c2UploadDraft) return;
+    for(const asset of finalUploads){
+      if(!asset.assetRef.startsWith('local-asset:')) continue;
+      try { resolveRegisteredC2FinalAsset(candidate,asset); }
+      catch(error) {
+        if(error?.constructor===Error&&String(error.extra?.code).startsWith('c2_')) throw new AliyunOssLocalPreparationError('OSS_LOCAL_ASSET_INVALID');
+        throw error;
+      }
+    }
+  }
+  /**
+   * A guard that rejects after the claim used to leave the job held as `claimed` with no failureClass: no request had
+   * been sent, but nothing recorded the stop either, so the task could never be read as finished or continued again.
+   * The known technical failure is persisted here instead. This never retries, renews a lease or re-enqueues; it only
+   * refuses when the holder has already moved on, in which case the original error stays the visible result.
+   */
+  async function stopClaimedDBeforeSend(context,failureCode) {
+    return repository.transact(document=>{
+      const observedAt=serverClock();
+      const settled=settleDProductionPreSendStopInDocument(document,{jobId:context.jobId,workerId:context.workerId,
+        leaseId:context.leaseId,failureClass:`d-production-guard-rejected:${failureCode}`},observedAt);
+      return {changed:true,document,result:{status:settled.status,candidate:clone(candidateIn(document,settled.candidateId)),job:clone(settled)}};
+    });
+  }
   async function runE(input,known=null) {
     const active=eExecutions.get(input.jobId);
     if(active){
@@ -199,14 +311,22 @@ export function createDEProductionRuntimeServices({ repository, runtimeMode, ser
     const initial=known||await snapshot(input);
     if(terminal(initial.job)||initial.job.status!=='queued') return replay(initial,input);
     if(input.expectedRevision!==initial.candidate.dataRevision) throw new Error('DE_RUNTIME_REVISION_CONFLICT');
-    const service=available(initial.candidate,initial.job);workerRegistry.heartbeat({...service.worker,status:'online'});
+    const service=available(initial.candidate,initial.job);refreshActiveWorker(service);
     const leaseId=`lease:de:${randomUUID()}`,workerActor=actor(service);
     await jobStore.claim({jobId:input.jobId,worker:service.worker,leaseId,leaseDurationMs:service.binding.leaseDurationMs});
     const context={jobStore,jobId:input.jobId,workerId:service.worker.workerId,leaseId};
     const runtime=createSystemEReadbackSoftwareRuntime({repository,runtimeMode,serverClock,readPlatform:async(query,options)=>{
       const current=await snapshot(input);
       const capabilities=await loadAdapterCapabilities({candidate:clone(current.candidate),productionBinding:clone(production(current.candidate,service)),job:clone(current.job)});
-      return createStoreIsolatedOzonSellerApiDEAdapter({requestJson,adapterCapabilities:capabilities}).readbackSellerApi(query,
+      const guardedRead=async(request,options)=>{
+        const beforeRequestSend=()=>repository.transact(document=>{
+          jobStore.assertDEExecutionInDocument({document,...context,observedAt:serverClock()});
+          return {changed:false,result:null};
+        });
+        await beforeRequestSend();
+        return requestJson(request,{...options,beforeRequestSend});
+      };
+      return createStoreIsolatedOzonSellerApiDEAdapter({requestJson:guardedRead,adapterCapabilities:capabilities}).readbackSellerApi(query,
         {...options,signal:AbortSignal.any([options.signal,stopSignal])});
     }});
     activeReadbacks.set(input.jobId,runtime);
@@ -225,7 +345,7 @@ export function createDEProductionRuntimeServices({ repository, runtimeMode, ser
         !isDeepStrictEqual(candidate.lifecycleV11.skuPackage.productionAuthorization,state.productionPlan.sourceAuthorization) ||
         Date.parse(serverClock())>=Date.parse(state.platformContinuation.policy.expiresAt))
         return jobStore.rejectDRemainingInventory({jobId:sourceDJobId,observationJobId,failureClass:'context_changed'});
-    service=available(candidate,job);workerRegistry.heartbeat({...service.worker,status:'online'});
+    service=available(candidate,job);refreshActiveWorker(service);
     capabilities=await loadAdapterCapabilities({candidate:clone(candidate),job:clone(job),productionBinding:clone(production(candidate,service))});
     if(verifyInventoryPrerequisiteSource === null || !capabilities.inventoryWrite.prerequisitePolicy) return jobStore.rejectDRemainingInventory({jobId:sourceDJobId,observationJobId,failureClass:'inventory_policy_missing'});
     const initialProof=await verifyInventoryPrerequisiteSource({candidate:clone(candidate),job:clone(job),productionBinding:clone(production(candidate,service))});
@@ -234,6 +354,31 @@ export function createDEProductionRuntimeServices({ repository, runtimeMode, ser
     const verify=args=>initialProof.assertCurrent(args) === true &&
       isDeepStrictEqual(args.prerequisites.priceSentObservation.policy,capabilities.inventoryWrite.prerequisitePolicy) &&
       isDeepStrictEqual(args.prerequisites.inventoryPrerequisiteObservation.policy,capabilities.inventoryWrite.prerequisitePolicy);
+    // 三岔（主人 2026-09-24 决定：库存他自己填）：
+    //   回读值 === 授权锁定值 → 只登记，不发任何库存写请求，也不生成 productionRecord；
+    //   回读值 === 0          → 软件写入档，现行路径不变；
+    //   其他任何数            → 停下报主人，不覆盖、不重写。
+    const stock=readOwnerStockDecision({document,job,observationJobId,checkedAt:serverClock(),
+      verifyInventoryPrerequisiteSource:verify});
+    if(stock.decision==='register') {
+      return jobStore.registerOwnerWrittenInventory({jobId:sourceDJobId,observationJobId,
+        verifyInventoryPrerequisiteSource:verify,actorId:job.ownerUserId});
+    }
+    if(stock.decision==='mismatch') {
+      return jobStore.rejectDRemainingInventory({jobId:sourceDJobId,observationJobId,failureClass:'inventory_stock_mismatch'});
+    }
+    // 冻结的导入请求若已经无法按当前代码重建（背心就是：23171 标签格式在 r69 改过，
+    // 它那份是旧格式），软件写入必然在执行中途撞 D_EXECUTION_AUTHORIZATION_SCOPE_MISMATCH。
+    // 与其给主人留一条注定失败的路，不如在**发出任何请求之前**停下并说清楚。
+    // 新授权的品其冻结请求是按当前代码现建的，这里必然通过，正常写库存的路不受影响。
+    try {
+      assertCurrentDExecutionContext({request:decodeAttempt(state.attempt).request,
+        executionContext:{productionPlan:state.productionPlan,
+          currentProductionBinding:production(candidate,service),serverClock}});
+    } catch(error) {
+      if(!String(error?.message).startsWith('D_EXECUTION_AUTHORIZATION_SCOPE_MISMATCH')) throw error;
+      return jobStore.rejectDRemainingInventory({jobId:sourceDJobId,observationJobId,failureClass:'inventory_request_superseded'});
+    }
     await jobStore.claimDRemainingInventory({jobId:sourceDJobId,worker:service.worker,leaseId,
       leaseDurationMs:service.binding.leaseDurationMs,observationJobId,verifyInventoryPrerequisiteSource:verify});
     } catch(error) {
@@ -298,7 +443,7 @@ export function createDEProductionRuntimeServices({ repository, runtimeMode, ser
   }
   const observationRuntime=createDPlatformObservationRuntime({repository,jobStore,serverClock,pumpIntervalMs:observationPumpIntervalMs,
     onError:onObservationError,onPrerequisitesObserved:resumeInventory,resolveExecution:async({candidate,job})=>{
-      const service=available(candidate,job);workerRegistry.heartbeat({...service.worker,status:'online'});
+      const service=available(candidate,job);refreshActiveWorker(service);
       return {worker:service.worker,leaseDurationMs:service.binding.leaseDurationMs,createAdapter:async()=>{
         const capabilities=await loadAdapterCapabilities({candidate:clone(candidate),job:clone(job),productionBinding:clone(production(candidate,service))});
         return createStoreIsolatedOzonSellerApiDEAdapter({requestJson,adapterCapabilities:capabilities});
@@ -309,7 +454,7 @@ export function createDEProductionRuntimeServices({ repository, runtimeMode, ser
     ePumpActive=(async()=>{
       let rejection=null;
       for(const service of services.values()){
-        workerRegistry.heartbeat({...service.worker,status:'online'});
+        refreshActiveWorker(service);
         const {assignable:jobs,rejected}=await jobStore.listAssignableWithDiagnostics({worker:service.worker,jobType:'e_independent_readback',limit:1});
         if(rejected.length>0&&rejection===null)rejection=rejected[0];
         if(jobs.length===0)continue;
@@ -333,14 +478,26 @@ export function createDEProductionRuntimeServices({ repository, runtimeMode, ser
   return Object.freeze({
     start(){
       if(eReadbackPumpIntervalMs!==null && onReadbackError===null)throw new Error('DE_RUNTIME_E_PUMP_ERROR_HANDLER_REQUIRED');
+      if(batchImportService!==null && observationPumpIntervalMs!==null && onObservationError===null)
+        throw new Error('DE_RUNTIME_BATCH_OBSERVATION_ERROR_HANDLER_REQUIRED');
       stopping=false;
       if(observationPumpIntervalMs!==null)observationRuntime.start();
+      if(batchImportService!==null && observationPumpIntervalMs!==null && !batchObservationPumpStarted){
+        batchObservationPumpStarted=true;scheduleBatchObservation();
+      }
+      if(batchImportService!==null && observationPumpIntervalMs!==null &&
+        workerRegistry.persistenceClass==='local_development_ephemeral' && !localWorkerHeartbeatStarted){
+        localWorkerHeartbeatStarted=true;scheduleLocalWorkerHeartbeat();
+      }
       if(eReadbackPumpIntervalMs!==null&&!ePumpStarted){ePumpStarted=true;scheduleEReadback();}
     },
     async stop(){
       stopping=true;ePumpStarted=false;clearTimeout(ePumpTimer);
+      batchObservationPumpStarted=false;clearTimeout(batchObservationTimer);
+      localWorkerHeartbeatStarted=false;clearTimeout(localWorkerHeartbeatTimer);
       for(const controller of eControllers.values())controller.abort(new Error('DE_RUNTIME_STOPPED'));
       await observationRuntime.stop();
+      if(batchObservationActive)await batchObservationActive;
       await Promise.all([...eExecutions.values()].map(value=>value.execution));
       if(ePumpActive)await ePumpActive;
     },runDueObservations:observationRuntime.runDue,runDueEReadbacks,resumeInventory,
@@ -350,7 +507,28 @@ export function createDEProductionRuntimeServices({ repository, runtimeMode, ser
       return (active || historyReadback).view(candidate);
     },
     configurationView:Object.freeze(bindings.map(binding=>Object.freeze(clone(binding)))),
-    dependencyView:Object.freeze({transport:requestJson!==null,preflight:inspectPlatform!==null,capabilities:loadAdapterCapabilities!==null,assetTransport:upload!==null&&resolveLocalAsset!==null}),
+    dependencyView:Object.freeze({transport:requestJson!==null,preflight:inspectPlatform!==null,capabilities:loadAdapterCapabilities!==null,
+      assetTransport:upload!==null&&resolveLocalAsset!==null}),
+    async continueAuthorizedBatchImport(input) {
+      if(batchImportService===null) throw new DERuntimeUnavailableError('BATCH_IMPORT');
+      return batchImportService.runAuthorizedBatch(input);
+    },
+    async resumeAuthorizedBatchContinuations(input){
+      if(batchImportService===null)throw new DERuntimeUnavailableError('BATCH_IMPORT');
+      return batchImportService.resumeAuthorizedBatchContinuations(input);
+    },
+    async observeBatchImportChunk(input) {
+      if(batchImportService===null) throw new DERuntimeUnavailableError('BATCH_IMPORT');
+      return batchImportService.observeBatchChunk(input);
+    },
+    async runDueBatchImportObservations() {
+      if(batchImportService===null) throw new DERuntimeUnavailableError('BATCH_IMPORT');
+      return batchImportService.runDueBatchObservations();
+    },
+    async reclaimBatchImportLease(input) {
+      if(batchImportService===null) throw new DERuntimeUnavailableError('BATCH_IMPORT');
+      return batchImportService.reclaimBatchLease(input);
+    },
     async continueSavedCurrent(input) {
       inputShape(input);let current=await snapshot(input);
       if(current.job.jobType==='e_independent_readback') return runE(input,current);
@@ -360,16 +538,45 @@ export function createDEProductionRuntimeServices({ repository, runtimeMode, ser
       }
       if(current.job.status!=='queued') return replay(current,input);
       if(input.expectedRevision!==current.candidate.dataRevision) throw new Error('DE_RUNTIME_REVISION_CONFLICT');
-      const service=available(current.candidate,current.job);workerRegistry.heartbeat({...service.worker,status:'online'});
+      const service=available(current.candidate,current.job);refreshActiveWorker(service);
+      // 平台查询策略必须在「发导入之前」就查。2026-09-24 背心死在这一条上：策略在 r65 被设成
+      // 一个绝对时刻（09-23 14:00Z），导入在 09-24 02:14Z 才发出，而过期判定写在导入被接受之后
+      // （d-e-software-integration.mjs:651），于是平台已经收下商品、软件却自断后路，观察和库存全没做。
+      // 该砍的要在最早能判断的那一刻砍：这里是零副作用位置，还没传图、还没落执行意图。
+      const observationPolicyCheckedAt=serverClock();
+      const earlyObservationPolicy=loadDPlatformObservationPolicy===null?null
+        :await loadDPlatformObservationPolicy({candidate:clone(current.candidate),job:clone(current.job),checkedAt:observationPolicyCheckedAt});
+      // 光判「此刻没过期」不够：观察最长要跑 maxQueries × intervalMs（现配置 100 × 30 秒 = 50 分钟）。
+      // 策略若在这段窗口里到期，观察作业会在中途以 context_changed 停下——又是一次「发出去了没人管」。
+      // 所以要求剩余寿命覆盖整个观察窗口，再加一个租约时长的余量。
+      const observationWindowMs=earlyObservationPolicy===null?0
+        :earlyObservationPolicy.maxQueries*earlyObservationPolicy.intervalMs+(service.binding.leaseDurationMs??0);
+      const observationRemainingMs=earlyObservationPolicy===null?0
+        :Date.parse(earlyObservationPolicy.expiresAt)-Date.parse(observationPolicyCheckedAt);
+      const observationPolicyGap=earlyObservationPolicy===null?'observation_policy_missing'
+        :observationRemainingMs<=0?'observation_policy_expired'
+        :observationRemainingMs<observationWindowMs?'observation_policy_expiring_within_window':null;
+      if(observationPolicyGap!==null){
+        const held=await snapshot(input);
+        return {status:'observation_policy_unavailable',reason:observationPolicyGap,
+          policyExpiresAt:earlyObservationPolicy?.expiresAt??null,checkedAt:observationPolicyCheckedAt,
+          requiredWindowMs:observationWindowMs,remainingMs:Math.max(0,observationRemainingMs),
+          candidate:clone(held.candidate),job:clone(held.job),externalRequests:0,platformWrites:0};
+      }
       const leaseId=`lease:de:${randomUUID()}`,workerActor=actor(service);
       const claimed=await jobStore.claim({jobId:input.jobId,worker:service.worker,leaseId,leaseDurationMs:service.binding.leaseDurationMs});
       const context={jobStore,jobId:input.jobId,workerId:service.worker.workerId,leaseId};
+      try {
       current=await snapshot(input);
       // Read persisted protocol/account evidence before any public asset upload.
       let capabilities=await loadAdapterCapabilities({candidate:clone(current.candidate),productionBinding:clone(production(current.candidate,service)),job:clone(current.job)});
       let sku=current.candidate.lifecycleV11.skuPackage;
       const accountAndProtocolsReady=capabilities.gaps.every(gap=>gap.code==='asset_transport_not_verified');
       if(accountAndProtocolsReady&&sku.productionAuthorization.lockedScope.finalUploads.some(asset=>asset.assetRef.startsWith('local-asset:'))&&!sku.dAssetTransport){
+        // 先把「本地这几张图读不读得出、登记对不对得上」全部查完，再去落盘执行意图。
+        // 落盘那一下会把候选 revision 推到下一版，而 D 作用域钉死在授权那一版；一旦推过去，
+        // 这个授权就再也建不出新一轮了。本地能查的事就必须在那之前查，失败停在零副作用。
+        assertFinalUploadsRegistered({candidate:current.candidate,finalUploads:sku.productionAuthorization.lockedScope.finalUploads});
         const assets=createDAssetTransportSoftwareRuntime({repository,runtimeMode,serverClock,upload,resolveLocalAsset,loadCurrentProductionBinding:({candidate})=>production(candidate,service)});
         const result=await assets.run({actor:workerActor,input:{candidateId:input.candidateId,expectedCandidateRevision:current.candidate.dataRevision},softwareJobContext:context});
         if(result.assetTransportState.status!=='verified'||result.assetTransportState.continuationBlocked) return result;
@@ -384,6 +591,7 @@ export function createDEProductionRuntimeServices({ repository, runtimeMode, ser
         const stopped=await snapshot(input);
         return {status:stopped.job.status,candidate:clone(stopped.candidate),job:clone(stopped.job)};
       }
+      // 上面已在零副作用处确认策略存在且未过期；这里重新取一次当前值，仍按原样传给执行层。
       const platformObservationPolicy=loadDPlatformObservationPolicy === null ? null : await loadDPlatformObservationPolicy({candidate:clone(current.candidate),job:clone(current.job),checkedAt:serverClock()});
       const d=await runPersistedDExecution({repository,runtimeMode,platformObservationPolicy,serverClock,actor:workerActor,candidateId:input.candidateId,
         expectedCandidateRevision:current.candidate.dataRevision,productionPlan:plan,platformWritePreflight:preparation.evidence.result.platformWritePreflight,
@@ -395,6 +603,17 @@ export function createDEProductionRuntimeServices({ repository, runtimeMode, ser
         const e=await runE({candidateId:input.candidateId,jobId:eRef.jobId,expectedRevision:current.candidate.dataRevision});return {status:e.status,d,e};
       }
       return d;
+      } catch(error) {
+        // 本地素材准备失败同样是「证明一个请求都没发出去」的已知技术失败。
+        const failureCode=productionJobPrewriteCode(error) ??
+          (error instanceof AliyunOssLocalPreparationError ? error.code : null);
+        if(failureCode===null) throw error;
+        let stopped=null;
+        // Refusing to stop means the holder already moved past "claimed, nothing sent"; the original failure stands.
+        try { stopped=await stopClaimedDBeforeSend(context,failureCode); } catch { stopped=null; }
+        if(stopped===null) throw error;
+        return stopped;
+      }
     }
   });
 }

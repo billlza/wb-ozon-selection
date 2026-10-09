@@ -1,25 +1,31 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
-import { createLatestRead, createSelectionGuard, shouldContinuePolling, errorMessage, candidatePlatform } from "./formState.js";
+import { createPreparationSaveState } from './siblingPreparationState.js';
+import { createLatestRead, createSelectionGuard, openSavedCandidate, runMutation, shouldContinuePolling, errorMessage, candidatePlatform } from "./formState.js";
 import { validateCandidateCommentReceipt } from "./commentInput.js";
-import { requestSupplierCaptureStart } from "./captureStart.js";
+import { c2ReferenceFailureMessage } from "./c2UploadInput.js";
+import { OZON_PAGE_READ_CHANNEL, startQueuedSupplierCapture } from "./captureStart.js";
 import { firstInQueue, matchesQueue } from "./candidateViews";
 import AddCandidateModal from "./components/AddCandidateModal";
 import CandidateDetail, { CandidateReview } from "./components/CandidateDetail";
 import CandidateRail from "./components/CandidateRail";
 import DailyProgress from "./components/DailyProgress";
-import { PlusIcon } from "./components/Icons";
 import QueueTabs from "./components/QueueTabs";
 import OperatingRules from "./components/OperatingRules";
 import ProcessingBreakdown from "./components/ProcessingBreakdown";
-import RuntimeArchitectureStatus from "./components/RuntimeArchitectureStatus";
+import HeaderStatus from "./components/HeaderStatus.jsx";
 import LocalOwnerAccessPanel from "./components/LocalOwnerAccessPanel.jsx";
 import OzonAccountPreparationCard from './components/OzonAccountPreparationCard.jsx';
 import ProductDiscoveryCard from './components/ProductDiscoveryCard.jsx';
 import ProductDetailPreparationCard from './components/ProductDetailPreparationCard.jsx';
 import Phase2ASimulation from "./components/Phase2ASimulation";
-import UserInspector from "./components/UserInspector";
+const UserInspector = lazy(() => import("./components/UserInspector.jsx"));
 import ThreeStoreMap from "./components/ThreeStoreMap";
+import SelectionDesk from "./components/SelectionDesk.jsx";
+import PipelineBoard from "./components/PipelineBoard.jsx";
+import OwnerInbox from "./components/OwnerInbox.jsx";
+const ProductPage = lazy(() => import("./components/ProductPage.jsx"));
+import { DESK_STORES, deskCounts, discoveredTitleZh, shortProductTitle, storeLabel } from "./selectionDeskView.js";
 import {
   EXTENSION_STATUS_PING,
   EXTENSION_STATUS_RESPONSE,
@@ -29,7 +35,23 @@ import {
 } from "./extensionStatus";
 
 const INITIAL_QUEUE = "codex_processing";
+/** The owner's own pages plus the maintenance list; every older page stays reachable under 维护. */
+const DESK_VIEWS = ["desk", "board", "inbox", "maint"];
+/** Views that read the saved query results, so the read keeps running while the owner is on any of them. */
+const DISCOVERY_VIEWS = ["discovery", "desk", "product"];
+/** Views whose product links open one product page. */
+const CANDIDATE_LINK_VIEWS = ["discovery", "desk", "board", "inbox", "product"];
+const MAINTENANCE_PAGES = [
+  { view: "review", label: "今日选品评审" },
+  { view: "discovery", label: "软件找商品" },
+  { view: "accounts", label: "账户准备" },
+  { view: "map", label: "全店能力地图" },
+  { view: "phase2a", label: "第2A模拟验收" }
+];
+const VIEW_TITLES = { desk: "选品台", board: "进行中", inbox: "需要你处理", maint: "维护", product: "商品",
+  map: "全店能力地图", phase2a: "第2A模拟验收", accounts: "账户准备", discovery: "软件找商品", review: "今日选品评审" };
 export default function App() {
+  const [preparationSaveState] = useState(createPreparationSaveState);
   const [state, setState] = useState({
     candidates: [],
     meta: null,
@@ -46,10 +68,16 @@ export default function App() {
   const [addOpen, setAddOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState(null);
+  const [batchExecution, setBatchExecution] = useState(null);
+  const [batchExecutionError, setBatchExecutionError] = useState(null);
+  const batchReadEpoch = useRef(0);
   const [pollEpoch, setPollEpoch] = useState(0);
   const readFailed = useRef(false);
   const selectionGuard = useRef(createSelectionGuard());
-  const [view, setView] = useState("review");
+  // The owner lands on 选品台; the older pages keep their behaviour and stay reachable under 维护.
+  const [view, setView] = useState("desk");
+  const [deskStore, setDeskStore] = useState("miska");
+  const [skippedProducts, setSkippedProducts] = useState([]);
   const [threeStoreMap, setThreeStoreMap] = useState(null);
   const [accountPreparationView,setAccountPreparationView]=useState(null);
   const [accountPreparationError,setAccountPreparationError]=useState(null);
@@ -57,8 +85,21 @@ export default function App() {
   const accountReads=useRef(createLatestRead());
   const accountOwner=state.runtimeArchitecture?.currentUser?.authenticated===true&&state.runtimeArchitecture.currentUser.roles.includes('owner');
   const accountOwnerId=accountOwner?state.runtimeArchitecture.currentUser.userId:null;
+  useEffect(() => {
+    if (view !== 'product' || !accountOwnerId || !selectedId) return undefined;
+    let cancelled = false;
+    const epoch = ++batchReadEpoch.current;
+    api.getSiblingBatchExecution(selectedId).then(result => {
+      if (!cancelled && batchReadEpoch.current === epoch) {
+        setBatchExecution({ parentId: selectedId, view: result.executionView });
+        setBatchExecutionError(null);
+      }
+    }).catch(error => { if (!cancelled && batchReadEpoch.current === epoch) setBatchExecutionError(errorMessage(error)); });
+    return () => { cancelled = true; };
+  }, [view, accountOwnerId, selectedId]);
   const accountContext=useRef(null);
-  accountContext.current={ownerId:accountOwnerId,view};
+  accountContext.current={ownerId:accountOwnerId,view,store:deskStore};
+  useEffect(()=>{selectionGuard.current.changed();},[accountOwnerId,view,deskStore]);
   useEffect(()=>{
     setAccountPreparationView(null);setAccountPreparationError(null);
     if(view!=='accounts'||!accountOwner)return undefined;
@@ -79,7 +120,7 @@ export default function App() {
   const discoveryReads=useRef(createLatestRead());
   useEffect(()=>{
     setDiscoveryView(null);setDiscoveryError(null);
-    if(view!=='discovery'||!accountOwner)return undefined;
+    if(!DISCOVERY_VIEWS.includes(view)||!accountOwner)return undefined;
     const controller=new AbortController();let timer;
     async function read(){
       try{
@@ -92,19 +133,156 @@ export default function App() {
     read();
     return ()=>{controller.abort();window.clearTimeout(timer);discoveryReads.current.cancel();};
   },[view,accountOwnerId,discoveryRefresh]);
-  async function runProductDiscovery(action,payload){
+  /**
+   * Every discovery write goes through here and never through the read guard: the guard drops its result whenever a
+   * refresh or a view switch happens mid-flight, which is how a confirmed round reached the server and was reported to
+   * the owner as "没有创建成功" (2026-09-11). The server's answer is always returned; only publishing it is conditional.
+   */
+  async function mutateProductDiscovery(action,payload){
     const ownerId=accountOwnerId;
-    const result=await discoveryReads.current.run(()=>action(payload),next=>{
-      if(accountContext.current.ownerId===ownerId&&accountContext.current.view==='discovery')setDiscoveryView(next);
+    const current=()=>accountContext.current.ownerId===ownerId&&DISCOVERY_VIEWS.includes(accountContext.current.view);
+    return runMutation(()=>action(payload),{reads:discoveryReads.current,isCurrent:current,publish(next){
+      setDiscoveryView(next);setDiscoveryRefresh(value=>value+1);
+    }});
+  }
+  /**
+   * The 找货 step of one product. Opening it derives the market snapshot from the already-saved query receipt and
+   * recomputes the estimate on the server; the page itself starts no work and reads no platform.
+   */
+  const [productDraftView,setProductDraftView]=useState(null);
+  const [productDraftError,setProductDraftError]=useState(null);
+  const [productDraftRefresh,setProductDraftRefresh]=useState(0);
+  const productDraftReads=useRef(createLatestRead());
+  /**
+   * The step data follows the saved record. When the poll sees a newer revision for the product on screen — the
+   * capture the owner was waiting for just came back with its specifications — the step is read again, instead of
+   * leaving the page saying it has nothing to show while the server already holds the answer.
+   */
+  const productRevision=view==='product'
+    ? state.candidates.find(item=>item.id===selectedId)?.dataRevision??null
+    : null;
+  // Switching products clears the previous product's draft; a refresh of the same product keeps what is on screen.
+  useEffect(()=>{setProductDraftView(null);},[selectedId]);
+  useEffect(()=>{
+    setProductDraftError(null);
+    if(view!=='product'||!accountOwner||!selectedId)return undefined;
+    const controller=new AbortController();
+    productDraftReads.current.run(signal=>api.getSupplierDraft(selectedId,signal),setProductDraftView,{signal:controller.signal})
+      .catch(error=>{if(!controller.signal.aborted)setProductDraftError(errorMessage(error));});
+    return ()=>{controller.abort();productDraftReads.current.cancel();};
+  },[view,accountOwnerId,selectedId,productDraftRefresh,productRevision]);
+  async function runProductStep(action,payload){
+    const ownerId=accountOwnerId,candidateId=selectedId;
+    const result=await productDraftReads.current.run(()=>action(candidateId,payload),next=>{
+      if(accountContext.current.ownerId===ownerId&&accountContext.current.view==='product'&&next?.supplierDraftV1!==undefined){
+        setProductDraftView(next);
+      }
     },{protect:true});
-    if(accountContext.current.ownerId===ownerId&&accountContext.current.view==='discovery')setDiscoveryRefresh(value=>value+1);
+    await load(true);
+    setProductDraftRefresh(value=>value+1);
     return result;
+  }
+  /**
+   * 申请插件采集 on the product page. Two things separate it from runProductStep: the write never passes through the
+   * read guard (a cancelled read would hide the server's real answer — the same class of error r13 fixed), and the
+   * queued receipt is followed by the page→content-script start signal. The extension background only keeps a
+   * heartbeat and never polls for jobs, so without that signal the job can only sit until it expires, which is exactly
+   * what the owner saw four times on 2026-09-11. The returned sentence is what the page shows in its own notice slot.
+   */
+  async function requestProductCapture(payload){
+    const ownerId=accountOwnerId,candidateId=selectedId;
+    const current=()=>accountContext.current.ownerId===ownerId&&accountContext.current.view==='product';
+    try{
+      const result=await runMutation(()=>api.confirmRealAStage(candidateId,payload),{
+        reads:productDraftReads.current,isCurrent:current,
+        publish(next){if(next?.supplierDraftV1!==undefined)setProductDraftView(next);}
+      });
+      const start=await startQueuedSupplierCapture(result);
+      if(start)return start.message;
+      return result?.status==="supplier_capture_job_queued"
+        ? "这件商品已经有一个还在等待的采集作业，这次没有重新创建；等它结束后再申请，软件不会自动重试"
+        : "已提交A阶段确认，这次没有创建采集作业；请看上面的采集状态";
+    // Whatever happened — accepted, refused by the extension, or refused by the server — the page then shows the state
+    // the server actually holds, so a rejection is never read off a stale card.
+    }finally{await load(true);setProductDraftRefresh(value=>value+1);}
+  }
+  /**
+   * 这次采集没有结果，我确认并重新申请. Two explicit steps, in this order and never merged: the review route records the
+   * owner's own acknowledgement that no result arrived (it writes no capture evidence and moves no business state), and
+   * only then does the existing request chain run again. The second step must carry the revision the review actually
+   * produced — the review advances dataRevision, so the payload built from the page's candidate is already stale. If
+   * either step fails the owner is told which one, because "已核实但没能重新申请" and "根本没核实" need different actions.
+   */
+  async function reviewCaptureAndRequest({review,capture}){
+    const candidateId=selectedId;
+    let reviewed;
+    try{reviewed=await api.reviewSourceCapture(candidateId,review);}
+    catch(cause){await load(true);setProductDraftRefresh(value=>value+1);throw new Error(`没能记下你的确认，这次也没有重新申请采集：${errorMessage(cause)}`);}
+    try{return await requestProductCapture({...capture,dataRevision:reviewed.candidate.dataRevision,sourceDataRevision:reviewed.candidate.dataRevision});}
+    catch(cause){throw new Error(`已记下你的确认（这条记录不再挡路），但这次重新申请采集没有成功：${errorMessage(cause)}`);}
+  }
+  /**
+   * 重新采集 — read the same 1688 page again. It is the same two moves as 申请插件采集, for the same reasons: the write
+   * stays out of the read guard so the server's real answer cannot be cancelled into null, and the queued receipt is
+   * followed by the one start signal in captureStart.js, because the extension background never polls for jobs. Only
+   * the request differs: this one goes to the recapture route, which is the single place that re-queues a capture whose
+   * specifications are already waiting on the owner.
+   */
+  async function recaptureProductSource(payload){
+    const ownerId=accountOwnerId,candidateId=selectedId;
+    const current=()=>accountContext.current.ownerId===ownerId&&accountContext.current.view==='product';
+    try{
+      const result=await runMutation(()=>api.recaptureSourceCapture(candidateId,payload),{
+        reads:productDraftReads.current,isCurrent:current,
+        publish(next){if(next?.supplierDraftV1!==undefined)setProductDraftView(next);}
+      });
+      const start=await startQueuedSupplierCapture(result);
+      if(start)return start.message;
+      return "这件商品已经有一次采集还在等插件，这次没有重新开始；等它结束后再试，软件不会自动重试";
+    }finally{await load(true);setProductDraftRefresh(value=>value+1);}
+  }
+  /**
+   * 读一次这个 Ozon 商品页 —— 算利润卡在类目上时唯一的出路。
+   *
+   * 和 申请插件采集 / 重新采集 是同样的两步，理由也一样：写操作留在读取守卫之外（被取消的读会把服务端真正的回答
+   * 抹成 null），拿到排队回执之后必须发一条开始信号，因为插件后台只维持心跳、从不主动轮询作业。只有目标不同，
+   * 所以走的是 captureStart.js 里同一个 helper，只把消息类型换成 Ozon 那一条，没有第二份实现。
+   */
+  async function readOzonProductPage(payload){
+    const ownerId=accountOwnerId,candidateId=selectedId;
+    const current=()=>accountContext.current.ownerId===ownerId&&accountContext.current.view==='product';
+    try{
+      const result=await runMutation(()=>api.startOzonSalesCapture(candidateId,payload),{
+        reads:productDraftReads.current,isCurrent:current,
+        publish(next){if(next?.supplierDraftV1!==undefined)setProductDraftView(next);}
+      });
+      const start=await startQueuedSupplierCapture(result,{channel:OZON_PAGE_READ_CHANNEL});
+      if(start)return start.message;
+      return "这件商品已经有一次读页面还在等插件，这次没有重新开始；等它结束后再试，软件不会自动重试";
+    }finally{await load(true);setProductDraftRefresh(value=>value+1);}
+  }
+  /**
+   * 算利润 的确认。它走的是既有的 A 阶段确认那条路（成功后服务端自己接着算 B），所以这里只做三件事：把写操作放在读取
+   * 守卫之外——被取消的读会把服务端真正的回答抹成 null，那正是 r13 修掉的那一类错误——把服务端的回执原样交回页面，让
+   * 页面照它实际保存成什么样说话，然后无论成败都按服务端实际保存的状态重读一次。服务端拒绝时把它自己那句话原样抛回
+   * 页面，不改写、不概括。
+   */
+  async function confirmProductProfitStep(payload){
+    const ownerId=accountOwnerId,candidateId=selectedId;
+    const current=()=>accountContext.current.ownerId===ownerId&&accountContext.current.view==='product';
+    try{
+      return await runMutation(()=>api.confirmRealAStage(candidateId,payload),{
+        reads:productDraftReads.current,isCurrent:current,
+        publish(next){if(next?.supplierDraftV1!==undefined)setProductDraftView(next);}
+      });
+    }finally{await load(true);setProductDraftRefresh(value=>value+1);}
   }
   const [extensionStatus, setExtensionStatus] = useState(() => extensionConnectionStatus({
     cachedVersion: readCachedExtensionVersion()
   }));
   const effectiveExtensionStatus = useMemo(() => {
-    if (["authentication_unverified", "background_unavailable", "reload_required"].includes(extensionStatus.code)) {
+    // The page bridge answered for this exact tab, so its verdict wins; only an unanswered ping falls back to the heartbeat.
+    if (["connected", "background_unavailable", "reload_required"].includes(extensionStatus.code)) {
       return extensionStatus;
     }
     return extensionConnectionStatus({
@@ -153,15 +331,15 @@ export default function App() {
   const currentView = useRef({ queue, sourceFilter });
   currentView.current = { queue, sourceFilter };
 
-  const load = useCallback(async (quiet = false, { protect = false, signal } = {}) => {
+  const load = useCallback(async (quiet = false, { protect = false, joinProtected = false, confirmOwnerPermissions = false, signal } = {}) => {
     try {
       const next = await latestRead.current.run(api.getState, (value) => {
         readFailed.current = false;
-        if (protect) ownerPermissionsKnown.current = true;
+        if (confirmOwnerPermissions) ownerPermissionsKnown.current = true;
         setState((current) => ({ ...value, seerfarRuntime: current.seerfarRuntime,
           runtimeArchitecture: value.runtimeArchitecture && !ownerPermissionsKnown.current
             ? { ...value.runtimeArchitecture, currentUser: null } : value.runtimeArchitecture }));
-      }, { protect, signal });
+      }, { protect, joinProtected, signal });
       if (!next || signal?.aborted) return null;
       const { queue, sourceFilter } = currentView.current;
       setSelectedId((currentId) => {
@@ -174,20 +352,22 @@ export default function App() {
     } catch (error) {
       if (signal?.aborted) return null;
       readFailed.current = true;
-      setNotice({ type: "error", message: `读取共享数据失败，轮询已暂停；点击“刷新数据”恢复：${error.message}` });
+      // 「刷新数据」已经收进「维护」，所以这句话必须说清楚现在去哪儿点它。
+      setNotice({ type: "error", message: `读取共享数据失败，轮询已暂停；到「维护」里点“刷新数据”恢复：${error.message}` });
       if (!quiet) setLoading(false);
       return null;
     }
   }, []);
 
   const clearOwnerPermissions = useCallback(() => {
+    selectionGuard.current.changed();
     ownerPermissionsKnown.current = false;
     latestRead.current.cancel();
     setState(current => ({ ...current, runtimeArchitecture: current.runtimeArchitecture ? { ...current.runtimeArchitecture, currentUser: null } : null }));
   }, []);
   const refreshOwnerPermissions = useCallback(async (access, { signal } = {}) => {
     clearOwnerPermissions();
-    const next = await load(true, { protect: true, signal });
+    const next = await load(true, { protect: true, confirmOwnerPermissions: true, signal });
     if (!next && !signal?.aborted) throw new Error("主人登录状态已读取，但当前业务权限回读失败；请重新读取登录状态。");
   }, [clearOwnerPermissions, load]);
 
@@ -296,14 +476,44 @@ export default function App() {
     setSelectedId(candidate.id);
   }
   async function openDiscoveredCandidate(candidateId){
-    const ownerId=accountOwnerId;
-    const next=await load(true);
-    if(accountContext.current.ownerId!==ownerId||accountContext.current.view!=='discovery')return;
-    const candidate=next?.candidates.find(value=>value.id===candidateId);
-    if(!candidate){setDiscoveryError('候选未能从当前保存记录回读，请刷新核对。');return;}
-    selectionGuard.current.changed();
-    currentView.current={queue:candidate.workflowStatus,sourceFilter:'all'};
-    setQueue(candidate.workflowStatus);setSourceFilter('all');setSelectedId(candidateId);setView('review');
+    if(!CANDIDATE_LINK_VIEWS.includes(accountContext.current.view))return;
+    return openSavedCandidate({candidateId,selectionGuard:selectionGuard.current,
+      readState:options=>load(true,options),getContext:()=>accountContext.current,
+      onMissing(){
+        setDiscoveryError('候选未能从当前保存记录回读，请刷新核对。');
+        setNotice({type:'error',message:'这件商品没能从当前保存记录里读出来，请刷新数据后再打开。'});
+      },
+      onOpen(candidate){
+        setDiscoveryError(null);setNotice(null);
+        currentView.current={queue:candidate.workflowStatus,sourceFilter:'all'};
+        // All product links use the saved record; the old A card stays under 维护.
+        setQueue(candidate.workflowStatus);setSourceFilter('all');setSelectedId(candidate.id);setView('product');
+      }
+    });
+  }
+  /**
+   * 淘汰 / 恢复 from any list. The write carries the revision the list rendered, so a stale page is refused with 409
+   * instead of dropping something the owner is no longer looking at; either way the page then reads what was saved.
+   */
+  async function eliminateCandidate({ id, dataRevision, reason }){
+    const revision=Number.isInteger(dataRevision)?dataRevision:state.candidates.find(item=>item.id===id)?.dataRevision;
+    try{
+      await api.eliminateCandidate(id,{dataRevision:revision,...(typeof reason==='string'&&reason!==''?{reason}:{})});
+      setNotice({type:'success',message:'已淘汰，可以在列表底部的「已淘汰」里恢复。'});
+    }catch(error){
+      setNotice({type:'error',message:errorMessage(error)});
+      throw error;
+    }finally{await load(true);}
+  }
+  async function restoreCandidate({ id, dataRevision }){
+    const revision=Number.isInteger(dataRevision)?dataRevision:state.candidates.find(item=>item.id===id)?.dataRevision;
+    try{
+      await api.restoreCandidate(id,{dataRevision:revision});
+      setNotice({type:'success',message:'已恢复，它回到了淘汰前的那一步；没有自动继续任何事。'});
+    }catch(error){
+      setNotice({type:'error',message:errorMessage(error)});
+      throw error;
+    }finally{await load(true);}
   }
 
   async function addCandidate(payload) {
@@ -328,6 +538,104 @@ export default function App() {
       }
       throw error;
     }
+  }
+
+  async function createSiblingSkuBatch(payload) {
+    const parentCandidateId = selectedId;
+    const result = await api.createSiblingSkuBatch(parentCandidateId, payload);
+    await load(true);
+    setNotice({ type: 'success', message: `已建立 ${result.createdCount} 个规格的内部 A 记录；正式利润、颜色、图片和生产授权仍待核验。` });
+    return result;
+  }
+
+  async function confirmSiblingBatchA(payload) {
+    const result = await api.confirmSiblingBatchA(payload.parentCandidateId, payload);
+    await load(true);
+    setNotice({ type: 'success', message: `整批 ${result.members.length} 个规格已各自完成 A、正式 B 利润和 C1 输入交接；C1 事实、素材和生产授权仍待核验。` });
+    return result;
+  }
+
+  async function readSiblingBatchColorDictionary(child) {
+    const candidateId = child.id;
+    const skuPackageId = child.lifecycleV11.skuPackage.skuPackageId;
+    try {
+      const authorized = await api.authorizeC1ColorDictionary(candidateId, {
+        candidateId, skuPackageId, attributeId: '10096', dataRevision: child.dataRevision });
+      const read = await api.continueC1ColorDictionary(candidateId, {
+        candidateId, skuPackageId, attributeId: '10096', authorizationId: authorized.result.authorizationId,
+        dataRevision: authorized.candidate.dataRevision });
+      await load(true);
+      setNotice({ type: read.result?.status === 'succeeded' ? 'success' : 'error',
+        message: read.result?.status === 'succeeded' ? '本批官方颜色候选已保存，请逐行核对。' : '官方颜色读取结果未确定，请先核对原请求。' });
+      return read;
+    } catch (error) { await load(true); throw error; }
+  }
+
+  async function confirmSiblingBatchC1(payload) {
+    const result = await api.confirmSiblingBatchC1(payload.parentCandidateId, payload);
+    await load(true);
+    setNotice({ type: 'success', message: `整批 ${result.members.length} 个规格的独立 C1 事实和共享草稿已确认，正在等待最终素材。` });
+    return result;
+  }
+
+  async function previewSiblingBatchC1(payload) {
+    return api.previewSiblingBatchC1(payload.parentCandidateId, payload);
+  }
+
+  async function authorizeSiblingProductionBatch(payload) {
+    const result = await api.authorizeProductionBatch(payload);
+    batchReadEpoch.current += 1;
+    setBatchExecution({ parentId: selectedId, view: result.executionView });
+    setBatchExecutionError(null);
+    await load(true);
+    setNotice({ type: 'success', message: `整批 ${result.batch.members.length} 个规格的生产授权已原子保存；请查看逐项导入、库存与 E 回读结果。` });
+    return result;
+  }
+
+  async function saveSiblingBatchStockDrafts(payload) {
+    const result = await api.saveSiblingBatchCommercialDrafts(payload);
+    await load(true);
+    setNotice({ type: 'success', message: `本批 ${result.members.length} 个规格的库存草稿已一起保存；请核对新版本再确认生产。` });
+    return result;
+  }
+
+  async function refreshSiblingBatchExecution(batchId) {
+    const view = await api.getProductionBatch(batchId);
+    batchReadEpoch.current += 1;
+    setBatchExecution({ parentId: selectedId, view });
+    setBatchExecutionError(null);
+    return view;
+  }
+
+  async function resumeSiblingBatchStock(batchId) {
+    const result = await api.resumeProductionBatchStock(batchId);
+    batchReadEpoch.current += 1;
+    setBatchExecution({ parentId: selectedId, view: result.executionView });
+    setBatchExecutionError(null);
+    return result;
+  }
+
+  async function uploadSiblingC2Asset(candidateId, context) {
+    try {
+      const result = await api.uploadLifecycleFinalAsset(candidateId, context);
+      await load(true);
+      return result;
+    } catch (error) { await load(true); throw error; }
+  }
+
+  async function linkSiblingC2Asset(candidateId, payload) {
+    try {
+      const result = await api.linkSiblingC2Asset(candidateId, payload);
+      await load(true);
+      return result;
+    } catch (error) { await load(true); throw error; }
+  }
+
+  async function confirmSiblingBatchC2(payload) {
+    const result = await api.confirmSiblingBatchC2(payload.parentCandidateId, payload);
+    await load(true);
+    setNotice({ type: 'success', message: '整批最终素材和独立确认卡已保存；尚未取得生产授权。' });
+    return result;
   }
 
   async function updateSelected(payload) {
@@ -363,18 +671,17 @@ export default function App() {
         ...payload,
         dataRevision: payload.dataRevision ?? selected.dataRevision
       });
-      const captureStart = result.status === "supplier_capture_job_queued" && result.duplicate !== true
-        ? await requestSupplierCaptureStart(result.captureJob.jobId)
-        : null;
+      // Same receipt, same start signal as before; only the sentence now comes from the shared ACK-code mapping.
+      const captureStart = await startQueuedSupplierCapture(result);
       navigateResult(result.candidate, navigationToken);
       setNotice({
         type: "success",
         message: payload.decision === "reject"
           ? "A阶段已淘汰当前商品；未启动B或任何平台操作"
           : result.status === "supplier_capture_job_queued"
-            ? captureStart?.accepted === true
-              ? "A阶段供应链接已保存；插件已领取本次明确创建的单商品采集作业"
-              : "A阶段供应链接已保存；本次采集未收到新的领取确认，请查看作业状态，系统不会自动重试"
+            ? captureStart
+              ? `A阶段供应链接已保存；${captureStart.message}`
+              : "A阶段供应链接已保存；这件商品已经有一个还在等待的采集作业，这次没有重新创建，系统不会自动重试"
           : result.candidate.lifecycleV11?.skuPackage?.businessPhase === "C1"
             ? "A确认已原子保存，B已自动通过并创建C1；无需再次点击开始上架准备"
             : "A确认已原子保存，B已自动计算；当前商品未进入C1"
@@ -503,11 +810,21 @@ export default function App() {
     }
   }
 
-  async function startOzonSalesCapture() {
+  async function startOzonSalesCapture(productUrl = null) {
     if (!selected) return null;
     try {
-      const result = await api.startOzonSalesCapture(selected.id, { dataRevision: selected.dataRevision });
-      setNotice({ type: "success", message: "已提交当前商品的单次只读采集请求，等待后台认证领取；页面不转发凭据，也不把请求接受当作采集完成。" });
+      // 不给地址 = 读这件商品自己的页面（原样）。给了 = 主人指名读一个对标页面，
+      // 它会以 comparable 标记存进 salesSnapshotsV11，供最终定价多样本比较和关键词素材使用。
+      const result = await api.startOzonSalesCapture(selected.id, {
+        dataRevision: selected.dataRevision,
+        ...(typeof productUrl === "string" && productUrl.trim() ? { productUrl: productUrl.trim() } : {})
+      });
+      // The same receipt → start signal as every other capture: the extension background only keeps a heartbeat and
+      // never polls, so a queued job with no signal can do nothing but expire (owner, four attempts, 2026-09-11).
+      const captureStart = await startQueuedSupplierCapture(result, { channel: OZON_PAGE_READ_CHANNEL });
+      setNotice({ type: "success", message: captureStart
+        ? captureStart.message
+        : "这件商品已经有一次读页面还在等插件，这次没有重新开始；页面不转发凭据，也不把请求接受当作采集完成。" });
       await load(true);
       return result;
     } catch (error) {
@@ -543,13 +860,166 @@ export default function App() {
     if (!selected || payload.candidateId !== selected.id) throw new Error("当前商品已变化，未复算旧商品。");
     try {
       const result = await api.recalculateBWithExactCommission(selected.id, payload);
-      setNotice({ type: "success", message: result.result.status === "passed"
+      // 这一次用的是店里的实收费率还是官方费率表，必须跟着结果说出来。两种都算正式B，
+      // 可只有实收费率能上架；不说清楚，主人会以为这件商品已经可以提交生产授权了。
+      const official = result.result.commissionEvidenceMode === "official_reference";
+      const usedLine = official
+        ? "这一次用的是 Ozon 官方费率表上的公开费率，不是这个店被扣过的钱；上架之前仍然要读到店里的实收费率。"
+        : "这一次用的是店里同类目在售商品的实收费率。";
+      setNotice({ type: "success", message: (result.result.status === "passed"
         ? "正式利润已通过，上架准备已接收该商品；供货确认保持不变。"
-        : "正式利润未达到门槛，结果已保存；未进入上架准备。" });
+        : "正式利润未达到门槛，结果已保存；未进入上架准备。") + usedLine });
       await load(true);
       return result;
     } catch (error) {
       setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
+  /**
+   * 重读一次费用证据。这一步只换证据，利润结论一个字都不动——那句话要说出来，
+   * 不然主人会以为按完这一下就完事了，而真正改结论的是紧接着那一次「用更好的费用证据重算」。
+   */
+  async function refreshBFeeEvidence(payload) {
+    if (!selected || payload.candidateId !== selected.id) throw new Error("当前商品已变化，未替旧商品读取费用证据。");
+    try {
+      const result = await api.refreshBFeeEvidence(selected.id, payload);
+      const kinds = { commission: "佣金", schema: "Schema", exchange_rate: "汇率", logistics_tariff: "物流资费" };
+      const read = (result.evidencePacks || []).map(pack => kinds[pack.kind] || pack.kind);
+      setNotice({ type: "success", message: read.length === 0
+        ? "已经核对过：这件商品的费用证据都是当期的，没有需要重读的，什么都没有改动。"
+        : `已经重新读到${read.join("、")}证据并存下来；规格、货价、线路、运费和供货确认都没有动，也没有向 Ozon 写任何东西。` +
+          "利润结论还是原来那份条件测算——要用新证据换掉它，请再点一次「用更好的费用证据重算」。" });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
+  async function continueC1Preparation(payload) {
+    if (!selected || payload.candidateId !== selected.id) throw new Error("当前商品已变化，未继续准备。");
+    try {
+      const result = await api.continueC1Preparation(selected.id, payload);
+      setNotice({ type: "success", message: payload.mode === "saved_material_only"
+        ? "本节点准备结果已保存，请在商品页核查属性、关键词和剩余缺项。"
+        : "已继续准备文案素材；只用了本机已冻结的资料，没有查询关键词、没有付费调用。" });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
+  // 同一次1688采集里已采到、却没搬进冻结快照的供应商属性。免费，不碰价格与身份。
+  async function backfillC1SupplyAttributes(candidateId, payload) {
+    if (!selected || candidateId !== selected.id) throw new Error("当前商品已变化，未补齐供应属性。");
+    try {
+      const result = await api.backfillC1SupplyAttributes(selected.id, payload);
+      const added = result?.result?.addedAttributeKeys ?? [];
+      setNotice({ type: "success", message: added.length
+        ? `已把同一次采集里的 ${added.length} 条页面属性补进冻结快照：${added.join("、")}。没有外部调用、没有付费。`
+        : "页面属性已经都在冻结快照里了，没有改动任何数据。" });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
+  // 重读类目 Schema，把计划里冻结的那一份换成新的。只读、免费，不碰价格与事实。
+  async function refreshC1CategorySchema(candidateId, payload) {
+    if (!selected || candidateId !== selected.id) throw new Error("当前商品已变化，未重读类目资料。");
+    try {
+      const result = await api.refreshC1CategorySchema(selected.id, payload);
+      const change = result?.change;
+      const added = change?.requiredFieldsAdded ?? [];
+      const removed = change?.requiredFieldsRemoved ?? [];
+      const diff = added.length || removed.length
+        ? `；平台必填字段有变：新增 ${added.join("、") || "无"}，移除 ${removed.join("、") || "无"}`
+        : "";
+      setNotice({ type: "success", message:
+        `已重读Ozon类目资料：${change?.attributeCount ?? 0} 个属性，其中 ${change?.dictionaryBackedCount ?? 0} 个带字典${diff}。没有付费调用、没有改价格。` });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
+  // 让软件把属性表填好。模型只在字典真实候选里挑，主人只做判断。
+  async function proposeC1OzonAttributes(candidateId, payload) {
+    if (!selected || candidateId !== selected.id) throw new Error("当前商品已变化，未生成建议。");
+    try {
+      const result = await api.proposeC1OzonAttributes(selected.id, payload);
+      const p = result?.proposal;
+      setNotice({ type: "success", message:
+        `已生成 ${p?.suggestedCount ?? 0} 条建议（另有 ${p?.alternativeOnlyCount ?? 0} 行只有对标备选）；俄文值全部来自 Ozon 字典，没有写入任何数据。` });
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      throw error;
+    }
+  }
+
+  // 主人签下「这条中文事实，在Ozon上就是这个俄文字典值」。软件拿Ozon自己的字典核对。
+  async function saveC1OzonAttributeMapping(candidateId, payload) {
+    if (!selected || candidateId !== selected.id) throw new Error("当前商品已变化，未保存属性映射。");
+    try {
+      const result = await api.saveC1OzonAttributeMapping(selected.id, payload);
+      const count = result?.result?.mappedAttributeIds?.length ?? 0;
+      setNotice({ type: "success", message: `已保存 ${count} 条Ozon属性映射；字典项逐字核对，自由文本项按当前类目资料保存，没有付费调用。` });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
+  async function reviseSiblingColor(payload) {
+    if (!selected || payload.candidateId !== selected.id) throw new Error('当前商品已变化，未建立颜色修订。');
+    try {
+      const result = await api.reviseSiblingColor(selected.id, payload);
+      setNotice({ type: 'success', message: '已建立新的 C1 修订；请核对本规格的颜色映射及权利声明。旧版保留历史。' });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: 'error', message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
+  async function readC1ColorDictionary(candidateId, { attributeId, authorizationId = null }) {
+    if (!selected || candidateId !== selected.id) throw new Error('当前商品已变化，未读取颜色字典。');
+    try {
+      const skuPackageId = selected.lifecycleV11.skuPackage.skuPackageId;
+      const authorized = authorizationId ? null : await api.authorizeC1ColorDictionary(candidateId, {
+        candidateId, skuPackageId, attributeId, dataRevision: selected.dataRevision
+      });
+      const read = await api.continueC1ColorDictionary(candidateId, { candidateId, skuPackageId, attributeId,
+        authorizationId: authorizationId ?? authorized.result.authorizationId,
+        dataRevision: authorized?.candidate?.dataRevision ?? selected.dataRevision });
+      setNotice({ type: read.result?.status === 'succeeded' ? 'success' : 'error',
+        message: read.result?.status === 'succeeded'
+          ? '已保存当前类目的完整官方颜色候选，请核对后选择。'
+          : '颜色字典结果不完整或未知，当前候选不可用于映射；请核对已保存状态。' });
+      await load(true);
+      return read;
+    } catch (error) {
+      setNotice({ type: 'error', message: errorMessage(error) });
       await load(true);
       throw error;
     }
@@ -583,11 +1053,63 @@ export default function App() {
     }
   }
 
+  async function readOriginalC1DraftResult(payload) {
+    if (!selected || payload.candidateId !== selected.id) throw new Error("当前商品已变化，未读取旧任务。");
+    try {
+      const result = await api.readOriginalC1DraftResult(selected.id, payload);
+      const messages = {
+        applied: "本次文案结果已取回并保存，请核对商品内容。",
+        idempotent_replay: "本次文案结果已保存，请核对商品内容。",
+        pending: "原任务仍在处理或正在核对。本次没有重新生成；稍后可再次读取结果。",
+        unknown_outcome: "本次仍未取得确定结果，没有重新生成。请查看任务提示。",
+        failed: "原任务返回失败或结果未通过核验，没有重新生成。请查看失败记录。"
+      };
+      const message = messages[result.executionStatus];
+      if (!message) throw new Error("本次结果读取返回了无法识别的状态，请核对保存记录。");
+      setNotice({ type: ["applied", "idempotent_replay"].includes(result.executionStatus) ? "success"
+        : result.executionStatus === "pending" ? "info" : "error", message });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
   async function continueSavedC1Draft(payload) {
     if (!selected || payload.candidateId !== selected.id) throw new Error("当前商品已变化，未继续旧任务。");
     try {
       const result = await api.continueSavedC1Draft(selected.id, payload);
       setNotice({ type: "success", message: "已取得原任务的执行状态，请查看文案回执。" });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
+  async function confirmC1EditorialContent(payload) {
+    if (!selected || payload.candidateId !== selected.id) throw new Error("当前商品已变化，未确认旧修订文案。");
+    try {
+      const result = await api.confirmC1EditorialContent(selected.id, payload);
+      setNotice({ type: "success", message: "修订文案已确认，可以准备本规格的图片。原文案和用量记录已保留。" });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
+  async function confirmC1Content(payload) {
+    if (!selected || payload.candidateId !== selected.id) throw new Error("当前商品已变化，未确认旧文案。");
+    try {
+      const result = await api.confirmC1Content(selected.id, payload);
+      setNotice({ type: "success", message: "商品内容已确认，请上传本规格的图片并安排主图和顺序。" });
       await load(true);
       return result;
     } catch (error) {
@@ -616,6 +1138,23 @@ export default function App() {
     try {
       const result = await api.saveProductionOwnerDecision(selected.id, payload);
       setNotice({ type: "success", message: "生产授权和任务已保存，请查看当前执行结果。" });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
+  async function reviseC1FinalPlan(payload) {
+    if (!selected || selected.id !== payload.candidateId || selected.dataRevision !== payload.dataRevision ||
+        selected.lifecycleV11?.skuPackage?.skuPackageId !== payload.skuPackageId) {
+      throw new Error("当前商品资料已变化，请核对新版后再准备方案。");
+    }
+    try {
+      const result = await api.reviseC1FinalPlan(selected.id, payload);
+      setNotice({ type: "success", message: "已用现有资料准备新版本；新文案尚未生成，未收费、未上架。" });
       await load(true);
       return result;
     } catch (error) {
@@ -656,6 +1195,62 @@ export default function App() {
     }
   }
 
+  async function dispatchDProductionRound(candidateId, payload) {
+    if (!selected || candidateId !== selected.id) throw new Error("当前商品已变化，未重派生产作业。");
+    try {
+      const result = await api.dispatchDProductionRound(candidateId, payload);
+      setNotice({ type: "success", message: "已在同一份生产授权下排好新一轮作业；还没有发送任何平台请求，请点「继续已保存任务」开始执行。" });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
+  async function rollbackProductionAuthorization(candidateId, payload) {
+    if (!selected || candidateId !== selected.id) throw new Error("当前商品已变化，未作废任何授权。");
+    try {
+      const result = await api.rollbackProductionAuthorization(candidateId, payload);
+      setNotice({ type: "success", message: "本轮生产授权已作废并整体归档留底，商品退回到等你确认那一刻；价格、库存、图片和文案都没动，平台上也没有写入任何东西。下一步：重签最终商品确认卡，再通过进入生产授权。" });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
+  async function reobserveDUnknownOutcome(candidateId, payload) {
+    if (!selected || candidateId !== selected.id) throw new Error("当前商品已变化，未重新观察。");
+    try {
+      const result = await api.reobserveDUnknownOutcome(candidateId, payload);
+      setNotice({ type: "success", message: "已按新规则重新排了一次只读查询，没有往平台写任何东西。稍等片刻页面会更新：如果平台报的只是警告，就会继续往下走；如果确实有真错误，会把每条错误的级别和文案显示出来，那时再告诉施工方处理。" });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
+  async function recoverDInitialImport(candidateId, payload) {
+    if (!selected || candidateId !== selected.id) throw new Error("当前商品已变化，未登记任何导入。");
+    try {
+      const result = await api.recoverDInitialImport(candidateId, payload);
+      setNotice({ type: "success", message: "这次导入已经对账登记回来了，软件只做了只读查询，没有往平台写任何东西。接下来软件会自动按期限查询商品状态和仓库库存；库存如果已经是你自己填的数，软件只登记「这是你填的」，不会覆盖。" });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
   async function runAccountRead(action, payload) {
     if (!selected || payload.candidateId !== selected.id) throw new Error('当前商品已变化，未提交旧的账户核验。');
     try {
@@ -680,7 +1275,8 @@ export default function App() {
       });
     } catch (error) {
       setNotice({ type: "error", message: errorMessage(error) });
-      if (error.status === 409) await load(true);
+      // A rejected file can already have a persisted failed registration and a new draft revision.
+      await load(true);
       throw error;
     }
   }
@@ -701,7 +1297,7 @@ export default function App() {
       setNotice({ type: "success", message: "最终素材及顺序已锁定，最终商品方案卡已生成；尚未生产授权，也没有店铺写入" });
       await load(true);
     } catch (error) {
-      setNotice({ type: "error", message: errorMessage(error) });
+      setNotice({ type: "error", message: c2ReferenceFailureMessage(error.message) || errorMessage(error) });
       if (error.status === 409) await load(true);
       throw error;
     }
@@ -722,52 +1318,182 @@ export default function App() {
     return <div className="app-loading">正在打开全店经营工作台…</div>;
   }
 
+  const counts = deskCounts({ discoveryView, candidates: state.candidates, store: deskStore });
+  // The product page is read twice: once by the top bar, which names it and keeps the way back, once by the page itself.
+  const productCandidate = view === "product" ? state.candidates.find(item => item.id === selectedId) ?? null : null;
+  const productTitleZh = view === "product" ? discoveredTitleZh(discoveryView, productCandidate) : null;
+  const siblingCandidates = productCandidate === null ? [] : state.candidates
+    .filter(item => item.siblingSourceV1?.parentCandidateId === productCandidate.id);
+  const siblingSkuIds = siblingCandidates.map(item => item.siblingSourceV1.supplierSkuId);
+  const deskNav = [
+    { view: "desk", label: "选品台", count: counts.desk },
+    { view: "board", label: "进行中", count: counts.board },
+    { view: "inbox", label: "需要你处理", count: counts.inbox },
+    { view: "maint", label: "维护", count: null }
+  ];
+
   return (
     <div className="app-shell">
       <header className="app-header">
         <div className="app-brand">
-          <h1>全店经营工作台</h1>
-          <p>{view === "map" ? "全店能力地图" : view === "phase2a" ? "第2A模拟验收" : view==='accounts'?'账户准备':view==='discovery'?'软件找商品':"今日选品评审"}</p>
+          <h1>选品台</h1>
+          {view === "product"
+            ? <p className="app-brand-product">商品 · {shortProductTitle(productCandidate, productTitleZh)}
+              <button type="button" className="app-brand-back" onClick={() => setView("desk")}>← 选品台</button></p>
+            : <p>{VIEW_TITLES[view] ?? "今日选品评审"}</p>}
         </div>
+        <nav className="desk-nav" aria-label="主要页面">
+          {deskNav.map(item => <button key={item.view} type="button" className={`button ${view === item.view ? "primary" : "secondary"}`}
+            onClick={() => setView(item.view)}>
+            {item.label}{item.count === null || item.count === 0 ? null : <span className="desk-badge">{item.count}</span>}
+          </button>)}
+          <label className="desk-store-switch">店铺
+            <select value={deskStore} onChange={event => setDeskStore(event.target.value)} aria-label="选择店铺">
+              {DESK_STORES.map(store => <option key={store} value={store}>{storeLabel(store)}</option>)}
+            </select>
+          </label>
+        </nav>
+        {/* 三条工程状态收成一条：都正常时一个圆点，任何一条不正常才占主人的注意力。 */}
         <div className="header-actions">
-          <RuntimeArchitectureStatus status={state.runtimeArchitecture} />
-          <span className={`extension-status ${effectiveExtensionStatus.code}`} data-testid="extension-status">
-            <i aria-hidden="true" />{effectiveExtensionStatus.label}
-          </span>
-          <span className={`capture-control-status ${state.captureControl?.status || "idle"}`} data-testid="capture-control-status">
-            <i aria-hidden="true" />{state.captureControl?.label || "商品采集控制状态未取得"}
-          </span>
-          <button type="button" className={`button ${view === "phase2a" ? "primary" : "secondary"}`} onClick={() => setView(view === "phase2a" ? "review" : "phase2a")}>
-            {view === "phase2a" ? "返回今日选品评审" : "第2A模拟验收"}
-          </button>
-          <button type="button" className={`button ${view === "map" ? "primary" : "secondary"}`} onClick={() => setView(view === "map" ? "review" : "map")}>
-            {view === "map" ? "返回今日选品评审" : "全店能力地图"}
-          </button>
-          <button type="button" className={`button ${view==='accounts'?'primary':'secondary'}`} onClick={()=>setView(view==='accounts'?'review':'accounts')}>
-            {view==='accounts'?'返回今日选品评审':'账户准备'}
-          </button>
-          <button type="button" className={`button ${view==='discovery'?'primary':'secondary'}`} onClick={()=>setView(view==='discovery'?'review':'discovery')}>
-            {view==='discovery'?'返回今日选品评审':'软件找商品'}
-          </button>
-          <button type="button" className="button secondary" onClick={() => { readFailed.current = false; setNotice(null); setPollEpoch(epoch => epoch + 1); }}>刷新数据</button>
-          <button type="button" className="button add-button" onClick={() => setAddOpen(true)}>
-            <PlusIcon /> 添加我找到的商品
-          </button>
+          <HeaderStatus extensionStatus={effectiveExtensionStatus} captureControl={state.captureControl}
+            runtimeArchitecture={state.runtimeArchitecture} />
         </div>
       </header>
-      <LocalOwnerAccessPanel onAccessResolved={refreshOwnerPermissions} onAccessUnknown={clearOwnerPermissions} />
+      {/* 已登录是常态，不必每一页都声明；没登录、读不出来或只是预览身份时这一条必须仍然显眼。退出登录收在「维护」里。 */}
+      <LocalOwnerAccessPanel showAuthenticated={view === "maint"}
+        onAccessResolved={refreshOwnerPermissions} onAccessUnknown={clearOwnerPermissions} />
+      {notice ? <div role={notice.type === "error" ? "alert" : "status"} className={`global-notice ${notice.type}`}>{notice.message}</div> : null}
 
-      {view==='discovery'?<>
+      {DESK_VIEWS.includes(view) ? (
+        view === "desk" ? (
+          <SelectionDesk
+            discoveryView={discoveryView}
+            candidates={state.candidates}
+            store={deskStore}
+            ownerReady={accountOwner}
+            loadingLabel={discoveryError ? `读取本店查询结果失败：${discoveryError}` : "正在读取本店的查询结果…"}
+            skipped={skippedProducts}
+            onSelectProduct={payload => mutateProductDiscovery(api.selectProductDiscovery, payload)}
+            onDeclineProduct={payload => mutateProductDiscovery(api.declineProductDiscovery, payload)}
+            onLaterProduct={row => setSkippedProducts(current => current.includes(row.key) ? current : [...current, row.key])}
+            onEstimate={payload => mutateProductDiscovery(api.estimateProductDiscovery, payload)}
+            onTranslate={payload => mutateProductDiscovery(api.translateProductDiscovery, payload)}
+            onOpenCandidate={openDiscoveredCandidate}
+            onStartNewRound={({ plan, binding, store }) =>
+              // One explicit confirmation on the desk, one request: the server creates, authorizes and starts the round
+              // in one saved transaction, so a dropped answer can never leave a paid batch that was never started.
+              mutateProductDiscovery(api.startProductDiscovery, { planId: plan.planId, planVersion: plan.version, targetStore: store,
+                bindingId: binding.bindingId, configurationVersion: binding.configurationVersion,
+                expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), idempotencyKey: `desk-round:${crypto.randomUUID()}` })}
+            onResumeRound={({ batchId, expectedRevision }) =>
+              // An older click that created a batch without a permit: this authorizes that same batch, never a new one.
+              mutateProductDiscovery(api.authorizeProductDiscovery, { batchId, expectedRevision,
+                expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), idempotencyKey: `desk-permit:${crypto.randomUUID()}` })}
+            onOpenBoard={() => setView("board")}
+            onOpenInbox={() => setView("inbox")}
+            // 添加我找到的商品属于找货这件事，所以它在选品台自己的位置上，而不是压在每一页的顶栏里。
+            onAddProduct={() => setAddOpen(true)}
+            onEliminateCandidate={eliminateCandidate}
+            onRestoreCandidate={restoreCandidate}
+          />
+        ) : view === "board" ? (
+          <PipelineBoard candidates={state.candidates} store={deskStore} onOpenCandidate={openDiscoveredCandidate}
+            onEliminateCandidate={eliminateCandidate} onRestoreCandidate={restoreCandidate} />
+        ) : view === "inbox" ? (
+          <OwnerInbox candidates={state.candidates} store={deskStore} onOpenCandidate={openDiscoveredCandidate}
+            onEliminateCandidate={eliminateCandidate} onRestoreCandidate={restoreCandidate} />
+        ) : (
+          <div className="page-panel">
+            <h2>维护</h2>
+            <p>这些是以前的页面，行为没有变化。日常判断不需要打开它们。</p>
+            <div className="maint-pages">
+              {MAINTENANCE_PAGES.map(page => <button key={page.view} type="button" className="button secondary" onClick={() => setView(page.view)}>{page.label}</button>)}
+            </div>
+            {/* 页面本来就在自动轮询；这个按钮只在轮询因为读取失败停下来时才用得上，所以收在这里。 */}
+            <h3>手动操作</h3>
+            <p>页面每 3 秒自己读一次共享数据。只有读取失败、轮询停下来时才需要手动刷新。</p>
+            <div className="maint-pages">
+              <button type="button" className="button secondary"
+                onClick={() => { readFailed.current = false; setNotice(null); setPollEpoch(epoch => epoch + 1); }}>刷新数据</button>
+            </div>
+          </div>
+        )
+      ) : view === "product" ? (
+        !accountOwner ? <div className="page-panel"><p role="status">请先登录主人身份后查看这件商品。</p></div> : <Suspense fallback={<p role="status">正在载入商品页面…</p>}><ProductPage
+          preparationSaveState={preparationSaveState}
+          candidate={productCandidate}
+          view={productDraftView}
+          titleZh={productTitleZh}
+          extensionStatus={effectiveExtensionStatus}
+          loadingLabel={productDraftError ? `读取这件商品的找货资料失败：${productDraftError}` : "正在读取这件商品的找货资料…"}
+          onSaveDraft={payload => runProductStep(api.saveSupplierDraft, payload)}
+          onChooseSkus={payload => runProductStep(api.chooseSourceSkus, payload)}
+          onCreateSiblingSku={createSiblingSkuBatch}
+          onConfirmSiblingBatchA={confirmSiblingBatchA}
+          onConfirmSiblingBatchC1={confirmSiblingBatchC1}
+          onPreviewSiblingBatchC1={previewSiblingBatchC1}
+          onReadSiblingBatchColorDictionary={readSiblingBatchColorDictionary}
+          onAuthorizeSiblingProductionBatch={authorizeSiblingProductionBatch}
+          onSaveSiblingBatchStockDrafts={saveSiblingBatchStockDrafts}
+          siblingBatchExecutionView={batchExecution?.parentId === productCandidate.id ? batchExecution.view : null}
+          siblingBatchExecutionError={batchExecutionError}
+          siblingBatchExecutionLoading={accountOwner && batchExecution?.parentId !== productCandidate.id && !batchExecutionError}
+          onRefreshSiblingBatchExecution={refreshSiblingBatchExecution}
+          onResumeSiblingBatchStock={resumeSiblingBatchStock}
+          onUploadSiblingC2Asset={uploadSiblingC2Asset}
+          onLinkSiblingC2Asset={linkSiblingC2Asset}
+          onConfirmSiblingBatchC2={confirmSiblingBatchC2}
+          siblingSkuIds={siblingSkuIds}
+          siblingCandidates={siblingCandidates}
+          onDeclareCargoFacts={payload => runProductStep(api.declareCargoFacts, payload)}
+          onDeclareExtraHandlingFees={payload => runProductStep(api.declareExtraHandlingFees, payload)}
+          onDeclareUniformSupply={payload => runProductStep(api.declareSkuUniformSupply, payload)}
+          onRequestCapture={payload => requestProductCapture(payload)}
+          onReviewCaptureAndRequest={payload => reviewCaptureAndRequest(payload)}
+          onRecaptureSource={payload => recaptureProductSource(payload)}
+          onReadOzonPage={payload => readOzonProductPage(payload)}
+          onConfirmProfitStep={payload => confirmProductProfitStep(payload)}
+          onRecalculateBWithExactCommission={recalculateBWithExactCommission}
+          onRefreshBFeeEvidence={refreshBFeeEvidence}
+          productionIdentity={state.runtimeArchitecture?.currentUser}
+          onPrepareC1Local={continueC1Preparation}
+          onAuthorizeC1PaidDraft={authorizeC1PaidDraft}
+          onContinueSavedC1Draft={continueSavedC1Draft}
+          onReadOriginalC1DraftResult={readOriginalC1DraftResult}
+          onConfirmC1Content={confirmC1Content}
+          onConfirmC1EditorialContent={confirmC1EditorialContent}
+          onUploadLifecycleFinalAsset={uploadLifecycleFinalAsset}
+          onSaveC2UploadDraft={saveC2UploadDraft}
+          onConfirmLifecycleFinalAssets={confirmLifecycleFinalAssets}
+          onSaveProductionOwnerDecision={saveProductionOwnerDecision}
+          onSaveFinalPricingReview={saveFinalPricingReview}
+          onReviseC1FinalPlan={reviseC1FinalPlan}
+          onReviseSiblingColor={reviseSiblingColor}
+          onSaveC1RightsReview={saveC1RightsReview}
+          onBackfillC1SupplyAttributes={backfillC1SupplyAttributes}
+          onSaveC1OzonAttributeMapping={saveC1OzonAttributeMapping}
+          onRefreshC1CategorySchema={refreshC1CategorySchema}
+          onProposeC1OzonAttributes={proposeC1OzonAttributes}
+          onLoadC1OzonAttributes={api.getC1OzonAttributes}
+          onReadC1ColorDictionary={readC1ColorDictionary}
+          onOpenLegacyCard={() => setView("review")}
+          onEliminateCandidate={eliminateCandidate}
+          onBack={() => setView("desk")}
+        /></Suspense>
+      ) : view==='discovery'?<div className="page-panel">
         {!accountOwner?<p role="status">请先登录主人身份后查看商品发现计划。</p>:<>
           <button type="button" className="button secondary" onClick={()=>setDiscoveryRefresh(value=>value+1)}>刷新发现记录</button>
           {discoveryError?<p role="alert">读取发现记录失败：{discoveryError}</p>:discoveryView?
             <ProductDiscoveryCard view={discoveryView}
-              onCreate={payload=>runProductDiscovery(api.createProductDiscovery,payload)}
-              onAuthorize={payload=>runProductDiscovery(api.authorizeProductDiscovery,payload)}
-              onContinue={payload=>runProductDiscovery(api.continueProductDiscovery,payload)}
+              onCreate={payload=>mutateProductDiscovery(api.createProductDiscovery,payload)}
+              onAuthorize={payload=>mutateProductDiscovery(api.authorizeProductDiscovery,payload)}
+              onContinue={payload=>mutateProductDiscovery(api.continueProductDiscovery,payload)}
+              onSelect={payload=>mutateProductDiscovery(api.selectProductDiscovery,payload)}
+              onTranslate={payload=>mutateProductDiscovery(api.translateProductDiscovery,payload)}
+              onEstimate={payload=>mutateProductDiscovery(api.estimateProductDiscovery,payload)}
               onOpenCandidate={openDiscoveredCandidate}/>:<p role="status">正在读取当前发现计划和保存的批次…</p>}
         </>}
-      </>:view==='accounts'?<>
+      </div>:view==='accounts'?<div className="page-panel">
         {!accountOwner?<p role="status">请先登录主人身份后查看账户准备。</p>:<>
           <button type="button" className="button secondary" onClick={()=>setAccountRefresh(value=>value+1)}>重新读取准备记录</button>
           {accountPreparationError?<p role="alert">读取账户准备失败：{accountPreparationError}</p>:accountPreparationView?
@@ -777,17 +1503,14 @@ export default function App() {
               onContinue={payload=>runAccountPreparation(api.continueAccountDiscovery,payload)}
               onSelectWarehouse={payload=>runAccountPreparation(api.selectAccountWarehouse,payload)}/>:<p role="status">正在读取已保存的账户准备…</p>}
         </>}
-      </>:view === "phase2a" ? (
+      </div>:view === "phase2a" ? (
         <Phase2ASimulation onClose={() => setView("review")} />
       ) : view === "map" ? (
-        <>
-          {notice ? <div role={notice.type === "error" ? "alert" : "status"} className={`global-notice ${notice.type}`}>{notice.message}</div> : null}
-          <ThreeStoreMap
-            map={threeStoreMap}
-            onClose={() => setView("review")}
-            onRefresh={loadThreeStoreMap}
-          />
-        </>
+        <ThreeStoreMap
+          map={threeStoreMap}
+          onClose={() => setView("review")}
+          onRefresh={loadThreeStoreMap}
+        />
       ) : (
       <>
 
@@ -801,8 +1524,6 @@ export default function App() {
         summary={state.summary}
         automationStarted={state.meta?.automationStarted}
       />
-
-      {notice ? <div role={notice.type === "error" ? "alert" : "status"} className={`global-notice ${notice.type}`}>{notice.message}</div> : null}
 
       <div className="workspace">
         <CandidateRail
@@ -829,10 +1550,14 @@ export default function App() {
               seerfarRuntime={state.seerfarRuntime}
               onRealAConfirm={confirmRealAStage}
               onContinueSavedDE={continueSavedDE}
+              onDispatchDProductionRound={dispatchDProductionRound}
+              onRollbackProductionAuthorization={rollbackProductionAuthorization}
+              onRecoverDInitialImport={recoverDInitialImport}
+              onReobserveDUnknownOutcome={reobserveDUnknownOutcome}
               onAuthorizeAccountRead={payload => runAccountRead(api.authorizeAccountRead, payload)}
               onContinueAccountRead={payload => runAccountRead(api.continueAccountRead, payload)}
             />
-            <UserInspector
+            <Suspense fallback={<p role="status">正在载入审核资料…</p>}><UserInspector
               candidate={selected}
               rules={state.rules}
               captureControl={state.captureControl}
@@ -853,10 +1578,18 @@ export default function App() {
               onSaveC1RightsReview={saveC1RightsReview}
               onAuthorizeC1PaidDraft={authorizeC1PaidDraft}
               onContinueSavedC1Draft={continueSavedC1Draft}
+          onReadOriginalC1DraftResult={readOriginalC1DraftResult}
               onRetryC1KeywordHandoff={retryC1KeywordHandoff}
+              onContinueC1Preparation={continueC1Preparation}
+              onBackfillC1SupplyAttributes={backfillC1SupplyAttributes}
+              onSaveC1OzonAttributeMapping={saveC1OzonAttributeMapping}
+              onRefreshC1CategorySchema={refreshC1CategorySchema}
+              onProposeC1OzonAttributes={proposeC1OzonAttributes}
+              onLoadC1OzonAttributes={api.getC1OzonAttributes}
+              onReadC1ColorDictionary={readC1ColorDictionary}
               onRecalculateBWithExactCommission={recalculateBWithExactCommission}
               productionIdentity={state.runtimeArchitecture?.currentUser}
-            />
+            /></Suspense>
             <CandidateReview candidate={selected} />
           </div>
         ) : (

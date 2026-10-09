@@ -5,6 +5,9 @@ import { productionOwnerDecisionFixture } from './fixtures/production-owner-deci
 import { commitSingleOwnerProductionAuthorization } from '../lib/production-authorization.mjs';
 import { createLocalDevelopmentWorkerRegistry } from '../lib/worker-registry.mjs';
 import { createDEProductionRuntimeServices, DEPreflightTransportError } from '../lib/d-e-runtime-services.mjs';
+import { settleDProductionPreSendStopInDocument } from '../lib/software-job-contract.mjs';
+import { createDProductionRoundUseCase } from '../lib/d-production-round-use-case.mjs';
+import { buildDESavedJobRuntimeView } from '../lib/d-e-runtime-view.mjs';
 import { inspectAdapterCapabilities, OZON_DE_READBACK_ENDPOINTS } from '../lib/ozon-seller-api-de-adapter.mjs';
 import { loadPublishedSchemaValidator } from './helpers/published-schema-validator.mjs';
 import { finalAssets } from './helpers/c2-software-fixture.mjs';
@@ -32,7 +35,10 @@ async function fixture({stableAssets=false}={}){
     stable:true,authorizationStatus:'approved',evidenceRef:`oss:synthetic:${asset.assetId}`}))};
  };
  const inspectPlatform=async query=>{
-  inspections++;const doc=await repository.readSnapshot(),job=doc.runtime.softwareJobs.find(j=>j.jobType==='d_production_execution');
+  inspections++;const doc=await repository.readSnapshot();
+  // 同一份授权可能跑过不止一轮，正在准备的那一轮才是当前轮。
+  const dJobs=doc.runtime.softwareJobs.filter(j=>j.jobType==='d_production_execution');
+  const job=dJobs.find(j=>j.preparationEvidence)??dJobs[0];
   assert.equal(job.preparationEvidence.status,'in_flight');
   if(job.preparationEvidence.requestMode==='persisted_evidence_only'&&job.externalRequestRef===null){
    assert.equal(job.status,'claimed');assert.equal(job.externalRequestState,'not_sent');
@@ -67,8 +73,13 @@ async function fixture({stableAssets=false}={}){
   if(commits.at(-1).runtime.softwareJobs.some(j=>j.jobType==='e_independent_readback'&&j.status==='waiting_platform')) assert.ok(options.signal instanceof AbortSignal);
   return readResponses[request.endpoint];
  };
+ // 2026-09-24 起：没有平台查询策略就不发导入（导入发出后无人跟进，正是背心那次的成因）。
+ // 夹具按生产形态提供一条覆盖整场观察的策略；「缺策略」「策略过期」由专门用例覆盖。
+ const observationPolicy={schemaVersion:'d-platform-observation-policy-v1',policyRef:'policy:synthetic:de-runtime',
+  version:'version:1',maxQueries:20,intervalMs:15000,requestTimeoutMs:30000,expiresAt:'2099-01-01T00:00:00.000Z'};
  const options={repository,runtimeMode:'local_development',serverClock:clock,workerRegistry:registry,deServiceBindings:services,productionBindings:[binding],upload,
-  resolveLocalAsset:async()=>{throw new Error('Synthetic uploader never reads files');},inspectPlatform,loadAdapterCapabilities,requestJson,loadCurrentProductionBinding:()=>clone(binding)};
+  resolveLocalAsset:async()=>{throw new Error('Synthetic uploader never reads files');},inspectPlatform,loadAdapterCapabilities,requestJson,loadCurrentProductionBinding:()=>clone(binding),
+  loadDPlatformObservationPolicy:()=>clone(observationPolicy)};
  const input={candidateId:candidate.id,jobId:candidate.lifecycleV11.skuPackage.dHandoff.softwareJobRef.jobId,expectedRevision:candidate.dataRevision};
  return {owner,repository,candidate,input,options,calls,puts,commits,binding,registry,counts:()=>({inspections,capabilityReads}),advance:ms=>{now=new Date(Date.parse(now)+ms).toISOString();}};
 }
@@ -76,7 +87,7 @@ function readResponsesFor(imported,binding){
  const identity={offer_id:imported.offer_id,product_id:910001,id:910001};
  return {
    '/v4/product/info/attributes':{result:[{...identity,primary_image:imported.primary_image,images:imported.images}]},
-   '/v3/product/info/list':{items:[{...identity,statuses:{moderate_status:'approved',validation_status:'success',status_name:'Продается'},errors:[]}]},
+   '/v3/product/info/list':{items:[{...identity,primary_image:[imported.primary_image],images:imported.images,statuses:{moderate_status:'approved',validation_status:'success',status_name:'Продается'},errors:[]}]},
    '/v5/product/info/prices':{items:[{...identity,price:{price:Number(imported.price),currency_code:'CNY'}}]},
    '/v2/product/info/stocks-by-warehouse/fbs':{products:[{offer_id:imported.offer_id,product_id:910001,sku:1910001,warehouse_id:Number(binding.warehouseId),free_stock:100,present:100,reserved:0}],has_next:false,cursor:''},
   };
@@ -138,7 +149,13 @@ test('construction performs zero repository/provider reads; missing declared ser
 test('one PA drives saved OSS and preflight, then a single accepted import waits without creating E or replaying',async()=>{
  const f=await fixture(),runtime=createDEProductionRuntimeServices(f.options);
  const outcome=await runtime.continueSavedCurrent(f.input);assert.equal(outcome.status,'waiting_platform');
- const doc=await f.repository.readSnapshot();assertPublished(doc);assert.equal(doc.runtime.softwareJobs.length,1);
+ const doc=await f.repository.readSnapshot();assertPublished(doc);
+ // 2026-09-24 起导入被接受后会同时排出第一条平台观察作业，所以是 1 条 D + 1 条观察。
+ // 逐类型数，比原来只数总数更严：仍然不得出现任何 E 作业。
+ assert.equal(doc.runtime.softwareJobs.length,2);
+ assert.equal(doc.runtime.softwareJobs.filter(job=>job.jobType==='d_production_execution').length,1);
+ assert.equal(doc.runtime.softwareJobs.filter(job=>job.jobType==='e_d_platform_observation').length,1);
+ assert.equal(doc.runtime.softwareJobs.filter(job=>job.jobType==='e_independent_readback').length,0);
  assert.equal(f.puts.length,2);assert.equal(f.counts().inspections,1);assert.equal(f.calls.length,1);
  assert.deepEqual(f.calls,['/v3/product/import']);
  assert.equal(doc.runtime.softwareJobs[0].revision,f.input.expectedRevision);assert.equal(doc.runtime.softwareJobs[0].attempt,1);
@@ -307,6 +324,28 @@ test('E pump interval is explicit and unknown scheduling errors stop the pump vi
  const runtime=createDEProductionRuntimeServices({...f.options,workerRegistry:createLocalDevelopmentWorkerRegistry({clock:f.options.serverClock}),
   repository:{...f.repository,readSnapshot:async()=>{reads++;throw failure;}},eReadbackPumpIntervalMs:1000,onReadbackError:observed.resolve});
  runtime.start();assert.equal(await observed.promise,failure);await runtime.stop();assert.equal(reads,1);assert.deepEqual(f.calls,[]);
+});
+test('local batch observation pump keeps a live worker current but never revives an expired worker',async()=>{
+ const f=await fixture();
+ assert.throws(()=>createDEProductionRuntimeServices({...f.options,
+  loadBatchMemberEvidence:async()=>null}),/DE_RUNTIME_BATCH_EVIDENCE_DEPENDENCY_INCOMPLETE/);
+ const errors=[];
+ const localRegistry=createLocalDevelopmentWorkerRegistry({clock:f.options.serverClock,heartbeatTtlMs:3000});
+ const runtime=createDEProductionRuntimeServices({...f.options,
+  workerRegistry:localRegistry,
+  loadBatchMemberEvidence:async()=>{throw new Error('No batch job in this test');},
+  loadBatchEReadEvidence:async()=>{throw new Error('No batch E job in this test');},
+  observationPumpIntervalMs:100000,onObservationError:error=>errors.push(error.message)});
+ runtime.start();
+ try{
+  f.advance(2000);
+  await new Promise(resolve=>setTimeout(resolve,1150));
+  assert.equal(localRegistry.findEligible(['ozon-production-execution']).length,1);
+  f.advance(3100);
+  await new Promise(resolve=>setTimeout(resolve,1150));
+  assert.deepEqual(errors,['DE_RUNTIME_LOCAL_WORKER_HEARTBEAT_EXPIRED']);
+  assert.equal(localRegistry.findEligible(['ozon-production-execution']).length,0);
+ }finally{await runtime.stop();}
 });
 test('inspection is bounded by its existing lease and forwards a real cancellation signal without retry',async()=>{
  const f=await fixture();let signal,inspections=0;
@@ -553,4 +592,221 @@ test('initial import rechecks current revision and lease after credential prepar
   assert.equal(state.attempt.productionRecord,null);assert.equal(document.runtime.softwareJobs[0].status,'failed');
   await runtime.continueSavedCurrent(f.input);assert.equal(callbacks,1);assert.equal(sent,0);
  }
+});
+
+test('active multi-image checkpoints renew liveness after 30 seconds without extending the D lease',async()=>{
+ const f=await fixture();
+ const upload=async args=>f.options.upload({...args,beforePublicWrite:async asset=>{
+  f.advance(20000);return args.beforePublicWrite(asset);
+ }});
+ const runtime=createDEProductionRuntimeServices({...f.options,upload});
+ const outcome=await runtime.continueSavedCurrent(f.input);
+ assert.equal(outcome.status,'waiting_platform');assert.equal(f.puts.length,2);assert.deepEqual(f.calls,['/v3/product/import']);
+ const job=(await f.repository.readSnapshot()).runtime.softwareJobs.find(value=>value.jobId===f.input.jobId);
+ const active=f.commits.at(-1).runtime.softwareJobs.find(value=>value.jobId===f.input.jobId);
+ assert.equal(Date.parse(active.leaseExpiresAt)-Date.parse(active.startedAt),60000);
+ assert.equal(job.attempt,1);
+});
+
+for(const change of ['offline','version','capabilities','lease'])test(`active D upload stops for ${change} without a second public write`,async()=>{
+ const f=await fixture();let checkpoints=0;
+ const upload=async args=>f.options.upload({...args,beforePublicWrite:async asset=>{
+  checkpoints++;
+  if(checkpoints===2){
+   const worker=f.registry.get(f.options.deServiceBindings[0].workerId);
+   if(change==='offline')f.registry.markOffline(worker.workerId);
+   else if(change==='version')f.registry.heartbeat({...worker,version:'worker-version:changed'});
+   else if(change==='capabilities')f.registry.heartbeat({...worker,capabilities:['ozon-independent-readback']});
+   else f.advance(60001);
+  }
+  return args.beforePublicWrite(asset);
+ }});
+ const runtime=createDEProductionRuntimeServices({...f.options,upload});
+ const outcome=await runtime.continueSavedCurrent(f.input);
+ assert.notEqual(outcome.status,'waiting_platform');assert.equal(f.puts.length,1);assert.equal(f.calls.length,0);
+ const saved=await f.repository.readSnapshot();assertPublished(saved);
+ await runtime.continueSavedCurrent({...f.input,expectedRevision:saved.candidates[0].dataRevision});
+ assert.equal(f.puts.length,1);assert.equal(f.calls.length,0);
+});
+
+test('each independent E read checks its current holder after 30 seconds and retains the original lease',async()=>{
+ const f=await savedEFixture();let now=f.options.serverClock();const clock=()=>now;const leases=[];
+ const registry=createLocalDevelopmentWorkerRegistry({clock});
+ const runtime=createDEProductionRuntimeServices({...f.options,serverClock:clock,workerRegistry:registry,
+  requestJson:async(request,options)=>{
+   // Model credential preparation before the real transport send checkpoint.
+   now=new Date(Date.parse(now)+10000).toISOString();await options.beforeRequestSend();
+   const job=(await f.repository.readSnapshot()).runtime.softwareJobs.find(value=>value.jobId===f.input.jobId);
+   leases.push({startedAt:job.startedAt,leaseExpiresAt:job.leaseExpiresAt});
+   return f.options.requestJson(request,options);
+  }});
+ const result=await runtime.continueSavedCurrent(f.input);
+ assert.equal(result.status,'not_verified');assert.deepEqual(f.calls,Object.values(OZON_DE_READBACK_ENDPOINTS));
+ const saved=await f.repository.readSnapshot(),job=saved.runtime.softwareJobs.find(value=>value.jobId===f.input.jobId);
+ assert.equal(new Set(leases.map(value=>value.leaseExpiresAt)).size,1);
+ assert.equal(Date.parse(leases[0].leaseExpiresAt)-Date.parse(leases[0].startedAt),60000);assert.equal(job.attempt,1);
+ assert.equal(saved.candidates[0].lifecycleV11.skuPackage.readbackHistory.at(-1).externalRequestState,'succeeded');
+});
+
+for(const change of ['offline','version','capabilities','lease','source_revision','binding_expiry'])test(`E stops before another platform read after ${change}`,async()=>{
+ const f=await savedEFixture();let now=f.options.serverClock();const clock=()=>now;
+ const registry=createLocalDevelopmentWorkerRegistry({clock});let preparations=0;
+ const binding=clone(f.options.productionBindings[0]);
+ const runtime=createDEProductionRuntimeServices({...f.options,serverClock:clock,workerRegistry:registry,loadCurrentProductionBinding:()=>clone(binding),
+  requestJson:async(request,options)=>{
+   preparations++;
+   if(preparations===2){
+    const worker=registry.get(f.options.deServiceBindings[0].workerId);
+    if(change==='offline')registry.markOffline(worker.workerId);
+    else if(change==='version')registry.heartbeat({...worker,version:'worker-version:changed'});
+    else if(change==='capabilities')registry.heartbeat({...worker,capabilities:['ozon-production-execution']});
+    else if(change==='lease')now=new Date(Date.parse(now)+60001).toISOString();
+    else if(change==='source_revision')await f.repository.transact(document=>{document.candidates[0].dataRevision++;return {changed:true,document,result:null};});
+    else binding.verification.expiresAt=now;
+   }
+   await options.beforeRequestSend();return f.options.requestJson(request,options);
+  }});
+ const result=await runtime.continueSavedCurrent(f.input);
+ assert.equal(result.status,change==='source_revision'?'not_applied':'unknown_outcome');assert.equal(f.calls.length,1);
+ const saved=await f.repository.readSnapshot();assertPublished(saved);
+ assert.equal(saved.candidates[0].lifecycleV11.skuPackage.eVerificationRecord,null);
+ await runtime.continueSavedCurrent(f.input);assert.equal(f.calls.length,1);
+});
+
+// 2026-09-22：真实事故。领取成功后守卫拒绝，旧代码既没发请求也没收口，任务永远停在 claimed。
+// 时钟必须真的前进：冻结时钟下租约永不过期，这条路径根本走不到。
+test('claim后守卫拒绝时把已领取任务收口成已知技术失败，零外部请求且不自动重试',async()=>{
+ const f=await fixture();let advanced=false;
+ const runtime=createDEProductionRuntimeServices({...f.options,loadAdapterCapabilities:args=>{
+  const capabilities=f.options.loadAdapterCapabilities(args);
+  if(!advanced){advanced=true;f.advance(60001);}
+  return capabilities;
+ }});
+ const outcome=await runtime.continueSavedCurrent(f.input);
+ assert.equal(outcome.status,'failed');
+ const document=await f.repository.readSnapshot(),job=document.runtime.softwareJobs.find(entry=>entry.jobType==='d_production_execution');
+ assert.equal(job.status,'failed');assert.equal(job.attempt,1);
+ assert.equal(job.externalRequestState,'not_sent');assert.equal(job.externalRequestRef,null);
+ assert.equal(job.automaticRetryAllowed,false);
+ assert.match(job.failureClass,/^d-production-guard-rejected:[A-Z][A-Z0-9_]+$/);
+ assert.equal(document.candidates[0].lifecycleV11.skuPackage.dAssetTransport??null,null);
+ assert.equal(document.candidates[0].lifecycleV11.skuPackage.dSoftwareExecution??null,null);
+ assert.equal(document.candidates[0].lifecycleV11.skuPackage.productionRecord,null);
+ assert.equal(f.calls.length,0);assert.equal(f.puts.length,0);
+ assert.equal(f.counts().inspections,0);
+ assertPublished(document);
+ // 收口是终态，不是新一轮：再点一次只读回同一结果，不重新领取也不再发请求。
+ const again=await runtime.continueSavedCurrent(f.input);
+ assert.equal(again.status,'idempotent_replay');
+ assert.equal(f.calls.length,0);
+ assert.deepEqual((await f.repository.readSnapshot()).runtime.softwareJobs,document.runtime.softwareJobs);
+});
+
+// pre-send 收口是窄路：只有“已领取、什么都没落盘、什么都没发”才允许收口，别的一律拒绝。
+test('pre-send收口只认已领取且零副作用的持有态，非守卫类错误仍原样抛出',async()=>{
+ const f=await fixture();
+ const runtime=createDEProductionRuntimeServices({...f.options,loadAdapterCapabilities:()=>{throw new TypeError('合成实现缺陷');}});
+ await assert.rejects(()=>runtime.continueSavedCurrent(f.input),/合成实现缺陷/);
+ const claimed=await f.repository.readSnapshot(),job=claimed.runtime.softwareJobs.find(entry=>entry.jobType==='d_production_execution');
+ assert.equal(job.status,'claimed');assert.equal(job.failureClass,null);
+ const holder={jobId:job.jobId,workerId:job.workerId,leaseId:job.leaseId};
+ const at=new Date(Date.parse(job.lastProgressAt)+1000).toISOString();
+ const guardClass='d-production-guard-rejected:SOFTWARE_JOB_LEASE_REJECTED';
+ const attempt=(mutate,settlement={})=>{
+  const document=clone(claimed),saved=document.runtime.softwareJobs.find(entry=>entry.jobId===job.jobId);
+  if(mutate)mutate(saved,document.candidates[0].lifecycleV11.skuPackage);
+  return ()=>settleDProductionPreSendStopInDocument(document,{...holder,failureClass:guardClass,...settlement},at);
+ };
+ const invalid=/SOFTWARE_JOB_D_PRE_SEND_STOP_INVALID/;
+ assert.throws(attempt(null,{failureClass:'lease_expired'}),invalid);
+ assert.throws(attempt(null,{failureClass:'d-production-guard-rejected:随便写'}),invalid);
+ assert.throws(attempt(saved=>{saved.externalRequestState='in_flight';saved.externalRequestRef='d-production-request:synthetic';}),invalid);
+ assert.throws(attempt((saved,sku)=>{sku.dAssetTransport={schemaVersion:'aliyun-oss-d-asset-state-v1',status:'in_flight'};}),invalid);
+ assert.throws(attempt((saved,sku)=>{sku.dSoftwareExecution={schemaVersion:'d-software-execution-state-v2',status:'in_flight'};}),invalid);
+ assert.throws(attempt(null,{leaseId:'lease:de:other'}),/SOFTWARE_JOB_LEASE_REJECTED/);
+ const document=clone(claimed);
+ const settled=settleDProductionPreSendStopInDocument(document,{...holder,failureClass:guardClass},at);
+ assert.equal(settled.status,'failed');assert.equal(settled.externalRequestState,'not_sent');
+ assert.equal(settled.completedAt,at);assert.equal(settled.failureClass,guardClass);
+ assertPublished(document);
+});
+
+// 主人拍板（2026-09-22）：上一轮证明什么都没发出去时，在同一份授权下再派一轮，而不是重签授权。
+// 这条路必须真的走得通到底——不只是排出作业，而是新一轮能把商品实际写到平台并通过独立回读。
+test('上一轮零发送停下后，同一授权可再派一轮，新一轮真的传素材并把导入发到平台',async()=>{
+ const f=await fixture();let advanced=false;
+ const blocked=createDEProductionRuntimeServices({...f.options,loadAdapterCapabilities:args=>{
+  const capabilities=f.options.loadAdapterCapabilities(args);
+  if(!advanced){advanced=true;f.advance(60001);}
+  return capabilities;
+ }});
+ assert.equal((await blocked.continueSavedCurrent(f.input)).status,'failed');
+ const stopped=await f.repository.readSnapshot();
+ const firstRound=stopped.runtime.softwareJobs.find(entry=>entry.jobType==='d_production_execution');
+ const revisionBefore=stopped.candidates[0].dataRevision;
+
+ const rounds=createDProductionRoundUseCase({repository:f.repository,serverClock:f.options.serverClock});
+ const dispatched=await rounds.dispatch({actor:f.owner.args.actor,input:{candidateId:f.input.candidateId,
+  expectedRevision:revisionBefore,supersededJobId:firstRound.jobId,confirmPreviousRoundSentNothing:true}});
+ assert.equal(dispatched.round,2);
+ assert.equal(dispatched.jobId,`${firstRound.jobId}:round2`);
+ assert.equal(dispatched.externalRequests,0);assert.equal(dispatched.platformWrites,0);
+
+ const requeued=await f.repository.readSnapshot(),jobs=requeued.runtime.softwareJobs.filter(e=>e.jobType==='d_production_execution');
+ assert.equal(jobs.length,2);
+ // 授权、候选和失败历史一律不动：轮次是技术尝试，不占 revision，也不改写上一轮。
+ assert.equal(requeued.candidates[0].dataRevision,revisionBefore);
+ assert.deepEqual(requeued.candidates[0].lifecycleV11.skuPackage.productionAuthorization,
+  stopped.candidates[0].lifecycleV11.skuPackage.productionAuthorization);
+ assert.deepEqual(requeued.candidates[0].lifecycleV11.skuPackage.dHandoff,stopped.candidates[0].lifecycleV11.skuPackage.dHandoff);
+ assert.deepEqual(jobs.find(e=>e.jobId===firstRound.jobId),firstRound);
+ const second=jobs.find(e=>e.jobId===dispatched.jobId);
+ assert.equal(second.status,'queued');assert.equal(second.attempt,0);
+ assert.equal(second.externalRequestState,'not_sent');assert.equal(second.revision,firstRound.revision);
+ assert.deepEqual(second.scopeBinding,firstRound.scopeBinding);
+ assertPublished(requeued);
+ // 重复点击：第二下引用的还是已经被取代的那一轮，必须拒绝，不能派出第三轮。
+ await assert.rejects(()=>rounds.dispatch({actor:f.owner.args.actor,input:{candidateId:f.input.candidateId,
+  expectedRevision:revisionBefore,supersededJobId:firstRound.jobId,confirmPreviousRoundSentNothing:true}}),
+  error=>error.code==='ROUND_NOT_ALLOWED'&&/已经重派过/.test(error.message));
+ assert.equal((await f.repository.readSnapshot()).runtime.softwareJobs.filter(e=>e.jobType==='d_production_execution').length,2);
+
+ // 同一个运行时实例继续跑：工人注册表只允许一个，重派也不需要重启服务。
+ const view=buildDESavedJobRuntimeView({candidate:requeued.candidates[0],
+  runtime:{...requeued.runtime,workers:f.registry.snapshot()},serviceBindings:f.options.deServiceBindings,
+  productionBindings:f.options.productionBindings,dependencyView:blocked.dependencyView,observedAt:f.options.serverClock()});
+ assert.equal(view.canContinueSaved,true);
+ assert.equal(view.continueJobId,dispatched.jobId);
+ assert.equal(view.canDispatchNewRound,false);
+
+ // 新一轮真的把素材传上去、把商品导入发到平台了；这才是「能上架」，不只是排了个作业。
+ const outcome=await blocked.continueSavedCurrent({...f.input,jobId:dispatched.jobId,expectedRevision:revisionBefore});
+ assert.equal(outcome.status,'waiting_platform');
+ assert.equal(f.puts.length,2);
+ assert.deepEqual(f.calls,['/v3/product/import']);
+ const done=await f.repository.readSnapshot(),sku=done.candidates[0].lifecycleV11.skuPackage;
+ assert.equal(sku.dSoftwareExecution.softwareJobRef.jobId,dispatched.jobId);
+ assert.equal(sku.dAssetTransport.softwareJobRef.jobId,dispatched.jobId);
+ assert.equal(sku.dSoftwareExecution.productionPlan.sourceAuthorization.authorizationId,
+  stopped.candidates[0].lifecycleV11.skuPackage.productionAuthorization.authorizationId);
+ const executed=done.runtime.softwareJobs.find(e=>e.jobId===dispatched.jobId);
+ assert.equal(executed.status,'waiting_platform');assert.equal(executed.externalRequestState,'succeeded');
+ // 失败的第一轮一个字节都没被改写。
+ assert.deepEqual(done.runtime.softwareJobs.find(e=>e.jobId===firstRound.jobId),firstRound);
+ assertPublished(done);
+});
+
+// 只要上一轮无法证明零发送，就绝不允许重派——这是整条规则的保险丝。
+test('上一轮可能已经发出请求时拒绝重派，且不创建任何新作业',async()=>{
+ const f=await fixture();
+ const runtime=createDEProductionRuntimeServices(f.options);
+ await runtime.continueSavedCurrent(f.input);
+ const sent=await f.repository.readSnapshot();
+ const job=sent.runtime.softwareJobs.find(entry=>entry.jobType==='d_production_execution');
+ assert.notEqual(job.externalRequestRef,null);
+ const rounds=createDProductionRoundUseCase({repository:f.repository,serverClock:f.options.serverClock});
+ await assert.rejects(()=>rounds.dispatch({actor:f.owner.args.actor,input:{candidateId:f.input.candidateId,
+  expectedRevision:sent.candidates[0].dataRevision,supersededJobId:job.jobId,confirmPreviousRoundSentNothing:true}}),
+  error=>error.code==='ROUND_NOT_ALLOWED'&&/还没停下来|没发出去/.test(error.message));
+ assert.deepEqual((await f.repository.readSnapshot()).runtime.softwareJobs,sent.runtime.softwareJobs);
 });

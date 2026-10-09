@@ -1,9 +1,13 @@
-import { readDProductionJobWaiting, readDPlatformStoppedJobTerminal, readDInitialImportStoppedJobTerminal } from './d-platform-observation-contract.mjs';
+import { readDProductionJobWaiting, readDPlatformStoppedJobTerminal, readDInitialImportStoppedJobTerminal,
+  readDOwnerStockRegisteredJobTerminal, D_OWNER_STOCK_REGISTRATION_FIELD,
+  D_UNKNOWN_OUTCOME_REOBSERVATION_FIELD } from './d-platform-observation-contract.mjs';
 import { isDeepStrictEqual } from "node:util";
-import { assertDProductionJobReference, assertEReadbackJobReference } from "./d-e-software-job-handoff.mjs";
+import { assertDProductionJobReference, assertEReadbackJobReference, currentDProductionRound,
+  dProductionRoundDispatchable } from "./d-e-software-job-handoff.mjs";
 import { assertDEJobAdmissionDecision, createDEJobAdmissionDecision, DESoftwareJobAdmissionError } from "./d-e-software-job-admission.mjs";
 import { assertDProductionRecordSource, assertDProductionReceiptChain, DEJobScopeError } from "./d-e-software-job-scope.mjs";
 import { DProductionJobCursorError } from "./d-production-job-cursor.mjs";
+import { productionAuthorizationRollbackEligible, PRODUCTION_AUTHORIZATION_ROLLBACK_FIELD } from "./production-authorization-rollback.mjs";
 import { assertEReadbackAttempt } from "./e-readback-attempt.mjs";
 import { validateSystemCreatedVerificationRecord } from "./e-stage-readback.mjs";
 import { normalizeDEServiceBindings, isRuntimeConfigurationTimestamp } from "./runtime-configuration.mjs";
@@ -35,7 +39,12 @@ function savedMaterial(stage, job, candidate, view, observedAt) {
   const sku = candidate.lifecycleV11.skuPackage;
   if (stage === "D") {
     const state = sku.dSoftwareExecution;
-    if (state?.status === "succeeded") {
+    // 登记档：商品由软件建、库存由主人手工写。没有生产记录是**正确**的，
+    // 所以不能走下面那条「succeeded 必须有生产记录」的路。
+    if (state?.status === "succeeded" && state.platformContinuation?.status === "owner_stock_registered") {
+      readDOwnerStockRegisteredJobTerminal({ candidate, job, observedAt });
+      view.receiptStatus = "owner_stock_registered";
+    } else if (state?.status === "succeeded") {
       const authorization = state.productionPlan?.sourceAuthorization;
       if (!authorization || fingerprintCanonicalRecord(authorization) !== job.scopeBinding.authorizationFingerprint ||
           !isDeepStrictEqual(state.softwareJobRef, { jobId: job.jobId, revision: job.revision, workerId: job.workerId, leaseId: job.leaseId })) {
@@ -52,7 +61,21 @@ function savedMaterial(stage, job, candidate, view, observedAt) {
       const continuation=state.platformContinuation;
       if(state.status === 'waiting_platform') readDProductionJobWaiting({candidate,job,observedAt});
       else if(continuation.inventoryWriteState === 'not_sent' && ['failed','unknown_outcome'].includes(state.status)) {
-        if (job.resultEnvelope?.payload?.schemaVersion === 'd-initial-import-stop-job-result-v1') readDInitialImportStoppedJobTerminal({candidate,job,observedAt});
+        if (job.resultEnvelope?.payload?.schemaVersion === 'd-initial-import-stop-job-result-v1') {
+          readDInitialImportStoppedJobTerminal({candidate,job,observedAt});
+          // 导入已被平台接受、却因上下文变化停下——这一档主人可以「对账并登记」。
+          // 按钮要点的东西都从这里给出去，界面不自己拼。
+          const stopped=job.resultEnvelope.payload;
+          const recovered=(candidate.lifecycleV11.dInitialImportRecoveryV1 ?? [])
+            .some(entry=>entry.taskId === stopped.taskId);
+          view.initialImportRecovery={
+            canRecover: !recovered && job.failureClass === 'd-initial-import-context-changed',
+            blocker: recovered ? {code:'ALREADY_RECOVERED',message:'这个导入任务已经对账恢复过一次了，不会重复恢复。'}
+              : job.failureClass === 'd-initial-import-context-changed' ? null
+              : {code:'NOT_CONTEXT_CHANGED',message:'本轮停止原因不是上下文变化，不能用对账恢复。'},
+            sourceDJobId: job.jobId, taskId: stopped.taskId,
+            requestReceiptRef: stopped.requestReceiptRef, expectedRevision: candidate.dataRevision };
+        }
         else readDPlatformStoppedJobTerminal({candidate,job,observedAt});
       }
       view.businessStatus=continuation.status;
@@ -65,10 +88,77 @@ function savedMaterial(stage, job, candidate, view, observedAt) {
         query_budget_exhausted:'本轮查询次数或期限已用尽，已停止。',unknown_outcome:'本轮观察结果无法确认，已停止且不会重放导入。',
         blocked:'缺少已核实的后续执行前提，库存尚未发送。',inventory_not_sent_interrupted:'库存发送前服务中断，原导入回执已保留。'};
       if (continuation.status === 'waiting_import' && continuation.policy === null) messages.waiting_import='平台已接收导入；查询策略未配置，尚未安排查询。';
+      // 这两档原先都落进笼统的 blocked 文案（「缺少已核实的后续执行前提」），
+      // 主人看不出该做什么，甚至可能去重签授权——**重签等于第二次导入、会在平台上建出重复商品**。
+      // 所以逐档说清楚，并明确写「不要重签、不要重发」。
+      if (state.attempt?.failure?.code === 'inventory_request_superseded') messages.blocked=
+        '商品已经在平台上建好了（本轮导入已被接受）。但本轮冻结的导入内容与当前软件生成的已不一致，'
+        + '为避免发出一份对不上的请求，库存没有发送，软件已安全停下。'
+        + '**请不要重签授权、也不要重新导入**——重签会在平台上再建一个重复商品。请把这条告诉施工方处理。';
+      if (state.attempt?.failure?.code === 'inventory_stock_mismatch') messages.blocked=
+        '平台仓库里读到的库存，既不是 0 也不等于本轮授权锁定的数量，软件不会覆盖它，已安全停下。'
+        + '**请不要重签授权、也不要重新导入。**请先在卖家后台确认该仓库实际应有多少件，再把结论告诉施工方。';
       if (job.resultEnvelope?.payload?.schemaVersion === 'd-initial-import-stop-job-result-v1') messages.blocked=
         state.blockReason === 'lease_expired' ? '导入任务已接收，但执行租约已过期；已停止后续查询，库存尚未发送。' :
           '导入任务已接收，但商品、执行配置或查询期限已不满足后续条件；已停止查询，库存尚未发送。';
-      if(Object.hasOwn(messages,continuation.status)) view.blockers.push(blocker(`D_PLATFORM_${continuation.status.toUpperCase()}`,messages[continuation.status]));
+      // 平台在导入任务上报了错误时，把每一条都摆给主人看——
+      // 2026-09-24 背心停在 unknown_outcome，记录里只有「2 条」，主人只能去后台翻。
+      const importErrors = continuation.observationHistory?.findLast(entry =>
+        entry.queryKind === 'import_task' && Array.isArray(entry.result?.importObservation?.errors)
+          && entry.result.importObservation.errors.length > 0)?.result.importObservation.errors;
+      // r70 之前落的观察记录只有 errorCount、没有明细。如实说明，别让主人以为「没有错误」。
+      const countOnly = continuation.observationHistory?.findLast(entry =>
+        entry.queryKind === 'import_task' && (entry.result?.importObservation?.errorCount ?? 0) > 0
+          && !Array.isArray(entry.result.importObservation.errors));
+      if (countOnly && !Array.isArray(importErrors)) {
+        view.blockers.push(blocker('D_IMPORT_ERRORS_DETAIL_MISSING',
+          `平台在导入任务上报了 ${countOnly.result.importObservation.errorCount} 条错误，`
+          + '但这条观察记录是本次改动之前落的，当时只记了条数、没有留下明细。'
+          + '重新观察一次就会把每条错误的级别与文案补齐并显示在这里。'));
+      }
+      if (Array.isArray(importErrors)) {
+        for (const [index, item] of importErrors.entries()) {
+          const where = item.attributeName ?? item.field ?? null;
+          view.blockers.push(blocker(`D_IMPORT_ERROR_${index + 1}`,
+            `平台在导入任务上报的第 ${index + 1} 条${item.level ? `（${item.level}）` : ''}：`
+            + `${item.message ?? item.code ?? '未提供文案'}`
+            + `${where ? `｜位置：${where}` : ''}${item.code ? `｜代码：${item.code}` : ''}`));
+        }
+      }
+      // 「按新分类重新观察一次」：只在**确实还有得看**时才亮。
+      // 停在 unknown_outcome、平台已经把商品建出来（观察记录里有 product_id）、
+      // 策略当下有效、且剩余预算还够把这一轮观察跑完——四条缺一不可。
+      if (state.status === 'unknown_outcome' && continuation.status === 'unknown_outcome') {
+        const withProduct = continuation.observationHistory?.findLast(entry =>
+          entry.queryKind === 'import_task' && entry.result?.importObservation?.status === 'imported' &&
+          entry.result.importObservation.productId);
+        const already = (candidate.lifecycleV11[D_UNKNOWN_OUTCOME_REOBSERVATION_FIELD] ?? [])
+          .some(entry => entry.taskId === continuation.taskId);
+        const policy = continuation.policy;
+        const remainingQueries = policy ? policy.maxQueries - (continuation.queryCount ?? 0) : 0;
+        const policyCurrent = Boolean(policy) && Date.parse(policy.expiresAt) - Date.parse(observedAt)
+          >= remainingQueries * policy.intervalMs;
+        const blocker = already ? { code: 'ALREADY_REOBSERVED', message: '这个导入任务已经按新分类重新观察过一次了。' }
+          : !withProduct ? { code: 'NO_PLATFORM_PRODUCT', message: '平台还没有给出商品号，重新观察也拿不到结论。' }
+          : remainingQueries <= 0 ? { code: 'QUERY_BUDGET_EXHAUSTED', message: '本轮查询预算已用尽。' }
+          : !policyCurrent ? { code: 'OBSERVATION_POLICY_UNAVAILABLE', message: '平台查询策略缺失或剩余寿命盖不住剩余预算。' }
+          : null;
+        view.unknownOutcomeReobservation = { canReobserve: blocker === null, blocker,
+          sourceDJobId: job.jobId, taskId: continuation.taskId,
+          productId: withProduct ? String(withProduct.result.importObservation.productId) : null,
+          expectedRevision: candidate.dataRevision };
+      }
+      if (continuation.status === 'owner_stock_registered') {
+        // 主人要求三句分开显示，不许合并成「已上架」：谁建的、库存谁写的、E 谁核的，是三件事。
+        const registration = (candidate.lifecycleV11[D_OWNER_STOCK_REGISTRATION_FIELD] ?? []).at(-1);
+        view.blockers.push(blocker('D_OWNER_STOCK_PRODUCT_CREATED',
+          `商品由软件创建（导入任务 ${registration?.taskId ?? continuation.taskId}、商品号 ${registration?.productId ?? continuation.productId}）。`));
+        view.blockers.push(blocker('D_OWNER_STOCK_WRITTEN_BY_OWNER',
+          `库存由主人手工写入（登记时回读到 ${registration?.observedStock ?? '未知'} 件，授权锁定 ${registration?.authorizedStock ?? '未知'} 件）；软件未发送任何库存请求。`));
+        view.blockers.push(blocker('D_OWNER_STOCK_E_MANUAL',
+          'E 阶段由主人人工核对：本轮没有生产记录，软件不会自动回读。'));
+      }
+      else if(Object.hasOwn(messages,continuation.status)) view.blockers.push(blocker(`D_PLATFORM_${continuation.status.toUpperCase()}`,messages[continuation.status]));
     }
     if (job.preparationEvidence) {
       const preparation = assertDProductionPreparation(job.preparationEvidence, { job });
@@ -168,6 +258,32 @@ function continuationConfiguration({ stage, job, candidate, runtime, serviceBind
 }
 
 /** Read-only display projection. Presence of configured providers is not a platform health check or permission to send. */
+/**
+ * 作废一轮授权之后，被归档那几轮仍然留在作业表里（按规矩一条不删），它们带的是旧授权号。
+ * 因此"本商品的全部D作业必须同属一个授权"这条断言会把正常状态误判成来源错乱，
+ * 2026-09-23 背心就是这样把三个按钮全关掉的。
+ *
+ * 换成两条，合起来比原来严：
+ *   一、当前授权下的各轮次仍然必须同源（原语义一字不减）；
+ *   二、不属于当前授权的作业，必须逐个能在本候选的作废归档里找到出处，
+ *       并且都停在「失败、且证明一个请求都没发出去」。
+ * 来路不明的外来作业照旧判冲突。
+ */
+function dJobsHaveSingleTraceableSource(candidate, relevant, job) {
+  const currentRef = job?.scopeBinding?.authorizationRef;
+  if (!job || !currentRef) return false;
+  const archivedRefs = new Set((candidate.lifecycleV11?.[PRODUCTION_AUTHORIZATION_ROLLBACK_FIELD] ?? [])
+    .map(entry => entry.productionAuthorizationRef?.authorizationId)
+    .filter(value => typeof value === "string" && value.length > 0));
+  return relevant.every(entry => {
+    const entryRef = entry.scopeBinding?.authorizationRef;
+    if (entryRef === currentRef) return true;
+    return archivedRefs.has(entryRef) && entry.status === "failed" &&
+      entry.externalRequestState === "not_sent" && entry.externalRequestRef === null &&
+      entry.resultEnvelope === null;
+  });
+}
+
 export function buildDESavedJobRuntimeView({ candidate, runtime, serviceBindings = [], productionBindings = [], dependencyView = {}, observedAt }) {
   if (!isRuntimeConfigurationTimestamp(observedAt)) throw new TypeError("DE_RUNTIME_VIEW_TIME_INVALID");
   if (!runtime || (runtime.softwareJobs !== undefined && !Array.isArray(runtime.softwareJobs)) || !Array.isArray(serviceBindings) || !Array.isArray(productionBindings) ||
@@ -188,9 +304,14 @@ export function buildDESavedJobRuntimeView({ candidate, runtime, serviceBindings
     const expectsE = sku.dSoftwareExecution?.status === "succeeded" && sku.dSoftwareExecution.continuationBlocked === false &&
       stages.d?.status === "completed";
     if (stage === "E" && !refs.E && relevant.length === 0 && !expectsE) { stages.e = null; continue; }
-    const job = relevant.find(job => job.jobId === refs[stage]?.jobId) ?? relevant[0];
+    // D 可能有不止一轮受控执行；当前轮由轮次链决定，被取代的轮次必须都已证明一个请求都没发出去。
+    const job = stage === "D"
+      ? currentDProductionRound(document, { authorizationRef: sku.productionAuthorization?.authorizationId,
+        authorizationFingerprint: sku.productionAuthorization ? fingerprintCanonicalRecord(sku.productionAuthorization) : null })
+      : relevant.find(entry => entry.jobId === refs[stage]?.jobId) ?? relevant[0];
     let view = stageBase(stage, job);
-    if (!job || relevant.length !== 1 || !refs[stage]) { stages[stage.toLowerCase()] = conflict(view, "DE_SAVED_JOB_REFERENCE_CONFLICT"); continue; }
+    const sameSource = stage === "D" ? dJobsHaveSingleTraceableSource(candidate, relevant, job) : relevant.length === 1;
+    if (!job || !sameSource || !refs[stage]) { stages[stage.toLowerCase()] = conflict(view, "DE_SAVED_JOB_REFERENCE_CONFLICT"); continue; }
     try {
       view = savedMaterial(stage, job, candidate, view, observedAt);
       currentSource(stage, job, candidate, document);
@@ -212,6 +333,17 @@ export function buildDESavedJobRuntimeView({ candidate, runtime, serviceBindings
     }
     stages[stage.toLowerCase()] = view;
   }
+  // 上一轮已经停下且证明什么都没发出去时，主人可以在同一份授权下再派一轮；这不是重试，要他自己点。
+  const round = stages.d && !stages.d.sourceBlockReason && !stages.e ? dProductionRoundDispatchable(document, candidate)
+    : { dispatchable: false, blocker: null, supersededJobId: null };
+  if (stages.d) stages.d.newRound = { canDispatch: round.dispatchable, blocker: round.dispatchable ? null : round.blocker,
+    supersededJobId: round.supersededJobId ?? null, supersededFailureClass: round.supersededFailureClass ?? null,
+    nextRound: round.dispatchable ? round.round : null };
+  // 再派一轮和作废授权互斥：还能直接再派时 eligible 必为 false（ROUND_STILL_DISPATCHABLE），
+  // 只有被 DOWNSTREAM_EXISTS / REVISION_MOVED 挡住且六项证据齐全，才轮到作废这条路。
+  const rollback = stages.d && !stages.d.sourceBlockReason && !stages.e
+    ? productionAuthorizationRollbackEligible(document, candidate)
+    : { eligible: false, blocker: null, authorizationId: null };
   const sourceConflict = [stages.d, stages.e].some(stage => stage?.sourceBlockReason);
   if (sourceConflict && stages.e) stages.e.currentVerified = false;
   const active = stages.e ?? stages.d;
@@ -220,5 +352,30 @@ export function buildDESavedJobRuntimeView({ candidate, runtime, serviceBindings
   return { schemaVersion: "d-e-saved-job-runtime-view-v1", ...stages,
     status: sourceConflict ? "source_conflict" : currentVerified ? "verified" : active.status,
     currentVerified, canContinueSaved, continueJobId: canContinueSaved ? active.jobId : null,
+    canDispatchNewRound: !sourceConflict && stages.d?.newRound.canDispatch === true,
+    newRoundSupersededJobId: !sourceConflict && stages.d?.newRound.canDispatch === true ? stages.d.newRound.supersededJobId : null,
+    canRollbackAuthorization: !sourceConflict && rollback.eligible === true,
+    rollbackAuthorizationId: !sourceConflict && rollback.eligible === true ? rollback.authorizationId : null,
+    rollbackBlocker: !sourceConflict && rollback.eligible === true ? null : (rollback.blocker ?? null),
+    // 导入已被平台接受、却因上下文变化停下：主人可以「对账并登记」。
+    // 按钮要用的几项从这里一并给出去，界面不自己拼。
+    canReobserveUnknownOutcome: !sourceConflict && stages.d?.unknownOutcomeReobservation?.canReobserve === true,
+    unknownOutcomeReobservation: !sourceConflict && stages.d?.unknownOutcomeReobservation?.canReobserve === true
+      ? { sourceDJobId: stages.d.unknownOutcomeReobservation.sourceDJobId,
+          taskId: stages.d.unknownOutcomeReobservation.taskId,
+          productId: stages.d.unknownOutcomeReobservation.productId,
+          expectedRevision: stages.d.unknownOutcomeReobservation.expectedRevision }
+      : null,
+    reobservationBlocker: !sourceConflict && stages.d?.unknownOutcomeReobservation
+      && stages.d.unknownOutcomeReobservation.canReobserve !== true
+      ? stages.d.unknownOutcomeReobservation.blocker ?? null : null,
+    canRecoverInitialImport: !sourceConflict && stages.d?.initialImportRecovery?.canRecover === true,
+    initialImportRecovery: !sourceConflict && stages.d?.initialImportRecovery?.canRecover === true
+      ? { sourceDJobId: stages.d.initialImportRecovery.sourceDJobId, taskId: stages.d.initialImportRecovery.taskId,
+          requestReceiptRef: stages.d.initialImportRecovery.requestReceiptRef,
+          expectedRevision: stages.d.initialImportRecovery.expectedRevision }
+      : null,
+    recoveryBlocker: !sourceConflict && stages.d?.initialImportRecovery && stages.d.initialImportRecovery.canRecover !== true
+      ? stages.d.initialImportRecovery.blocker ?? null : null,
     expectedRevision: candidate.dataRevision, automaticRetryAllowed: false, platformHealth: "not_checked" };
 }

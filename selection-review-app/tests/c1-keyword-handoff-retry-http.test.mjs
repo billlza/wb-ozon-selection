@@ -3,20 +3,15 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { productionOwnerDecisionHttpFixture, startSavedDEApi } from './helpers/d-e-saved-api-fixture.mjs';
 import { createC1KeywordHandoffRetryFixture, keywordHandoffDraftBinding } from './fixtures/c1-keyword-handoff-retry-fixture.mjs';
 import { openExceptionCase } from '../lib/software-execution-state.mjs';
 
-async function freePort() {
-  const server = http.createServer();
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
-  const port = server.address().port;
-  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-  assert.ok(![4317, 4318, 4173].includes(port));
-  return port;
-}
+const port = Number(process.env.SELECTION_REVIEW_TEST_PORT);
+const dependencyPort = Number(process.env.SELECTION_REVIEW_TEST_GATEWAY_PORT);
+if (![port, dependencyPort].every(value => Number.isSafeInteger(value) && value > 0 && value <= 65535 &&
+    ![4317, 4318, 4173].includes(value)) || port === dependencyPort) throw new Error('TEST_REQUIRES_ISOLATED_PORT');
 
 async function retryHttpFixture(t, { configured = true, unknown = false } = {}) {
   const fixture = await createC1KeywordHandoffRetryFixture();
@@ -38,8 +33,6 @@ async function retryHttpFixture(t, { configured = true, unknown = false } = {}) 
   // Only the isolated server clock is synthetic. Native timers still enforce real timeouts.
   // These tripwires fail before any real keychain or external fetch; they never supply successful responses.
   await writeFile(preload, `import childProcess from 'node:child_process';\nimport {syncBuiltinESMExports} from 'node:module';\nimport {writeFileSync} from 'node:fs';\nconst NativeDate=Date;const fixed=NativeDate.parse(${JSON.stringify(fixture.clock())});globalThis.Date=class extends NativeDate{constructor(...args){super(...(args.length?args:[fixed]));}static now(){return fixed;}};\nconst counts={credentials:0,network:0};function deny(kind){counts[kind]++;writeFileSync(${JSON.stringify(probeFile)},JSON.stringify(counts));throw new Error('UNEXPECTED_TEST_EXTERNAL_ACTION');}\nchildProcess.execFile=()=>deny('credentials');syncBuiltinESMExports();globalThis.fetch=async()=>deny('network');\n`);
-  const port = await freePort(); let dependencyPort = await freePort();
-  while (dependencyPort === port) dependencyPort = await freePort();
   const draftBinding = { ...keywordHandoffDraftBinding, gatewayOrigin: `http://127.0.0.1:${dependencyPort}` };
   const env = { SELECTION_REVIEW_TEST_GATEWAY_PORT: String(dependencyPort),
     SELECTION_REVIEW_C1_DRAFT_SERVICE_BINDINGS_JSON: JSON.stringify(configured ? [draftBinding] : []),

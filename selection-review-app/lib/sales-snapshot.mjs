@@ -3,6 +3,22 @@ export const MOCK_OZON_COLLECTOR_VERSION = "mock-ozon-sales-snapshot-v1";
 export const REAL_OZON_COLLECTOR_VERSION = "real-ozon-sales-snapshot-v1";
 export const TERRA_AUXILIARY_DRAFT_VERSION = "terra-a-sales-draft-v1";
 export const OZON_COLLECTION_RESULT_VERSION = "ozon-sales-collection-result-v1";
+/**
+ * A market snapshot derived from one already-saved Seerfar category-detail receipt. It is not a page read: every
+ * number is exactly what the provider reported for that product in that receipt, and the two evidence refs
+ * (providerRecordRef and receiptId) say which saved record it came from.
+ */
+export const SEERFAR_CATEGORY_DETAIL_SOURCE = "seerfar_category_detail";
+export const SEERFAR_CATEGORY_DETAIL_COLLECTOR_VERSION = "seerfar-category-detail-v1";
+export const SEERFAR_CATEGORY_DETAIL_COLLECTOR_MODE = "provider_category_result_read_only";
+/** Closed key set for the derived snapshot: nothing beyond the provider's own reported facts may be saved here. */
+export const SEERFAR_CATEGORY_DETAIL_SNAPSHOT_KEYS = Object.freeze([
+  "schemaVersion", "snapshotId", "platform", "source", "marketScope", "sellerType", "sellerIdentityEvidence",
+  "productUrl", "title", "imageRefs", "currentPrice", "currency", "priceCurrencySource", "categoryPath",
+  "attributes", "marketMetrics", "evidenceRefs", "collectedAt", "evidenceRef", "collectorVersion",
+  "collectorMode", "readOnly"
+]);
+const SEERFAR_MARKET_METRIC_KEYS = Object.freeze(["salesCount", "salesWindow", "revenue", "reviewCount", "reviewRating"]);
 export const UNKNOWN = "unknown";
 
 export function extractOzonProductId(value) {
@@ -69,6 +85,65 @@ function deepFreeze(value) {
 
 function sameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function nullableNonNegative(value) {
+  return value === null || (Number.isFinite(value) && value >= 0);
+}
+
+function isoDate(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value));
+}
+
+/**
+ * The derived Seerfar snapshot keeps closed keys, an explicit source type and both provenance refs, so a number
+ * saved here can never be confused with a real page read or silently gain fields nobody evidenced.
+ */
+function validateSeerfarCategoryDetailSnapshot(snapshot, errors) {
+  const keys = Object.keys(snapshot);
+  if (keys.length !== SEERFAR_CATEGORY_DETAIL_SNAPSHOT_KEYS.length ||
+      SEERFAR_CATEGORY_DETAIL_SNAPSHOT_KEYS.some((key) => !Object.hasOwn(snapshot, key))) {
+    push(errors, "$", `${SEERFAR_CATEGORY_DETAIL_SOURCE}快照只能保存声明的固定字段`);
+  }
+  if (snapshot.collectorMode !== SEERFAR_CATEGORY_DETAIL_COLLECTOR_MODE ||
+      snapshot.collectorVersion !== SEERFAR_CATEGORY_DETAIL_COLLECTOR_VERSION) {
+    push(errors, "collectorMode", "查询结果快照必须声明只读的品类查询采集模式");
+  }
+  if (snapshot.sellerType !== UNKNOWN) push(errors, "sellerType", "查询结果没有卖家身份证据，只能是unknown");
+  if (snapshot.priceCurrencySource !== "ozon_platform_currency") {
+    push(errors, "priceCurrencySource", "必须写明售价币种依据的是平台币种约定");
+  }
+  const metrics = snapshot.marketMetrics;
+  if (!isObject(metrics)) {
+    push(errors, "marketMetrics", "必须是对象");
+  } else {
+    const metricKeys = Object.keys(metrics);
+    if (metricKeys.length !== SEERFAR_MARKET_METRIC_KEYS.length ||
+        SEERFAR_MARKET_METRIC_KEYS.some((key) => !Object.hasOwn(metrics, key))) {
+      push(errors, "marketMetrics", "只能保存服务商回报的固定指标字段");
+    }
+    if (!(metrics.salesCount === null || (Number.isSafeInteger(metrics.salesCount) && metrics.salesCount >= 0))) {
+      push(errors, "marketMetrics.salesCount", "必须是服务商回报的非负整数销量或null");
+    }
+    if (!(metrics.reviewCount === null || (Number.isSafeInteger(metrics.reviewCount) && metrics.reviewCount >= 0))) {
+      push(errors, "marketMetrics.reviewCount", "必须是非负整数评价数或null");
+    }
+    if (!nullableNonNegative(metrics.revenue)) push(errors, "marketMetrics.revenue", "必须是非负数或null");
+    if (!nullableNonNegative(metrics.reviewRating)) push(errors, "marketMetrics.reviewRating", "必须是非负数或null");
+    if (metrics.salesWindow !== null) {
+      const window = metrics.salesWindow;
+      if (!isObject(window) || Object.keys(window).length !== 2 ||
+          !["startDate", "endDate"].every((key) => Object.hasOwn(window, key)) ||
+          !["startDate", "endDate"].every((key) => window[key] === null || isoDate(window[key]))) {
+        push(errors, "marketMetrics.salesWindow", "销量统计区间必须是服务商声明的起止日期或null");
+      }
+    }
+  }
+  if (!Array.isArray(snapshot.evidenceRefs) || snapshot.evidenceRefs.length !== 2 ||
+      snapshot.evidenceRefs.some((item) => !nonEmptyString(item)) ||
+      new Set(snapshot.evidenceRefs).size !== 2) {
+    push(errors, "evidenceRefs", "必须同时保留服务商记录引用和回执引用");
+  }
 }
 
 export function validateSalesSnapshot(snapshot) {
@@ -174,11 +249,16 @@ export function validateSalesSnapshot(snapshot) {
   const validCollectorPair =
     (snapshot.collectorMode === "mock_only" && snapshot.collectorVersion === MOCK_OZON_COLLECTOR_VERSION) ||
     (snapshot.collectorMode === "real_page_read_only" && snapshot.collectorVersion === REAL_OZON_COLLECTOR_VERSION) ||
-    (snapshot.collectorMode === "provider_api_read_only" && snapshot.collectorVersion === "linkfox-detail-93a1dbf-v1");
+    (snapshot.collectorMode === "provider_api_read_only" && snapshot.collectorVersion === "linkfox-detail-93a1dbf-v1") ||
+    (snapshot.collectorMode === SEERFAR_CATEGORY_DETAIL_COLLECTOR_MODE &&
+      snapshot.collectorVersion === SEERFAR_CATEGORY_DETAIL_COLLECTOR_VERSION);
   if (!validCollectorPair) {
     push(errors, "collectorMode", "采集模式与采集器版本不匹配");
   }
   if (snapshot.readOnly !== true) push(errors, "readOnly", "必须为true");
+  // Only a snapshot that declares a source type is judged by that source's rules; page reads keep their own shape.
+  if (snapshot.source === SEERFAR_CATEGORY_DETAIL_SOURCE) validateSeerfarCategoryDetailSnapshot(snapshot, errors);
+  else if (snapshot.source !== undefined) push(errors, "source", "销售快照来源类型无效");
   return { valid: errors.length === 0, errors };
 }
 

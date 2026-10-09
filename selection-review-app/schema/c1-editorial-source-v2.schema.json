@@ -1,0 +1,405 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "c1-editorial-source-v2",
+  "title": "主人确认的已生成C1文案修订来源",
+  "description": "保留原成功作业和回执的独立修订；跨身份、版本、时间和内容一致性由领域合同验证，不授予生产权限。",
+  "$ref": "#/$defs/source",
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "bundle",
+        "ownerConfirmation"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "c1-editorial-source-v2"
+        },
+        "bundle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "request",
+            "receipt",
+            "sourceJob",
+            "correctionPlan"
+          ],
+          "properties": {
+            "request": {
+              "$ref": "c1-ai-draft-request-v1.schema.json"
+            },
+            "receipt": {
+              "$ref": "c1-ai-draft-receipt-v1.schema.json"
+            },
+            "sourceJob": {
+              "$ref": "#/$defs/completedJob"
+            },
+            "correctionPlan": {
+              "$ref": "#/$defs/correctionPlan"
+            }
+          }
+        },
+        "ownerConfirmation": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/ownerConfirmation"
+        }
+      }
+    },
+    "completedJob": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "jobId",
+        "candidateId",
+        "skuPackageId",
+        "revision",
+        "jobType",
+        "status",
+        "attempt",
+        "externalRequestState",
+        "failureClass",
+        "progressRef",
+        "resultRef",
+        "scopeBinding",
+        "admissionDecision",
+        "externalRequestRef",
+        "workerId",
+        "leaseId",
+        "startedAt",
+        "completedAt",
+        "resultEnvelope"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "c1-editorial-completed-job-v1"
+        },
+        "jobId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/jobId"
+        },
+        "candidateId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/candidateId"
+        },
+        "skuPackageId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/skuPackageId"
+        },
+        "revision": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/revision"
+        },
+        "jobType": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/jobType"
+        },
+        "status": {
+          "const": "completed"
+        },
+        "attempt": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/attempt"
+        },
+        "externalRequestState": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/externalRequestState"
+        },
+        "failureClass": {
+          "type": "null"
+        },
+        "progressRef": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/progressRef"
+        },
+        "resultRef": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/resultRef"
+        },
+        "scopeBinding": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/scopeBinding"
+        },
+        "admissionDecision": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/admissionDecision"
+        },
+        "externalRequestRef": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/externalRequestRef"
+        },
+        "workerId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/workerId"
+        },
+        "leaseId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/leaseId"
+        },
+        "startedAt": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/startedAt"
+        },
+        "completedAt": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/completedAt"
+        },
+        "resultEnvelope": {
+          "$ref": "#/$defs/completedEnvelope"
+        }
+      }
+    },
+    "completedEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "resultRef",
+        "jobId",
+        "jobType",
+        "candidateId",
+        "skuPackageId",
+        "revision",
+        "workerId",
+        "leaseId",
+        "externalRequestRef",
+        "externalRequestState",
+        "payloadKind",
+        "payload",
+        "payloadFingerprint",
+        "applicationDisposition",
+        "recordedAt"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/resultEnvelope/properties/schemaVersion"
+        },
+        "resultRef": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/resultEnvelope/properties/resultRef"
+        },
+        "jobId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/resultEnvelope/properties/jobId"
+        },
+        "jobType": {
+          "const": "c1_ai_draft"
+        },
+        "candidateId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/resultEnvelope/properties/candidateId"
+        },
+        "skuPackageId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/resultEnvelope/properties/skuPackageId"
+        },
+        "revision": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/resultEnvelope/properties/revision"
+        },
+        "workerId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/resultEnvelope/properties/workerId"
+        },
+        "leaseId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/resultEnvelope/properties/leaseId"
+        },
+        "externalRequestRef": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/resultEnvelope/properties/externalRequestRef"
+        },
+        "externalRequestState": {
+          "const": "succeeded"
+        },
+        "payloadKind": {
+          "const": "c1_ai_draft"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": "c1-ai-draft-software-result-v1"
+            }
+          }
+        },
+        "payloadFingerprint": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/resultEnvelope/properties/payloadFingerprint"
+        },
+        "applicationDisposition": {
+          "const": "applied"
+        },
+        "recordedAt": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/sourceJob/properties/resultEnvelope/properties/recordedAt"
+        }
+      }
+    },
+    "correctionPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "requestFingerprint",
+        "sourceOutputFingerprint",
+        "sourceSoftwareJobId",
+        "items"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "c1-draft-editorial-plan-v2"
+        },
+        "requestFingerprint": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/correctionPlan/properties/requestFingerprint"
+        },
+        "sourceOutputFingerprint": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/correctionPlan/properties/sourceOutputFingerprint"
+        },
+        "sourceSoftwareJobId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/correctionPlan/properties/sourceSoftwareJobId"
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 62,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "originalText",
+              "originalFactRefs",
+              "originalAssertions",
+              "correctedText",
+              "factPaths",
+              "explanation",
+              "sourceRefs",
+              "originalReviewZh",
+              "correctedReviewZh"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "maxLength": 500,
+                "pattern": "^output\\.(?:title|description|(?:bulletPoints|searchKeywords)\\[(?:0|[1-9][0-9]*)\\])$"
+              },
+              "originalText": {
+                "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/correctionPlan/properties/items/items/properties/originalText"
+              },
+              "originalFactRefs": {
+                "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/correctionPlan/properties/items/items/properties/originalFactRefs"
+              },
+              "originalAssertions": {
+                "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/correctionPlan/properties/items/items/properties/originalAssertions"
+              },
+              "correctedText": {
+                "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/correctionPlan/properties/items/items/properties/correctedText"
+              },
+              "factPaths": {
+                "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/correctionPlan/properties/items/items/properties/factPaths"
+              },
+              "explanation": {
+                "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/correctionPlan/properties/items/items/properties/explanation"
+              },
+              "sourceRefs": {
+                "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/bundle/properties/correctionPlan/properties/items/items/properties/sourceRefs"
+              },
+              "originalReviewZh": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 6000
+              },
+              "correctedReviewZh": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 6000
+              }
+            }
+          }
+        }
+      }
+    },
+    "draftOnlySeo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "sourceType",
+        "formalProviderResultAccepted",
+        "reason",
+        "editorialSource"
+      ],
+      "properties": {
+        "status": {
+          "const": "draft_only"
+        },
+        "sourceType": {
+          "const": "owner_confirmed_editorial"
+        },
+        "formalProviderResultAccepted": {
+          "const": false
+        },
+        "reason": {
+          "type": "null"
+        },
+        "editorialSource": {
+          "$ref": "#/$defs/source"
+        }
+      }
+    },
+    "evidenceLayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "draftVersion",
+        "sourceType",
+        "editorialVersionId",
+        "requestId",
+        "requestFingerprint",
+        "sourceReceiptId",
+        "sourceSoftwareJobId",
+        "sourceGatewayJobId",
+        "sourceOutputFingerprint",
+        "outputFingerprint",
+        "createdAt",
+        "executionStatus",
+        "finalApprovalGranted",
+        "outputContractVersion",
+        "russianAttributes"
+      ],
+      "properties": {
+        "draftVersion": {
+          "const": "c1-draft-editorial-version-v2"
+        },
+        "sourceType": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/evidenceLayer/properties/sourceType"
+        },
+        "editorialVersionId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/evidenceLayer/properties/editorialVersionId"
+        },
+        "requestId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/evidenceLayer/properties/requestId"
+        },
+        "requestFingerprint": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/evidenceLayer/properties/requestFingerprint"
+        },
+        "sourceReceiptId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/evidenceLayer/properties/sourceReceiptId"
+        },
+        "sourceSoftwareJobId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/evidenceLayer/properties/sourceSoftwareJobId"
+        },
+        "sourceGatewayJobId": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/evidenceLayer/properties/sourceGatewayJobId"
+        },
+        "sourceOutputFingerprint": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/evidenceLayer/properties/sourceOutputFingerprint"
+        },
+        "outputFingerprint": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/evidenceLayer/properties/outputFingerprint"
+        },
+        "createdAt": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/evidenceLayer/properties/createdAt"
+        },
+        "executionStatus": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/evidenceLayer/properties/executionStatus"
+        },
+        "finalApprovalGranted": {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/evidenceLayer/properties/finalApprovalGranted"
+        },
+        "outputContractVersion": {
+          "const": "c1-ai-draft-output-v3"
+        },
+        "factDefinitionsVersion": {
+          "const": "c1-fact-definitions-v1"
+        },
+        "russianAttributes": {
+          "$ref": "c1-ai-draft-receipt-v1.schema.json#/properties/output/oneOf/2/properties/russianAttributes"
+        },
+        "categoryPathReview": {
+          "$ref": "c1-ai-draft-receipt-v1.schema.json#/properties/output/oneOf/2/properties/categoryPathReview"
+        }
+      }
+    }
+  }
+}

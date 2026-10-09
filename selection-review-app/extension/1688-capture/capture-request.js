@@ -32,8 +32,16 @@ export function canonicalOzonCaptureSource(value, expectedProductId) {
   } catch { return null; }
 }
 
+// A capture id is minted by the service as SCJ-<uuid>. A candidate id carries its record type as a prefix —
+// `candidate:2e417eaf-…` — so the colon is part of the real shape, not something to defend against. Demanding the
+// capture id's charset from it made every real supplier job arrive invalid and be dropped before a page was opened
+// (owner, four capture attempts on 2026-09-11/12). Both patterns still exclude whitespace, slashes and separators.
+const CAPTURE_ID_PATTERN = /^[A-Za-z0-9_-]{1,160}$/;
+const CANDIDATE_ID_PATTERN = /^[A-Za-z0-9_:.-]{1,160}$/;
+
 function validJobIdentity(payload) {
-  return ["captureId", "candidateId"].every((key) => typeof payload[key] === "string" && /^[A-Za-z0-9_-]{1,160}$/.test(payload[key])) &&
+  return typeof payload.captureId === "string" && CAPTURE_ID_PATTERN.test(payload.captureId) &&
+    typeof payload.candidateId === "string" && CANDIDATE_ID_PATTERN.test(payload.candidateId) &&
     typeof payload.token === "string" && payload.token.length > 0 && payload.token.length <= 512;
 }
 

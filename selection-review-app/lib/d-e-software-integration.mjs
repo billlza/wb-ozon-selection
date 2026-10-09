@@ -644,11 +644,26 @@ async function settleDExecution({ repository, candidateId, executionKey, expecte
         throw new Error("D_PLATFORM_ACCEPTANCE_SOURCE_CONFLICT");
       }
       // Receipt recording is allowed after expiry; permission to continue is checked separately.
-      let stopReason = state.continuationBlocked || candidate.dataRevision !== state.expectedCandidateRevision ||
-        !validateProductionPlanAuthorizationBinding(state.productionPlan, sku.productionAuthorization).valid ? "context_changed" : null;
+      // stopTrigger：停下时必须记清楚是哪一条判定、比较的是哪两个值。
+      // 2026-09-24 背心停在 context_changed，记录里只有这一个词，两个人各查了一小时才定位到
+      // 是「观察策略过期」。原因不该靠事后翻代码去猜。
+      let stopReason = null, stopTrigger = null;
+      const trip = (reason, condition, left, right) => { stopReason = reason; stopTrigger = { condition, left, right }; };
+      if (state.continuationBlocked) trip("context_changed", "state.continuationBlocked", true, false);
+      else if (candidate.dataRevision !== state.expectedCandidateRevision) {
+        trip("context_changed", "candidate.dataRevision !== state.expectedCandidateRevision",
+          candidate.dataRevision, state.expectedCandidateRevision);
+      } else if (!validateProductionPlanAuthorizationBinding(state.productionPlan, sku.productionAuthorization).valid) {
+        trip("context_changed", "productionPlan 与当前授权绑定校验不通过",
+          state.productionPlan?.sourceAuthorization?.authorizationId ?? null, sku.productionAuthorization?.authorizationId ?? null);
+      }
       const sourceDJob = softwareJobContext === null ? null : findSoftwareJobInDocument(document, softwareJobContext.jobId);
-      if (sourceDJob && Date.parse(settledAt) >= Date.parse(sourceDJob.leaseExpiresAt)) stopReason = "lease_expired";
-      if (platformObservationPolicy !== null && Date.parse(settledAt) >= Date.parse(platformObservationPolicy.expiresAt)) stopReason = "context_changed";
+      if (sourceDJob && Date.parse(settledAt) >= Date.parse(sourceDJob.leaseExpiresAt)) {
+        trip("lease_expired", "settledAt >= job.leaseExpiresAt", settledAt, sourceDJob.leaseExpiresAt);
+      }
+      if (platformObservationPolicy !== null && Date.parse(settledAt) >= Date.parse(platformObservationPolicy.expiresAt)) {
+        trip("context_changed", "settledAt >= platformObservationPolicy.expiresAt", settledAt, platformObservationPolicy.expiresAt);
+      }
       if (sourceDJob && stopReason === null) {
         try {
           const guard = softwareJobContext.jobStore.assertDEExecutionInDocument({ document, ...softwareJobContext, observedAt: settledAt });
@@ -656,7 +671,7 @@ async function settleDExecution({ repository, candidateId, executionKey, expecte
           assertCurrentDExecutionContext({ request: persistedAttempt.request,
             executionContext: { productionPlan: state.productionPlan, currentProductionBinding, serverClock: () => settledAt } });
         } catch (error) {
-          if (productionJobPrewriteCode(error)) stopReason = "context_changed";
+          if (productionJobPrewriteCode(error)) trip("context_changed", "接受后守卫拒绝", productionJobPrewriteCode(error), null);
           else {
             unexpectedAcceptanceError = error;
             hasUnexpectedAcceptanceError = true;
@@ -672,6 +687,8 @@ async function settleDExecution({ repository, candidateId, executionKey, expecte
         state.executionRevision += 1; state.settledAt = settledAt;
         state.platformWrites = 1;
         if (sourceDJob && stopReason !== null) {
+          state.stopTrigger = { schemaVersion: "d-initial-import-stop-trigger-v1", failureClass: stopReason,
+            condition: stopTrigger.condition, left: stopTrigger.left, right: stopTrigger.right, settledAt };
           stopDInitialImportContinuationInDocument({ document, job: sourceDJob, workerId: softwareJobContext.workerId,
             leaseId: softwareJobContext.leaseId, observedAt: settledAt, failureClass: stopReason });
           softwareJobContext.jobStore.settleDInitialImportStoppedInDocument({ document, jobId: sourceDJob.jobId,

@@ -1,3 +1,5 @@
+// This fixture preserves the historical three-group scoring contract.
+const KEYWORD_SCORING_VERSION = "keyword-scoring-v1";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -12,7 +14,7 @@ import {
   prepareC1SoftwareInputs
 } from "../lib/c1-software-input-preparation.mjs";
 import { createKeywordEvidenceSnapshot } from "../lib/keyword-evidence-snapshot.mjs";
-import { KEYWORD_SCORING_COMPONENTS, KEYWORD_SCORING_VERSION } from "../lib/keyword-evidence-scoring.mjs";
+import { KEYWORD_SCORING_COMPONENTS } from "../lib/keyword-evidence-scoring.mjs";
 
 const NOW = "2026-08-23T08:00:00.000Z";
 const EXPIRES = "2026-08-24T08:00:00.000Z";

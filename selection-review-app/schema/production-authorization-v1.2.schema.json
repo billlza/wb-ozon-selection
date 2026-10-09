@@ -414,7 +414,7 @@
         "publishScope",
         "allowedWriteFields",
         "exclusions",
-        "mediaRequirementsFingerprint",
+        "authorizedMediaFingerprint",
         "finalManifestSha256",
         "finalUploadsFingerprint",
         "mainImageAssetId",
@@ -495,7 +495,7 @@
             "$ref": "#/$defs/nonEmpty"
           }
         },
-        "mediaRequirementsFingerprint": {
+        "authorizedMediaFingerprint": {
           "$ref": "#/$defs/sha256"
         },
         "finalManifestSha256": {
@@ -579,7 +579,6 @@
         "sourceType",
         "order",
         "role",
-        "slotId",
         "byteSize",
         "width",
         "height",
@@ -637,10 +636,10 @@
           "minimum": 1
         },
         "role": {
-          "$ref": "#/$defs/nonEmpty"
-        },
-        "slotId": {
-          "$ref": "#/$defs/nonEmpty"
+          "enum": [
+            "main_image",
+            "gallery_image"
+          ]
         },
         "byteSize": {
           "type": [
@@ -799,13 +798,12 @@
         "credentialAlias",
         "schemaRevision",
         "schemaEvidenceRef",
-        "schemaEvidenceVersion",
         "activeProfitModelVersion",
         "buyerTargetPrice",
         "platformWritePrice",
         "priceConversion",
         "stock",
-        "mediaRequirementsFingerprint",
+        "authorizedMediaFingerprint",
         "finalManifestVersion",
         "finalManifestSha256",
         "finalUploadsFingerprint",
@@ -852,9 +850,6 @@
         "schemaEvidenceRef": {
           "$ref": "#/$defs/nonEmpty"
         },
-        "schemaEvidenceVersion": {
-          "$ref": "#/$defs/nonEmpty"
-        },
         "activeProfitModelVersion": {
           "$ref": "#/$defs/nonEmpty"
         },
@@ -871,7 +866,7 @@
           "type": "integer",
           "minimum": 0
         },
-        "mediaRequirementsFingerprint": {
+        "authorizedMediaFingerprint": {
           "$ref": "#/$defs/sha256"
         },
         "finalManifestVersion": {
@@ -993,6 +988,426 @@
                                   "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
                                 },
                                 "properties": {
+                                  "editorialSource": {
+                                    "if": {
+                                      "type": "object"
+                                    },
+                                    "then": {
+                                      "type": "object",
+                                      "propertyNames": {
+                                        "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                      },
+                                      "properties": {
+                                        "bundle": {
+                                          "if": {
+                                            "type": "object"
+                                          },
+                                          "then": {
+                                            "type": "object",
+                                            "propertyNames": {
+                                              "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                            },
+                                            "properties": {
+                                              "sourceJob": {
+                                                "if": {
+                                                  "type": "object"
+                                                },
+                                                "then": {
+                                                  "type": "object",
+                                                  "propertyNames": {
+                                                    "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                  },
+                                                  "properties": {
+                                                    "scopeBinding": {
+                                                      "if": {
+                                                        "type": "object"
+                                                      },
+                                                      "then": {
+                                                        "type": "object",
+                                                        "propertyNames": {
+                                                          "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                        },
+                                                        "properties": {
+                                                          "authorizationRef": {
+                                                            "$ref": "#/$defs/c1OpaqueAuthorizationId"
+                                                          }
+                                                        },
+                                                        "additionalProperties": {
+                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                        }
+                                                      },
+                                                      "else": {
+                                                        "$ref": "#/$defs/noProductionSecrets"
+                                                      }
+                                                    },
+                                                    "admissionDecision": {
+                                                      "if": {
+                                                        "type": "object"
+                                                      },
+                                                      "then": {
+                                                        "type": "object",
+                                                        "propertyNames": {
+                                                          "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                        },
+                                                        "properties": {
+                                                          "authorizationRef": {
+                                                            "$ref": "#/$defs/c1OpaqueAuthorizationId"
+                                                          }
+                                                        },
+                                                        "additionalProperties": {
+                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                        }
+                                                      },
+                                                      "else": {
+                                                        "$ref": "#/$defs/noProductionSecrets"
+                                                      }
+                                                    }
+                                                  },
+                                                  "additionalProperties": {
+                                                    "$ref": "#/$defs/noProductionSecrets"
+                                                  }
+                                                },
+                                                "else": {
+                                                  "$ref": "#/$defs/noProductionSecrets"
+                                                }
+                                              }
+                                            },
+                                            "additionalProperties": {
+                                              "$ref": "#/$defs/noProductionSecrets"
+                                            }
+                                          },
+                                          "else": {
+                                            "$ref": "#/$defs/noProductionSecrets"
+                                          }
+                                        }
+                                      },
+                                      "additionalProperties": {
+                                        "$ref": "#/$defs/noProductionSecrets"
+                                      }
+                                    },
+                                    "else": {
+                                      "$ref": "#/$defs/noProductionSecrets"
+                                    }
+                                  },
+                                  "siblingFormalReuseRecord": {
+                                    "if": {
+                                      "type": "object"
+                                    },
+                                    "then": {
+                                      "type": "object",
+                                      "propertyNames": {
+                                        "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                      },
+                                      "properties": {
+                                        "sourcePlan": {
+                                          "if": {
+                                            "type": "object"
+                                          },
+                                          "then": {
+                                            "type": "object",
+                                            "propertyNames": {
+                                              "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                            },
+                                            "properties": {
+                                              "draftOnlySeo": {
+                                                "if": {
+                                                  "type": "object"
+                                                },
+                                                "then": {
+                                                  "type": "object",
+                                                  "propertyNames": {
+                                                    "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                  },
+                                                  "properties": {
+                                                    "editorialSource": {
+                                                      "if": {
+                                                        "type": "object"
+                                                      },
+                                                      "then": {
+                                                        "type": "object",
+                                                        "propertyNames": {
+                                                          "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                        },
+                                                        "properties": {
+                                                          "bundle": {
+                                                            "if": {
+                                                              "type": "object"
+                                                            },
+                                                            "then": {
+                                                              "type": "object",
+                                                              "propertyNames": {
+                                                                "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                              },
+                                                              "properties": {
+                                                                "sourceJob": {
+                                                                  "if": {
+                                                                    "type": "object"
+                                                                  },
+                                                                  "then": {
+                                                                    "type": "object",
+                                                                    "propertyNames": {
+                                                                      "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                                    },
+                                                                    "properties": {
+                                                                      "scopeBinding": {
+                                                                        "if": {
+                                                                          "type": "object"
+                                                                        },
+                                                                        "then": {
+                                                                          "type": "object",
+                                                                          "propertyNames": {
+                                                                            "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                                          },
+                                                                          "properties": {
+                                                                            "authorizationRef": {
+                                                                              "$ref": "#/$defs/c1OpaqueAuthorizationId"
+                                                                            }
+                                                                          },
+                                                                          "additionalProperties": {
+                                                                            "$ref": "#/$defs/noProductionSecrets"
+                                                                          }
+                                                                        },
+                                                                        "else": {
+                                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                                        }
+                                                                      },
+                                                                      "admissionDecision": {
+                                                                        "if": {
+                                                                          "type": "object"
+                                                                        },
+                                                                        "then": {
+                                                                          "type": "object",
+                                                                          "propertyNames": {
+                                                                            "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                                          },
+                                                                          "properties": {
+                                                                            "authorizationRef": {
+                                                                              "$ref": "#/$defs/c1OpaqueAuthorizationId"
+                                                                            }
+                                                                          },
+                                                                          "additionalProperties": {
+                                                                            "$ref": "#/$defs/noProductionSecrets"
+                                                                          }
+                                                                        },
+                                                                        "else": {
+                                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                                        }
+                                                                      }
+                                                                    },
+                                                                    "additionalProperties": {
+                                                                      "$ref": "#/$defs/noProductionSecrets"
+                                                                    }
+                                                                  },
+                                                                  "else": {
+                                                                    "$ref": "#/$defs/noProductionSecrets"
+                                                                  }
+                                                                }
+                                                              },
+                                                              "additionalProperties": {
+                                                                "$ref": "#/$defs/noProductionSecrets"
+                                                              }
+                                                            },
+                                                            "else": {
+                                                              "$ref": "#/$defs/noProductionSecrets"
+                                                            }
+                                                          }
+                                                        },
+                                                        "additionalProperties": {
+                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                        }
+                                                      },
+                                                      "else": {
+                                                        "$ref": "#/$defs/noProductionSecrets"
+                                                      }
+                                                    },
+                                                    "providerJobRef": {
+                                                      "if": {
+                                                        "type": "object"
+                                                      },
+                                                      "then": {
+                                                        "type": "object",
+                                                        "propertyNames": {
+                                                          "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                        },
+                                                        "properties": {
+                                                          "authorizationRef": {
+                                                            "if": {
+                                                              "type": "object"
+                                                            },
+                                                            "then": {
+                                                              "type": "object",
+                                                              "propertyNames": {
+                                                                "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                              },
+                                                              "properties": {
+                                                                "authorizationId": {
+                                                                  "$ref": "#/$defs/c1OpaqueAuthorizationId"
+                                                                }
+                                                              },
+                                                              "additionalProperties": {
+                                                                "$ref": "#/$defs/noProductionSecrets"
+                                                              }
+                                                            },
+                                                            "else": {
+                                                              "$ref": "#/$defs/noProductionSecrets"
+                                                            }
+                                                          }
+                                                        },
+                                                        "additionalProperties": {
+                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                        }
+                                                      },
+                                                      "else": {
+                                                        "$ref": "#/$defs/noProductionSecrets"
+                                                      }
+                                                    }
+                                                  },
+                                                  "additionalProperties": {
+                                                    "$ref": "#/$defs/noProductionSecrets"
+                                                  }
+                                                },
+                                                "else": {
+                                                  "$ref": "#/$defs/noProductionSecrets"
+                                                }
+                                              },
+                                              "seoEvidenceLayer": {
+                                                "if": {
+                                                  "type": "object"
+                                                },
+                                                "then": {
+                                                  "type": "object",
+                                                  "propertyNames": {
+                                                    "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                  },
+                                                  "properties": {
+                                                    "providerJobRef": {
+                                                      "if": {
+                                                        "type": "object"
+                                                      },
+                                                      "then": {
+                                                        "type": "object",
+                                                        "propertyNames": {
+                                                          "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                        },
+                                                        "properties": {
+                                                          "authorizationRef": {
+                                                            "if": {
+                                                              "type": "object"
+                                                            },
+                                                            "then": {
+                                                              "type": "object",
+                                                              "propertyNames": {
+                                                                "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                              },
+                                                              "properties": {
+                                                                "authorizationId": {
+                                                                  "$ref": "#/$defs/c1OpaqueAuthorizationId"
+                                                                }
+                                                              },
+                                                              "additionalProperties": {
+                                                                "$ref": "#/$defs/noProductionSecrets"
+                                                              }
+                                                            },
+                                                            "else": {
+                                                              "$ref": "#/$defs/noProductionSecrets"
+                                                            }
+                                                          }
+                                                        },
+                                                        "additionalProperties": {
+                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                        }
+                                                      },
+                                                      "else": {
+                                                        "$ref": "#/$defs/noProductionSecrets"
+                                                      }
+                                                    }
+                                                  },
+                                                  "additionalProperties": {
+                                                    "$ref": "#/$defs/noProductionSecrets"
+                                                  }
+                                                },
+                                                "else": {
+                                                  "$ref": "#/$defs/noProductionSecrets"
+                                                }
+                                              }
+                                            },
+                                            "additionalProperties": {
+                                              "$ref": "#/$defs/noProductionSecrets"
+                                            }
+                                          },
+                                          "else": {
+                                            "$ref": "#/$defs/noProductionSecrets"
+                                          }
+                                        },
+                                        "settledExecution": {
+                                          "if": {
+                                            "type": "object"
+                                          },
+                                          "then": {
+                                            "type": "object",
+                                            "propertyNames": {
+                                              "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                            },
+                                            "properties": {
+                                              "authorizedExecution": {
+                                                "if": {
+                                                  "type": "object"
+                                                },
+                                                "then": {
+                                                  "type": "object",
+                                                  "propertyNames": {
+                                                    "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                  },
+                                                  "properties": {
+                                                    "authorizationRef": {
+                                                      "if": {
+                                                        "type": "object"
+                                                      },
+                                                      "then": {
+                                                        "type": "object",
+                                                        "propertyNames": {
+                                                          "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                        },
+                                                        "properties": {
+                                                          "authorizationId": {
+                                                            "$ref": "#/$defs/c1OpaqueAuthorizationId"
+                                                          }
+                                                        },
+                                                        "additionalProperties": {
+                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                        }
+                                                      },
+                                                      "else": {
+                                                        "$ref": "#/$defs/noProductionSecrets"
+                                                      }
+                                                    }
+                                                  },
+                                                  "additionalProperties": {
+                                                    "$ref": "#/$defs/noProductionSecrets"
+                                                  }
+                                                },
+                                                "else": {
+                                                  "$ref": "#/$defs/noProductionSecrets"
+                                                }
+                                              }
+                                            },
+                                            "additionalProperties": {
+                                              "$ref": "#/$defs/noProductionSecrets"
+                                            }
+                                          },
+                                          "else": {
+                                            "$ref": "#/$defs/noProductionSecrets"
+                                          }
+                                        }
+                                      },
+                                      "additionalProperties": {
+                                        "$ref": "#/$defs/noProductionSecrets"
+                                      }
+                                    },
+                                    "else": {
+                                      "$ref": "#/$defs/noProductionSecrets"
+                                    }
+                                  },
                                   "pricingReuseRecord": {
                                     "if": {
                                       "type": "object"
@@ -1350,6 +1765,426 @@
                                   "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
                                 },
                                 "properties": {
+                                  "editorialSource": {
+                                    "if": {
+                                      "type": "object"
+                                    },
+                                    "then": {
+                                      "type": "object",
+                                      "propertyNames": {
+                                        "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                      },
+                                      "properties": {
+                                        "bundle": {
+                                          "if": {
+                                            "type": "object"
+                                          },
+                                          "then": {
+                                            "type": "object",
+                                            "propertyNames": {
+                                              "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                            },
+                                            "properties": {
+                                              "sourceJob": {
+                                                "if": {
+                                                  "type": "object"
+                                                },
+                                                "then": {
+                                                  "type": "object",
+                                                  "propertyNames": {
+                                                    "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                  },
+                                                  "properties": {
+                                                    "scopeBinding": {
+                                                      "if": {
+                                                        "type": "object"
+                                                      },
+                                                      "then": {
+                                                        "type": "object",
+                                                        "propertyNames": {
+                                                          "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                        },
+                                                        "properties": {
+                                                          "authorizationRef": {
+                                                            "$ref": "#/$defs/c1OpaqueAuthorizationId"
+                                                          }
+                                                        },
+                                                        "additionalProperties": {
+                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                        }
+                                                      },
+                                                      "else": {
+                                                        "$ref": "#/$defs/noProductionSecrets"
+                                                      }
+                                                    },
+                                                    "admissionDecision": {
+                                                      "if": {
+                                                        "type": "object"
+                                                      },
+                                                      "then": {
+                                                        "type": "object",
+                                                        "propertyNames": {
+                                                          "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                        },
+                                                        "properties": {
+                                                          "authorizationRef": {
+                                                            "$ref": "#/$defs/c1OpaqueAuthorizationId"
+                                                          }
+                                                        },
+                                                        "additionalProperties": {
+                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                        }
+                                                      },
+                                                      "else": {
+                                                        "$ref": "#/$defs/noProductionSecrets"
+                                                      }
+                                                    }
+                                                  },
+                                                  "additionalProperties": {
+                                                    "$ref": "#/$defs/noProductionSecrets"
+                                                  }
+                                                },
+                                                "else": {
+                                                  "$ref": "#/$defs/noProductionSecrets"
+                                                }
+                                              }
+                                            },
+                                            "additionalProperties": {
+                                              "$ref": "#/$defs/noProductionSecrets"
+                                            }
+                                          },
+                                          "else": {
+                                            "$ref": "#/$defs/noProductionSecrets"
+                                          }
+                                        }
+                                      },
+                                      "additionalProperties": {
+                                        "$ref": "#/$defs/noProductionSecrets"
+                                      }
+                                    },
+                                    "else": {
+                                      "$ref": "#/$defs/noProductionSecrets"
+                                    }
+                                  },
+                                  "siblingFormalReuseRecord": {
+                                    "if": {
+                                      "type": "object"
+                                    },
+                                    "then": {
+                                      "type": "object",
+                                      "propertyNames": {
+                                        "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                      },
+                                      "properties": {
+                                        "sourcePlan": {
+                                          "if": {
+                                            "type": "object"
+                                          },
+                                          "then": {
+                                            "type": "object",
+                                            "propertyNames": {
+                                              "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                            },
+                                            "properties": {
+                                              "draftOnlySeo": {
+                                                "if": {
+                                                  "type": "object"
+                                                },
+                                                "then": {
+                                                  "type": "object",
+                                                  "propertyNames": {
+                                                    "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                  },
+                                                  "properties": {
+                                                    "editorialSource": {
+                                                      "if": {
+                                                        "type": "object"
+                                                      },
+                                                      "then": {
+                                                        "type": "object",
+                                                        "propertyNames": {
+                                                          "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                        },
+                                                        "properties": {
+                                                          "bundle": {
+                                                            "if": {
+                                                              "type": "object"
+                                                            },
+                                                            "then": {
+                                                              "type": "object",
+                                                              "propertyNames": {
+                                                                "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                              },
+                                                              "properties": {
+                                                                "sourceJob": {
+                                                                  "if": {
+                                                                    "type": "object"
+                                                                  },
+                                                                  "then": {
+                                                                    "type": "object",
+                                                                    "propertyNames": {
+                                                                      "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                                    },
+                                                                    "properties": {
+                                                                      "scopeBinding": {
+                                                                        "if": {
+                                                                          "type": "object"
+                                                                        },
+                                                                        "then": {
+                                                                          "type": "object",
+                                                                          "propertyNames": {
+                                                                            "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                                          },
+                                                                          "properties": {
+                                                                            "authorizationRef": {
+                                                                              "$ref": "#/$defs/c1OpaqueAuthorizationId"
+                                                                            }
+                                                                          },
+                                                                          "additionalProperties": {
+                                                                            "$ref": "#/$defs/noProductionSecrets"
+                                                                          }
+                                                                        },
+                                                                        "else": {
+                                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                                        }
+                                                                      },
+                                                                      "admissionDecision": {
+                                                                        "if": {
+                                                                          "type": "object"
+                                                                        },
+                                                                        "then": {
+                                                                          "type": "object",
+                                                                          "propertyNames": {
+                                                                            "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                                          },
+                                                                          "properties": {
+                                                                            "authorizationRef": {
+                                                                              "$ref": "#/$defs/c1OpaqueAuthorizationId"
+                                                                            }
+                                                                          },
+                                                                          "additionalProperties": {
+                                                                            "$ref": "#/$defs/noProductionSecrets"
+                                                                          }
+                                                                        },
+                                                                        "else": {
+                                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                                        }
+                                                                      }
+                                                                    },
+                                                                    "additionalProperties": {
+                                                                      "$ref": "#/$defs/noProductionSecrets"
+                                                                    }
+                                                                  },
+                                                                  "else": {
+                                                                    "$ref": "#/$defs/noProductionSecrets"
+                                                                  }
+                                                                }
+                                                              },
+                                                              "additionalProperties": {
+                                                                "$ref": "#/$defs/noProductionSecrets"
+                                                              }
+                                                            },
+                                                            "else": {
+                                                              "$ref": "#/$defs/noProductionSecrets"
+                                                            }
+                                                          }
+                                                        },
+                                                        "additionalProperties": {
+                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                        }
+                                                      },
+                                                      "else": {
+                                                        "$ref": "#/$defs/noProductionSecrets"
+                                                      }
+                                                    },
+                                                    "providerJobRef": {
+                                                      "if": {
+                                                        "type": "object"
+                                                      },
+                                                      "then": {
+                                                        "type": "object",
+                                                        "propertyNames": {
+                                                          "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                        },
+                                                        "properties": {
+                                                          "authorizationRef": {
+                                                            "if": {
+                                                              "type": "object"
+                                                            },
+                                                            "then": {
+                                                              "type": "object",
+                                                              "propertyNames": {
+                                                                "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                              },
+                                                              "properties": {
+                                                                "authorizationId": {
+                                                                  "$ref": "#/$defs/c1OpaqueAuthorizationId"
+                                                                }
+                                                              },
+                                                              "additionalProperties": {
+                                                                "$ref": "#/$defs/noProductionSecrets"
+                                                              }
+                                                            },
+                                                            "else": {
+                                                              "$ref": "#/$defs/noProductionSecrets"
+                                                            }
+                                                          }
+                                                        },
+                                                        "additionalProperties": {
+                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                        }
+                                                      },
+                                                      "else": {
+                                                        "$ref": "#/$defs/noProductionSecrets"
+                                                      }
+                                                    }
+                                                  },
+                                                  "additionalProperties": {
+                                                    "$ref": "#/$defs/noProductionSecrets"
+                                                  }
+                                                },
+                                                "else": {
+                                                  "$ref": "#/$defs/noProductionSecrets"
+                                                }
+                                              },
+                                              "seoEvidenceLayer": {
+                                                "if": {
+                                                  "type": "object"
+                                                },
+                                                "then": {
+                                                  "type": "object",
+                                                  "propertyNames": {
+                                                    "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                  },
+                                                  "properties": {
+                                                    "providerJobRef": {
+                                                      "if": {
+                                                        "type": "object"
+                                                      },
+                                                      "then": {
+                                                        "type": "object",
+                                                        "propertyNames": {
+                                                          "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                        },
+                                                        "properties": {
+                                                          "authorizationRef": {
+                                                            "if": {
+                                                              "type": "object"
+                                                            },
+                                                            "then": {
+                                                              "type": "object",
+                                                              "propertyNames": {
+                                                                "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                              },
+                                                              "properties": {
+                                                                "authorizationId": {
+                                                                  "$ref": "#/$defs/c1OpaqueAuthorizationId"
+                                                                }
+                                                              },
+                                                              "additionalProperties": {
+                                                                "$ref": "#/$defs/noProductionSecrets"
+                                                              }
+                                                            },
+                                                            "else": {
+                                                              "$ref": "#/$defs/noProductionSecrets"
+                                                            }
+                                                          }
+                                                        },
+                                                        "additionalProperties": {
+                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                        }
+                                                      },
+                                                      "else": {
+                                                        "$ref": "#/$defs/noProductionSecrets"
+                                                      }
+                                                    }
+                                                  },
+                                                  "additionalProperties": {
+                                                    "$ref": "#/$defs/noProductionSecrets"
+                                                  }
+                                                },
+                                                "else": {
+                                                  "$ref": "#/$defs/noProductionSecrets"
+                                                }
+                                              }
+                                            },
+                                            "additionalProperties": {
+                                              "$ref": "#/$defs/noProductionSecrets"
+                                            }
+                                          },
+                                          "else": {
+                                            "$ref": "#/$defs/noProductionSecrets"
+                                          }
+                                        },
+                                        "settledExecution": {
+                                          "if": {
+                                            "type": "object"
+                                          },
+                                          "then": {
+                                            "type": "object",
+                                            "propertyNames": {
+                                              "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                            },
+                                            "properties": {
+                                              "authorizedExecution": {
+                                                "if": {
+                                                  "type": "object"
+                                                },
+                                                "then": {
+                                                  "type": "object",
+                                                  "propertyNames": {
+                                                    "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                  },
+                                                  "properties": {
+                                                    "authorizationRef": {
+                                                      "if": {
+                                                        "type": "object"
+                                                      },
+                                                      "then": {
+                                                        "type": "object",
+                                                        "propertyNames": {
+                                                          "$ref": "#/$defs/noProductionSecrets/then/propertyNames"
+                                                        },
+                                                        "properties": {
+                                                          "authorizationId": {
+                                                            "$ref": "#/$defs/c1OpaqueAuthorizationId"
+                                                          }
+                                                        },
+                                                        "additionalProperties": {
+                                                          "$ref": "#/$defs/noProductionSecrets"
+                                                        }
+                                                      },
+                                                      "else": {
+                                                        "$ref": "#/$defs/noProductionSecrets"
+                                                      }
+                                                    }
+                                                  },
+                                                  "additionalProperties": {
+                                                    "$ref": "#/$defs/noProductionSecrets"
+                                                  }
+                                                },
+                                                "else": {
+                                                  "$ref": "#/$defs/noProductionSecrets"
+                                                }
+                                              }
+                                            },
+                                            "additionalProperties": {
+                                              "$ref": "#/$defs/noProductionSecrets"
+                                            }
+                                          },
+                                          "else": {
+                                            "$ref": "#/$defs/noProductionSecrets"
+                                          }
+                                        }
+                                      },
+                                      "additionalProperties": {
+                                        "$ref": "#/$defs/noProductionSecrets"
+                                      }
+                                    },
+                                    "else": {
+                                      "$ref": "#/$defs/noProductionSecrets"
+                                    }
+                                  },
                                   "pricingReuseRecord": {
                                     "if": {
                                       "type": "object"

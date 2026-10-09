@@ -6,6 +6,39 @@ const PERMISSION_STATUSES = new Set(["verified", "denied", "permission_required"
 const CONNECTION_STATUSES = new Set(["connected", "unavailable", "system_error", "permission_required", "unknown"]);
 const IMAGE_PERMISSION_STATUSES = new Set(["verified", "denied", "permission_required", "unknown"]);
 const TECHNICAL_STATUSES = new Set(["completed", "system_error", "permission_required", "data_unavailable"]);
+/** The anchors a store identity may stand on. Optional on a record: an absent value reads as "platform_store_id",
+ * the original rule, so results written before owner decision 2026-09-16 keep validating unchanged. */
+export const STORE_IDENTITY_PATHS = new Set(["platform_store_id", "scoped_warehouse", "none"]);
+/** Of those names, the two that can hold an identity at all. 'none' names the absence of an anchor, and a name
+ * nobody recognizes is not an anchor either, so neither can ever hold one — whatever is filed beside it. */
+const ANCHORING_STORE_IDENTITY_PATHS = new Set(["platform_store_id", "scoped_warehouse"]);
+
+/**
+ * 单独导出，是为了让"根本没有锚点可站"和"站上去了但对不上"能分开说，它们该有不同的下场：
+ * 前者在最早能判断的那道门就砍掉，而且真要落成结论时诚实的词是"未核验"，不是"核过了两边不一致"。
+ */
+export function canStoreIdentityPathAnchor(via) {
+  return ANCHORING_STORE_IDENTITY_PATHS.has(via ?? "platform_store_id");
+}
+
+/**
+ * 全仓唯一一处回答"这个身份结论到底站在哪条锚上、锚住了没有"。前检、前检合同、适配器能力检查、
+ * 草稿写入前检和 D/E 收口全部调这里，避免同一判断出现第二种写法。
+ * 能锚住的只有两条路：
+ * 'platform_store_id'（缺失值按它读，旧记录不回归）按原规则比对观察到的店铺引用；
+ * 'scoped_warehouse'（主人2026-09-16决定）站在"这把钥匙能读到该仓"加上主人亲自核对的仓库归属上；
+ * Ozon 不发布店铺编号，所以这条锚只在 observedStoreRef 保持 null 时成立——旁边再挂一个店铺引用
+ * 是伪造，不是更强的证据。
+ * 'none' 的字面意思就是没有锚点，所以永远不算锚住：Ozon 从不返回店铺编号，一条 'none' 记录旁边
+ * 那个"对得上的"observedStoreRef 只可能是人手填进去的，认它就等于给伪造开了门。认不出来的锚点名
+ * 同理——叫不出名字的锚不是锚。
+ */
+export function isStoreIdentityAnchored({ via, observedStoreRef, expectedStoreRef }) {
+  const path = via ?? "platform_store_id";
+  if (!canStoreIdentityPathAnchor(path)) return false;
+  if (path === "scoped_warehouse") return observedStoreRef === null;
+  return sameStoreRef(expectedStoreRef, observedStoreRef);
+}
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -66,7 +99,16 @@ export function validatePlatformWritePreflight(preflight) {
   const identity = preflight.storeIdentity;
   if (!isCompleteStoreRef(identity?.expectedStoreRef, identity?.expectedStore) ||
       !(identity.observedStoreRef === null || isCompleteStoreRef(identity.observedStoreRef, identity.observedStore))) push(errors, "storeIdentity", "必须保存完整预期店铺引用和已观察引用或明确未验证");
-  if (identity?.status === "matched" && (identity.expectedStore !== identity.observedStore || !sameStoreRef(identity.expectedStoreRef, identity.observedStoreRef))) push(errors, "storeIdentity.status", "同名店铺不能替代完整店铺身份匹配");
+  // 'scoped_warehouse' asserts the platform publishes no store number; a record carrying one alongside it is
+  // internally inconsistent, so verifiedVia stays a trustworthy statement of where the conclusion came from.
+  if (Object.hasOwn(identity ?? {}, "verifiedVia") && (!STORE_IDENTITY_PATHS.has(identity.verifiedVia) ||
+      (identity.verifiedVia === "scoped_warehouse" && identity.observedStoreRef !== null))) push(errors, "storeIdentity.verifiedVia", "店铺身份证据路径无效");
+  // 'matched' still needs an anchor, but there are now two of them: the observed store ref, or the scoped warehouse
+  // (owner decision 2026-09-16) which by construction carries no observed store ref. A bare claim anchors on neither.
+  if (identity?.status === "matched" && (identity.expectedStore !== identity.observedStore ||
+      !isStoreIdentityAnchored({ via: identity.verifiedVia, observedStoreRef: identity.observedStoreRef, expectedStoreRef: identity.expectedStoreRef }))) {
+    push(errors, "storeIdentity.status", "同名店铺不能替代完整店铺身份匹配");
+  }
   if (!isObject(preflight.permission) || !PERMISSION_STATUSES.has(preflight.permission.status) || !nonEmptyString(preflight.permission.evidenceRef)) {
     push(errors, "permission", "必须保存权限状态和证据");
   }

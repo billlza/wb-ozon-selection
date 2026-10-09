@@ -6,7 +6,7 @@ import { assertADiscoveryPlan, assertADiscoveryBatch, assertADiscoveryScope, ass
   readADiscoveryTerminal, interruptADiscoveryReceipt, getADiscoveryCapability, getADiscoveryProviderCapability,
   getADiscoveryHttpRequestLimit, nextADiscoveryRequest } from '../lib/a-discovery-contract.mjs';
 import { assertSeerfarDiscoveryBinding, SEERFAR_DISCOVERY_CAPABILITY, SeerfarDiscoveryContractError,
-  SEERFAR_DISCOVERY_EVIDENCE_FAILURE_CLASSES,
+  SEERFAR_DISCOVERY_EVIDENCE_FAILURE_CLASSES, assertSeerfarDiscoveryRequest, describeSeerfarFilters,
   assertSeerfarDiscoveryEvidence, normalizeSeerfarDiscoveryEvidenceRecords, resolveSeerfarDiscoveryEvidence } from '../lib/seerfar-discovery-contract.mjs';
 import { createADiscoveryContractFixture, discoveryAt } from './fixtures/a-discovery-contract-fixture.mjs';
 
@@ -224,4 +224,146 @@ test('v2 published schema accepts every closed DTO and rejects extra fields',asy
   }
   const enrichedLegacy = structuredClone(legacy); enrichedLegacy.products[0].reviewCount = 0;
   assert.equal(validate(enrichedLegacy), false);
+});
+
+test('market result v3 carries the provider package facts and stays closed; v2 stays readable without them', async () => {
+  const f = fixture(), result = f.receipt.steps[1].result;
+  result.schemaVersion = 'seerfar-discovery-market-result-v3';
+  result.dateRange = { startDate: '2026-08-10', endDate: '2026-09-09' };
+  Object.assign(result.products[0], { reviewCount: 41, reviewRating: 4.8, rawSellerType: 1, weightGrams: 850, volumeLitres: 12.4, dimensionMm: '600x450x150' });
+  assertADiscoveryReceipt(f.receipt, f.job);
+  const read = readADiscoveryMarketResult(f.receipt);
+  assert.equal(read.products[0].weightGrams, 850); assert.equal(read.products[0].dimensionMm, '600x450x150');
+  const nulls = structuredClone(f.receipt); Object.assign(nulls.steps[1].result.products[0], { weightGrams: null, volumeLitres: null, dimensionMm: null });
+  assertADiscoveryReceipt(nulls, f.job);
+  for (const mutate of [r => r.products[0].dimensionMm = '60x45', r => r.products[0].dimensionMm = '600x450x150mm', r => r.products[0].weightGrams = -1,
+    r => r.products[0].volumeLitres = '12', r => delete r.products[0].weightGrams, r => r.products[0].extra = 1]) {
+    const copy = structuredClone(f.receipt); mutate(copy.steps[1].result);
+    assert.throws(() => assertADiscoveryReceipt(copy, f.job));
+  }
+  const v2 = structuredClone(f.receipt); v2.steps[1].result.schemaVersion = 'seerfar-discovery-market-result-v2';
+  for (const key of ['weightGrams', 'volumeLitres', 'dimensionMm']) delete v2.steps[1].result.products[0][key];
+  assertADiscoveryReceipt(v2, f.job);
+  const v2WithDims = structuredClone(f.receipt); v2WithDims.steps[1].result.schemaVersion = 'seerfar-discovery-market-result-v2';
+  assert.throws(() => assertADiscoveryReceipt(v2WithDims, f.job));
+});
+
+// Owner-declared conditions in the provider's own units: RUB, grams, litres and units sold.
+const SYNTHETIC_FILTERS = { priceRub: { min: 800, max: null }, weightGrams: { min: null, max: 1000 } };
+function filteredFixture(filters, echo) {
+  const f = fixture();
+  for (const request of [f.batch.plan.requests[0], f.scope.request, f.receipt.scope.request]) {
+    if (filters === null) delete request.filters; else request.filters = structuredClone(filters);
+  }
+  const result = f.receipt.steps[1].result;
+  result.schemaVersion = 'seerfar-discovery-market-result-v3';
+  result.dateRange = { startDate: '2026-08-10', endDate: '2026-09-09' };
+  Object.assign(result.products[0], { reviewCount: 41, reviewRating: 4.8, rawSellerType: 1,
+    weightGrams: 850, volumeLitres: 12.4, dimensionMm: '600x450x150' });
+  if (echo !== undefined) result.appliedFilters = structuredClone(echo);
+  return f;
+}
+
+test('optional owner filters ride the plan, scope and receipt and are rejected when malformed', () => {
+  const plain = fixture();
+  assert.equal(Object.hasOwn(plain.scope.request, 'filters'), false);
+  assert.equal(Object.hasOwn(assertSeerfarDiscoveryRequest(plain.scope.request), 'filters'), false);
+  assertADiscoveryScope(plain.scope, plain.job);
+
+  const f = filteredFixture(SYNTHETIC_FILTERS, SYNTHETIC_FILTERS);
+  assert.deepEqual(assertADiscoveryPlan(f.batch.plan).requests[0].filters, SYNTHETIC_FILTERS);
+  assert.deepEqual(assertADiscoveryScope(f.scope, f.job).request.filters, SYNTHETIC_FILTERS);
+  assertADiscoveryBatch(f.batch); assertADiscoveryBatchSource(f.batch, f.scope);
+  assertADiscoveryAuthorization(f.authorization); assertADiscoveryCredential(f.credential);
+  assertADiscoveryReceipt(f.receipt, f.job);
+  assert.deepEqual(readADiscoveryMarketResult(f.receipt).appliedFilters, SYNTHETIC_FILTERS);
+
+  for (const invalid of [{}, null, [{ priceRub: { min: 1, max: null } }], { priceRub: { min: -1, max: null } },
+    { priceRub: { min: 900, max: 800 } }, { priceRub: { min: null, max: null } }, { priceRub: { min: 800 } },
+    { priceRub: { min: 800, max: null, extra: 1 } }, { priceRub: { min: '800', max: null } },
+    { priceRub: { min: Infinity, max: null } }, { priceRub: null }, { unknownFilter: { min: 1, max: null } },
+    { monthlySales: { min: 1, max: null } }]) {
+    const bad = fixture(); bad.scope.request.filters = invalid;
+    assert.throws(() => assertSeerfarDiscoveryRequest(bad.scope.request),
+      error => error instanceof SeerfarDiscoveryContractError && error.code === 'INPUT_INVALID', JSON.stringify(invalid));
+    assert.throws(() => assertADiscoveryScope(bad.scope, bad.job), /INPUT_INVALID/, JSON.stringify(invalid));
+    assert.throws(() => assertADiscoveryPlan(bad.batch.plan), /INPUT_INVALID/, JSON.stringify(invalid));
+  }
+});
+
+test('a v3 result states its own conditions and cannot echo conditions the request never declared', () => {
+  const unfiltered = filteredFixture(null, null);
+  assertADiscoveryReceipt(unfiltered.receipt, unfiltered.job);
+  assert.equal(readADiscoveryMarketResult(unfiltered.receipt).appliedFilters, null);
+
+  // A v3 result saved before this echo existed stays readable; silence is never read as "no conditions".
+  const silent = filteredFixture(SYNTHETIC_FILTERS);
+  assertADiscoveryReceipt(silent.receipt, silent.job);
+  assert.equal(readADiscoveryMarketResult(silent.receipt).appliedFilters, undefined);
+
+  for (const [filters, echo] of [[SYNTHETIC_FILTERS, null], [null, SYNTHETIC_FILTERS], [SYNTHETIC_FILTERS, {}], [null, {}],
+    [SYNTHETIC_FILTERS, { priceRub: { min: 800, max: null } }],
+    [SYNTHETIC_FILTERS, { priceRub: { min: 900, max: null }, weightGrams: { min: null, max: 1000 } }],
+    [SYNTHETIC_FILTERS, { ...SYNTHETIC_FILTERS, salesCount: { min: 1, max: null } }],
+    [SYNTHETIC_FILTERS, { priceRub: { min: 800, max: null }, weightGrams: { min: null, max: 1000, extra: 1 } }]]) {
+    const bad = filteredFixture(filters, echo);
+    assert.throws(() => assertADiscoveryReceipt(bad.receipt, bad.job), /RESPONSE_INVALID/, JSON.stringify([filters, echo]));
+  }
+
+  const v2 = filteredFixture(null, null), result = v2.receipt.steps[1].result;
+  result.schemaVersion = 'seerfar-discovery-market-result-v2';
+  for (const key of ['weightGrams', 'volumeLitres', 'dimensionMm']) delete result.products[0][key];
+  assert.throws(() => assertADiscoveryReceipt(v2.receipt, v2.job), /RESPONSE_INVALID/);
+  delete result.appliedFilters;
+  assertADiscoveryReceipt(v2.receipt, v2.job);
+});
+
+test('the desk label states every declared bound with its provider unit and never invents one', () => {
+  assert.equal(describeSeerfarFilters(null), '无筛选条件');
+  assert.equal(describeSeerfarFilters(undefined), '无筛选条件');
+  assert.equal(describeSeerfarFilters(SYNTHETIC_FILTERS), '售价 ≥800 卢布 · 重量 ≤1000 克');
+  assert.equal(describeSeerfarFilters({ salesCount: { min: 30, max: 300 }, volumeLitres: { min: null, max: 12.5 } }),
+    '体积 ≤12.5 升 · 销量 30-300 件');
+  assert.equal(describeSeerfarFilters({ priceRub: { min: 0, max: 0 } }), '售价 0-0 卢布');
+  assert.throws(() => describeSeerfarFilters({}), /INPUT_INVALID/);
+  assert.throws(() => describeSeerfarFilters({ priceRub: { min: 900, max: 800 } }), /INPUT_INVALID/);
+});
+
+test('published v2 schema keeps filters optional, closed and bounded on the request and the v3 result', async () => {
+  const { loadPublishedSchemaValidator } = await import('./helpers/published-schema-validator.mjs');
+  const validator = await loadPublishedSchemaValidator(), f = filteredFixture(SYNTHETIC_FILTERS, SYNTHETIC_FILTERS);
+  for (const [name, value] of [['plan', f.batch.plan], ['batch', f.batch], ['scope', f.scope], ['receipt', f.receipt],
+    ['result', f.receipt.steps[1].result], ['authorization', f.authorization], ['credential', f.credential]]) {
+    const validate = validator.getSchema(`a-discovery-v2.schema.json#/$defs/${name}`);
+    assert.equal(validate(value), true, `${name}: ${JSON.stringify(validate.errors)}`);
+  }
+  const validateScope = validator.getSchema('a-discovery-v2.schema.json#/$defs/scope');
+  assert.equal(validateScope(fixture().scope), true);
+  for (const invalid of [{}, { priceRub: { min: null, max: null } }, { priceRub: { min: -1, max: null } },
+    { priceRub: { min: 800 } }, { priceRub: { min: 800, max: null, extra: 1 } }, { unknownFilter: { min: 1, max: null } }, null]) {
+    const copy = structuredClone(f.scope); copy.request.filters = invalid;
+    assert.equal(validateScope(copy), false, JSON.stringify(invalid));
+  }
+  const validateResult = validator.getSchema('a-discovery-v2.schema.json#/$defs/result');
+  const silent = filteredFixture(SYNTHETIC_FILTERS).receipt.steps[1].result;
+  assert.equal(validateResult(silent), true, JSON.stringify(validateResult.errors));
+  assert.equal(validateResult({ ...silent, appliedFilters: null }), true);
+  assert.equal(validateResult({ ...silent, appliedFilters: {} }), false);
+  const v2Echo = filteredFixture(null, null).receipt.steps[1].result;
+  v2Echo.schemaVersion = 'seerfar-discovery-market-result-v2';
+  for (const key of ['weightGrams', 'volumeLitres', 'dimensionMm']) delete v2Echo.products[0][key];
+  assert.equal(validateResult(v2Echo), false);
+});
+
+test('v3 dimension text accepts the provider multiplication sign and keeps it literal (2026-07-27 real capture; 2026-09-11 RESPONSE_INVALID root cause)', async () => {
+  const f = fixture(), result = f.receipt.steps[1].result;
+  result.schemaVersion = 'seerfar-discovery-market-result-v3';
+  result.dateRange = { startDate: '2026-08-10', endDate: '2026-09-09' };
+  Object.assign(result.products[0], { reviewCount: 41, reviewRating: 4.8, rawSellerType: 1, weightGrams: 23400, volumeLitres: 162.685, dimensionMm: '487×223×1498' });
+  assertADiscoveryReceipt(f.receipt, f.job);
+  assert.equal(readADiscoveryMarketResult(f.receipt).products[0].dimensionMm, '487×223×1498');
+  for (const bad of ['487×223', '487*223*1498', '487××223×1498']) {
+    const copy = structuredClone(f.receipt); copy.steps[1].result.products[0].dimensionMm = bad;
+    assert.throws(() => assertADiscoveryReceipt(copy, f.job));
+  }
 });

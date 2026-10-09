@@ -34,12 +34,20 @@ function inspectCaptureTab(tab, payload) {
     if (!address) return null;
     const sourceUrl = canonicalOzonCaptureSource(address, payload.expectedProductId);
     if (!sourceUrl) throw failure("wrong_product");
-    return tab.status === "complete" && !tab.pendingUrl ? { sourceUrl, productId: payload.expectedProductId } : null;
+    // Same relaxation as the supplier branch below, for the same measured reason: the Ozon product document has
+    // committed, and the collector waits in the page for the components it needs rather than for the load event that a
+    // throttled background tab may never report (owner, 2026-09-14, timed out at 25s).
+    return tab.pendingUrl ? null : { sourceUrl, productId: payload.expectedProductId };
   }
   const address = observed1688TabAddress(tab).value;
   if (!address) return null;
   const resolved = validateResolved1688Source(payload.sourceUrl, address, payload.expectedOfferId);
-  if (resolved && tab.status === "complete" && !tab.pendingUrl) return resolved;
+  // The offer document has committed — tab.url is this offer and nothing else is pending — so the collector can start.
+  // Waiting for the whole page to reach complete is what actually stopped the first real captures: a 1688 detail page
+  // loads in a background tab that Chrome throttles, and its load event did not arrive inside 15s or 25s. The collector
+  // polls the page for its own data and carries its own deadline, so an early start costs nothing, and the identity of
+  // what was read is re-checked against the browser's own address after extraction (2026-09-12).
+  if (resolved && !tab.pendingUrl) return resolved;
   const diagnostics = classify1688NavigationOutcome(address, {
     expectedOfferId: payload.expectedOfferId,
     navigationStage: tab.status === "complete" ? "page_complete" : "redirect_observed"
@@ -52,7 +60,7 @@ function inspectCaptureTab(tab, payload) {
 }
 
 // Listen before reading the tab: a completion event between those steps must not be lost.
-export function waitForCaptureTab(chromeApi, tabId, payload, { timeoutMs = 15000, setTimer = setTimeout, clearTimer = clearTimeout, signal } = {}) {
+export function waitForCaptureTab(chromeApi, tabId, payload, { timeoutMs = 25000, setTimer = setTimeout, clearTimer = clearTimeout, signal } = {}) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer;
@@ -109,7 +117,12 @@ function validatedCollectedResult(collected, resolved, payload) {
  * Server authentication, durable lease/revision validation and no-replay remain mandatory.
  */
 export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new Date().toISOString(), waitOptions,
-  jobTimerOptions = { setTimer: setTimeout, clearTimer: clearTimeout } } = {}) {
+  // Chrome's global timer functions refuse to run with anything but the global as their receiver: held as plain
+  // properties and then called as jobTimerOptions.setTimer(…), they throw TypeError: Illegal invocation. That threw
+  // where the capture deadline was created and again in the finally that cleared it, so the deadline never existed,
+  // the opened 1688 tab was never closed, no result was ever sent, and the worker stayed "capturing" for good — four
+  // captures the owner watched time out on 2026-09-11/12. The wrappers keep the calls on the global.
+  jobTimerOptions = { setTimer: (handler, delay) => setTimeout(handler, delay), clearTimer: timer => clearTimeout(timer) } } = {}) {
   let heartbeatPending = null;
   let alarmPending = null;
   let activeCapture = null;
@@ -162,14 +175,16 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       } catch { cleanupBlocked = "tab_cleanup_failed"; lastCaptureCode = "tab_cleanup_failed"; }
       finally { jobTimerOptions.clearTimer(closeTimer); }
     };
-    // 30s includes tab creation, navigation, extraction and final browser identity readback.
-    // With one 10s result POST this leaves room inside the existing 60s server lease.
+    // 40s includes tab creation, navigation, extraction and final browser identity readback. A 1688 detail page is
+    // heavy and Chrome throttles the background tab it loads in, so the first real capture (2026-09-12) ran out of the
+    // earlier 30s budget with the page still loading. With a 3s tab close and one 10s result POST this still finishes
+    // inside the server's 60s execution lease.
     let deadlineTimer;
     const deadline = new Promise((_resolve, reject) => {
       deadlineTimer = jobTimerOptions.setTimer(() => {
         cancellation.abort();
         reject(failure("timeout"));
-      }, 30000);
+      }, 40000);
     });
     const capture = async () => {
       const url = isOzonCaptureJob(payload)

@@ -1,19 +1,12 @@
+import { allocatedTestPorts } from './helpers/api-process-lifecycle.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { productionOwnerDecisionHttpFixture, startSavedDEApi } from './helpers/d-e-saved-api-fixture.mjs';
 
-async function freePort() {
-  const server=http.createServer();
-  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
-  const port=server.address().port;
-  await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
-  assert.ok(![4317,4318,4173].includes(port));return port;
-}
 
 for (const oldFlag of ['false','true']) {
   test(`旧开关=${oldFlag}不直连付费；当前身份、来源、输入和冻结证据门禁拒绝且零写入`,async t=>{
@@ -25,9 +18,9 @@ for (const oldFlag of ['false','true']) {
     const fixture=await productionOwnerDecisionHttpFixture();
     const candidate={id:'CX-C1-NOT-READY',dataRevision:7,lifecycleV11:{skuPackage:{candidateId:'CX-C1-NOT-READY',skuPackageId:'sku:not-ready:7',businessPhase:'C1',c1ProductPlan:{status:'inputs_ready'}}}};
     const document={...fixture.document,candidates:[candidate]};
-    const port=await freePort();let dependencyPort=await freePort();while(dependencyPort===port)dependencyPort=await freePort();
+    const { api: port, gateway: dependencyPort } = allocatedTestPorts();
     const env={SELECTION_REVIEW_TEST_GATEWAY_PORT:String(dependencyPort),SELECTION_REVIEW_SEERFAR_SOFTWARE_ENABLED:oldFlag,
-      SELECTION_REVIEW_C1_KEYWORD_SERVICE_BINDINGS_JSON:'[]',NODE_OPTIONS:`--import=${pathToFileURL(preload).href}`};
+      SELECTION_REVIEW_C1_KEYWORD_SERVICE_BINDINGS_JSON:'[]',NODE_OPTIONS:`${process.env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(preload).href}`};
     const previous=Object.fromEntries(Object.keys(env).map(key=>[key,process.env[key]]));let api;
     try{Object.assign(process.env,env);api=await startSavedDEApi(t,{directory,port,document,binding:fixture.binding});}
     finally{for(const [key,value]of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}

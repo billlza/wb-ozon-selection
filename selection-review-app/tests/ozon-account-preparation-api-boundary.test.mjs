@@ -1,3 +1,4 @@
+import { allocatedTestPorts } from './helpers/api-process-lifecycle.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
@@ -9,7 +10,7 @@ test('real server account preparation has no candidate dependency and rejects un
   const fixture=await productionOwnerDecisionHttpFixture();fixture.document.candidates=[];
   const directory=await mkdtemp(path.join(tmpdir(),'account-preparation-boundary-'));
   const route={bindingId:'binding:discovery:http',configurationVersion:'config:1',platform:'ozon',targetStore:'miska',storeName:'合成账户',credentialAlias:'alias:discovery:http',workerId:'worker:discovery:http',workerVersion:'worker:1',leaseDurationMs:10000};
-  const api=await startSavedDEApi(t,{directory,port:Number(process.env.SELECTION_REVIEW_TEST_PORT),document:fixture.document,binding:fixture.binding,productionBindings:[],
+  const api=await startSavedDEApi(t,{directory,port:allocatedTestPorts().api,document:fixture.document,binding:fixture.binding,productionBindings:[],
     discoveryBindings:[route],credentialBindings:[{credentialAlias:route.credentialAlias,clientId:'700123',keychainService:'synthetic-discovery-http',keychainAccount:'synthetic-only'}]});
   const url='/api/account-preparations';
   assert.ok([401,403].includes((await api.get(url)).status));

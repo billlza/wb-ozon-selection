@@ -25,6 +25,30 @@ export function assertIsolatedApiTestSource({file,source,sharedFixtureSource,lau
   if(!source.includes('mkdtemp')||!direct&&!shared&&!packaged)throw new Error(`CI_API_TEST_BOUNDARY_MISSING:${file}`);
 }
 
+/** Local Seatbelt permits only the runner's three allocated ports. Inspect the named helper, not a comment marker. */
+export function assertLocalApiTestPortsSource({ file, source, portFixtureSource, sharedFixtureSource }) {
+  const usesAllocated = /import\s*\{[^}]*\ballocatedTestPorts\b[^}]*\}\s*from\s*['"]\.\/helpers\/api-process-lifecycle\.mjs['"]/u.test(source)
+    && /\ballocatedTestPorts\s*\(/u.test(source);
+  if (usesAllocated) {
+    const inspected = typeof portFixtureSource === 'string'
+      && portFixtureSource.includes('export function allocatedTestPorts(')
+      && ['SELECTION_REVIEW_TEST_PORT', 'SELECTION_REVIEW_TEST_SECOND_PORT', 'SELECTION_REVIEW_TEST_GATEWAY_PORT',
+        '65535', 'new Set(ports)', 'TEST_REQUIRES_ISOLATED_PORT'].every(value => portFixtureSource.includes(value));
+    const dynamic = /\bfreePort\s*\(|\.listen\s*\(\s*0\b|process\.pid\s*%/u.test(source);
+    const shared = !sharedApiFixtureImport.test(source) || typeof sharedFixtureSource === 'string'
+      && sharedFixtureSource.includes('const allocated = allocatedTestPorts();')
+      && sharedFixtureSource.includes('const dependencyPort = allocated.gateway;')
+      && sharedFixtureSource.includes('port !== allocated.api && port !== allocated.second');
+    if (!inspected || dynamic || !shared) throw new Error(`LOCAL_API_TEST_PORT_BOUNDARY_MISSING:${file}`);
+    return 'allocated_fixture';
+  }
+  // Previously classified direct/package tests retain their own explicit-port guard and the exact OS whitelist.
+  if (!source.includes('SELECTION_REVIEW_TEST_PORT') || !source.includes('TEST_REQUIRES_ISOLATED_PORT')) {
+    throw new Error(`LOCAL_API_TEST_PORT_BOUNDARY_MISSING:${file}`);
+  }
+  return 'direct_guard';
+}
+
 export function assertSelfContainedTestSource({
   file,
   source,

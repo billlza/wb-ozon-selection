@@ -13,7 +13,7 @@ import {
   VALIDATION_MODERATION_PUBLISH_SCOPE,
   PRODUCTION_WRITE_FIELDS
 } from "./production-authorization.mjs";
-import { assertValidPlatformWritePreflight, assertCurrentProductionExecutionBinding } from "./platform-write-preflight.mjs";
+import { assertValidPlatformWritePreflight, assertCurrentProductionExecutionBinding, isStoreIdentityAnchored } from "./platform-write-preflight.mjs";
 import { PRODUCTION_RECORD_VERSION, DRAFT_WRITE_FIELDS, MODERATION_WRITE_FIELDS, assertValidProductionRecord } from "./production-record-contract.mjs";
 export { PRODUCTION_RECORD_VERSION, validateProductionReadbackExpectation, validateProductionRecord, assertValidProductionRecord } from "./production-record-contract.mjs";
 
@@ -104,8 +104,11 @@ function validateDraftInputs(productionPlan, preflight) {
       preflight.sourceProductionPlanFingerprint !== fingerprintProductionPlan(productionPlan)) {
     throw new Error("DRAFT_PREFLIGHT_STALE: 前置检查不属于当前ProductionPlan");
   }
+  // 仓库反推下 observedStoreRef 恒为 null（Ozon 不发店铺编号），身份靠 verifiedVia 指的那条锚成立；
+  // 非仓库锚点仍按原来的观察引用比对。expectedStoreRef 与授权店铺的比对不变。
   if (preflight.technicalStatus !== "completed" ||
-      preflight.storeIdentity.status !== "matched" || !sameStoreRef(preflight.storeIdentity.expectedStoreRef, inputs.storeRef) || !sameStoreRef(preflight.storeIdentity.observedStoreRef, inputs.storeRef) ||
+      preflight.storeIdentity.status !== "matched" || !sameStoreRef(preflight.storeIdentity.expectedStoreRef, inputs.storeRef) ||
+      !isStoreIdentityAnchored({ via: preflight.storeIdentity.verifiedVia, observedStoreRef: preflight.storeIdentity.observedStoreRef, expectedStoreRef: inputs.storeRef }) ||
       preflight.permission.status !== "verified" ||
       preflight.priceCurrency?.status !== "matched" ||
       preflight.connectionStatus.api.status !== "connected") {
@@ -165,6 +168,11 @@ export async function executeSingleSkuDraftCreation({
     priceConversion: structuredClone(inputs.priceConversion),
     stock: inputs.stock,
     finalUploads: structuredClone(inputs.finalUploads),
+    authorizedMedia: {
+      fingerprint: inputs.authorizedMediaFingerprint,
+      primaryImage: inputs.finalUploads[0]?.assetRef,
+      images: inputs.finalUploads.slice(1).map(asset => asset.assetRef)
+    },
     publishScope: inputs.publishScope,
     batchSize: 1,
     publish: false,

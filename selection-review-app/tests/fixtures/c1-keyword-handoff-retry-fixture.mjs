@@ -17,10 +17,20 @@ export const keywordHandoffDraftBinding=Object.freeze({schemaVersion:'c1-draft-s
   gatewayOrigin:'http://127.0.0.1:49099',configurationVersion:'configuration:synthetic-retry:1',leaseDurationMs:90000});
 
 /** Actual enqueue, keyword settlement and known-failure reducers with explicit synthetic provider evidence. No real transport. */
-export async function createC1KeywordHandoffRetryFixture() {
+export async function createC1KeywordHandoffRetryFixture({ attributeSourceGranularity = 'field' } = {}) {
+  if (!['field','collection'].includes(attributeSourceGranularity)) throw new Error('RETRY_FIXTURE_SOURCE_GRANULARITY_INVALID');
   const skuAttributes=Object.fromEntries(Array.from({length:19},(_,index)=>[`keywordFact${index+1}`,`synthetic decorative train phrase ${index+1}`]));
   const candidate=structuredClone(createFormalC1DraftFixture({at:KEYWORD_NOW,salesSnapshotVersion:'sales-snapshot-v1.1',skuAttributes}).candidate);
   const sku=candidate.lifecycleV11.skuPackage,plan=sku.c1ProductPlan;
+  // Each synthetic keyword describes one saved attribute, so its evidence must
+  // point to that scalar. Collection-level evidence is retained explicitly for
+  // the oversized historical-input regression, not used by the normal fixture.
+  if (attributeSourceGranularity === 'field') {
+    for (const entry of plan.productAttributes.supplierAttributes.filter(value=>value.fieldKey.startsWith('keywordFact'))) {
+      const pointer=entry.fieldKey.replaceAll('~','~0').replaceAll('/','~1');
+      entry.fact.sourceRefs=entry.fact.sourceRefs.map(ref=>`${ref}/${pointer}`);
+    }
+  }
   // Explicit synthetic keyword-query mode, supplied before planning freezes the input.
   sku.fulfillmentMode='rfbs';
   const productFactTerms=plan.productAttributes.supplierAttributes.flatMap((entry,index)=>entry.fieldKey.startsWith('keywordFact')?[{

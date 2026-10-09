@@ -12,6 +12,7 @@ import {
   createProductionPlan, projectProductionPlanInputs,
   fingerprintProductionPlan
 } from "../lib/production-plan.mjs";
+import { ozonProductionConnectionRequirements } from "../lib/ozon-production-strategy.mjs";
 
 function planAndPreflight(options = {}) {
   const fixture = authorizedProductionFixture({ publishScope: "create_draft_only", ...options });
@@ -239,6 +240,55 @@ test("13B-2 rejects unknown required attributes and stale preflight without call
     readbackPlatformDraft: async () => { calls += 1; }
   }), /DRAFT_PREFLIGHT_STALE/);
   assert.equal(calls, 0);
+});
+
+test("13B-2 店铺身份认两条锚：仓库反推放行，非仓库锚点仍要求观察到的店铺引用", async () => {
+  const { authorization, plan, inputs, preflight } = planAndPreflight();
+  const warehouseAnchored = structuredClone(preflight);
+  // 仓库反推只出现在当前版本的前检记录上；v1.1 是历史结果，不追认锚点。
+  warehouseAnchored.schemaVersion = "platform-write-preflight-v1.2";
+  warehouseAnchored.connectionRequirements = ozonProductionConnectionRequirements("seller_api");
+  Object.assign(warehouseAnchored.storeIdentity, { verifiedVia: "scoped_warehouse", observedStoreRef: null });
+
+  let writes = 0;
+  const run = (platformWritePreflight) => executeSingleSkuDraftCreation({
+    productionPlan: plan, productionAuthorization: authorization,
+    currentProductionBinding: currentProductionBindingFixture(authorization),
+    platformWritePreflight, executedAt: "2026-08-22T07:10:00.000Z",
+    createPlatformDraft: async () => { writes += 1; return { status: "draft", productId: "OZON-DRAFT-3001", offerId: "TEST-SKU-001",
+      writeEvidenceRef: "test:write:3001", published: false, activated: false, advertisingOpened: false, inventoryModified: true, imagesUploaded: 2 }; },
+    readbackPlatformDraft: async () => ({ status: "draft", productId: "OZON-DRAFT-3001", title: inputs.title, price: inputs.platformWritePrice,
+      stock: 100, finalUploadAssetIds: inputs.finalUploads.map(asset => asset.assetId), mainImageAssetId: inputs.finalUploads[0].assetId,
+      evidenceRef: "test:readback:3001", published: false, activated: false, moderationSubmitted: false })
+  });
+
+  // 放行方向：Ozon 不发店铺编号，observedStoreRef 为 null 是正确状态，不该再挡写入。
+  assert.equal((await run(warehouseAnchored)).productionRecord.platformProductId, "OZON-DRAFT-3001");
+  assert.equal(writes, 1);
+
+  // 拦截方向：非仓库锚点下（未声明、明写原路径、none）少了观察引用，或引用对不上，都必须在调用平台前拦住。
+  for (const via of [undefined, "platform_store_id", "none"]) {
+    const bare = structuredClone(warehouseAnchored);
+    bare.storeIdentity.observedStoreRef = null;
+    if (via === undefined) delete bare.storeIdentity.verifiedVia; else bare.storeIdentity.verifiedVia = via;
+    await assert.rejects(() => run(bare), /DRAFT_PREFLIGHT_NOT_READY|PlatformWritePreflight校验失败/, String(via));
+  }
+  const otherStore = structuredClone(preflight);
+  otherStore.storeIdentity.observedStoreRef = { ...structuredClone(inputs.storeRef), platformStoreId: "seller-miska-001" };
+  await assert.rejects(() => run(otherStore), /DRAFT_PREFLIGHT_NOT_READY|PlatformWritePreflight校验失败/);
+
+  // 锁：声称仓库反推、同时又带着店铺引用，不得因为这次改动变成合法。
+  const contradictory = structuredClone(warehouseAnchored);
+  contradictory.storeIdentity.observedStoreRef = structuredClone(inputs.storeRef);
+  await assert.rejects(() => run(contradictory), /PlatformWritePreflight校验失败/);
+
+  // 锁：'none' 就是没有锚点。后人顺手把 observedStoreRef 补成一个真实可对上的引用（Ozon 从不返回
+  // 店铺编号，只可能是人手填的），也不得走到真实写入那一步。
+  const noneWithRef = structuredClone(warehouseAnchored);
+  Object.assign(noneWithRef.storeIdentity, { verifiedVia: "none", observedStoreRef: structuredClone(inputs.storeRef) });
+  assert.equal(noneWithRef.storeIdentity.status, "matched");
+  await assert.rejects(() => run(noneWithRef), /DRAFT_PREFLIGHT_NOT_READY|PlatformWritePreflight校验失败/);
+  assert.equal(writes, 1, "被拦住的每一次都不许碰平台");
 });
 
 test("13B-2 saves no ProductionRecord when platform result is not a draft with product ID", async () => {

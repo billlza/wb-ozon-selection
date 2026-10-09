@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "c1-local-draft-source-v2",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "candidateId",
+    "skuPackageId",
+    "materialFingerprint",
+    "sourceSkuRevision",
+    "preparedSkuRevision",
+    "preparedSkuFingerprint",
+    "preparedAt",
+    "frozenSeoRules",
+    "allowedFactPaths",
+    "sourceFingerprint"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "c1-local-draft-source-v2"
+    },
+    "candidateId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "skuPackageId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "materialFingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "sourceSkuRevision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "preparedSkuRevision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "preparedSkuFingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "preparedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "frozenSeoRules": {
+      "$ref": "c1-ai-draft-request-v1#/$defs/localWritingRules"
+    },
+    "allowedFactPaths": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "sourceFingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "additionalProperties": false
+}

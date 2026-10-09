@@ -248,3 +248,26 @@ test('versioned WB commission preserves its reference and unknown expiry without
     await assert.rejects(createLifecycleBEvidenceProvider({kind,read:async()=>invalid})(request(kind)),/B_EVIDENCE_PROVIDER_VALIDITY_INVALID/);
   }
 });
+
+test("官方费表查询输入只随佣金请求原样传给reader，其他类型一律为空", async () => {
+  const observed = [];
+  const readers = Object.fromEntries(Object.keys(scopes).map((kind) => [
+    kind,
+    async (input) => { observed.push({ kind, commissionReferenceScope: input.commissionReferenceScope }); return result(kind); }
+  ]));
+  const registry = createLifecycleBEvidenceProviderRegistry(readers);
+  const reference = { priceRub: 2490, typeName: "宠物躺床" };
+  await registry.commission({ ...request("commission"), commissionReferenceScope: reference });
+  for (const kind of Object.keys(scopes).filter((value) => value !== "commission")) {
+    await registry[kind]({ ...request(kind), commissionReferenceScope: reference });
+  }
+  assert.deepEqual(observed.find((entry) => entry.kind === "commission").commissionReferenceScope, reference);
+  for (const entry of observed.filter((value) => value.kind !== "commission")) assert.equal(entry.commissionReferenceScope, null);
+  const observedAgain = [];
+  const plainRegistry = createLifecycleBEvidenceProviderRegistry({
+    commission: async (input) => { observedAgain.push(input.commissionReferenceScope); return result("commission"); }
+  });
+  await plainRegistry.commission(request("commission"));
+  await plainRegistry.commission({ ...request("commission"), commissionReferenceScope: "宠物躺床" });
+  assert.deepEqual(observedAgain, [null, null], "缺失或非结构化输入不传给reader");
+});

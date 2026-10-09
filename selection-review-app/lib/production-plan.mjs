@@ -1,7 +1,9 @@
+import { derivePlatformWriteBindings } from "./platform-write-bindings.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { assertValidProductionAuthorization, assertCurrentProductionAuthorization, validateProductionAuthorization, readAuthorizedProductionSnapshot } from "./production-authorization.mjs";
 import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
 import { createOzonProductionStrategy } from "./ozon-production-strategy.mjs";
+import { assertAuthorizedMediaUnchanged, fingerprintAuthorizedMedia } from "./production-authorization-preparation.mjs";
 
 export const PRODUCTION_PLAN_VERSION = "production-plan-v1.1";
 const PLAN_FIELDS = Object.freeze([
@@ -100,7 +102,7 @@ export function projectProductionPlanInputs(plan) {
   const writeBindings = requireFact(c1.schemaSnapshot?.writeBindings, "schemaSnapshot.writeBindings");
   const rawSchema = c1.inputSnapshots?.platformSchemaRules;
   if (!isObject(writeBindings) || writeBindings.schemaRevision !== scope.schemaRevision ||
-      rawSchema?.schemaRevision !== scope.schemaRevision || !isDeepStrictEqual(writeBindings, rawSchema.writeBindings) ||
+      rawSchema?.schemaRevision !== scope.schemaRevision || !isDeepStrictEqual(writeBindings, derivePlatformWriteBindings(rawSchema)) ||
       !nonEmpty(writeBindings.evidenceRef) || !isObject(writeBindings.content) || !Array.isArray(writeBindings.requiredAttributes)) {
     throw new Error("PRODUCTION_PLAN_INPUT_GAP: 写入绑定未与冻结Schema修订对齐");
   }
@@ -119,8 +121,10 @@ export function projectProductionPlanInputs(plan) {
     attributes: structuredClone(c1.productAttributes), attributeVersion: c1.factVerificationVersion,
     packing: { weight: structuredClone(weight), dimensions: structuredClone(dimensions) },
     schemaWriteBindings: structuredClone(writeBindings), platformCategory: structuredClone(c1.platformCategory),
+    platformSchemaAttributes: rawSchema.attributes === undefined ? null : structuredClone(rawSchema.attributes),
     buyerTargetPrice: structuredClone(scope.buyerTargetPrice), platformWritePrice: structuredClone(scope.platformWritePrice), priceConversion: structuredClone(scope.priceConversion),
     stock: scope.stock, assetsFinalUploadsVersion: scope.finalManifestVersion, finalUploads: structuredClone(scope.finalUploads),
+    authorizedMediaFingerprint: scope.authorizedMediaFingerprint,
     executionStrategy: createOzonProductionStrategy({ platform: scope.platform, finalUploads: scope.finalUploads }),
     publishScope: scope.publishScope, exclusions: [...scope.exclusions], allowedWriteFields: [...scope.allowedWriteFields]
   });
@@ -145,12 +149,20 @@ export function projectProductionPlanImportPayload({ productionPlan, resolvedFin
   if (!Array.isArray(resolvedFinalUploads) || resolvedFinalUploads.length !== inputs.finalUploads.length) {
     throw new Error("D_EXECUTION_AUTHORIZATION_SCOPE_MISMATCH: 最终素材数量不属于冻结计划");
   }
+  // 换地址之前先确认：计划里这批地址就是主人当初授权的那批，顺序一字不差。
+  assertAuthorizedMediaUnchanged(inputs.finalUploads, inputs.authorizedMediaFingerprint, "productionPlanInputs");
   const finalUploads = inputs.finalUploads.map((asset, index) => {
     const resolved = resolvedFinalUploads[index];
     if (!resolved || ["assetId", "sha256", "order", "role"].some(field => resolved[field] !== asset[field]) ||
         !nonEmpty(resolved.platformAcceptedUrl)) throw new Error("D_EXECUTION_AUTHORIZATION_SCOPE_MISMATCH: 最终素材不属于冻结计划");
     return { ...structuredClone(asset), assetRef: resolved.platformAcceptedUrl };
   });
+  // 真正会写进 import 请求的那批地址，也按同一规则取一次指纹，交给适配器在发出前再对一次。
+  const authorizedMedia = {
+    fingerprint: fingerprintAuthorizedMedia(finalUploads),
+    primaryImage: finalUploads[0].assetRef,
+    images: finalUploads.slice(1).map(asset => asset.assetRef)
+  };
   return deepFreeze({
     mode: "single_sku_create_and_moderate", merchantSku: inputs.sku.merchantSku,
     platform: inputs.platform, store: inputs.store, storeRef: structuredClone(inputs.storeRef),
@@ -158,8 +170,9 @@ export function projectProductionPlanImportPayload({ productionPlan, resolvedFin
     skuPackageId: inputs.skuPackageId, supplierSkuId: inputs.sku.supplierSkuId, variantKey: inputs.sku.variantKey,
     title: inputs.title, content: structuredClone(inputs.content), attributes: structuredClone(inputs.attributes),
     packing: structuredClone(inputs.packing), schemaWriteBindings: structuredClone(inputs.schemaWriteBindings),
+    platformSchemaAttributes: structuredClone(inputs.platformSchemaAttributes),
     platformCategory: structuredClone(inputs.platformCategory), platformWritePrice: structuredClone(inputs.platformWritePrice),
-    finalUploads, publishScope: inputs.publishScope
+    finalUploads, authorizedMedia, publishScope: inputs.publishScope
   });
 }
 

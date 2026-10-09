@@ -130,7 +130,7 @@ export function validateFinalProductPlanConfirmationCard(card) {
   if (isObject(card.riskAndUnknowns) && Object.hasOwn(card.riskAndUnknowns, 'classificationVersion')) {
     const risk = card.riskAndUnknowns;
     if (risk.classificationVersion !== C1_UNKNOWN_CLASSIFICATION_VERSION || !Array.isArray(risk.unknownFields) ||
-        risk.unknownFields.some(field => !isObject(field) || !['informational','required_field','compliance','media_slot'].includes(field.blockingScope) ||
+        risk.unknownFields.some(field => !isObject(field) || !['informational','required_field','compliance'].includes(field.blockingScope) ||
           field.blocksProductionAuthorization !== (field.blockingScope !== 'informational')) ||
         risk.blockingUnknownCount !== risk.unknownFields.filter(field => field.blocksProductionAuthorization).length)
       push(errors, 'riskAndUnknowns', '未知字段分类必须完整且计数一致');

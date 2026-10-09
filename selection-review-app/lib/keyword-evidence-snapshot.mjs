@@ -3,6 +3,34 @@ import { createHash } from "node:crypto";
 export const KEYWORD_EVIDENCE_SNAPSHOT_VERSION = "keyword-evidence-snapshot-v1";
 export const KEYWORD_SOURCE_ATTEMPT_VERSION = "keyword-source-attempt-v1";
 
+// Persisted scoring versions retain their original quantity policy. Snapshot
+// readers must not reinterpret historical results using today's minima.
+const SCORING_GROUP_LIMITS = deepFreeze({
+  "keyword-scoring-v1": {
+    title_keywords: { min: 3, max: 5 },
+    attribute_and_tag_keywords: { min: 6, max: 12 },
+    description_long_tail: { min: 10, max: 20 }
+  },
+  "keyword-scoring-v2": {
+    title_keywords: { min: 1, max: 5 },
+    attribute_and_tag_keywords: { min: 0, max: 12 },
+    description_long_tail: { min: 0, max: 20 }
+  }
+});
+
+export function keywordScoringGroupLimits(version) {
+  return Object.hasOwn(SCORING_GROUP_LIMITS, version) ? SCORING_GROUP_LIMITS[version] : null;
+}
+
+function hasRequiredGroups(groups, scoringVersion) {
+  if (scoringVersion === "keyword-scoring-v2") {
+    return KEYWORD_GROUPS.every(group => Array.isArray(groups?.[group]) &&
+      groups[group].length >= SCORING_GROUP_LIMITS[scoringVersion][group].min);
+  }
+  // Unscored snapshots and v1 retain the original three-group coverage rule.
+  return KEYWORD_GROUPS.every(group => Array.isArray(groups?.[group]) && groups[group].length > 0);
+}
+
 export const KEYWORD_PREPARATION_STATUSES = Object.freeze([
   "ready",
   "partial_ready",
@@ -223,6 +251,9 @@ export function validateKeywordEvidenceSnapshot(snapshot, { currentBinding, asOf
         snapshot.scoringContext.execution.codexDispatches !== 0 || snapshot.scoringContext.execution.bOrC1Created !== false || snapshot.scoringContext.execution.sharedWrites !== 0) {
       push(errors, "scoringContext", "K3评分上下文绑定或零副作用字段无效");
     }
+    if (keywordScoringGroupLimits(snapshot.scoringContext?.scoringVersion) === null) {
+      push(errors, "scoringContext.scoringVersion", "评分版本无效");
+    }
   }
   const keywords = KEYWORD_GROUPS.flatMap((group) => snapshot.groups?.[group] || []);
   const attempts = Array.isArray(snapshot.sourceAttempts) ? snapshot.sourceAttempts : [];
@@ -234,8 +265,9 @@ export function validateKeywordEvidenceSnapshot(snapshot, { currentBinding, asOf
   if (snapshot.status === "technical_unavailable" && (keywords.length !== 0 || !attempts.some((item) => TECHNICAL_FAILURES.has(item.failureClass)))) {
     push(errors, "status", "technical_unavailable要求零关键词且存在明确技术失败");
   }
-  if (snapshot.status === "ready" && KEYWORD_GROUPS.some((group) => (snapshot.groups?.[group] || []).length === 0)) push(errors, "status", "ready要求三组均有结果");
-  if (snapshot.status === "partial_ready" && !(keywords.length > 0 && KEYWORD_GROUPS.some((group) => (snapshot.groups?.[group] || []).length === 0))) push(errors, "status", "partial_ready要求已有部分结果但尚未覆盖三组");
+  const requiredGroupsPresent = hasRequiredGroups(snapshot.groups, snapshot.scoringContext?.scoringVersion);
+  if (snapshot.status === "ready" && !requiredGroupsPresent) push(errors, "status", "ready要求满足当前评分版本的必要分组");
+  if (snapshot.status === "partial_ready" && !(keywords.length > 0 && !requiredGroupsPresent)) push(errors, "status", "partial_ready要求已有结果但尚未满足当前评分版本的必要分组");
   if (snapshot.status === "stale" && !attempts.some((item) => item.failureClass === "stale_result") && !(asOf && isoDateTime(snapshot.validity?.expiresAt) && Date.parse(snapshot.validity.expiresAt) <= Date.parse(asOf))) {
     push(errors, "status", "stale必须由过期尝试或有效期证明");
   }
@@ -258,7 +290,7 @@ export function validateKeywordEvidenceSnapshot(snapshot, { currentBinding, asOf
   return { valid: errors.length === 0, errors };
 }
 
-function deriveStatus({ groups, attempts, expiresAt, asOf, needsReview }) {
+function deriveStatus({ groups, attempts, expiresAt, asOf, needsReview, scoringVersion }) {
   if (Date.parse(expiresAt) <= Date.parse(asOf) || attempts.some((item) => item.failureClass === "stale_result")) return "stale";
   if (needsReview === true) return "needs_review";
   const keywords = KEYWORD_GROUPS.flatMap((group) => groups[group]);
@@ -266,7 +298,7 @@ function deriveStatus({ groups, attempts, expiresAt, asOf, needsReview }) {
   if (keywords.length === 0 && hasPositiveCompletedResult) return "needs_review";
   if (keywords.length === 0 && attempts.some((item) => item.failureClass === "true_empty")) return "true_empty";
   if (keywords.length === 0 && attempts.some((item) => TECHNICAL_FAILURES.has(item.failureClass))) return "technical_unavailable";
-  if (KEYWORD_GROUPS.every((group) => groups[group].length > 0)) return "ready";
+  if (hasRequiredGroups(groups, scoringVersion)) return "ready";
   if (keywords.length > 0) return "partial_ready";
   return "needs_review";
 }
@@ -275,7 +307,7 @@ export function createKeywordEvidenceSnapshot(input) {
   if (!isObject(input)) throw new TypeError("KEYWORD_EVIDENCE_INPUT_INVALID");
   const groups = Object.fromEntries(KEYWORD_GROUPS.map((group) => [group, structuredClone(input.groups?.[group] ?? [])]));
   const sourceAttempts = structuredClone(input.sourceAttempts || []);
-  const status = input.statusOverride ?? deriveStatus({ groups, attempts: sourceAttempts, expiresAt: input.expiresAt, asOf: input.asOf, needsReview: input.needsReview });
+  const status = input.statusOverride ?? deriveStatus({ groups, attempts: sourceAttempts, expiresAt: input.expiresAt, asOf: input.asOf, needsReview: input.needsReview, scoringVersion: input.scoringContext?.scoringVersion });
   const snapshot = {
     schemaVersion: KEYWORD_EVIDENCE_SNAPSHOT_VERSION,
     snapshotId: input.snapshotId,

@@ -1,7 +1,8 @@
 import { dESoftwareRuntimeDisplay, eReadbackRuntimeDisplay, dESavedJobRuntimeDisplay } from "../dESoftwareRuntimeView";
 import { useSubmit } from "./FormRevisionNotice.jsx";
 
-export default function DESoftwareRuntimeCard({ runtime, readback, savedJobRuntime = null, onContinueSaved = null }) {
+export default function DESoftwareRuntimeCard({ runtime, readback, savedJobRuntime = null, onContinueSaved = null,
+  onDispatchNewRound = null, onRollbackAuthorization = null, onRecoverInitialImport = null, onReobserveUnknownOutcome = null }) {
   const { saving, error, run } = useSubmit();
   const saved = dESavedJobRuntimeDisplay(savedJobRuntime);
   if (saved) return (
@@ -16,6 +17,40 @@ export default function DESoftwareRuntimeCard({ runtime, readback, savedJobRunti
       {saved.canContinueSaved ? <button type="button" disabled={saving || typeof onContinueSaved !== "function"}
         onClick={() => run(async () => { await onContinueSaved(saved.continuation); })}>
         {saving ? "正在继续已保存任务…" : "继续已保存任务"}</button> : null}
+      {saved.canDispatchNewRound ? <div aria-label="再派一轮生产作业">
+        <p>上一轮已经停下，而且记录证明一个请求都没有发到平台。可以在同一份生产授权下再派一轮执行：
+          价格、库存、图片和顺序都不变，也不需要你重新签任何确认卡。</p>
+        <button type="button" disabled={saving || typeof onDispatchNewRound !== "function"}
+          onClick={() => run(async () => { await onDispatchNewRound(saved.newRound); })}>
+          {saving ? "正在再派一轮…" : "再派一轮生产作业"}</button>
+      </div> : saved.newRoundBlocker ? <p>{saved.newRoundBlocker}</p> : null}
+      {saved.canReobserveUnknownOutcome ? <div aria-label="按新分类重新观察一次">
+        <p>上一次查询时，平台在导入任务上报了错误，当时的软件只要见到错误就一律判「结果未知」并停下，
+          不区分「警告」和「真错误」。现在已经会区分了，所以可以按新规则再看一次。
+          这一步<strong>只做只读查询</strong>，不会重发导入、不会写库存、不会改你确认过的任何内容。
+          上面列出的就是上次停在什么上。<strong>看一次不保证一定能继续</strong>——
+          如果确实有真错误，它还会停，但会把每条错误的级别和文案都显示在这里。</p>
+        <button type="button" disabled={saving || typeof onReobserveUnknownOutcome !== "function"}
+          onClick={() => run(async () => { await onReobserveUnknownOutcome(saved.reobservation); })}>
+          {saving ? "正在重新观察…" : "按新分类重新观察一次"}</button>
+      </div> : saved.reobservationBlocker ? <p>{saved.reobservationBlocker.message ?? saved.reobservationBlocker}</p> : null}
+      {saved.canRecoverInitialImport ? <div aria-label="对账并登记本轮导入">
+        <p>平台已经接受了这次导入（导入任务 {saved.recovery?.taskId}），商品在店铺里已经建好了；
+          只是当时的查询期限已过，软件停下了，没有继续核对。现在可以把这次导入对账登记回来：
+          软件只会做只读查询，确认商品状态和仓库库存，<strong>不会再往平台写任何东西</strong>。
+          库存如果已经是你自己填好的数，软件只登记「这是你填的」，不会覆盖。</p>
+        <button type="button" disabled={saving || typeof onRecoverInitialImport !== "function"}
+          onClick={() => run(async () => { await onRecoverInitialImport(saved.recovery); })}>
+          {saving ? "正在对账并登记…" : "对账并登记本轮导入"}</button>
+      </div> : saved.recoveryBlocker ? <p>{saved.recoveryBlocker.message ?? saved.recoveryBlocker}</p> : null}
+      {saved.canRollbackAuthorization ? <div aria-label="作废本轮生产授权">
+        <p>这一轮已经走不下去了，而且记录证明一个字节都没有写到平台。可以作废本轮生产授权、退回等你确认：
+          旧授权、旧确认卡和两轮失败记录全部归档留底，一条不删；价格、库存、15张图和文案都不动。
+          作废之后你在最终确认卡上重新签一次，软件会排一轮全新的生产作业。</p>
+        <button type="button" disabled={saving || typeof onRollbackAuthorization !== "function"}
+          onClick={() => run(async () => { await onRollbackAuthorization(saved.rollback); })}>
+          {saving ? "正在作废本轮授权…" : "作废本轮授权、退回等我确认"}</button>
+      </div> : saved.rollbackBlocker && !saved.canDispatchNewRound ? <p>{saved.rollbackBlocker}</p> : null}
       {error ? <p role="alert">{error}</p> : null}
       <p>{savedJobRuntime.currentVerified ? "当前商品的独立验证结果已保存。" : "尚未形成当前商品的独立验证通过结果。"}</p>
       <small>配置存在不代表平台在线。继续时会重新检查当前条件；已经发出的请求不会自动重发。</small>

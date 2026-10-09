@@ -28,6 +28,25 @@ export function assertADiscoveryCandidateImportRecord(record, {batchId, revision
   }
   return structuredClone(record);
 }
+export function assertADiscoveryCandidateSelectionRecord(record, {batchId, revision, marketProductId}) {
+  const fields = ['schemaVersion','batchId','revision','marketProductId','selectedByUserId','recordedAt','status','candidateId','sourceJobIds','failureClass'];
+  requireValue(object(record) && Object.keys(record).length === fields.length && fields.every(field=>Object.hasOwn(record,field)) &&
+    record.schemaVersion === 'a-discovery-candidate-selection-v1' && record.batchId === batchId && isCanonicalFrozenRef(batchId) &&
+    record.revision === revision && Number.isSafeInteger(revision) && revision >= 0 && record.marketProductId === marketProductId &&
+    typeof marketProductId === 'string' && /^[1-9][0-9]*$/.test(marketProductId) && isCanonicalFrozenRef(record.selectedByUserId) &&
+    typeof record.recordedAt === 'string' && Number.isFinite(Date.parse(record.recordedAt)) &&
+    ['imported','all_duplicates','blocked','failed'].includes(record.status) && Array.isArray(record.sourceJobIds) && record.sourceJobIds.length <= 3 &&
+    record.sourceJobIds.every(isCanonicalFrozenRef) && new Set(record.sourceJobIds).size === record.sourceJobIds.length, 'SELECTION_RECORD_INVALID');
+  if (record.status === 'imported') requireValue(isCanonicalFrozenRef(record.candidateId) && record.sourceJobIds.length > 0 && record.failureClass === null, 'SELECTION_RECORD_INVALID');
+  else requireValue(record.candidateId === null && (record.status === 'all_duplicates' ? record.sourceJobIds.length > 0 && record.failureClass === null :
+    isCanonicalFrozenRef(record.failureClass)), 'SELECTION_RECORD_INVALID');
+  return structuredClone(record);
+}
+function selections(document) {
+  if (!Object.hasOwn(document.runtime, 'aDiscoveryCandidateSelections')) document.runtime.aDiscoveryCandidateSelections = {};
+  requireValue(object(document.runtime.aDiscoveryCandidateSelections), 'IMPORT_REPOSITORY_INVALID');
+  return document.runtime.aDiscoveryCandidateSelections;
+}
 function imports(document) {
   if (!Object.hasOwn(document.runtime, 'aDiscoveryCandidateImports')) document.runtime.aDiscoveryCandidateImports = {};
   requireValue(object(document.runtime.aDiscoveryCandidateImports), 'IMPORT_REPOSITORY_INVALID');
@@ -65,6 +84,8 @@ export function readCompletedADiscoveryBatch({ document, batchId, revision }) {
   return { batch, jobs, receipts };
 }
 
+/** Market product ids already represented by any candidate, eliminated ones included; nothing is revived through discovery. */
+export function knownMarketProductIds(candidates) { return existingMarketIds(candidates); }
 function existingMarketIds(candidates) {
   const result = new Set();
   for (const candidate of candidates) {
@@ -78,6 +99,29 @@ function existingMarketIds(candidates) {
     }
   }
   return result;
+}
+
+/** One market product becomes one unverified A candidate; the same shape whether the software or the owner picked it. */
+function createDiscoveredCandidate({document, batch, receipts, product, at, storeBindings, detail}) {
+  const id = `candidate:${randomUUID()}`;
+  requireValue(isCanonicalFrozenRef(id) && !document.candidates.some(value=>value.id===id), 'IMPORT_CANDIDATE_CONFLICT');
+  const candidate = createInitialCandidate({input:{targetStore:batch.targetStore,productName:product.title,productUrl:product.productUrl,
+    // The provider's main image is display-only evidence for the owner's supplier search; it is not a listing asset.
+    imageUrl:typeof product.imageUrl==='string'?product.imageUrl:''},
+    source:'software',id,timestamp:at,storeBindings});
+  candidate.targetPlatform = 'ozon';
+  const seerfar = batch.plan.provider === 'seerfar';
+  const evidence = {schemaVersion:seerfar?'a-discovery-candidate-evidence-v2':'a-discovery-candidate-evidence-v1',
+    ...(seerfar?{provider:'seerfar',platform:'ozon',contractVersion:batch.plan.contractVersion}:{}),batchId:batch.batchId,sourceRevision:batch.revision,
+    resultRevision:candidate.dataRevision,planId:batch.plan.planId,planVersion:batch.plan.version,marketProductId:product.productId,
+    marketReceiptRef:receipts[0].receiptId,supplierReceiptRefs:receipts.slice(1).map(receipt=>receipt.receiptId),
+    observedMarketPrice:{value:product.price,currency:product.currency},exactSkuMatch:'unknown',businessEffect:'discovery_evidence_only'};
+  if(seerfar)candidate.aDiscoveryEvidenceV2=evidence;
+  else candidate.aDiscoveryEvidenceV1=evidence;
+  candidate.history.push({id:`history:${randomUUID()}`,actor:'software',action:'discovery_imported',detail,at});
+  assertSafeBusinessMutationCandidate(candidate);
+  document.candidates.unshift(candidate);
+  return id;
 }
 
 export function createADiscoveryCandidateImportUseCase({ repository, serverClock, storeBindings }) {
@@ -103,23 +147,9 @@ export function createADiscoveryCandidateImportUseCase({ repository, serverClock
         const product = readADiscoveryMarketResult(receipts[0]).products.find(value => !known.has(value.productId));
         imported = {...base,status:product ? 'imported' : 'all_duplicates',sourceJobIds:jobs.map(job=>job.jobId)};
         if (product) {
-          const id = `candidate:${randomUUID()}`;
-          requireValue(isCanonicalFrozenRef(id) && !document.candidates.some(value=>value.id===id), 'IMPORT_CANDIDATE_CONFLICT');
-          const candidate = createInitialCandidate({input:{targetStore:batch.targetStore,productName:product.title,productUrl:product.productUrl},
-            source:'software',id,timestamp:at,storeBindings});
-          candidate.targetPlatform = 'ozon';
-          const seerfar = batch.plan.provider === 'seerfar';
-          const evidence = {schemaVersion:seerfar?'a-discovery-candidate-evidence-v2':'a-discovery-candidate-evidence-v1',
-            ...(seerfar?{provider:'seerfar',platform:'ozon',contractVersion:batch.plan.contractVersion}:{}),batchId,sourceRevision:revision,
-            resultRevision:candidate.dataRevision,planId:batch.plan.planId,planVersion:batch.plan.version,marketProductId:product.productId,
-            marketReceiptRef:receipts[0].receiptId,supplierReceiptRefs:receipts.slice(1).map(receipt=>receipt.receiptId),
-            observedMarketPrice:{value:product.price,currency:product.currency},exactSkuMatch:'unknown',businessEffect:'discovery_evidence_only'};
-          if(seerfar)candidate.aDiscoveryEvidenceV2=evidence;
-          else candidate.aDiscoveryEvidenceV1=evidence;
-          candidate.history.push({id:`history:${randomUUID()}`,actor:'software',action:'discovery_imported',detail:'按已批准发现计划保存待核验商品，尚未确认供货方案或正式利润。',at});
-          assertSafeBusinessMutationCandidate(candidate);
-          imported.candidateId = id; imported.marketProductId = product.productId;
-          document.candidates.unshift(candidate);
+          imported.candidateId = createDiscoveredCandidate({document,batch,receipts,product,at,storeBindings,
+            detail:'按已批准发现计划保存待核验商品，尚未确认供货方案或正式利润。'});
+          imported.marketProductId = product.productId;
         }
       } catch (error) {
         imported = {...base,status:error instanceof ADiscoveryError ? 'blocked' : 'failed',
@@ -128,6 +158,39 @@ export function createADiscoveryCandidateImportUseCase({ repository, serverClock
       }
       imports(document)[key] = assertADiscoveryCandidateImportRecord(imported,{batchId,revision});
       return {changed:true,document,result:structuredClone(imported)};
+    });
+    if (hasOriginalError) throw originalError;
+    return result;
+  },
+  /** Owner-picked product from a completed batch; same duplicate rules as the automatic import, one record per product. */
+  async importSelectedProduct({ batchId, revision, marketProductId, selectedByUserId }) {
+    if (!isCanonicalFrozenRef(batchId) || !Number.isSafeInteger(revision) || revision < 0 || typeof marketProductId !== 'string' ||
+        !/^[1-9][0-9]*$/.test(marketProductId) || !isCanonicalFrozenRef(selectedByUserId)) throw new ADiscoveryError('IMPORT_INPUT_INVALID');
+    const key = `${batchId}:${revision}:${marketProductId}`, at = serverClock();
+    if (typeof at !== 'string' || !Number.isFinite(Date.parse(at))) throw new TypeError('A_DISCOVERY_IMPORT_CLOCK_INVALID');
+    let originalError, hasOriginalError = false;
+    const result = await repository.transact(document => {
+      const saved = selections(document)[key];
+      if (saved !== undefined) return {changed:false,result:assertADiscoveryCandidateSelectionRecord(saved,{batchId,revision,marketProductId})};
+      const {batch,jobs,receipts} = readCompletedADiscoveryBatch({document,batchId,revision});
+      requireValue(batch.ownerUserId === selectedByUserId, 'OWNER_CONFLICT');
+      requireValue(Array.isArray(document.candidates), 'IMPORT_REPOSITORY_INVALID');
+      const product = readADiscoveryMarketResult(receipts[0]).products.find(value => value.productId === marketProductId);
+      requireValue(product !== undefined, 'IMPORT_INPUT_INVALID');
+      const base = {schemaVersion:'a-discovery-candidate-selection-v1',batchId,revision,marketProductId,selectedByUserId,recordedAt:at,status:'failed',
+        candidateId:null,sourceJobIds:jobs.map(job=>job.jobId),failureClass:null};
+      let selected;
+      try {
+        if (existingMarketIds(document.candidates).has(marketProductId)) selected = {...base,status:'all_duplicates'};
+        else selected = {...base,status:'imported',candidateId:createDiscoveredCandidate({document,batch,receipts,product,at,storeBindings,
+          detail:'主人从已批准发现批次的结果中选定该商品，保存为待核验商品；尚未确认供货方案或正式利润。'})};
+      } catch (error) {
+        selected = {...base,status:error instanceof ADiscoveryError ? 'blocked' : 'failed',
+          failureClass:error instanceof ADiscoveryError ? error.code : 'UNEXPECTED_SYSTEM_ERROR'};
+        if (!(error instanceof ADiscoveryError)) { originalError = error; hasOriginalError = true; }
+      }
+      selections(document)[key] = assertADiscoveryCandidateSelectionRecord(selected,{batchId,revision,marketProductId});
+      return {changed:true,document,result:structuredClone(selected)};
     });
     if (hasOriginalError) throw originalError;
     return result;

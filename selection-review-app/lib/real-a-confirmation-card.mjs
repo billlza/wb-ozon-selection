@@ -1,6 +1,6 @@
 import { adapt1688CaptureToSupplierOption } from './supplier-option.mjs';
 import { readAProductDetailSupplierEvidence } from './a-product-detail-evidence.mjs';
-import { validateSalesSnapshot } from "./sales-snapshot.mjs";
+import { currentSalesSnapshot } from "./discovery-market-snapshot.mjs";
 import { sourceCaptureFailureDestinationLabel } from "./source-capture.mjs";
 import { STORE_PLATFORMS, isCompleteStoreRef, sameStoreRef } from "./store-binding.mjs";
 
@@ -32,10 +32,13 @@ function nonNegative(value) {
   return parsed !== null && parsed >= 0;
 }
 
+/**
+ * The current snapshot is the newest saved entry that still validates, whichever source produced it: a real page read,
+ * a provider detail read, or the read-only projection of an already-saved discovery receipt. The card only requires
+ * that one exists and that the owner confirms it; it never ranks the sources itself.
+ */
 function newestValidSalesSnapshot(candidate) {
-  return (Array.isArray(candidate?.salesSnapshotsV11) ? candidate.salesSnapshotsV11 : [])
-    .filter((snapshot) => validateSalesSnapshot(snapshot).valid)
-    .sort((left, right) => Date.parse(right.collectedAt) - Date.parse(left.collectedAt))[0] || null;
+  return currentSalesSnapshot(candidate);
 }
 
 function selectedCaptureSku(candidate) {
@@ -121,6 +124,8 @@ export function buildRealAConfirmationCard(candidate, options = {}) {
     guooRouteComparison,
     salesReview: sales ? {
       snapshotId: sales.snapshotId,
+      source: sales.source ?? "platform_page_read",
+      marketMetrics: isObject(sales.marketMetrics) ? structuredClone(sales.marketMetrics) : null,
       sourceDataRevision: sales.sourceDataRevision,
       productUrl: sales.productUrl,
       title: sales.title,

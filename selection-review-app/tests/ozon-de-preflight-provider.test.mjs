@@ -51,6 +51,45 @@ test('closed DTO rejects raw secrets, extra fields, missing provenance and inven
   const f=fixture();change(f.record);assert.throws(()=>assertOzonDEPreflightEvidence(f.record));
  }
 });
+test('店铺身份必须说明它站在哪条锚上，两条锚不能混着说',()=>{
+ // Ozon returns no store number, so 'scoped_warehouse' asserts there is none to observe: a record carrying one
+ // alongside it is a contradiction, in any status. A 'matched' on neither anchor is a bare claim.
+ for(const change of [r=>{r.inspection.storeIdentityVia='scoped_warehouse';},
+   r=>{r.inspection.storeIdentityVia='scoped_warehouse';r.inspection.storeIdentityStatus='mismatched';},
+   r=>{r.inspection.storeIdentityVia='owner_says_so';r.inspection.observedStoreRef=null;},
+   r=>{r.inspection.observedStoreRef=null;},
+   r=>{r.inspection.storeIdentityVia='none';r.inspection.observedStoreRef=null;},
+   // 'none' 就是"没有锚点"，认不出的名字也不是锚。旁边挂着一个真实可对上的 observedStoreRef 仍然不算锚住——
+   // Ozon 从不返回店铺编号，那个引用只可能是人手填进去的。这一刀必须落在最早这道门，不能留到下一步。
+   r=>{r.inspection.storeIdentityVia='none';},
+   r=>{r.inspection.storeIdentityVia='owner_says_so';}]){
+  const f=fixture();change(f.record);assert.throws(()=>assertOzonDEPreflightEvidence(f.record),/INSPECTION_INVALID/);
+ }
+ // 真实生产者写出来的"什么都没查到"仍然合法：'none' + 未核验 + 空引用。
+ const blind=fixture();blind.record.inspection.storeIdentityVia='none';blind.record.inspection.storeIdentityStatus='unverified';blind.record.inspection.observedStoreRef=null;
+ assert.equal(assertOzonDEPreflightEvidence(blind.record).inspection.storeIdentityVia,'none');
+ // Both anchors are accepted on their own terms, and an inspection that names no path keeps the original rule.
+ const warehouse=fixture();warehouse.record.inspection.storeIdentityVia='scoped_warehouse';warehouse.record.inspection.observedStoreRef=null;
+ assert.equal(assertOzonDEPreflightEvidence(warehouse.record).inspection.storeIdentityVia,'scoped_warehouse');
+ const classic=fixture();assert.equal(assertOzonDEPreflightEvidence(classic.record).inspection.storeIdentityStatus,'matched');
+ const unverified=fixture();unverified.record.inspection.storeIdentityStatus='unverified';unverified.record.inspection.observedStoreRef=null;
+ assert.equal(assertOzonDEPreflightEvidence(unverified.record).inspection.observedStoreRef,null);
+});
+test('身份锚点跟着身份一起交给适配器：仓库反推放行，非仓库锚点仍按原规则拦',async()=>{
+ // 仓库反推：Ozon 不发店铺编号，observedStoreRef 恒为 null 是正确状态，能力检查必须放行。
+ const warehouse=fixture();warehouse.record.inspection.storeIdentityVia='scoped_warehouse';warehouse.record.inspection.observedStoreRef=null;
+ const anchored=await provider(async()=>warehouse.record).loadAdapterCapabilities(warehouse.context);
+ assert.equal(anchored.status,'ready');assert.equal(anchored.storeIdentity.verifiedVia,'scoped_warehouse');
+ assert.equal(anchored.storeIdentity.observedStoreRef,null);
+ // 未声明路径的历史证据按原规则读，锚点原样记成 platform_store_id。
+ const classic=fixture();const classicResult=await provider(async()=>classic.record).loadAdapterCapabilities(classic.context);
+ assert.equal(classicResult.status,'ready');assert.equal(classicResult.storeIdentity.verifiedVia,'platform_store_id');
+ // 非仓库锚点下引用对不上仍然拦：换掉 platformStoreId，证据本身合法，能力检查必须报身份未验证。
+ const drifted=fixture();drifted.record.inspection.observedStoreRef.platformStoreId+=':other';
+ assert.deepEqual(assertOzonDEPreflightEvidence(drifted.record).inspection.observedStoreRef,drifted.record.inspection.observedStoreRef);
+ const blocked=await provider(async()=>drifted.record).loadAdapterCapabilities(drifted.context);
+ assert.equal(blocked.status,'not_ready');assert.ok(blocked.gaps.some(g=>g.code==='store_identity_not_verified'));
+});
 test('query/context disagreement and expired leases are rejected before evidence reads',async()=>{
  for(const change of [f=>f.query.expectedStore='miska',f=>f.query.platformWriteRequested=true,f=>f.context.candidateRevision++,f=>f.context.sourceRevision++,f=>f.context.leaseId='lease:wrong',f=>f.context.job.leaseExpiresAt=now]){
   const f=fixture();change(f);let reads=0;await assert.rejects(()=>provider(async()=>{reads++;return f.record;}).inspectPlatform(f.query,f.context));assert.equal(reads,0);

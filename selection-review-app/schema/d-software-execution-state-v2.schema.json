@@ -168,6 +168,79 @@
     },
     "platformContinuation": {
       "$ref": "#/$defs/platformContinuation"
+    },
+    "stopTrigger": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "failureClass",
+            "condition",
+            "left",
+            "right",
+            "settledAt"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": "d-initial-import-stop-trigger-v1"
+            },
+            "failureClass": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "condition": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "left": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "maxLength": 512
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "right": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "maxLength": 512
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "settledAt": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        }
+      ]
     }
   },
   "description": "Current persisted execution records require requestEncoding and executionRevision. Older records are historical observations only and cannot be resumed or decoded for execution.",
@@ -766,6 +839,114 @@
             "requestReceiptRef": {
               "type": "string",
               "minLength": 1
+            },
+            "errors": {
+              "oneOf": [
+                {
+                  "const": "unknown"
+                },
+                {
+                  "type": "array",
+                  "maxItems": 50,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "code",
+                      "message",
+                      "state",
+                      "level",
+                      "field",
+                      "attributeId",
+                      "attributeName"
+                    ],
+                    "properties": {
+                      "code": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128
+                          }
+                        ]
+                      },
+                      "message": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 512
+                          }
+                        ]
+                      },
+                      "state": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128
+                          }
+                        ]
+                      },
+                      "level": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
+                        ]
+                      },
+                      "field": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128
+                          }
+                        ]
+                      },
+                      "attributeId": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "integer"
+                          }
+                        ]
+                      },
+                      "attributeName": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
             }
           }
         },
@@ -1054,7 +1235,8 @@
             "blocked",
             "query_budget_exhausted",
             "inventory_not_sent_interrupted",
-            "completed"
+            "completed",
+            "owner_stock_registered"
           ]
         },
         "taskId": {
@@ -1233,6 +1415,114 @@
                           "requestReceiptRef": {
                             "type": "string",
                             "minLength": 1
+                          },
+                          "errors": {
+                            "oneOf": [
+                              {
+                                "const": "unknown"
+                              },
+                              {
+                                "type": "array",
+                                "maxItems": 50,
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "code",
+                                    "message",
+                                    "state",
+                                    "level",
+                                    "field",
+                                    "attributeId",
+                                    "attributeName"
+                                  ],
+                                  "properties": {
+                                    "code": {
+                                      "oneOf": [
+                                        {
+                                          "type": "null"
+                                        },
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 128
+                                        }
+                                      ]
+                                    },
+                                    "message": {
+                                      "oneOf": [
+                                        {
+                                          "type": "null"
+                                        },
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 512
+                                        }
+                                      ]
+                                    },
+                                    "state": {
+                                      "oneOf": [
+                                        {
+                                          "type": "null"
+                                        },
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 128
+                                        }
+                                      ]
+                                    },
+                                    "level": {
+                                      "oneOf": [
+                                        {
+                                          "type": "null"
+                                        },
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 64
+                                        }
+                                      ]
+                                    },
+                                    "field": {
+                                      "oneOf": [
+                                        {
+                                          "type": "null"
+                                        },
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 128
+                                        }
+                                      ]
+                                    },
+                                    "attributeId": {
+                                      "oneOf": [
+                                        {
+                                          "type": "null"
+                                        },
+                                        {
+                                          "type": "integer"
+                                        }
+                                      ]
+                                    },
+                                    "attributeName": {
+                                      "oneOf": [
+                                        {
+                                          "type": "null"
+                                        },
+                                        {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 256
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            ]
                           }
                         }
                       },
@@ -1672,6 +1962,7 @@
                           "request_cancelled",
                           "transport_failure",
                           "inventory_policy_missing",
+                          "inventory_policy_outdated",
                           "system_failure",
                           "context_changed"
                         ]

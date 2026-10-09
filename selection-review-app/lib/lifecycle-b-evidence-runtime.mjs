@@ -3,6 +3,7 @@ import { normalizeEvidenceScope, evidenceScopeKey, evidenceScopeMatches } from "
 import { validateLifecycleEvidenceData, isLifecycleEvidenceTraceValid, inspectCommissionCatalogValidity,
   normalizeCurrentCommissionCatalogs } from "./lifecycle-b-input-bundle.mjs";
 import { resolveLifecycleBCostPolicy, instantiateLifecycleBCostPolicySnapshot } from "./global-pricing-policy.mjs";
+import { extraHandlingFeesConsistency, extraHandlingFeesGate } from "./extra-handling-fees.mjs";
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -41,6 +42,13 @@ export function buildLifecycleBExplicitOtherCosts(candidate, profitRule, { asOf 
   const snapshot = lifecycleBCostPolicySnapshot(profitRule, context);
   const resolved = resolveLifecycleBCostPolicy({ snapshot, context, asOf });
   const costs = Object.fromEntries(Object.entries(resolved).filter(([key]) => !["policyId", "policyVersion"].includes(key)));
+  // 明细和总额必须是同一笔钱。明细缺失（历史数据）不报错，总额照旧；明细在场但加不出这个总额，那份明细说的就不是
+  // 正在被扣的这笔钱，宁可停在这里，也不能拿一份对不上的分解去支撑一个签得下去的利润。
+  const detail = extraHandlingFeesConsistency(candidate);
+  if (detail.status === "inconsistent") {
+    throw Object.assign(new Error(`B_EVIDENCE_COST_POLICY_INCOMPLETE: ${detail.reason}`),
+      { code: "B_EVIDENCE_COST_POLICY_INCOMPLETE" });
+  }
   const policy = {
     ...costs,
     packagingRmb: candidate?.packagingCostRmb,
@@ -65,7 +73,7 @@ const COST_ITEM_LABELS = Object.freeze({
 });
 
 const COST_READINESS_MESSAGES = Object.freeze({
-  B_EVIDENCE_COST_POLICY_INCOMPLETE: "当前店铺成本规则、商品包材费用或利润门槛不完整。",
+  B_EVIDENCE_COST_POLICY_INCOMPLETE: "当前店铺成本规则、这件商品的每单额外操作费或利润门槛不完整。",
   B_COST_POLICY_INVALID: "完整成本政策缺失或结构无效，需要明确政策版本与来源。",
   B_COST_POLICY_SCOPE_MISMATCH: "成本政策不适用于当前平台、店铺身份或销售模式。",
   B_COST_POLICY_TIME_INVALID: "成本政策有效时间配置无效。",
@@ -93,6 +101,10 @@ export function inspectLifecycleBCostReadiness({ candidate, rules, asOf }) {
     if (!(error instanceof Error) || !Object.hasOwn(COST_READINESS_MESSAGES, error.code)) throw error;
     const snapshot = profitRule?.costPolicySnapshot ?? profitRule?.costPolicy;
     let missing = [];
+    // 这一条缺口必须点名说出来。它是这台机器上最常见的那一个（从 Seerfar 发现进来的候选一律没有这笔钱），
+    // 报成「成本规则不完整」主人无从下手，报成这句话他知道去哪儿点。
+    const fee = extraHandlingFeesGate(candidate);
+    if (error.code === "B_EVIDENCE_COST_POLICY_INCOMPLETE" && fee.ready !== true) missing.push(fee.reason);
     if (error.code === "B_COST_POLICY_INVALID" && (snapshot === null || snapshot === undefined)) {
       missing = ["完整成本政策未登记。"];
     } else if (isObject(snapshot?.items)) {
@@ -161,7 +173,7 @@ export function commitLifecycleBEvidencePacks(data, packs, { createdAt, createdB
   for (const pack of prepared) {
     const duplicate = next.find((existing) => existing.id === pack.id);
     if (duplicate) {
-      const same = ["kind", "scope", "sourceType", "sourceRef", "checkedAt", "expiresAt", "evidenceData", "commissionCatalogRef"].every(field => isDeepStrictEqual(duplicate[field], pack[field]));
+      const same = ["kind", "scope", "sourceType", "sourceRef", "checkedAt", "expiresAt", "validity", "evidenceData", "commissionCatalogRef"].every(field => isDeepStrictEqual(duplicate[field], pack[field]));
       if (!same) throw new Error("B_EVIDENCE_COMMIT_ID_CONFLICT: 同一证据ID对应不同范围或内容");
       continue;
     }
@@ -172,4 +184,30 @@ export function commitLifecycleBEvidencePacks(data, packs, { createdAt, createdB
   }
   data.evidencePacks = next;
   return prepared.map((pack) => structuredClone(next.find((item) => item.id === pack.id)));
+}
+
+/**
+ * 「重新读一次费用证据」那一步唯一允许的落盘动作：只往 evidencePacks 里提交，候选记录逐字节不变。
+ *
+ * 逐字节里最要紧的是 `dataRevision`。紧接着那一步（用更好的费用证据重算）把三样东西钉死在当前
+ * 这一版上：停止记录的 `sourceRevision`、运行时的 `inputRevision/outputRevision`，以及官方费率表
+ * 命中行里的 `officialCommissionBinding.candidateRevision`。版本涨一格，这三样同时失效——刚读回来
+ * 的证据会把自己顶过期，主人白按一次，还看不出为什么。
+ *
+ * 所以这里不是「记得别改」，而是改了就抛：调用方在一个事务里跑它，抛出去就整笔回滚。宁可这一次
+ * 白读，也不让重读悄悄动了规格、运费或版本号。
+ */
+export function commitLifecycleBFeeEvidenceRefresh(data, candidateId, packs, options) {
+  if (!isObject(data) || !Array.isArray(data.candidates)) throw new Error("B_EVIDENCE_REFRESH_INVALID_INPUT");
+  const find = () => data.candidates.find((item) => item?.id === candidateId);
+  const before = find();
+  if (!isObject(before)) throw new Error("B_EVIDENCE_REFRESH_CANDIDATE_MISSING");
+  const frozenBytes = JSON.stringify(before);
+  const committed = commitLifecycleBEvidencePacks(data, packs, options);
+  if (JSON.stringify(find()) !== frozenBytes) {
+    throw Object.assign(new Error("B_EVIDENCE_REFRESH_FROZEN_RECORD_CHANGED: 重读费用证据改动了已冻结的商品记录，本轮未保存"), {
+      code: "B_EVIDENCE_REFRESH_FROZEN_RECORD_CHANGED"
+    });
+  }
+  return committed;
 }

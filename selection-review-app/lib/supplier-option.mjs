@@ -75,7 +75,7 @@ function meaningfulVariantText(value) {
   return nonEmptyString(value) && ![UNKNOWN, "null", "undefined"].includes(value.trim().toLowerCase());
 }
 
-function derivedVariantKey(sku) {
+export function derivedVariantKey(sku) {
   if (meaningfulVariantText(sku.propPath)) return sku.propPath.trim();
   const attributes = isObject(sku.attributes) ? sku.attributes : {};
   const attributeKey = Object.entries(attributes)

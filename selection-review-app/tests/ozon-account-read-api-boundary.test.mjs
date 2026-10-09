@@ -1,3 +1,4 @@
+import { allocatedTestPorts } from './helpers/api-process-lifecycle.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
@@ -5,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { productionOwnerDecisionHttpFixture, startSavedDEApi } from './helpers/d-e-saved-api-fixture.mjs';
 
-const port = Number(process.env.SELECTION_REVIEW_TEST_PORT);
+const { api: port } = allocatedTestPorts();
 test('real account HTTP boundary rejects anonymous, cross-origin, stale and unconfirmed requests before credentials or business changes', async t => {
   const fixture = await productionOwnerDecisionHttpFixture();
   const directory = await mkdtemp(path.join(tmpdir(), 'account-read-boundary-http-'));

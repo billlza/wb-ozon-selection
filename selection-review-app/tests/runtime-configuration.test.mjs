@@ -4,10 +4,21 @@ import test from "node:test";
 import {
   createSelectionReviewRuntimeConfiguration,
   normalizeKeywordEvidenceServiceBindings,
+  normalizeOzonCommissionReferenceConfiguration,
   normalizeServiceOrigin
 } from "../lib/runtime-configuration.mjs";
 
 const APP_DIR = "/tmp/selection-review-runtime-test";
+
+test("editorial proposal files are explicitly configured local paths, never implicit recovery jobs", () => {
+  const build = env => createSelectionReviewRuntimeConfiguration({ env, appDir: APP_DIR, argv: [] });
+  assert.equal(build({}).c1EditorialProposalFile, null);
+  assert.equal(build({ SELECTION_REVIEW_C1_EDITORIAL_PROPOSAL_FILE: "/tmp/review/proposal.json" }).c1EditorialProposalFile,
+    "/tmp/review/proposal.json");
+  for (const value of ["", "proposal.json", " /tmp/proposal.json", "/tmp/proposal.json\0"]) {
+    assert.throws(() => build({ SELECTION_REVIEW_C1_EDITORIAL_PROPOSAL_FILE: value }), /RUNTIME_CONFIGURATION_INVALID/);
+  }
+});
 
 test("GUOO新测算统一采用项目8月19版，路径可配置但旧版本不得悄然启用", () => {
   const build = env => createSelectionReviewRuntimeConfiguration({ env, appDir: APP_DIR, argv: [] });
@@ -205,5 +216,53 @@ test("独立E消费者仅接受显式受限间隔，不借用D观察配置", () 
   }
   for (const value of ["", "null", "0", "999", "-1", "1000.0", "1e3", "2147483648", " 1000", 1000, undefined]) {
     assert.throws(() => create({ SELECTION_REVIEW_E_READBACK_PUMP_INTERVAL_MS: value }), /E_READBACK_RUNTIME_CONFIGURATION_INVALID/);
+  }
+});
+
+test("Ozon官方佣金参考表配置默认未启用，显式配置要求绝对路径和CN卖家范围", () => {
+  const create = env => createSelectionReviewRuntimeConfiguration({ env, appDir: APP_DIR, argv: [] });
+  assert.equal(create({}).ozonCommissionReference, null);
+
+  const catalogPath = "/private/tmp/ozon-commission-reference-test/ozon-china-2026-09-10.json";
+  const config = create({ SELECTION_REVIEW_OZON_COMMISSION_REFERENCE_JSON: JSON.stringify({ catalogPath, sellerRegion: "CN" }) });
+  assert.deepEqual(config.ozonCommissionReference, { catalogPath, sellerRegion: "CN", versionState: null });
+  assert.ok(Object.isFrozen(config.ozonCommissionReference));
+
+  // Explicit JSON null mirrors the OSS runtime configuration convention: still "not configured", not an error.
+  assert.equal(create({ SELECTION_REVIEW_OZON_COMMISSION_REFERENCE_JSON: "null" }).ozonCommissionReference, null);
+  for (const value of ["", "broken-json"]) {
+    assert.throws(() => create({ SELECTION_REVIEW_OZON_COMMISSION_REFERENCE_JSON: value }),
+      /OZON_COMMISSION_REFERENCE_CONFIGURATION_INVALID/);
+  }
+  for (const bad of [
+    { catalogPath, sellerRegion: "CN", extra: "must-not-appear" },
+    { catalogPath: "relative/ozon-china.json", sellerRegion: "CN" },
+    { catalogPath, sellerRegion: "RU" },
+    { catalogPath: "", sellerRegion: "CN" },
+    { catalogPath: `${catalogPath} `, sellerRegion: "CN" },
+    { sellerRegion: "CN" }
+  ]) {
+    assert.throws(() => create({ SELECTION_REVIEW_OZON_COMMISSION_REFERENCE_JSON: JSON.stringify(bad) }),
+      error => /OZON_COMMISSION_REFERENCE_CONFIGURATION_INVALID/.test(error.message) && !error.message.includes("must-not-appear"));
+  }
+});
+
+test("normalizeOzonCommissionReferenceConfiguration resolves a clean absolute path and rejects a non-absolute one directly", () => {
+  assert.equal(normalizeOzonCommissionReferenceConfiguration(null), null);
+  assert.equal(normalizeOzonCommissionReferenceConfiguration(undefined), null);
+  const normalized = normalizeOzonCommissionReferenceConfiguration({ catalogPath: "/tmp/a/../a/ozon.json", sellerRegion: "CN" });
+  assert.equal(normalized.catalogPath, "/tmp/a/ozon.json");
+  assert.throws(() => normalizeOzonCommissionReferenceConfiguration({ catalogPath: "ozon.json", sellerRegion: "CN" }),
+    /OZON_COMMISSION_REFERENCE_CONFIGURATION_INVALID/);
+});
+
+test("Ozon commission reference configuration binds an optional saved official version state", () => {
+  const base = { catalogPath: "/tmp/synthetic/ozon-official-commission.json", sellerRegion: "CN" };
+  assert.equal(normalizeOzonCommissionReferenceConfiguration(base).versionState, null);
+  const state = { fileSha256: "a".repeat(64), effectiveFrom: "2025-12-01", status: "active" };
+  const bound = normalizeOzonCommissionReferenceConfiguration({ ...base, versionState: state });
+  assert.deepEqual(bound.versionState, state); assert.ok(Object.isFrozen(bound.versionState));
+  for (const bad of [{ ...state, status: "revoked" }, { ...state, fileSha256: "xyz" }, { ...state, effectiveFrom: "2025-13-01" }, { ...state, extra: 1 }, "active"]) {
+    assert.throws(() => normalizeOzonCommissionReferenceConfiguration({ ...base, versionState: bad }), /OZON_COMMISSION_REFERENCE_CONFIGURATION_INVALID/);
   }
 });

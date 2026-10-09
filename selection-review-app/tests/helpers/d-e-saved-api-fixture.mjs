@@ -4,7 +4,8 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { stopApiProcess } from "./api-process-lifecycle.mjs";
+import { stopApiProcess, allocatedTestPorts } from "./api-process-lifecycle.mjs";
+import { createJsonBusinessStateRepository } from "../../lib/business-state-repository.mjs";
 import { productionOwnerDecisionFixture } from "../fixtures/production-owner-decision-fixture.mjs";
 
 const appDir = fileURLToPath(new URL("../..", import.meta.url));
@@ -30,9 +31,11 @@ export async function productionOwnerDecisionHttpFixture() {
 }
 
 /** Real server subprocess with password identity and a loopback dependency tripwire. No transport is injected into production. */
-export async function startSavedDEApi(t, { directory, port, document, binding, productionBindings=[binding], services = [], accountReadServices = [], discoveryBindings=[], credentialBindings = [], ossConfiguration = null }) {
-  const dependencyPort = Number(process.env.SELECTION_REVIEW_TEST_GATEWAY_PORT);
-  if (![port, dependencyPort].every(value => Number.isSafeInteger(value) && value > 0 && ![4317, 4318, 4173].includes(value)) || port === dependencyPort) {
+export async function startSavedDEApi(t, { directory, port, document, binding, productionBindings=[binding], services = [], accountReadServices = [], discoveryBindings=[], credentialBindings = [], ossConfiguration = null, dictionaryResponder = null, browserOrigin = null,
+  identityProvider = "local_owner_password", catalogDirectory = null }) {
+  const allocated = allocatedTestPorts();
+  const dependencyPort = allocated.gateway;
+  if (port !== allocated.api && port !== allocated.second) {
     throw new Error("TEST_REQUIRES_ISOLATED_PORT");
   }
   const base = `http://127.0.0.1:${port}`, businessDirectory = path.join(directory, "business"), privateDirectory = path.join(directory, "private");
@@ -40,9 +43,27 @@ export async function startSavedDEApi(t, { directory, port, document, binding, p
   await mkdir(privateDirectory, { mode: 0o700 });
   await mkdir(businessDirectory);
   await writeFile(dataFile, JSON.stringify(document));
-  let dependencyRequests = 0;
-  const tripwire = http.createServer((request, response) => {
-    dependencyRequests += 1; request.resume();
+  let dependencyRequests = 0, dictionaryRequests = 0;
+  const tripwire = http.createServer(async (request, response) => {
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    let query = null;
+    if (dictionaryResponder && request.url === '/api/read-only/evidence/ozon') {
+      try { query = JSON.parse(body); }
+      catch {
+        dependencyRequests += 1;
+        response.writeHead(400, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: 'invalid_dictionary_query' }));
+        return;
+      }
+    }
+    const allowed = dictionaryResponder?.(request, query) ?? null;
+    if (allowed !== null) {
+      dictionaryRequests += 1;
+      response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(allowed));
+      return;
+    }
+    dependencyRequests += 1;
     response.writeHead(503, { "Content-Type": "application/json" }); response.end(JSON.stringify({ error: "unexpected_test_dependency_request" }));
   });
   await new Promise((resolve, reject) => { tripwire.once("error", reject); tripwire.listen(dependencyPort, "127.0.0.1", resolve); });
@@ -55,9 +76,9 @@ export async function startSavedDEApi(t, { directory, port, document, binding, p
       await rm(directory, { recursive: true, force: true });
     }
   });
-  const env = { ...process.env, SELECTION_REVIEW_API_PORT: String(port), SELECTION_REVIEW_DATA_FILE: dataFile,
-    SELECTION_REVIEW_PUBLIC_ORIGIN:base,SELECTION_REVIEW_ALLOWED_ORIGINS:base,
-    SELECTION_REVIEW_IDENTITY_PROVIDER: "local_owner_password", SELECTION_REVIEW_OWNER_IDENTITY_FILE: path.join(privateDirectory, "owner.json"),
+  const env = { ...process.env, ...(catalogDirectory?{SELECTION_REVIEW_BATCH_CATALOG_DIRECTORY:catalogDirectory}:{}), SELECTION_REVIEW_API_PORT: String(port), SELECTION_REVIEW_DATA_FILE: dataFile,
+    SELECTION_REVIEW_PUBLIC_ORIGIN:base,SELECTION_REVIEW_ALLOWED_ORIGINS:browserOrigin ? `${base},${browserOrigin}` : base,
+    SELECTION_REVIEW_IDENTITY_PROVIDER: identityProvider, SELECTION_REVIEW_OWNER_IDENTITY_FILE: path.join(privateDirectory, "owner.json"),
     SELECTION_REVIEW_STORE_BINDINGS_JSON: JSON.stringify([{ targetStore: binding.storeRef.stableStoreId, platform: binding.platform, storeRef: binding.storeRef }]),
     SELECTION_REVIEW_PRODUCTION_BINDINGS_JSON: JSON.stringify(productionBindings), SELECTION_REVIEW_DE_SERVICE_BINDINGS_JSON: JSON.stringify(services),
     SELECTION_REVIEW_OZON_DE_CREDENTIAL_BINDINGS_JSON: JSON.stringify(credentialBindings),
@@ -65,6 +86,7 @@ export async function startSavedDEApi(t, { directory, port, document, binding, p
     SELECTION_REVIEW_OZON_ACCOUNT_DISCOVERY_BINDINGS_JSON: JSON.stringify(discoveryBindings),
     SELECTION_REVIEW_D_PLATFORM_OBSERVATION_JSON: JSON.stringify({policies:[],pumpIntervalMs:null}),
     SELECTION_REVIEW_OSS_RUNTIME_CONFIGURATION_JSON: JSON.stringify(ossConfiguration),
+    ...(dictionaryResponder ? { SELECTION_REVIEW_OZON_EVIDENCE_SERVICE_URL: `http://127.0.0.1:${dependencyPort}` } : {}),
     SELECTION_REVIEW_CODEX_DISPATCH: "off", SELECTION_REVIEW_AUTO_DELIVER: "off" };
   async function start() {
     child = spawn(process.execPath, [path.join(appDir, "server.mjs"), "--api-only"], { cwd: appDir, env, stdio: ["ignore", "pipe", "pipe"] });
@@ -99,8 +121,9 @@ export async function startSavedDEApi(t, { directory, port, document, binding, p
   }
   await start();
   return { base, dataFile, get, post, authenticate, readBytes: () => readFile(dataFile),
-    readDocument: async () => JSON.parse(await readFile(dataFile, "utf8")),
-    dependencyRequests: () => dependencyRequests, stderr,
+    readDocument: () => createJsonBusinessStateRepository({ filePath: dataFile }).readSnapshot(),
+    readStoredDocument: async () => JSON.parse(await readFile(dataFile, "utf8")),
+    dependencyRequests: () => dependencyRequests, dictionaryRequests: () => dictionaryRequests, stderr,
     restart: async () => { await stopApiProcess(child); cookie = ""; await start(); },
     async assertClean() { assert.equal(dependencyRequests, 0); assert.equal(stderr.join(""), "");
       assert.equal((await readFile(dataFile, "utf8")).includes(password), false); }

@@ -100,6 +100,44 @@ test("D rejects missing authorization, authorization drift, and cross-store pref
   assert.ok(crossStore.prepared.gaps.some((item) => item.code === "store_identity_not_ready"));
 });
 
+test("D 收口认两条身份锚：仓库反推放行，非仓库锚点仍要求观察到的店铺引用", async () => {
+  const identityBlocked = (prepared) => prepared.gaps.some((item) => item.code === "store_identity_not_ready");
+
+  // 放行方向：仓库反推下 observedStoreRef 恒为 null，这是正确状态，不该再挡住 D 收口。
+  const warehouse = await preparedFixture({ preflight: { identityVia: "scoped_warehouse" } });
+  assert.equal(warehouse.preflight.storeIdentity.verifiedVia, "scoped_warehouse");
+  assert.equal(warehouse.preflight.storeIdentity.observedStoreRef, null);
+  assert.equal(warehouse.prepared.status, "ready");
+  assert.equal(identityBlocked(warehouse.prepared), false);
+
+  // 仓库反推不放过跨店：店铺名对不上仍然拦。
+  const crossStore = await preparedFixture({ preflight: { identityVia: "scoped_warehouse", store: "miska" } });
+  assert.equal(crossStore.prepared.status, "not_ready");
+  assert.ok(identityBlocked(crossStore.prepared));
+
+  // 拦截方向：没声明仓库反推、又没有观察引用，按原规则就是没验过，必须拦住。
+  const bare = await preparedFixture({ preflight: { identityVia: "none" } });
+  assert.equal(bare.preflight.storeIdentity.status, "unverified");
+  assert.equal(bare.prepared.status, "not_ready");
+  assert.ok(identityBlocked(bare.prepared));
+
+  // 事后改锚点不算数：把仓库反推的结果篡改成别的锚，或补上店铺引用，都不得放行。
+  // 最后一条钉住 'none'：它的字面意思就是没有锚点，旁边补一个真实可对上的 observedStoreRef
+  // （Ozon 从不返回店铺编号，只可能是人手填的）仍然不算锚住。
+  const { authorization, plan } = await preparedFixture({ preflight: { identityVia: "scoped_warehouse" } });
+  const inputs = projectProductionPlanInputs(plan);
+  for (const patch of [{ verifiedVia: "platform_store_id" }, { verifiedVia: "none" },
+    { observedStoreRef: structuredClone(inputs.storeRef) },
+    { verifiedVia: "none", observedStoreRef: structuredClone(inputs.storeRef) }]) {
+    const forged = structuredClone(warehouse.preflight);
+    Object.assign(forged.storeIdentity, patch);
+    assert.throws(() => prepareSingleSkuDExecution({ productionPlan: plan, productionAuthorization: authorization,
+      platformWritePreflight: forged, adapterCapabilities: capabilities(inputs.store, inputs.finalUploads, inputs),
+      currentProductionBinding: warehouse.currentProductionBinding, preparedAt: "2026-08-22T07:15:00.000Z" }),
+    /PlatformWritePreflight校验失败/, JSON.stringify(patch));
+  }
+});
+
 test("D intent is deterministic, persisted before write, and idempotent per authorization and plan", async () => {
   const first = await preparedFixture();
   const second = await preparedFixture();
@@ -371,4 +409,67 @@ test("published D/E schemas lock single attempt, no fallback, no retry, and zero
   assert.ok((JSON.stringify((await readFile(new URL("../schema/production-record-v1.1.schema.json", import.meta.url), "utf8")))).includes("requestReceiptRef"));
   assert.equal(eSchema.properties.automaticRetry.const, false);
   assert.equal(eSchema.properties.platformWrites.const, 0);
+});
+
+test('D records the confirmed creation while CDN correspondence and sale status remain unverified for E', async () => {
+  const { prepared, executionContext } = await preparedFixture();
+  const attempt = beginDSoftwareExecution({ preparedExecution: prepared, startedAt: '2026-08-22T07:20:00.000Z' });
+  const observation = exactObservation(attempt.request, {
+    mediaObservation: { sourceProtocol: 'ozon-product-attributes-v4', primaryImageUrl: 'https://cdn.example.com/platform/main.jpg',
+      images: ['https://cdn.example.com/platform/detail.jpg'] },
+    moderationStatus: 'in_moderation', validationStatus: 'processing', saleStatus: 'unknown'
+  });
+  let writes = 0;
+  const result = await executeDSoftwareAttempt({ executionAttempt: attempt, executionContext,
+    executeSellerApi: async request => { writes++; return { status: 'accepted', productId: '910001', offerId: request.merchantSku,
+      requestReceiptRef: 'receipt:synthetic:import-confirmed', inventoryReceiptRef: 'receipt:synthetic:stock-confirmed' }; },
+    readbackSellerApi: async () => observation, completedAt: '2026-08-22T07:25:00.000Z' });
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.productionRecord.status, 'validation_or_moderation');
+  assert.equal(result.productionRecord.businessStateEffect, 'D_created_entered_validation_moderation');
+  assert.equal(result.productionRecord.published, false);
+  assert.equal(result.productionRecord.activated, false);
+  assert.deepEqual(result.immediateReadback, observation);
+  assert.deepEqual(result.productionRecord.readbackExpectation, attempt.request.independentReadback.expectation);
+  assert.notEqual(result.productionRecord.readbackExpectation.media[0].submittedUrl, observation.mediaObservation.primaryImageUrl);
+  const e = await runSystemCreatedEReadback({ productionRecord: result.productionRecord,
+    readPlatform: async () => observation, verifiedAt: '2026-08-22T08:00:00.000Z' });
+  assert.equal(e.status, 'not_verified');assert.equal(e.eVerificationRecord, null);
+  assert.ok(e.gaps.includes('listedStatus'));
+  assert.ok(e.gaps.includes('media_identity_unverified'));
+  await assert.rejects(() => executeDSoftwareAttempt({ executionAttempt: result, executionContext,
+    executeSellerApi: async () => { writes++; }, readbackSellerApi: async () => observation,
+    completedAt: '2026-08-22T08:05:00.000Z' }), /ATTEMPT_STATE_REJECTED/);
+  assert.equal(writes, 1);
+});
+
+test('D retains exact identity, currency, price, warehouse stock, media count and platform error gates', async () => {
+  const { prepared, executionContext } = await preparedFixture();
+  const attempt = beginDSoftwareExecution({ preparedExecution: prepared, startedAt: '2026-08-22T07:20:00.000Z' });
+  const cases = [
+    ['merchantSku', value => { value.merchantSku = 'OTHER'; }],
+    ['platformProductId', value => { value.platformProductId = '910002'; }],
+    ['currentPrice', value => { value.currentPrice.currency = 'RUB'; }],
+    ['currentPrice', value => { value.currentPrice.amount++; }],
+    ['warehouse_identity_or_quantity_unverified', value => { value.inventoryObservation.rows[0].warehouseId = '70002'; }],
+    ['warehouse_stock_mismatch', value => { value.inventoryObservation.rows[0].freeStock = 99; }],
+    ['currentStock', value => { value.currentStock = 99; value.inventoryObservation.rows[0].freeStock = 99; }],
+    ['imageCount', value => { value.imageCount = 1; }],
+    ['imageCount', value => { value.mediaObservation.images = []; }],
+    ['media_duplicate', value => { value.mediaObservation.images.push(value.mediaObservation.images[0]); value.imageCount = 3; }],
+    ['media_identity_unverified', value => { value.mediaObservation.images = 'unknown'; }],
+    ['platformEvidence', value => { value.errors = [{ code: 'invalid_product' }]; }]
+  ];
+  for (const [gap, mutate] of cases) {
+    const observation = exactObservation(attempt.request, { saleStatus: 'unknown' });mutate(observation);
+    const result = await executeDSoftwareAttempt({ executionAttempt: attempt, executionContext,
+      executeSellerApi: async request => ({ status: 'accepted', productId: '910001', offerId: request.merchantSku,
+        requestReceiptRef: 'receipt:synthetic:import-confirmed', inventoryReceiptRef: 'receipt:synthetic:stock-confirmed' }),
+      readbackSellerApi: async () => observation, completedAt: '2026-08-22T07:25:00.000Z' });
+    assert.equal(result.status, 'unknown_outcome', gap);
+    assert.equal(result.productionRecord, null, gap);
+    assert.ok(result.reason.includes(gap), `${gap}: ${result.reason}`);
+    assert.equal(result.retryAllowed, false);
+    assert.deepEqual(result.immediateReadback, observation);
+  }
 });

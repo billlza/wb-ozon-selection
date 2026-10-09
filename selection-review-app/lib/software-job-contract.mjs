@@ -13,7 +13,7 @@ import {
 } from "./production-contract-primitives.mjs";
 import { validateC2StableAssetTransportResult } from "./c2-asset-lifecycle.mjs";
 import { normalizeC1SourceIdentity } from "./c1-product-plan.mjs";
-import { assertAuthorizedC1Execution, assertC1ProviderOutcome, validateC1AiAccounting, validateC1AiDraftRequest, validateC1AiDraftReceipt } from "./c1-ai-draft-contract.mjs";
+import { assertAuthorizedC1Execution, assertC1ProviderOutcome, assertC1ServiceTiming, validateC1AiAccounting, validateC1AiDraftRequest, validateC1AiDraftReceipt } from "./c1-ai-draft-contract.mjs";
 import { assertSafeRuntimeRecord, workerSatisfiesCapabilities, WORKER_CAPABILITIES } from "./runtime-identity.mjs";
 import { normalizeDESoftwareJobScope } from "./d-e-software-job-scope.mjs";
 import { isDESoftwareJob, assertDEJobAdmissionDecision } from "./d-e-software-job-admission.mjs";
@@ -21,7 +21,8 @@ import { readDProductionJobTerminal, readEReadbackJobTerminal, readDAssetTranspo
 import { assertDProductionPreparation } from "./d-production-preparation-contract.mjs";
 import { OZON_ACCOUNT_READ_JOB_TYPE, OZON_ACCOUNT_READ_CAPABILITY, assertOzonAccountReadScope, readOzonAccountReadTerminal } from "./ozon-account-read-contract.mjs";
 import { D_PLATFORM_OBSERVATION_JOB_TYPE, assertDPlatformObservationScope, assertDPlatformObservationAdmission,
-  readDPlatformObservationJobTerminal, readDPlatformStoppedJobTerminal, readDInitialImportStoppedJobTerminal } from './d-platform-observation-contract.mjs';
+  readDPlatformObservationJobTerminal, readDPlatformStoppedJobTerminal, readDInitialImportStoppedJobTerminal,
+  readDOwnerStockRegisteredJobTerminal } from './d-platform-observation-contract.mjs';
 export { D_PLATFORM_OBSERVATION_JOB_TYPE };
 export { OZON_ACCOUNT_READ_JOB_TYPE, OZON_ACCOUNT_READ_CAPABILITY };
 
@@ -816,10 +817,10 @@ function assertC1AiJobRequest(job, request) {
   }
 }
 
-function assertC1AiDraftResult(job, envelope, applicationDisposition, completedAt, requestStartedAt = job.lastProgressAt) {
+function assertC1AiDraftResult(job, envelope, applicationDisposition, completedAt, requestStartedAt = job.lastProgressAt, { allowApplied = false } = {}) {
   const payload = envelope.payload;
   const fields = ["schemaVersion", "request", "receipt"];
-  if (applicationDisposition === "applied" || envelope.applicationDisposition === "applied" ||
+  if ((!allowApplied && (applicationDisposition === "applied" || envelope.applicationDisposition === "applied")) ||
       !payload || typeof payload !== "object" || Array.isArray(payload) || Object.keys(payload).length !== fields.length ||
       fields.some(field => !Object.hasOwn(payload, field)) || payload.schemaVersion !== "c1-ai-draft-software-result-v1") {
     throw new Error("SOFTWARE_JOB_C1_AI_RESULT_INVALID: 作业只登记回执，不应用候选");
@@ -834,17 +835,18 @@ function assertC1AiDraftResult(job, envelope, applicationDisposition, completedA
   }
 }
 
-function assertC1AiDraftFailureResult(job, envelope, { externalRequestState, failureClass, completedAt }) {
+function assertC1AiDraftFailureResult(job, envelope, { externalRequestState, failureClass, completedAt, requestStartedAt = job.lastProgressAt }) {
   const payload = envelope.payload;
   const fields = ["schemaVersion", "request", "accounting", "errorCode"];
   if (payload && Object.hasOwn(payload, "providerOutcome")) fields.push("providerOutcome");
+  if (payload && Object.hasOwn(payload, "serviceTiming")) fields.push("serviceTiming");
   if (envelope.applicationDisposition !== "result_recorded_no_candidate_mutation" ||
       envelope.externalRequestState !== externalRequestState ||
       !payload || Object.keys(payload).length !== fields.length || fields.some(field => !Object.hasOwn(payload, field)) ||
       payload.schemaVersion !== "c1-ai-draft-software-failure-v1" || payload.errorCode !== failureClass ||
       !validateC1AiAccounting(payload.accounting).valid ||
       (payload.accounting.gatewayJobId !== null && payload.accounting.gatewayJobId !== envelope.resultRef) ||
-      Date.parse(envelope.recordedAt) < Date.parse(job.lastProgressAt) || Date.parse(envelope.recordedAt) > Date.parse(completedAt)) {
+      Date.parse(envelope.recordedAt) < Date.parse(requestStartedAt) || Date.parse(envelope.recordedAt) > Date.parse(completedAt)) {
     throw new Error("SOFTWARE_JOB_C1_AI_FAILURE_RESULT_INVALID");
   }
   strictRef(payload.errorCode, "c1Failure.errorCode");
@@ -852,6 +854,15 @@ function assertC1AiDraftFailureResult(job, envelope, { externalRequestState, fai
     const provider = assertC1ProviderOutcome(payload.providerOutcome);
     const gatewayResult = provider.externalRequestState === "not_sent" ? "failed" : provider.externalRequestState;
     if (gatewayResult !== externalRequestState) throw new Error("SOFTWARE_JOB_C1_AI_FAILURE_RESULT_INVALID: 网关与供应商请求终态冲突");
+  }
+  if (Object.hasOwn(payload, "serviceTiming")) {
+    const timing = assertC1ServiceTiming(payload.serviceTiming, { gatewayJobId: envelope.resultRef });
+    if (timing.gatewayJobId !== payload.accounting.gatewayJobId || externalRequestState === "unknown_outcome" ||
+        Date.parse(timing.startedAt) < Date.parse(job.startedAt) ||
+        Date.parse(timing.startedAt) < Date.parse(payload.request.requestedAt) ||
+        Date.parse(timing.completedAt) > Date.parse(envelope.recordedAt)) {
+      throw new Error("SOFTWARE_JOB_C1_AI_FAILURE_TIMING_INVALID");
+    }
   }
   assertC1AiJobRequest(job, payload.request);
 }
@@ -875,19 +886,122 @@ export function projectC1AiSoftwareJobAuthorizedExecution(job, request) {
 }
 
 /** Read and validate a previously persisted receipt; this does not settle or apply it. */
-export function readCompletedC1AiSoftwareJobResult(job) {
+export function readCompletedC1AiSoftwareJobResult(job, { allowApplied = false } = {}) {
+  if (typeof allowApplied !== "boolean") throw new TypeError("SOFTWARE_JOB_C1_AI_READ_OPTIONS_INVALID");
   if (job?.jobType !== C1_AI_DRAFT_JOB_TYPE || job.status !== "completed" || job.externalRequestState !== "succeeded" ||
-      job.attempt !== 1 || !job.resultEnvelope || job.resultEnvelope.applicationDisposition === "applied" ||
+      job.attempt !== 1 || !job.resultEnvelope || (!allowApplied && job.resultEnvelope.applicationDisposition === "applied") ||
       job.resultRef !== job.resultEnvelope.resultRef || !job.startedAt || !job.completedAt) {
     throw new Error("SOFTWARE_JOB_C1_AI_SAVED_RESULT_REQUIRED");
   }
   const envelope = normalizeResultEnvelope(job.resultEnvelope, job, job.resultEnvelope.applicationDisposition);
-  assertC1AiDraftResult(job, envelope, envelope.applicationDisposition, iso(job.completedAt, "completedAt"), iso(job.startedAt, "startedAt"));
+  assertC1AiDraftResult(job, envelope, envelope.applicationDisposition, iso(job.completedAt, "completedAt"), iso(job.startedAt, "startedAt"), { allowApplied });
   const { request, receipt } = envelope.payload;
   const authorizedExecution = projectC1AiSoftwareJobAuthorizedExecution({ ...job, status: "waiting_platform", externalRequestState: "in_flight" }, request);
   return Object.freeze({ request: structuredClone(request), receipt: structuredClone(receipt),
     settledExecution: { schemaVersion: "c1-ai-settled-execution-v1", authorizedExecution, softwareJobId: job.jobId,
       gatewayJobId: receipt.gatewayJobId, status: "completed", externalRequestState: "succeeded", receiptRef: receipt.receiptId } });
+}
+
+/** Eligibility for an explicit read of a durably accepted gateway request.
+ * Restart records without a bound failure receipt are intentionally excluded. */
+export function isC1AiDraftReconciliationPending(job) {
+  const envelope = job?.resultEnvelope, payload = envelope?.payload;
+  return job?.jobType === C1_AI_DRAFT_JOB_TYPE && job.status === "unknown_outcome" &&
+    job.externalRequestState === "unknown_outcome" && job.attempt === 1 &&
+    job.failureClass === "C1_AI_GATEWAY_DEADLINE_EXCEEDED" &&
+    typeof job.progressRef === "string" && job.progressRef.length > 0 && job.progressRef !== job.externalRequestRef &&
+    envelope?.externalRequestState === "unknown_outcome" && envelope.resultRef === job.progressRef && job.resultRef === job.progressRef &&
+    payload?.schemaVersion === "c1-ai-draft-software-failure-v1" && payload.errorCode === job.failureClass &&
+    payload.accounting?.gatewayJobId === job.progressRef;
+}
+
+export function readC1AiDraftReconciliationSource(job) {
+  if (!isC1AiDraftReconciliationPending(job)) throw new Error("C1_DRAFT_RECONCILIATION_NOT_ELIGIBLE");
+  const envelope = normalizeResultEnvelope(job.resultEnvelope, job, "result_recorded_no_candidate_mutation");
+  assertC1AiDraftFailureResult(job, envelope, { externalRequestState: job.externalRequestState,
+    failureClass: job.failureClass, completedAt: iso(job.completedAt, "completedAt"), requestStartedAt: iso(job.startedAt, "startedAt") });
+  const request = envelope.payload.request;
+  // This is a historical execution projection, never permission to resend it.
+  const authorizedExecution = projectC1AiSoftwareJobAuthorizedExecution({ ...job,
+    status: "waiting_platform", externalRequestState: "in_flight" }, request);
+  return Object.freeze({ request: structuredClone(request), authorizedExecution, gatewayJobId: job.progressRef });
+}
+
+export function beginC1AiDraftResultReconciliation({ job, workerId, leaseId, leaseDurationMs, serverTime }) {
+  const source = readC1AiDraftReconciliationSource(job);
+  const observedAt = iso(serverTime, "serverTime");
+  if (job.workerId !== strictRef(workerId, "workerId") || !Number.isInteger(leaseDurationMs) ||
+      leaseDurationMs < 1000 || leaseDurationMs > 1_800_000 || Date.parse(observedAt) < Date.parse(job.completedAt)) {
+    throw new Error("C1_DRAFT_RECONCILIATION_SCOPE_INVALID");
+  }
+  strictRef(leaseId, "leaseId");
+  const previous = job.c1ResultReconciliation;
+  if (previous !== undefined && (previous?.schemaVersion !== "c1-ai-result-reconciliation-v1" ||
+      previous.gatewayJobId !== source.gatewayJobId || previous.requestFingerprint !== source.request.requestFingerprint ||
+      previous.sourceRevision !== job.revision || previous.ownerUserId !== job.ownerUserId ||
+      !previous.readAttempt || previous.readAttempt.workerId !== workerId ||
+      !["in_flight", "pending", "read_failed"].includes(previous.readAttempt.status) ||
+      !Number.isSafeInteger(previous.readAttempt.sequence) || previous.readAttempt.sequence < 1 ||
+      !Number.isFinite(Date.parse(previous.readAttempt.startedAt)) ||
+      !(Date.parse(previous.readAttempt.expiresAt) > Date.parse(previous.readAttempt.startedAt)) ||
+      previous.priorOutcome !== null)) throw new Error("C1_DRAFT_RECONCILIATION_RECORD_INVALID");
+  if (previous?.readAttempt.status === "in_flight" && Date.parse(previous.readAttempt.expiresAt) > Date.parse(observedAt)) {
+    return Object.freeze({ changed: false, acquired: false, job: structuredClone(job) });
+  }
+  const sequence = previous === undefined ? 1 : previous.readAttempt.sequence + 1;
+  if (!Number.isSafeInteger(sequence) || sequence < 1) throw new Error("C1_DRAFT_RECONCILIATION_RECORD_INVALID");
+  const next = structuredClone(job);
+  next.c1ResultReconciliation = { schemaVersion: "c1-ai-result-reconciliation-v1", gatewayJobId: source.gatewayJobId,
+    requestFingerprint: source.request.requestFingerprint, sourceRevision: job.revision, ownerUserId: job.ownerUserId,
+    readAttempt: { attemptId: `${leaseId}:${sequence}`, sequence, workerId, status: "in_flight", startedAt: observedAt,
+      expiresAt: new Date(Date.parse(observedAt) + leaseDurationMs).toISOString(), completedAt: null },
+    observation: null, priorOutcome: null };
+  assertSafeRuntimeRecord(next, "softwareJob");
+  return Object.freeze({ changed: true, acquired: true, job: Object.freeze(next), ...source });
+}
+
+/** Reconcile only the accepted C1 request. Generic settlement rules remain strict. */
+export function settleC1AiDraftResultReconciliation({ job, workerId, attemptId, observationStatus, resultEnvelope = null,
+  failureClass = null, applicationDisposition = "result_recorded_no_candidate_mutation", serverTime }) {
+  const source = readC1AiDraftReconciliationSource(job);
+  const saved = job.c1ResultReconciliation;
+  if (saved?.schemaVersion !== "c1-ai-result-reconciliation-v1" || saved.readAttempt.status !== "in_flight" ||
+      saved.readAttempt.workerId !== strictRef(workerId, "workerId") || saved.readAttempt.attemptId !== strictRef(attemptId, "attemptId") ||
+      saved.gatewayJobId !== source.gatewayJobId || saved.requestFingerprint !== source.request.requestFingerprint || saved.sourceRevision !== job.revision) {
+    throw new Error("C1_DRAFT_RECONCILIATION_LEASE_CONFLICT");
+  }
+  const completedAt = iso(serverTime, "serverTime");
+  if (Date.parse(completedAt) < Date.parse(saved.readAttempt.startedAt) ||
+      !["pending", "read_failed", "completed", "failed"].includes(observationStatus)) throw new Error("C1_DRAFT_RECONCILIATION_RESULT_INVALID");
+  const next = structuredClone(job);
+  next.c1ResultReconciliation.readAttempt = { ...next.c1ResultReconciliation.readAttempt,
+    status: observationStatus, completedAt };
+  next.c1ResultReconciliation.observation = { status: observationStatus, failureCode: failureClass === null ? null : strictRef(failureClass, "failureClass") };
+  if (["pending", "read_failed"].includes(observationStatus)) {
+    if (resultEnvelope !== null || (observationStatus === "read_failed" && failureClass === null)) throw new Error("C1_DRAFT_RECONCILIATION_RESULT_INVALID");
+  } else {
+    const envelope = normalizeResultEnvelope(resultEnvelope, job, applicationDisposition);
+    if (!isDeepStrictEqual(envelope.payload.request, source.request)) throw new Error("C1_DRAFT_RECONCILIATION_REQUEST_CONFLICT");
+    if (observationStatus === "completed") {
+      assertC1AiDraftResult(job, envelope, applicationDisposition, completedAt, iso(job.startedAt, "startedAt"));
+      if (envelope.payload.receipt.gatewayJobId !== source.gatewayJobId || failureClass !== null) throw new Error("C1_DRAFT_RECONCILIATION_GATEWAY_CONFLICT");
+    } else {
+      if (!["failed", "succeeded"].includes(envelope.externalRequestState) || envelope.resultRef !== source.gatewayJobId ||
+          envelope.payload.accounting?.gatewayJobId !== source.gatewayJobId) throw new Error("C1_DRAFT_RECONCILIATION_GATEWAY_CONFLICT");
+      assertC1AiDraftFailureResult(job, envelope, { externalRequestState: envelope.externalRequestState, failureClass, completedAt });
+    }
+    next.c1ResultReconciliation.priorOutcome = { status: job.status, externalRequestState: job.externalRequestState,
+      failureClass: job.failureClass, completedAt: job.completedAt, resultRef: job.resultRef, resultEnvelope: structuredClone(job.resultEnvelope) };
+    next.status = observationStatus;
+    next.externalRequestState = envelope.externalRequestState;
+    next.failureClass = failureClass;
+    next.completedAt = completedAt;
+    next.lastProgressAt = completedAt;
+    next.resultRef = envelope.resultRef;
+    next.resultEnvelope = structuredClone(envelope);
+  }
+  assertSafeRuntimeRecord(next, "softwareJob");
+  return Object.freeze(next);
 }
 
 function settleSoftwareJobCore({
@@ -1034,8 +1148,10 @@ function assertSoftwareJobPreparationEvidence(job) {
     const original=job.preparationEvidence;
     if(job.platformContinuation?.schemaVersion==='d-platform-continuation-v1'){
       if(original.status!=='ready'||original.continuationBlocked!==false||!original.completedAt||original.result?.capabilities?.adapterVersion!=='ozon-seller-api-de-adapter-v3'||original.result.capabilities.protocolVersion!=='ozon-single-sku-d-e-v3')throw new Error('SOFTWARE_JOB_PREPARATION_SOURCE_CONFLICT');
-      assertDProductionPreparation(original,{job:{...job,workerId:original.workerId,leaseId:original.leaseId}});
-    }else assertDProductionPreparation(original,{job});
+    }
+    // 续写会换租约，准备证据仍记着当初的持有者；交叉校验已不比对 workerId/leaseId，
+    // 所以这里不必再把 job 的持有者替换成证据里的（原替换写法已删）。
+    assertDProductionPreparation(original,{job});
   }
 }
 
@@ -1165,6 +1281,30 @@ export function settleDPreparationSoftwareJobInDocument(document, { jobId, worke
   return Object.freeze({ job: settled, continuationBlocked: true, reconciliationRequired: false });
 }
 
+const D_PRE_SEND_STOP_FAILURE_CLASS = /^d-production-guard-rejected:[A-Z][A-Z0-9_]{1,100}$/;
+
+/**
+ * Closes a D job that was claimed and then rejected by a guard before any execution intent, external request or
+ * domain write existed. The holder check below is the proof that nothing was sent: every external request first
+ * persists `markSoftwareJobExternalRequestStarted`, and every domain step first persists its own state. The lease
+ * may already have expired — recording a terminal failure is a safe stop, never a renewed lease or a retry.
+ */
+export function settleDProductionPreSendStopInDocument(document, { jobId, workerId, leaseId, failureClass }, observedAt) {
+  const job = findSoftwareJobInDocument(document, jobId);
+  const sku = document.candidates?.find(entry => entry.id === job?.candidateId)?.lifecycleV11?.skuPackage;
+  if (job?.jobType !== D_PRODUCTION_EXECUTION_JOB_TYPE || job.status !== "claimed" || job.attempt !== 1 ||
+      job.externalRequestState !== "not_sent" || job.externalRequestRef !== null || job.completedAt !== null ||
+      job.resultRef !== null || job.resultEnvelope !== null || Object.hasOwn(job, "preparationEvidence") ||
+      (job.platformContinuation ?? null) !== null || typeof failureClass !== "string" ||
+      !D_PRE_SEND_STOP_FAILURE_CLASS.test(failureClass) ||
+      !sku || (sku.dAssetTransport ?? null) !== null || (sku.dSoftwareExecution ?? null) !== null || sku.productionRecord !== null) {
+    throw new Error("SOFTWARE_JOB_D_PRE_SEND_STOP_INVALID");
+  }
+  return settleSoftwareJobInDocumentCore(document, { jobId, workerId, leaseId, status: "failed",
+    externalRequestState: "not_sent", failureClass, externalRequestRef: null }, observedAt,
+    { domainSettlementValidated: true });
+}
+
 export function settleDPlatformStoppedSoftwareJobInDocument(document,{candidate,jobId,interruptedInventory=false},observedAt){
   const job=findSoftwareJobInDocument(document,jobId);
   if(job?.jobType!==D_PRODUCTION_EXECUTION_JOB_TYPE||(interruptedInventory?job.status!=='claimed'||job.externalRequestState!=='not_sent'||candidate.lifecycleV11.skuPackage.dSoftwareExecution.platformContinuation.status!=='inventory_not_sent_interrupted':job.status!=='waiting_platform'||job.externalRequestState!=='succeeded'||job.leaseId!==null||job.leaseExpiresAt!==null))throw new Error('SOFTWARE_JOB_D_PLATFORM_STOP_INVALID');
@@ -1172,8 +1312,22 @@ export function settleDPlatformStoppedSoftwareJobInDocument(document,{candidate,
   return persistDPlatformStoppedJob(document,job,terminal,observedAt);
 }
 
-function persistDPlatformStoppedJob(document,job,terminal,observedAt){
-  const resultRef=`d-platform-stop:${fingerprintCanonicalRecord(terminal.payload)}`;
+/**
+ * 登记档结算：作业记 completed，但回执里明写没有库存写入回执、没有生产记录、没有排 E。
+ * 与 stopped 档共用落盘逻辑，只是结果前缀不同——两者都不产生 productionRecord。
+ */
+export function settleDOwnerStockRegisteredSoftwareJobInDocument(document,{candidate,jobId},observedAt){
+  const job=findSoftwareJobInDocument(document,jobId);
+  if(job?.jobType!==D_PRODUCTION_EXECUTION_JOB_TYPE||job.status!=='waiting_platform'||
+    job.externalRequestState!=='succeeded'||job.leaseId!==null||job.leaseExpiresAt!==null){
+    throw new Error('SOFTWARE_JOB_D_OWNER_STOCK_INVALID');
+  }
+  const terminal=readDOwnerStockRegisteredJobTerminal({candidate,job,observedAt});
+  return persistDPlatformStoppedJob(document,job,terminal,observedAt,'d-owner-stock-registered');
+}
+
+function persistDPlatformStoppedJob(document,job,terminal,observedAt,prefix='d-platform-stop'){
+  const resultRef=`${prefix}:${fingerprintCanonicalRecord(terminal.payload)}`;
   const resultEnvelope=createSoftwareJobResultEnvelope({job,resultRef,payloadKind:job.jobType,payload:terminal.payload,
     externalRequestState:terminal.externalRequestState,recordedAt:observedAt});
   const next={...structuredClone(job),status:terminal.status,externalRequestState:terminal.externalRequestState,

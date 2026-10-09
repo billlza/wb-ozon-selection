@@ -1,7 +1,7 @@
 import path from "node:path";
 import { DEFAULT_GUOO_TARIFF_PATH, guooTariffRuleVersionFromPath } from "./guoo-tariff-reader.mjs";
 import { STORE_PLATFORMS, isCompleteStoreRef, sameStoreRef } from "./store-binding.mjs";
-import { assertNoProductionSecrets, isCanonicalFrozenRef } from "./production-contract-primitives.mjs";
+import { assertNoProductionSecrets, isCanonicalFrozenRef, isOpaqueProductionSourceRef } from "./production-contract-primitives.mjs";
 import { isProductionExecutionBinding } from "./production-authorization-preparation.mjs";
 import { normalizeOzonDECredentialBindings, assertOzonAccountDiscoveryBindings } from "./ozon-de-http-configuration.mjs";
 import { normalizeAliyunOssRuntimeConfiguration } from "./aliyun-oss-runtime-configuration.mjs";
@@ -13,15 +13,18 @@ import { assertADiscoveryPlan } from './a-discovery-contract.mjs';
 import { normalizeLinkfoxDiscoveryCredentialBindings } from './linkfox-discovery-credentials.mjs';
 
 export function normalizeDPlatformObservationConfiguration(input,productionBindings) {
-  if(!exactConfigurationKeys(input,['policies','pumpIntervalMs']))throw new Error('D_OBSERVATION_CONFIGURATION_INVALID');
+  // defaults 是 r70 新增的**可选**键：没有它的旧配置照常加载，不判无效。
+  if(!exactConfigurationKeys(input,['policies','pumpIntervalMs'])&&
+     !exactConfigurationKeys(input,['policies','pumpIntervalMs','defaults']))throw new Error('D_OBSERVATION_CONFIGURATION_INVALID');
   const {policies,pumpIntervalMs}=input;
+  const defaultsInput=Object.hasOwn(input,'defaults')?input.defaults:[];
   if(!Array.isArray(policies)||policies.length>100||pumpIntervalMs!==null&&
     (!Number.isSafeInteger(pumpIntervalMs)||pumpIntervalMs<1||pumpIntervalMs>2147483647))throw new Error('D_OBSERVATION_CONFIGURATION_INVALID');
   if(policies.length>0&&pumpIntervalMs===null)throw new Error('D_OBSERVATION_PUMP_CONFIGURATION_REQUIRED');
   const keys=new Set();
   const normalized=policies.map(entry=>{
     const refs=['candidateId','skuPackageId','authorizationRef','productionBindingId','productionConfigurationVersion'];
-    if(!exactConfigurationKeys(entry,[...refs,'revision','policy'])||!refs.every(field=>isCanonicalFrozenRef(entry[field]))||
+    if(!exactConfigurationKeys(entry,[...refs,'revision','policy'])||!refs.every(field=>field==='authorizationRef'?isOpaqueProductionSourceRef(entry[field]):isCanonicalFrozenRef(entry[field]))||
       !Number.isSafeInteger(entry.revision)||entry.revision<0)throw new Error('D_OBSERVATION_CONFIGURATION_INVALID');
     assertDPlatformObservationPolicy(entry.policy);
     if(!productionBindings.some(binding=>binding.bindingId===entry.productionBindingId&&binding.configurationVersion===entry.productionConfigurationVersion&&binding.platform==='ozon'))throw new Error('D_OBSERVATION_CONFIGURATION_BINDING_CONFLICT');
@@ -30,16 +33,50 @@ export function normalizeDPlatformObservationConfiguration(input,productionBindi
     keys.add(key);
     return Object.freeze({...structuredClone(entry),policy:Object.freeze(structuredClone(entry.policy))});
   });
-  return Object.freeze({policies:Object.freeze(normalized),pumpIntervalMs});
+  // 店铺级默认策略：按「生产绑定 + 配置版本」匹配，不钉候选与 SKU。
+  // 这样上一个新品不必先改 plist、重启服务才能上架（r69 严格门的代价，见 r69 卡 3.3）。
+  // 逐条仍要求绑定存在且为 ozon；同一绑定下只允许一条默认，多条按歧义失败停。
+  if(!Array.isArray(defaultsInput)||defaultsInput.length>20)throw new Error('D_OBSERVATION_CONFIGURATION_INVALID');
+  if(defaultsInput.length>0&&pumpIntervalMs===null)throw new Error('D_OBSERVATION_PUMP_CONFIGURATION_REQUIRED');
+  const defaultKeys=new Set();
+  const normalizedDefaults=defaultsInput.map(entry=>{
+    const refs=['productionBindingId','productionConfigurationVersion'];
+    if(!exactConfigurationKeys(entry,[...refs,'policy'])||!refs.every(field=>isCanonicalFrozenRef(entry[field])))
+      throw new Error('D_OBSERVATION_CONFIGURATION_INVALID');
+    assertDPlatformObservationPolicy(entry.policy);
+    if(!productionBindings.some(binding=>binding.bindingId===entry.productionBindingId&&
+      binding.configurationVersion===entry.productionConfigurationVersion&&binding.platform==='ozon'))
+      throw new Error('D_OBSERVATION_CONFIGURATION_BINDING_CONFLICT');
+    const key=JSON.stringify(refs.map(field=>entry[field]));
+    if(defaultKeys.has(key))throw new Error('D_OBSERVATION_CONFIGURATION_AMBIGUOUS');
+    defaultKeys.add(key);
+    return Object.freeze({...structuredClone(entry),policy:Object.freeze(structuredClone(entry.policy))});
+  });
+  return Object.freeze({policies:Object.freeze(normalized),pumpIntervalMs,
+    defaults:Object.freeze(normalizedDefaults)});
 }
 
+/**
+ * 有限只读查询策略是技术容量配置（查几次、隔多久、单次多久超时、整体多久过期），不是授权。
+ * 因此它按「哪个商品的哪个 SKU、发到哪个仓库绑定」匹配，不跟着授权版本和候选 revision 走：
+ * 原来钉死 revision 和 authorizationRef，只要重签一版授权就再也匹配不上，
+ * 而策略取不到时导入被接受后不会排观察作业 —— 商品发出去了、没人查审核、库存永远不写。
+ * 条目里仍保留 revision 与 authorizationRef 作为配置时的上下文记录，只是不参与匹配；
+ * 时间边界仍由 policy.expiresAt 兜住，同一绑定下出现多条仍然按歧义失败停。
+ */
 export function createDPlatformObservationPolicyResolver(configuration) {
   return function loadDPlatformObservationPolicy({candidate,job}) {
     const matches=configuration.dPlatformObservation.policies.filter(entry=>entry.candidateId===candidate.id&&
-      entry.skuPackageId===job.skuPackageId&&entry.revision===job.revision&&entry.authorizationRef===job.scopeBinding.authorizationRef&&
+      entry.skuPackageId===job.skuPackageId&&
       entry.productionBindingId===job.scopeBinding.productionBinding.bindingId&&entry.productionConfigurationVersion===job.scopeBinding.productionBinding.configurationVersion);
     if(matches.length>1)throw new Error('D_OBSERVATION_CONFIGURATION_AMBIGUOUS');
-    return matches.length===0?null:structuredClone(matches[0].policy);
+    if(matches.length===1)return structuredClone(matches[0].policy);
+    // 没有按品配置时退到店铺级默认。**逐品配置优先**——想给某个品特殊窗口，配一条就能盖过默认。
+    const fallback=(configuration.dPlatformObservation.defaults??[]).filter(entry=>
+      entry.productionBindingId===job.scopeBinding.productionBinding.bindingId&&
+      entry.productionConfigurationVersion===job.scopeBinding.productionBinding.configurationVersion);
+    if(fallback.length>1)throw new Error('D_OBSERVATION_CONFIGURATION_AMBIGUOUS');
+    return fallback.length===0?null:structuredClone(fallback[0].policy);
   };
 }
 
@@ -264,6 +301,31 @@ function aDiscoveryConfiguration(env) {
     aProductDetailConnectorBindings,aProductDetailServiceBindings,aProductDetailCredentialBindings };
 }
 
+/** Optional local pointer to the saved Ozon official commission workbook JSON; absent means not configured. */
+export function normalizeOzonCommissionReferenceConfiguration(config) {
+  const invalid = () => new Error("OZON_COMMISSION_REFERENCE_CONFIGURATION_INVALID: Ozon官方佣金参考表配置必须提供绝对路径和CN卖家范围");
+  if (config === null || config === undefined) return null;
+  const withVersion = exactConfigurationKeys(config, ["catalogPath", "sellerRegion", "versionState"]);
+  if (!(withVersion || exactConfigurationKeys(config, ["catalogPath", "sellerRegion"])) ||
+      typeof config.catalogPath !== "string" || config.catalogPath !== config.catalogPath.trim() ||
+      config.catalogPath === "" || config.catalogPath.includes("\0") || !path.isAbsolute(config.catalogPath) ||
+      config.sellerRegion !== "CN") {
+    throw invalid();
+  }
+  // The saved official version the reader must bind to (owner policy 2026-09-09: saved official commission version).
+  let versionState = null;
+  if (withVersion) {
+    const state = config.versionState;
+    if (!exactConfigurationKeys(state, ["fileSha256", "effectiveFrom", "status"]) || !/^[0-9a-f]{64}$/.test(String(state.fileSha256)) ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(String(state.effectiveFrom)) || !Number.isFinite(Date.parse(`${state.effectiveFrom}T00:00:00Z`)) ||
+        state.status !== "active") {
+      throw invalid();
+    }
+    versionState = Object.freeze({ fileSha256: state.fileSha256, effectiveFrom: state.effectiveFrom, status: "active" });
+  }
+  return Object.freeze({ catalogPath: path.resolve(config.catalogPath), sellerRegion: config.sellerRegion, versionState });
+}
+
 export const RUNTIME_MODES = Object.freeze(["local_development", "central_test", "central_production"]);
 export const STATE_ADAPTERS = Object.freeze(["json", "memory", "postgres"]);
 
@@ -370,7 +432,10 @@ export function createSelectionReviewRuntimeConfiguration({ env = process.env, a
   if(Object.hasOwn(env,'SELECTION_REVIEW_D_PLATFORM_OBSERVATION_JSON')) {
     try { observationInput=JSON.parse(env.SELECTION_REVIEW_D_PLATFORM_OBSERVATION_JSON); }
     catch(error) {if(!(error instanceof SyntaxError))throw error;throw new Error('D_OBSERVATION_CONFIGURATION_INVALID');}
-    if(!exactConfigurationKeys(observationInput,['policies','pumpIntervalMs']))throw new Error('D_OBSERVATION_CONFIGURATION_INVALID');
+    // 键集合由下一行的 normalizeDPlatformObservationConfiguration 统一校验，这里**不再重复一份**。
+    // 2026-09-24 r70 部署失败就栽在这：只放宽了 normalize 里那处、漏了这里重复的一份，
+    // 服务带着 defaults 启动即抛 D_OBSERVATION_CONFIGURATION_INVALID，反复重启。
+    // 同一条规则不许有两份——这一轮已经是第二次上这一课。
   }
   const dPlatformObservation=normalizeDPlatformObservationConfiguration(observationInput,productionBindings);
   let eReadbackPumpIntervalMs = null;
@@ -431,6 +496,15 @@ export function createSelectionReviewRuntimeConfiguration({ env = process.env, a
     }
   }
   ossRuntimeConfiguration = normalizeAliyunOssRuntimeConfiguration(ossRuntimeConfiguration);
+  let ozonCommissionReferenceInput = null;
+  if (Object.hasOwn(env, "SELECTION_REVIEW_OZON_COMMISSION_REFERENCE_JSON")) {
+    try { ozonCommissionReferenceInput = JSON.parse(env.SELECTION_REVIEW_OZON_COMMISSION_REFERENCE_JSON); }
+    catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      throw new Error("OZON_COMMISSION_REFERENCE_CONFIGURATION_INVALID: Ozon官方佣金参考表配置必须是有效JSON，未加载配置");
+    }
+  }
+  const ozonCommissionReference = normalizeOzonCommissionReferenceConfiguration(ozonCommissionReferenceInput);
   const deploymentMode = String(env.SELECTION_REVIEW_RUNTIME_MODE || "local_development").trim();
   if (!RUNTIME_MODES.includes(deploymentMode)) throw new Error("RUNTIME_CONFIGURATION_INVALID: deploymentMode无效");
   let c1DraftServiceBindings = [];
@@ -526,6 +600,19 @@ export function createSelectionReviewRuntimeConfiguration({ env = process.env, a
   const dataFile = path.resolve(env.SELECTION_REVIEW_DATA_FILE || path.join(resolvedAppDir, "data", "candidates.json"));
   const workflowMapFile = path.resolve(env.SELECTION_REVIEW_WORKFLOW_MAP_FILE || path.join(resolvedAppDir, "data", "workflow-map.json"));
   const c2FinalUploadsDir = path.resolve(env.SELECTION_REVIEW_C2_UPLOAD_DIR || path.join(resolvedAppDir, "data", "c2-final-uploads"));
+  const c1ImageTextExecutable = env.SELECTION_REVIEW_C1_IMAGE_TEXT_EXECUTABLE || null;
+  if (c1ImageTextExecutable !== null && (deploymentMode !== "local_development" || typeof c1ImageTextExecutable !== "string" || !path.isAbsolute(c1ImageTextExecutable))) {
+    throw new Error("C1_IMAGE_TEXT_LOCAL_EXECUTABLE_CONFIGURATION_INVALID");
+  }
+  let c1EditorialProposalFile = null;
+  if (Object.hasOwn(env, "SELECTION_REVIEW_C1_EDITORIAL_PROPOSAL_FILE")) {
+    const configured = env.SELECTION_REVIEW_C1_EDITORIAL_PROPOSAL_FILE;
+    if (deploymentMode !== "local_development" || typeof configured !== "string" || !configured ||
+        configured !== configured.trim() || !path.isAbsolute(configured) || configured.includes("\0")) {
+      throw new Error("RUNTIME_CONFIGURATION_INVALID: 文案修订文件必须通过本地开发适配器显式配置绝对路径");
+    }
+    c1EditorialProposalFile = path.resolve(configured);
+  }
   let localOwnerIdentity = null;
   if (identityProvider === "local_owner_password") {
     const credentialFile = env.SELECTION_REVIEW_OWNER_IDENTITY_FILE;
@@ -554,7 +641,10 @@ export function createSelectionReviewRuntimeConfiguration({ env = process.env, a
     ozonAccountDiscoveryBindings,
     ozonDECredentialBindings,
     ossRuntimeConfiguration,
+    ozonCommissionReference,
     c1DraftServiceBindings,
+    c1ImageTextExecutable,
+    c1EditorialProposalFile,
     keywordEvidenceServiceBindings,
     ...discoveryConfiguration,
     bindHost,

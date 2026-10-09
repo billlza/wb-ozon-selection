@@ -33,18 +33,21 @@ test("C阶段运行展示只认本次执行证明，历史派发不补位", asyn
 test("C2界面只在新版等待态提供本地素材排序与一次主人确认", async () => {
   const inspector = await readFile(path.join(appDir, "src", "components", "UserInspector.jsx"), "utf8");
   assert.match(inspector, /c2Assets\.softwareState/);
-  assert.match(inspector, /type="file" multiple/);
-  assert.match(inspector, /\.jpg,\.jpeg,\.png,\.webp/);
-  assert.match(inspector, /视频内容校验尚未配置/);
-  assert.match(inspector, /上移/);
-  assert.match(inspector, /下移/);
-  assert.match(inspector, /我确认以上文件属于当前SKU，并确认所选用途、唯一首图、顺序/);
-  assert.match(inspector, /确认最终素材并生成方案卡/);
-  assert.match(inspector, /不创建生产授权、不派发任务、不访问或写入店铺/);
-  assert.match(inspector, /selectedC2DraftAssets\(draft\)/);
-  assert.match(inspector, /draftRevision/);
-  assert.match(inspector, /onSave\(\{ dataRevision, draftRevision, selection \}\)/);
-  assert.doesNotMatch(inspector, /assets\.length\}\/30/);
+  const assets = await readFile(path.join(appDir, "src", "components", "C2FinalAssetsPanel.jsx"), "utf8");
+  assert.match(assets, /type="file" multiple/);
+  assert.match(assets, /本规格需要自己的首图/);
+  assert.match(assets, /candidate\.siblingSourceV1/);
+  assert.match(assets, /\.jpg,\.jpeg,\.png,\.webp/);
+  assert.match(assets, /视频内容校验尚未配置/);
+  assert.match(assets, /上移/);
+  assert.match(assets, /下移/);
+  assert.match(assets, /我确认以上文件属于当前SKU，并确认所选用途、唯一首图、顺序/);
+  assert.match(assets, /确认最终素材并生成方案卡/);
+  assert.match(assets, /不创建生产授权、不派发任务、不访问或写入店铺/);
+  assert.match(assets, /selectedC2DraftAssets\(draft\)/);
+  assert.match(assets, /draftRevision/);
+  assert.match(assets, /onSave\(\{ dataRevision, draftRevision, selection \}\)/);
+  assert.doesNotMatch(assets, /assets\.length\}\/30/);
 });
 
 test("C2素材上传和最终确认使用分离接口，选择文件不会直接确认", async () => {
@@ -55,4 +58,27 @@ test("C2素材上传和最终确认使用分离接口，选择文件不会直接
   assert.match(app, /uploadLifecycleFinalAsset/);
   assert.match(app, /confirmLifecycleFinalAssets/);
   assert.match(app, /尚未生产授权，也没有店铺写入/);
+});
+
+// 对标样本面板。2026-09-17 主人第一次用就卡住：采集排队等插件那两分钟里，连输入框都被禁了，
+// 下一个地址贴不进去。贴一个地址不伤害任何东西——该禁的只有「读」这个动作本身。
+test("对标面板：排队时只禁按钮不禁输入，地址必须是 Ozon 商品页，且由主人自己贴", async () => {
+  const inspector = await readFile(path.join(appDir, "src", "components", "UserInspector.jsx"), "utf8");
+  const panel = inspector.slice(inspector.indexOf("function ComparableCapturePanel("),
+    inspector.indexOf("function ListingPreparationPanel("));
+  assert.ok(panel.length > 0, "对标面板必须在");
+
+  assert.match(panel, /<input type="url"[^>]*disabled=\{saving\}/,
+    "输入框只在请求发送中禁用，不能因为有作业在排队就禁掉");
+  assert.doesNotMatch(panel, /<input type="url"[^>]*disabled=\{saving \|\| busy\}/,
+    "排队中禁输入正是 2026-09-17 卡住主人的那一下");
+
+  assert.match(panel, /<button[^>]*disabled=\{!valid \|\| saving \|\| busy\}/,
+    "「读」这个动作一次只能一个，排队中必须禁按钮");
+
+  assert.match(panel, /ozon\\\.ru\\\/product\\\//, "只接受 Ozon 商品页地址");
+  assert.match(panel, /不替你从类目里挑/, "对标由主人自己贴，软件不替他挑「像的」商品");
+  assert.match(panel, /snapshot\?\.comparable === true/, "列出的是已打对标标记的快照");
+  assert.match(panel, /if \(!candidate\.lifecycleV11\?\.skuPackage\) return null;/,
+    "只在已经进入C阶段的商品上出现");
 });
