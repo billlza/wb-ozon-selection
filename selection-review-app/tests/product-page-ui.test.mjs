@@ -341,7 +341,7 @@ test('商品页的申请插件采集走专用处理：写操作不经读取守�
   // 旧 A 卡仍然自己调用同一个信号与同一套文案映射，没有被改成另一条路径。
   assert.match(app, /const captureStart = await startQueuedSupplierCapture\(result\);/u);
   assert.match(app, /\$\{captureStart\.message\}/u);
-  assert.match(app, /import \{ OZON_PAGE_READ_CHANNEL, startQueuedSupplierCapture \} from "\.\/captureStart\.js";/u);
+  assert.match(app, /import \{ IMAGE_MATCH_CHANNEL, OZON_PAGE_READ_CHANNEL, startQueuedSupplierCapture \} from "\.\/captureStart\.js";/u);
 });
 
 // 定价指引 (owner question 2026-09-11). Synthetic guidance only: the page shows what the saved estimate carries.
