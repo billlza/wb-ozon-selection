@@ -121,12 +121,12 @@ test("the extension reads a Pinduoduo link exactly as the service does", () => {
 
 test("a Pinduoduo job passes the extension's request check under the same rules as a 1688 job", () => {
   const detail = supplierJob({ sourceUrl: GOODS_URL, expectedOfferId: GOODS_ID });
-  assert.equal(validateSupplierCaptureRequest({ payload: detail, manifestVersion: "1.2.8" }).ok, true);
+  assert.equal(validateSupplierCaptureRequest({ payload: detail, manifestVersion: "1.2.9" }).ok, true);
   const short = supplierJob({ sourceUrl: "https://p.pinduoduo.com/AbC", expectedOfferId: "", allowShortLinkResolution: true });
-  assert.equal(validateSupplierCaptureRequest({ payload: short, manifestVersion: "1.2.8" }).ok, true);
-  assert.equal(validateSupplierCaptureRequest({ payload: { ...short, allowShortLinkResolution: false }, manifestVersion: "1.2.8" }).code,
+  assert.equal(validateSupplierCaptureRequest({ payload: short, manifestVersion: "1.2.9" }).ok, true);
+  assert.equal(validateSupplierCaptureRequest({ payload: { ...short, allowShortLinkResolution: false }, manifestVersion: "1.2.9" }).code,
     "short_link_resolution_not_allowed");
-  assert.equal(validateSupplierCaptureRequest({ payload: { ...detail, expectedOfferId: "1" }, manifestVersion: "1.2.8" }).code,
+  assert.equal(validateSupplierCaptureRequest({ payload: { ...detail, expectedOfferId: "1" }, manifestVersion: "1.2.9" }).code,
     "expected_offer_invalid");
 });
 

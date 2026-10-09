@@ -1,7 +1,13 @@
-import { classifySupplierSource } from "./source-routing.js";
+import { canonicalPinduoduoImageUrl, classifySupplierSource, imageSearchUrl } from "./source-routing.js";
 
 export const SUPPLIER_CAPTURE_REQUEST_TYPE = "SELECTION_REVIEW_1688_CAPTURE_REQUEST";
 export const SUPPLIER_CAPTURE_MODE = "a_supplier_capture";
+export const IMAGE_MATCH_REQUEST_TYPE = "SELECTION_REVIEW_1688_IMAGE_MATCH_REQUEST";
+export const IMAGE_MATCH_MODE = "a_supplier_image_match";
+export const IMAGE_MATCH_MAX_RESULTS = 20;
+export function isImageMatchJob(payload) {
+  return payload?.mode === IMAGE_MATCH_MODE;
+}
 export function isOzonCaptureJob(payload) {
   return typeof payload?.productUrl === "string" && typeof payload?.expectedProductId === "string";
 }
@@ -17,7 +23,7 @@ export function isReviewSender(value) {
 export function validateCaptureStartSignal(message) {
   const valid = message && typeof message === "object" && !Array.isArray(message) &&
     Object.keys(message).length === 2 &&
-    [SUPPLIER_CAPTURE_REQUEST_TYPE, "SELECTION_REVIEW_OZON_CAPTURE_REQUEST"].includes(message.type) &&
+    [SUPPLIER_CAPTURE_REQUEST_TYPE, "SELECTION_REVIEW_OZON_CAPTURE_REQUEST", IMAGE_MATCH_REQUEST_TYPE].includes(message.type) &&
     typeof message.captureId === "string" && /^[A-Za-z0-9_-]{1,160}$/.test(message.captureId);
   return valid ? { ok: true } : { ok: false, code: "start_signal_invalid" };
 }
@@ -55,6 +61,24 @@ export function validateOzonCaptureRequest({ payload, manifestVersion = "" } = {
   return sourceUrl ? { ok: true, sourceUrl } : { ok: false, code: "source_url_invalid" };
 }
 
+/**
+ * 1688 找同款作业：只搜服务端锁定的那一张拼多多首图，搜索地址必须就是由这张图拼出来的那一个。
+ * 不带 sourceUrl、productUrl、expectedProductId，所以既不会被当成供应采集，也不会被当成 Ozon 读页面。
+ */
+export function validateImageMatchRequest({ payload, manifestVersion = "" } = {}) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload) || !validJobIdentity(payload)) return { ok: false, code: "request_payload_missing" };
+  if (payload.mode !== IMAGE_MATCH_MODE || payload.sourceUrl !== undefined || payload.productUrl !== undefined ||
+      payload.expectedProductId !== undefined) return { ok: false, code: "capture_mode_invalid" };
+  if (!Number.isSafeInteger(payload.dataRevision) || payload.dataRevision < 0) return { ok: false, code: "revision_invalid" };
+  if (payload.attempt !== 1) return { ok: false, code: "attempt_invalid" };
+  if (payload.requiredExtensionVersion !== manifestVersion || !manifestVersion) return { ok: false, code: "extension_version_mismatch" };
+  if (payload.maxResults !== IMAGE_MATCH_MAX_RESULTS) return { ok: false, code: "request_payload_missing" };
+  const imageUrl = canonicalPinduoduoImageUrl(payload.imageUrl);
+  const searchUrl = imageSearchUrl(payload.imageUrl);
+  if (!imageUrl || imageUrl !== payload.imageUrl || !searchUrl || searchUrl !== payload.searchUrl) return { ok: false, code: "image_url_invalid" };
+  return { ok: true, imageUrl, searchUrl };
+}
+
 const ERROR_MESSAGES = Object.freeze({
   request_origin_invalid: "采集请求不是来自本机评审台",
   request_payload_missing: "采集请求缺少必要字段",
@@ -63,7 +87,8 @@ const ERROR_MESSAGES = Object.freeze({
   extension_version_mismatch: "采集作业要求的插件版本与当前版本不一致",
   source_url_invalid: "1688或拼多多来源链接不在允许范围内",
   short_link_resolution_not_allowed: "当前作业未授权解析1688或拼多多短链",
-  expected_offer_invalid: "精确商品链接与作业锁定的商品编号不一致"
+  expected_offer_invalid: "精确商品链接与作业锁定的商品编号不一致",
+  image_url_invalid: "找同款要搜的首图或搜索地址不在允许范围内"
 });
 
 export function captureRequestErrorMessage(code) {

@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-09T17:02:34.694Z",
+  "frozenAt": "2026-10-09T17:46:33.072Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 888,
-      "sha256": "e94d58504fecfc2e1dca1539b79c6495e5b1aab84acc8daa290883888eca4606",
+      "artifactCount": 896,
+      "sha256": "2fd131bf449e4f17fa8ba53447e6234b1f22579f42a2fc2e2d4b5226ad0ace11",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -40,15 +40,19 @@
       },
       {
         "path": "extension/1688-capture/background.js",
-        "sha256": "9f08f57d8997da5448929728a4741ff9b60c0504d36a64fb13d2e4bcb7594b4c"
+        "sha256": "e4f17681f84ffe3f77d7535e4d96be64d7eb98786ac9b8976d32c3ed8c41d007"
       },
       {
         "path": "extension/1688-capture/bridge.js",
-        "sha256": "37baa0ee87e7c35c3688665b687525a2484040b46501017905232fbce80cb707"
+        "sha256": "c560209c8f3591cb9afb48f9a69b73c6849dceb7435697231c51016218a5b2c7"
       },
       {
         "path": "extension/1688-capture/capture-request.js",
-        "sha256": "a42bf2d73d6dbed39654343f18259b9fa9d4ed786a3cf0c861ae92372fa6371c"
+        "sha256": "1709454ea5be6d9735639f9688628b0b9ae3c454f0312f379bddf612ceceb584"
+      },
+      {
+        "path": "extension/1688-capture/collector-1688-image-search.js",
+        "sha256": "37af9958de35cd2c7ae96d3a9a8c6891066791b871865eddc1e30807bb86c3dc"
       },
       {
         "path": "extension/1688-capture/collector-ozon.js",
@@ -64,11 +68,11 @@
       },
       {
         "path": "extension/1688-capture/manifest.json",
-        "sha256": "bab8216c04b8d28683507f177e34395eae212b3dfa0a483a29c6633f9e8434b5"
+        "sha256": "0fc1c757b769024b8a00f5d943094b035a0520074ccb65c10dab7872459b9940"
       },
       {
         "path": "extension/1688-capture/source-routing.js",
-        "sha256": "069e1d3de63b877e42c05b87a97fb87697806f13244ac710cb64c7c64d46e7a2"
+        "sha256": "8aa84dcdee71e148a6f79cb7deed20b067abdb979b54a820c4d34ad4f20955d3"
       },
       {
         "path": "index.html",
@@ -424,7 +428,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "f5c978d49fcd3b9a8e6931c32c72e9d1377485b90d880f3874590beb99dbaba6"
+        "sha256": "05db9bd1f3fcaedc20e6140a12e96cc661e68a32ca4c943d15bfb04668ba534e"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -616,7 +620,7 @@
       },
       {
         "path": "lib/http-api-boundary.mjs",
-        "sha256": "3bff5e0df094fc8e9b5b6fb3ab44c77d547318b12b2dd75c0cbc275e40d2538b"
+        "sha256": "e193278d2d9d6dca30b18ccc75409caf04c4df6468a4ed4db954f1081416d712"
       },
       {
         "path": "lib/image-fingerprint.mjs",
@@ -1131,6 +1135,10 @@
         "sha256": "837e6e7b41eb4950a578d190824ec01ec109c129011efb8eeec325190e4e36d2"
       },
       {
+        "path": "lib/supplier-image-match.mjs",
+        "sha256": "a7ff5e69d420df1d0d995cc75073393fe3c101023d449b8e4e0429aa03cd5a73"
+      },
+      {
         "path": "lib/supplier-option.mjs",
         "sha256": "711ed6e12ca91747c52fe6dd9c904210d6071ad2f570156b4f34b969a84590f9"
       },
@@ -1447,6 +1455,10 @@
         "sha256": "42c8b30cdb03b3558244d0cbbd5e96f6cccd01871da06174d55691fe88b4d4a4"
       },
       {
+        "path": "scripts/check-1688-image-search-saved-page.mjs",
+        "sha256": "1ca5c23813421af99f5087ef68300c0faaf1a5240de52c05e3926de3cce73bae"
+      },
+      {
         "path": "scripts/check-pinduoduo-saved-page.mjs",
         "sha256": "dc0c378a3100987e7f7e928025421899575a70d83a09908d21c4d9928089da2b"
       },
@@ -1460,7 +1472,7 @@
       },
       {
         "path": "scripts/ci-test-suites.mjs",
-        "sha256": "ed4afc5b63f30418b4754a01a673dbc8635e8adf5cb9aec1d64daaff9ecc9bea"
+        "sha256": "7dcb5c5f235c8033106910fd449435348745a592f8e0c308a22e73819ba5a365"
       },
       {
         "path": "scripts/deploy-local-runtime.sh",
@@ -1520,11 +1532,11 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "185ef5c3c389f1bc1121f2784b8263cb73454825c08df3c0fe30b8a2d4e14cab"
+        "sha256": "cf6cb1e23cbfbee01ad119f0abf80c56efc6a828f0d033af4def35024dd083e5"
       },
       {
         "path": "src/App.jsx",
-        "sha256": "67c4fc62b3bc0de35da9ae7a9a5ae6c15ae1302462cfbd0a13b7f3d6aed8a050"
+        "sha256": "5c13144fbb898eca4762ec7f12f2733d92757677642144d3b6c7e83da77d8964"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1536,7 +1548,7 @@
       },
       {
         "path": "src/api.js",
-        "sha256": "1274f5488b8d81d3b740c83ba00e6d18cca269a9485663f978addf7945cc4e8c"
+        "sha256": "2ba97734bdae4ee38f178037a758dd26e7a81428de7c996998444274c2f1e813"
       },
       {
         "path": "src/bExactCommissionInput.js",
@@ -1564,7 +1576,7 @@
       },
       {
         "path": "src/captureStart.js",
-        "sha256": "72e47d69d659ea8c42734646196f72c5f1b9649870cd9688d97c0b1e42fa99d4"
+        "sha256": "aeb9685180af27bc70e6ba1ad0bd8e3ac769e6434434f2c5e3e9b55df5446c3c"
       },
       {
         "path": "src/commentInput.js",
@@ -1700,7 +1712,7 @@
       },
       {
         "path": "src/components/ProductPage.jsx",
-        "sha256": "a36bf89992c4d9ea1026e279447e17ab5f9d74a62af35c5bd724d6d3c6948752"
+        "sha256": "4ee35688b5f6b59b085ade610e59b189b71460ea31c8c821a7f9db1ce9bb690f"
       },
       {
         "path": "src/components/ProductionOwnerDecisionForm.jsx",
@@ -1764,7 +1776,7 @@
       },
       {
         "path": "src/extensionStatus.js",
-        "sha256": "8da054c0def552ce64f0cf0b144274f30e6c989b1a71cfbcb02535438f408d76"
+        "sha256": "e5da08f582e372c42b38567605801bd916f43b25946c0588ac79efd74d82f8ed"
       },
       {
         "path": "src/finalPricingReviewInput.js",
@@ -1828,7 +1840,11 @@
       },
       {
         "path": "src/styles.css",
-        "sha256": "a92c481c9da2b9f45542204baddf32260ec53cadd2e160592b746f4ed0820b63"
+        "sha256": "918218310355735cb6bd416302e97d48128d771606691ccef3ea0b20ad2e5e9e"
+      },
+      {
+        "path": "src/supplierImageMatchView.js",
+        "sha256": "3c156df8e9290cbece7e4174583f3fc63b3bc7a6f4f6a7de06de90349f93cc3f"
       },
       {
         "path": "src/wbPresentation.js",
@@ -2372,7 +2388,7 @@
       },
       {
         "path": "tests/ci-api-boundary.test.mjs",
-        "sha256": "2c30b225385cb9a5a38f9834728be7df2c28205cdc860bec70308e5b7a348f6f"
+        "sha256": "bbd7cb937b7fdd2a4df48627a163f2ca466772e2271fc9c96462b74d681a33f1"
       },
       {
         "path": "tests/ci-test-policy.test.mjs",
@@ -2576,7 +2592,7 @@
       },
       {
         "path": "tests/extension-capture-request.test.mjs",
-        "sha256": "174094f327f860fd20e584c9fa1731c9bc53cd2e47c8bcc4314701c4e91981f0"
+        "sha256": "097225032f0e5a4b609f812327ec5f8dd1d4bbe2a8a800ca409859946fb20090"
       },
       {
         "path": "tests/extension-heartbeat-api.test.mjs",
@@ -2584,7 +2600,7 @@
       },
       {
         "path": "tests/extension-status.test.mjs",
-        "sha256": "3636e19f50a228737cd57fc1c926936c9204452a00391b1607b512564b06a2f0"
+        "sha256": "36c9848c0d243a071e3c543ce918359085c7d7130b6e68d2f2f50a88b420fd3f"
       },
       {
         "path": "tests/extra-handling-fees.test.mjs",
@@ -2884,7 +2900,7 @@
       },
       {
         "path": "tests/helpers/extension-runtime-fixture.mjs",
-        "sha256": "efec874cbfbed5555c0f1be8f7503991f3138411d04b07036a7a025831468c4d"
+        "sha256": "14df4102aa9dc071ae5862c44713e99a2f2b0fb389464181c6a82fb55d7a1806"
       },
       {
         "path": "tests/helpers/legacy-candidate-fixture.mjs",
@@ -3152,7 +3168,7 @@
       },
       {
         "path": "tests/ozon-page-capture-job.test.mjs",
-        "sha256": "3e7d8d58414f0b23047e76948739ff30cd644e895a94a923e88b2d83853d8359"
+        "sha256": "bcbbe8ad743f879235638359ce4e356c0f48369fc83e404ee2e4e721800f29ac"
       },
       {
         "path": "tests/ozon-product-import-batch-limit.test.mjs",
@@ -3164,7 +3180,7 @@
       },
       {
         "path": "tests/ozon-sales-capture-api.test.mjs",
-        "sha256": "c6f5e57a32a7f6ff07d4c2f083dae0c558c52510c94540c20615397ee3cf8e9b"
+        "sha256": "807cbf2b07a468b85d96e984f0bf00e60a8ad487129c5579a9e2242bccba1704"
       },
       {
         "path": "tests/ozon-seller-api-de-adapter.test.mjs",
@@ -3224,7 +3240,7 @@
       },
       {
         "path": "tests/pinduoduo-capture.test.mjs",
-        "sha256": "9c58e8cc18b1fb000511d4216b3962239f03b3e899740a45346dc23bb3d23b1d"
+        "sha256": "114d7134512a8e6360d605b96ff62320c75812aaab041e7969621f5cff867a65"
       },
       {
         "path": "tests/platform-write-bindings.test.mjs",
@@ -3364,7 +3380,7 @@
       },
       {
         "path": "tests/runtime-package-api.test.mjs",
-        "sha256": "fc26cef490360f604cce53e38ad7b0b7ab689b39d3c5958dc482622848428245"
+        "sha256": "1d531c65cfb0daa339526a445fff708478593f96c9eb31355bcab9baf791832f"
       },
       {
         "path": "tests/runtime-preflight-api.test.mjs",
@@ -3500,23 +3516,23 @@
       },
       {
         "path": "tests/source-capture-job-api.test.mjs",
-        "sha256": "6e801c4bb3ec076f924263f3950bbed02ca0ddc8c07feacacec58f98dfb43941"
+        "sha256": "25eed28573cb8c91770828bf43209bff6567b0a854812b2636059a7c6e79d9d0"
       },
       {
         "path": "tests/source-capture-recapture-api.test.mjs",
-        "sha256": "40c250bd5a2c1728c8927e3f2152a3961781daad51ae2328fcddc29bce728895"
+        "sha256": "f7231045b4cca5ac39c79de4637664d66f2d486afb8968dd3f30af094baff920"
       },
       {
         "path": "tests/source-capture-restart-reconciliation.test.mjs",
-        "sha256": "ea746da5620abcaea499929e496e3db3a48f6de519ab2a4533c51d5e0d576d1d"
+        "sha256": "c2be66a655df6d9497f0227ac1faadab8fbb1174e86e08e184f2517e5d7471ab"
       },
       {
         "path": "tests/source-capture-review-api.test.mjs",
-        "sha256": "bb6e90817a1a8f141ab7cc39a4342b95c181e7cadb1096a9d75b8577f7423f5c"
+        "sha256": "b06a11f77b7ccf8fca2962c79baad332bbc65ca2394898a707c227ca9f1807cf"
       },
       {
         "path": "tests/source-capture.test.mjs",
-        "sha256": "bb91800b728bf66ee9100d4759bea351775d95b983511935fb668ea3bc3ea6ec"
+        "sha256": "05dc7eb6ee4b5761e27172d03a36538d7636ff2436d28698086fddad4d688fe1"
       },
       {
         "path": "tests/store-binding-api.test.mjs",
@@ -3537,6 +3553,22 @@
       {
         "path": "tests/supplier-draft.test.mjs",
         "sha256": "23caa44b3a297fe030c3343b194a4c508d8f0741e9273d99060a86315c4ec272"
+      },
+      {
+        "path": "tests/supplier-image-match-api.test.mjs",
+        "sha256": "9a6ded79eeb6e901be149158b768818c1d6fe81a1c7f3ad0b001b4fc67ccbb6b"
+      },
+      {
+        "path": "tests/supplier-image-match-extension.test.mjs",
+        "sha256": "2c3ca4bf0260d1efd6a6a1d69a17e4ecea3c800d281fde394a51f2c8440ceba1"
+      },
+      {
+        "path": "tests/supplier-image-match-ui.test.mjs",
+        "sha256": "7f32589a63d36f723ab689615a1daa2df9213b6374544402f5794ab928068517"
+      },
+      {
+        "path": "tests/supplier-image-match.test.mjs",
+        "sha256": "9dc4a4c81c4af8d92b61bbf99310caaa1fac9d8dbee963ce88e267fbb70fdf5b"
       },
       {
         "path": "tests/supplier-option.test.mjs",
@@ -3935,6 +3967,10 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "extension/1688-capture/collector-1688-image-search.js",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "extension/1688-capture/collector-pinduoduo.js",
           "status": "present_in_integration_source"
         },
@@ -3975,7 +4011,15 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/supplier-image-match.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "schema/a-supplier-image-search-v1.schema.json",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "scripts/check-1688-image-search-saved-page.mjs",
           "status": "present_in_integration_source"
         },
         {
@@ -3988,6 +4032,10 @@
         },
         {
           "path": "src/components/ProductPage.jsx",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "src/supplierImageMatchView.js",
           "status": "present_in_integration_source"
         },
         {
@@ -4044,6 +4092,22 @@
         },
         {
           "path": "tests/source-capture-review-api.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/supplier-image-match-api.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/supplier-image-match-extension.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/supplier-image-match-ui.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/supplier-image-match.test.mjs",
           "status": "present_in_integration_source"
         }
       ],

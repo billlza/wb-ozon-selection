@@ -16,6 +16,7 @@ import C1OzonAttributePanel from "./C1OzonAttributePanel.jsx";
 import C2FinalAssetsPanel from "./C2FinalAssetsPanel.jsx";
 import FinalProductPlanCard from "./FinalProductPlanCard.jsx";
 import SiblingBatchPreparation from './SiblingBatchPreparation.jsx';
+import { IMAGE_MATCH_JUDGEMENT_LABELS, supplierImageMatchView } from "../supplierImageMatchView.js";
 
 /**
  * One product page for the owner: the six steps of a product, with only the step that is actually open expanded.
@@ -1803,6 +1804,80 @@ function SavedC2Assets({ skuPackage }) {
   </section>;
 }
 
+/**
+ * 在 1688 找同款：拿拼多多首图，用主人自己 Chrome 里登录的 1688 搜一次，列出最像的结果。软件只标首图像不像，
+ * 是不是同款由主人逐条点；点了也只是记下判断，不改货源链接、不确认供货（AGENTS.md §4.3）。
+ */
+function ImageMatchSection({ candidate, saving, noticeAt, error, notice, onStart, onCompare, onJudge }) {
+  const view = supplierImageMatchView(candidate);
+  if (view === null) return null;
+  const start = acknowledgeUnknownOutcome => onStart({ dataRevision: candidate.dataRevision,
+    ...(acknowledgeUnknownOutcome ? { acknowledgeUnknownOutcome: true } : {}) });
+  const judge = (offerId, judgement) => onJudge({ dataRevision: candidate.dataRevision, captureId: view.captureId, offerId, judgement });
+  return <section className="product-section product-image-match" aria-label="在 1688 找同款">
+    <h3>在 1688 找同款</h3>
+    <div className="image-match-source">
+      {view.sourceImageUrl
+        ? <img className="image-match-thumb" src={view.sourceImageUrl} alt="拼多多首图" width="96" height="96" loading="lazy" referrerPolicy="no-referrer" />
+        : <span className="image-match-thumb product-thumb-empty">首图</span>}
+      <div>
+        <p className="product-section-hint">用这张拼多多首图，在你 Chrome 里登录的 1688 上搜一次图，读回最像的 20 条。软件只比两张首图像不像；
+          是不是同款由你逐条判断，判断只记在这里，不会改货源链接，也不会确认供货。</p>
+        {view.lowestPriceCny !== null ? <p className="image-match-price">拼多多最低拼单价：{money(view.lowestPriceCny)}</p> : null}
+        {view.sourceReason ? <p className="product-capture-hint">{view.sourceReason}</p> : null}
+      </div>
+    </div>
+    {view.statusLine ? <p className={view.failed ? "product-capture-blocked" : "product-capture-status"} role={view.failed ? "alert" : "status"}>
+      {view.statusLine}</p> : null}
+    <div className="product-actions">
+      {view.unknownOutcome
+        ? <button type="button" className="button primary" disabled={saving || !view.canStart}
+          onClick={() => start(true)}>我知道上次结果未知，重新找一次</button>
+        : <button type="button" className={`button ${view.status === null ? "primary" : "secondary"}`} disabled={saving || !view.canStart}
+          onClick={() => start(false)}>{saving && noticeAt === "image-match" ? "正在申请…" : view.status === null ? "用首图在 1688 找同款" : "再找一次"}</button>}
+      {view.canCompare ? <button type="button" className="button secondary" disabled={saving}
+        onClick={() => onCompare({ dataRevision: candidate.dataRevision, captureId: view.captureId })}>重新比对首图</button> : null}
+    </div>
+    <StepResult at="image-match" noticeAt={noticeAt} error={error} notice={notice} />
+    {view.rows.length ? <ol className="image-match-results">
+      {view.rows.map(row => <li key={row.offerId} className={`image-match-row image-match-${row.similarity}`}>
+        {row.imageUrl
+          ? <img className="image-match-thumb" src={row.imageUrl} alt="" width="72" height="72" loading="lazy" referrerPolicy="no-referrer" />
+          : <span className="image-match-thumb product-thumb-empty">无图</span>}
+        <div className="image-match-body">
+          <p className="image-match-head">
+            <span className={`image-match-badge image-match-badge-${row.similarity}`}
+              title={row.distance === null ? undefined : `首图指纹相差 ${row.distance} / 64`}>{row.similarityLabel}</span>
+            {row.isAd ? <span className="image-match-tag">广告</span> : null}
+            {row.superFactory ? <span className="image-match-tag">超级工厂</span> : null}
+            <a href={row.sourceUrl} target="_blank" rel="noreferrer noopener">{row.title}</a>
+          </p>
+          <p className="image-match-facts">
+            {row.priceCny === null ? "价格没读到" : money(row.priceCny)}
+            {row.priceNote ? ` · ${row.priceNote}` : ""}
+            {row.priceDifferenceCny === null ? "" : row.priceDifferenceCny === 0 ? " · 和拼多多一样"
+              : ` · 比拼多多${row.priceDifferenceCny < 0 ? "低" : "高"} ${money(Math.abs(row.priceDifferenceCny))}`}
+          </p>
+          <p className={`image-match-facts${row.quantity.ok === false ? " product-capture-blocked" : ""}`}>
+            {row.quantity.text}
+            {row.saleQuantity === null ? "" : ` · 已售 ${row.saleQuantity}`}
+            {row.shopName ? ` · ${row.shopName}` : ""}{row.location ? ` · ${row.location}` : ""}
+            {row.vendorSimilarity === null ? "" : ` · 1688 相似度 ${percent(row.vendorSimilarity)}`}
+          </p>
+          {view.judgeable ? <div className="image-match-judge" role="group" aria-label={`判断 ${row.title}`}>
+            {Object.entries(IMAGE_MATCH_JUDGEMENT_LABELS).map(([judgement, label]) =>
+              <button key={judgement} type="button" aria-pressed={row.judgement === judgement}
+                className={`button ${row.judgement === judgement ? "primary" : "secondary"}`} disabled={saving}
+                onClick={() => judge(row.offerId, row.judgement === judgement ? "clear" : judgement)}>{label}</button>)}
+          </div> : null}
+        </div>
+      </li>)}
+    </ol> : null}
+    {view.rows.length ? <p className="product-actions-note">近似款只能当价格参考，不能当供货方案。要用其中一个 1688 货源，打开它核对规格、一件起订和运费后，
+      把它的链接填进上面「找货」里再采集一次。</p> : null}
+  </section>;
+}
+
 export default function ProductPage({
   preparationSaveState,
   candidate, view = null, titleZh = null, extensionStatus = null,
@@ -1816,6 +1891,7 @@ export default function ProductPage({
   onRefreshSiblingBatchExecution = null, onResumeSiblingBatchStock = null,
   siblingSkuIds = [], siblingCandidates = [], onRequestCapture, onReviewCaptureAndRequest, onRecaptureSource,
   onConfirmProfitStep, onDeclareCargoFacts, onDeclareExtraHandlingFees, onDeclareUniformSupply, onReadOzonPage, onOpenLegacyCard,
+  onStartImageMatch = null, onCompareImageMatch = null, onJudgeImageMatch = null,
   onBack, onEliminateCandidate,
   productionIdentity = null, onPrepareC1Local = null,
   onAuthorizeC1PaidDraft = null, onContinueSavedC1Draft = null, onReadOriginalC1DraftResult = null, onConfirmC1Content = null,
@@ -2097,6 +2173,14 @@ export default function ProductPage({
         onSubmit={() => run(onChooseSkus, skuChoicePayload(skuTable, chosen, candidate.dataRevision),
           `已选定 ${chosen.length} 个规格，它们已经锁进这件商品的供货方案；没有下单、没有联系供应商、也没有向 Ozon 写任何东西。`)} />)
       : null}
+
+    {typeof onStartImageMatch === "function" ? <ImageMatchSection candidate={candidate} saving={saving} noticeAt={noticeAt}
+      error={error} notice={notice}
+      onStart={payload => run(onStartImageMatch, payload, "已经让插件去 1688 用首图搜一次，读完这里会列出最像的结果。", "image-match")}
+      onCompare={payload => run(onCompareImageMatch, payload, "正在重新比对首图，比完这里会更新。", "image-match")}
+      onJudge={payload => run(onJudgeImageMatch, payload, payload.judgement === "clear"
+        ? "已撤回这条判断。" : `已记下：这条${IMAGE_MATCH_JUDGEMENT_LABELS[payload.judgement]}。这只是同款判断，没有改货源、也没有确认供货。`,
+      "image-match")} /> : null}
 
     {/* 算利润：整套一起核线、指定先上的那一个、其余排队，这件货运输上是什么，最后那两个只有主人能做的判断。 */}
     {profitOpen ? <ProfitStepSection key={`${candidate.id}:${candidate.dataRevision}`}

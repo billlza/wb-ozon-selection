@@ -312,3 +312,58 @@ export function classifySupplierSource(value) {
   const pinduoduo = classifyPinduoduoSource(value);
   return pinduoduo ? { platform: "pinduoduo", ...pinduoduo } : null;
 }
+
+// ---- 1688 找同款：用拼多多首图在 1688 搜一次图 ----
+
+/** Mirrors canonicalPinduoduoImageUrl in lib/capture-evidence-sanitization.mjs: https, a Pinduoduo image host, no query. */
+export function canonicalPinduoduoImageUrl(value) {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    const host = url.hostname;
+    if (url.protocol !== "https:" || url.username || url.password || url.port ||
+        !(host === "pddpic.com" || host.endsWith(".pddpic.com") || host.endsWith(".yangkeduo.com"))) return null;
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Mirrors supplierImageMatchSearchUrl in lib/supplier-image-match.mjs, character for character. */
+export function imageSearchUrl(imageUrl) {
+  const canonical = canonicalPinduoduoImageUrl(imageUrl);
+  if (!canonical || canonical !== imageUrl) return null;
+  return `https://s.1688.com/youyuan/index.htm?tab=imageSearch&imageAddress=${encodeURIComponent(canonical)}`;
+}
+
+const IMAGE_SEARCH_RESULT_PATHS = ["/kapp/1688-search/pc-image-search", "/kapp/1688-global/sales/search"];
+
+/**
+ * Where a 1688 image-search tab has got to, as one fixed word. s.1688.com/youyuan is only the entry address: 1688 sends
+ * the browser on to its air.1688.com result page, which is the one page the collector may read. Login and verification
+ * pages stop the job with their own reason; anything else is not this search.
+ */
+export function classify1688ImageSearchNavigation(value) {
+  try {
+    if (typeof value !== "string") return "invalid";
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return "invalid";
+    const host = url.hostname.toLowerCase();
+    const pathname = url.pathname.toLowerCase().replace(/\/+$/, "");
+    if (host === "s.1688.com" && pathname === "/youyuan/index.htm") return "entry";
+    if (host === "air.1688.com" && IMAGE_SEARCH_RESULT_PATHS.includes(pathname)) return "results";
+    if (!is1688Host(host)) return "non_whitelisted_destination";
+    if (LOGIN_HOSTS.has(host) || /(?:^|\/)(?:login|signin|passport)(?:\/|$)/.test(pathname)) return "login_required";
+    if (VERIFICATION_HOSTS.has(host) || /(?:captcha|verify|verification|punish|security)/.test(pathname)) return "verification_required";
+    return "non_whitelisted_destination";
+  } catch {
+    return "invalid";
+  }
+}
+
+/** The result page as a fixed marker (host and path only), so the address read after extraction can be compared. */
+export function imageSearchResultPage(value) {
+  if (classify1688ImageSearchNavigation(value) !== "results") return null;
+  const url = new URL(value);
+  return `https://${url.hostname.toLowerCase()}${url.pathname.toLowerCase().replace(/\/+$/, "")}`;
+}

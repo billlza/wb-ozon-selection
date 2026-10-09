@@ -31,7 +31,7 @@ test("API test inventory contains every separately isolated suite once", () => {
     "source-capture-api.test.mjs", "source-capture-job-api.test.mjs", "source-capture-recapture-api.test.mjs",
     "source-capture-restart-reconciliation.test.mjs", "source-capture-review-api.test.mjs",
     "store-binding-api.test.mjs", "structured-dispatch-integration.test.mjs",
-    "supplier-draft-api.test.mjs", "sibling-preparation-api.test.mjs"
+    "supplier-draft-api.test.mjs", "supplier-image-match-api.test.mjs", "sibling-preparation-api.test.mjs"
   ].sort());
   assert.equal(new Set(ISOLATED_TESTS).size, API_PROCESS_TESTS.length + SOURCE_CONTRACT_TESTS.length + SUBPROCESS_TESTS.length);
   assert.equal(Object.isFrozen(API_PROCESS_TESTS), true);

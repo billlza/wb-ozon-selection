@@ -169,7 +169,7 @@ async function startApi(t, candidates, { ttlMs = 2000, executionTtlMs = 500, dat
       assert.equal(response.status, 200, JSON.stringify(response.body));
       cookie = response.cookie.split(";")[0];
     },
-    claim: (jobId, version = "1.2.8") =>
+    claim: (jobId, version = "1.2.9") =>
       post(`/api/extension/capture-jobs/${jobId}/claim`, { version }, { authenticated: false, headers: { Origin: extensionOrigin } }),
     result: (candidateId, body) =>
       post(`/api/candidates/${candidateId}/sales-capture/result`, body, { authenticated: false, headers: { Origin: extensionOrigin } }),
@@ -218,7 +218,7 @@ test("读一次 Ozon 页面：只有主人能发起，占同一把采集控制�
   assert.equal(queued.body.dispatch, null);
   assert.equal(queued.body.captureJob.status, "queued");
   assert.equal(queued.body.captureJob.attempt, 0);
-  assert.equal(queued.body.captureJob.requiredExtensionVersion, "1.2.8");
+  assert.equal(queued.body.captureJob.requiredExtensionVersion, "1.2.9");
   assert.equal(queued.body.captureJob.expectedProductId, "4403916892");
   assert.equal(queued.body.captureJob.productUrl, "https://www.ozon.ru/product/4403916892/");
   assert.equal(Object.hasOwn(queued.body.captureJob, "token"), false, "页面回执不得带一次性令牌");
@@ -255,7 +255,7 @@ test("读一次 Ozon 页面：只有主人能发起，占同一把采集控制�
   const job = claim.body.captureJob;
   // 插件那侧的判定原样跑一遍：形状不对，真实作业会在插件里被当场丢掉。
   assert.equal(isOzonCaptureJob(job), true);
-  assert.deepEqual(validateOzonCaptureRequest({ payload: job, manifestVersion: "1.2.8" }),
+  assert.deepEqual(validateOzonCaptureRequest({ payload: job, manifestVersion: "1.2.9" }),
     { ok: true, sourceUrl: "https://www.ozon.ru/product/4403916892/" });
   assert.equal(Object.hasOwn(job, "mode"), false);
   assert.equal(Object.hasOwn(job, "sourceUrl"), false);
@@ -352,7 +352,7 @@ test("没人领取就按期限收口，1688 那一侧的领取判断一个字都
   assert.equal(unknown.body.code, "capture_job_not_current");
   assert.equal(unknown.body.message, "当前服务没有这次明确创建的采集作业");
   const claimShape = await api.post("/api/extension/capture-jobs/SCJ-does-not-exist/claim",
-    { version: "1.2.8", extra: true }, { authenticated: false, headers: { Origin: extensionOrigin } });
+    { version: "1.2.9", extra: true }, { authenticated: false, headers: { Origin: extensionOrigin } });
   assert.equal(claimShape.status, 400);
   assert.equal(claimShape.body.code, "capture_claim_invalid");
 
@@ -378,11 +378,11 @@ test("服务重启时把等不到结果的读页面记录收口，不留下永�
   const waiting = candidate("OZON-RESTART-QUEUED", "4403916892");
   waiting.salesCapture = { captureId: "OPR-lost-queued", jobId: "OPR-lost-queued", status: "waiting_extension",
     jobStatus: "queued", productId: "4403916892", productUrl: "https://www.ozon.ru/product/4403916892/",
-    attempt: 0, requiredExtensionVersion: "1.2.8", token: "must-not-survive-restart", writeOccurred: false };
+    attempt: 0, requiredExtensionVersion: "1.2.9", token: "must-not-survive-restart", writeOccurred: false };
   const capturing = candidate("OZON-RESTART-CLAIMED", "4403916999");
   capturing.salesCapture = { captureId: "OPR-lost-claimed", jobId: "OPR-lost-claimed", status: "capturing",
     jobStatus: "claimed", productId: "4403916999", productUrl: "https://www.ozon.ru/product/4403916999/",
-    attempt: 1, requiredExtensionVersion: "1.2.8", writeOccurred: false };
+    attempt: 1, requiredExtensionVersion: "1.2.9", writeOccurred: false };
   const settled = candidate("OZON-RESTART-DONE", "4403916777");
   settled.salesCapture = { captureId: "OPR-done", status: "verified", technicalStatus: "completed", writeOccurred: false };
   await writeFile(dataFile, JSON.stringify(document([waiting, capturing, settled])));

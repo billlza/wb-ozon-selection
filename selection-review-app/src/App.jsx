@@ -4,7 +4,7 @@ import { createPreparationSaveState } from './siblingPreparationState.js';
 import { createLatestRead, createSelectionGuard, openSavedCandidate, runMutation, shouldContinuePolling, errorMessage, candidatePlatform } from "./formState.js";
 import { validateCandidateCommentReceipt } from "./commentInput.js";
 import { c2ReferenceFailureMessage } from "./c2UploadInput.js";
-import { OZON_PAGE_READ_CHANNEL, startQueuedSupplierCapture } from "./captureStart.js";
+import { IMAGE_MATCH_CHANNEL, OZON_PAGE_READ_CHANNEL, startQueuedSupplierCapture } from "./captureStart.js";
 import { firstInQueue, matchesQueue } from "./candidateViews";
 import AddCandidateModal from "./components/AddCandidateModal";
 import CandidateDetail, { CandidateReview } from "./components/CandidateDetail";
@@ -260,6 +260,26 @@ export default function App() {
       if(start)return start.message;
       return "这件商品已经有一次读页面还在等插件，这次没有重新开始；等它结束后再试，软件不会自动重试";
     }finally{await load(true);setProductDraftRefresh(value=>value+1);}
+  }
+  /**
+   * 用拼多多首图在 1688 找同款。和读 Ozon 页面是同样的两步：写操作留在读取守卫之外，拿到排队回执之后发那一条开始信号
+   * （插件后台从不主动轮询作业），只是消息类型换成找同款那一条。比对首图和主人的判断是普通的写，完了按服务端实际保存的
+   * 状态重读一次。
+   */
+  async function startSupplierImageMatch(payload){
+    const ownerId=accountOwnerId,candidateId=selectedId;
+    const current=()=>accountContext.current.ownerId===ownerId&&accountContext.current.view==='product';
+    try{
+      const result=await runMutation(()=>api.startSupplierImageMatch(candidateId,payload),{reads:productDraftReads.current,isCurrent:current});
+      const start=await startQueuedSupplierCapture(result,{channel:IMAGE_MATCH_CHANNEL});
+      if(start)return start.message;
+      return "这件商品已经有一次找同款还在等插件，这次没有重新开始；等它结束后再试，软件不会自动重试";
+    }finally{await load(true);}
+  }
+  async function writeSupplierImageMatch(action,payload){
+    const candidateId=selectedId;
+    try{await action(candidateId,payload);}
+    finally{await load(true);}
   }
   /**
    * 算利润 的确认。它走的是既有的 A 阶段确认那条路（成功后服务端自己接着算 B），所以这里只做三件事：把写操作放在读取
@@ -1452,6 +1472,9 @@ export default function App() {
           onReviewCaptureAndRequest={payload => reviewCaptureAndRequest(payload)}
           onRecaptureSource={payload => recaptureProductSource(payload)}
           onReadOzonPage={payload => readOzonProductPage(payload)}
+          onStartImageMatch={payload => startSupplierImageMatch(payload)}
+          onCompareImageMatch={payload => writeSupplierImageMatch(api.compareSupplierImageMatch, payload)}
+          onJudgeImageMatch={payload => writeSupplierImageMatch(api.judgeSupplierImageMatch, payload)}
           onConfirmProfitStep={payload => confirmProductProfitStep(payload)}
           onRecalculateBWithExactCommission={recalculateBWithExactCommission}
           onRefreshBFeeEvidence={refreshBFeeEvidence}
