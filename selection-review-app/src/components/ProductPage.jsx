@@ -158,6 +158,15 @@ export function showsSkuChoice(candidate) {
  * Nothing new is confirmed here: ownerSupplyConfirmed stays false and the sales review keeps its unknown judgments,
  * so the request only queues the 1688 capture job the software already runs today.
  */
+/** 一次操作的结果，放在触发它的那个按钮旁边；其余操作的结果仍在页面顶部那一个提示位。 */
+function StepResult({ at, noticeAt, error, notice }) {
+  if (noticeAt !== at) return null;
+  return <>
+    {error ? <p role="alert" className="product-step-result">{error}</p> : null}
+    {notice ? <p role="status" className="product-notice product-step-result">{notice}</p> : null}
+  </>;
+}
+
 export function captureSubmissionFromDraft({ candidate, draft, marketSnapshot }) {
   if (!isObject(candidate) || !isObject(draft)) return null;
   return {
@@ -1847,6 +1856,8 @@ export default function ProductPage({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
+  // 结果显示在主人刚点的那个按钮旁边。找货和采集都在长页面的中段，结果只出现在顶部时，主人以为点了没反应（2026-10-09）。
+  const [noticeAt, setNoticeAt] = useState(null);
   const errors = useMemo(() => supplierDraftFormErrors(form), [form]);
   const invalid = Object.keys(errors).length > 0;
   const step = currentProductStep(candidate);
@@ -1871,16 +1882,16 @@ export default function ProductPage({
   const snapshotLine = marketSnapshotLine(marketSnapshot);
   const change = key => value => { setForm(current => ({ ...current, [key]: value })); setNotice(null); };
 
-  async function run(action, payload, successNotice) {
+  async function run(action, payload, successNotice, at = null) {
     if (saving || typeof action !== "function") return;
-    setSaving(true); setError(null); setNotice(null);
+    setSaving(true); setError(null); setNotice(null); setNoticeAt(at);
     try { setNotice(stepNotice(await action(payload), successNotice)); }
     catch (cause) { setError(errorMessage(cause)); }
     finally { setSaving(false); }
   }
   /** 同一次重读，无论从规格表旁边点还是从「1688 采集」块里点，走的都是这一条路。 */
   const recapture = reason => run(onRecaptureSource, captureRecapturePayload(candidate, reason),
-    "已经让软件重新去读一次这个1688页面，读完这里会显示结果。");
+    `已经让软件重新去读一次这个${supplySiteName(candidate.sourceCapture?.sourceUrl)}页面，读完这里会显示结果。`, "capture");
   /**
    * 算利润 的确认。提交的东西整份由已保存的记录组装，主人只补那两个判断；组装不出完整的一份就返回 null，这里也就不发。
    * 回来之后说的是服务端实际保存成什么样，不是「已提交」——同一个 200 底下有四种结果。服务端说不行的时候，原样显示
@@ -1913,6 +1924,7 @@ export default function ProductPage({
     "已经让软件去读一次这个 Ozon 商品页；读完这里会显示读到了什么。");
   function confirmProfitStep(firstSkuId, judgments) {
     const payload = profitStepSubmission(profitReview, firstSkuId, judgments);
+    setNoticeAt(null);
     if (payload === null) { setError("这一份确认还凑不齐，没有提交；请看上面列出的缺项。"); return undefined; }
     // 失败时这里不记任何东西：服务端已经把这一次停在哪存进了记录，页面重读资料时那一块自己就回来了。
     return run(async input => profitStepOutcomeLine(await onConfirmProfitStep(input)), payload,
@@ -1948,9 +1960,11 @@ export default function ProductPage({
     </div>
     <div className="product-actions">
       <button type="button" className="button primary" disabled={saving || invalid}
-        onClick={() => run(onSaveDraft, supplierDraftPayload(form, candidate.dataRevision), "已保存你填的找货方案，下面的数字按它重新算过了。")}>保存</button>
+        onClick={() => run(onSaveDraft, supplierDraftPayload(form, candidate.dataRevision), "已保存你填的找货方案，下面的数字按它重新算过了。", "find")}>
+        {saving && noticeAt === "find" ? "正在保存…" : "保存"}</button>
       <span className="product-actions-note">保存只记录你填的方案，不会确认供货，也不会开始采购。</span>
     </div>
+    <StepResult at="find" noticeAt={noticeAt} error={error} notice={notice} />
 
     <div className="product-result" aria-label="找货结果">
       <p className="product-result-market">{snapshotLine ?? "市场快照：还没有本商品的查询结果快照。"}</p>
@@ -1974,12 +1988,14 @@ export default function ProductPage({
       {reviewRequired ? <p className="product-capture-blocked" role="alert">{CAPTURE_REVIEW_BLOCKED_MESSAGE}</p> : null}
       <button type="button" className={`button ${highlight === "capture" && !reviewRequired ? "primary" : "secondary"}`}
         disabled={saving || draft === null || reviewRequired}
-        onClick={() => run(onRequestCapture, captureSubmissionFromDraft({ candidate, draft, marketSnapshot }), "已申请插件采集，采到后这里会显示结果。")}>申请插件采集</button>
+        onClick={() => run(onRequestCapture, captureSubmissionFromDraft({ candidate, draft, marketSnapshot }), "已申请插件采集，采到后这里会显示结果。", "capture")}>
+        {saving && noticeAt === "capture" ? "正在申请…" : "申请插件采集"}</button>
       {reviewRequired ? <button type="button" className="button primary" disabled={saving || draft === null}
         onClick={() => run(onReviewCaptureAndRequest, {
           review: captureReviewPayload(candidate),
           capture: captureSubmissionFromDraft({ candidate, draft, marketSnapshot })
-        }, "已记下你的确认，并重新申请了一次采集。")}>{CAPTURE_REVIEW_ACTION_LABEL}</button> : null}
+        }, "已记下你的确认，并重新申请了一次采集。", "capture")}>{CAPTURE_REVIEW_ACTION_LABEL}</button> : null}
+      <StepResult at="capture" noticeAt={noticeAt} error={error} notice={notice} />
       {/* 采到了之后「申请插件采集」不会再建新的采集，所以重读这个页面必须自己有一个入口，否则这件商品就钉死在那一次读到的内容上。
           规格表在场时那个入口在规格表旁边（那里才是主人看着这些规格的地方），这里就不再重复一个同名按钮。 */}
       {recapturable && !recaptureInChoice ? <RecaptureControl candidate={candidate} disabled={saving} onRecapture={recapture} /> : null}
@@ -2035,8 +2051,8 @@ export default function ProductPage({
       </li>)}
     </ol>
 
-    {error ? <p role="alert">{error}</p> : null}
-    {notice ? <p role="status" className="product-notice">{notice}</p> : null}
+    {error && noticeAt === null ? <p role="alert">{error}</p> : null}
+    {notice && noticeAt === null ? <p role="status" className="product-notice">{notice}</p> : null}
 
     {typeof onCreateSiblingSku === 'function' &&
       candidate.sourceCapture?.mode === 'a_supplier_capture' &&

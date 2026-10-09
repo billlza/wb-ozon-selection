@@ -1258,6 +1258,8 @@ label em { color: var(--red); font-style: normal; font-size: 9px; }
 .product-capture-hint { color: var(--muted); }
 /* 结果未知且还没核实：这件商品此刻申请不了采集，颜色和位置都要让主人先看见这句话。 */
 .product-capture-blocked { color: #a86a12; font-weight: 700; }
+.product-step-result { margin: 6px 0 0; font-size: 13px; }
+.product-step-result[role="alert"] { color: #b3261e; font-weight: 700; }
 .product-capture button { justify-self: start; }
 /* 重新采集：打开之后先把会作废的东西说出来，再给按钮——和「淘汰」同一个形状。 */
 .product-recapture-confirm { display: flex; flex-direction: column; gap: 5px; padding: 7px 9px; border: 1px solid var(--line-dark); border-radius: 10px; background: #fffdf5; }
