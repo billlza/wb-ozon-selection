@@ -236,6 +236,8 @@ test("the collector reads the goods page shape found on the owner's saved pages 
     store: { initDataObj: { mall: { mallID: 1, mallName: "合成店铺" }, goods: {
       goodsID: Number(GOODS_ID), goodsName: "合成测试 三色背心", isOnSale: true, uin: "SYNTHETICUIN0000000000000000000000",
       neighborGroup: { nickname: "合成拼友" }, minGroupPrice: "19.90", maxGroupPrice: "21.90",
+      topGallery: ["https://img.pddpic.com/garner-api-new/synthetic-main.jpeg?imageMogr2/quality/90/thumbnail/1300x9999%3E",
+        "https://img.pddpic.com/garner-api-new/synthetic-second.jpeg?imageMogr2/quality/90"],
       goodsProperty: [{ key: "面料", values: ["牛津布"], ref_pid: 1, reference_id: 2 }],
       skus: [
         { skuId: 7001, skuID: 7001, goodsId: Number(GOODS_ID), quantity: 120, isOnsale: 1, groupPrice: "19.90", normalPrice: "25.90",
@@ -259,4 +261,27 @@ test("the collector reads the goods page shape found on the owner's saved pages 
   const serialized = JSON.stringify(result);
   for (const buyerData of ["SYNTHETICUIN", "合成拼友", "合成店铺", "券后"]) assert.equal(serialized.includes(buyerData), false, buyerData);
   assert.equal(sanitizePinduoduoEvidence(result.evidence, GOODS_ID).skus.length, 2);
+  // 首图 is the gallery's first picture with the resize suffix removed, kept with the field it came from.
+  assert.deepEqual([result.evidence.mainImageUrl, result.evidence.mainImageSource],
+    ["https://img.pddpic.com/garner-api-new/synthetic-main.jpeg", "rawData.goods.topGallery[0]"]);
+  const sanitized = sanitizePinduoduoEvidence(result.evidence, GOODS_ID);
+  assert.deepEqual([sanitized.mainImageUrl, sanitized.mainImageSource],
+    ["https://img.pddpic.com/garner-api-new/synthetic-main.jpeg", "rawData.goods.topGallery[0]"]);
+});
+
+test("the main image is the gallery's first picture or nothing, and the service keeps it only from Pinduoduo hosts", async () => {
+  const read = async (topGallery) => (await collectFrom(pageDocument([rawDataScript(syntheticGoods(topGallery === undefined ? {} : { topGallery }))]))).evidence;
+  // Some pages carry gallery entries as objects; the first one's url is the main image.
+  assert.equal((await read([{ url: "//img.pddpic.com/garner-api-new/synthetic-object.jpeg?imageMogr2/quality/90", id: 1 }])).mainImageUrl,
+    "https://img.pddpic.com/garner-api-new/synthetic-object.jpeg");
+  // No gallery, or a first entry from another host: no main image, never a later picture or a SKU thumbnail instead.
+  for (const gallery of [undefined, [], ["https://cbu01.alicdn.com/synthetic.jpg", "https://img.pddpic.com/garner-api-new/second.jpeg"]]) {
+    const evidence = await read(gallery);
+    assert.deepEqual([evidence.mainImageUrl, evidence.mainImageSource], [null, null], JSON.stringify(gallery));
+    assert.equal(sanitizePinduoduoEvidence(evidence, GOODS_ID).mainImageUrl, null);
+  }
+  const evidence = await read(["https://img.pddpic.com/garner-api-new/synthetic-main.jpeg"]);
+  // A main image the extension could not name the source of, or one from a foreign host, does not survive the service.
+  assert.throws(() => sanitizePinduoduoEvidence({ ...evidence, mainImageSource: null }, GOODS_ID), /invalid_capture/);
+  assert.equal(sanitizePinduoduoEvidence({ ...evidence, mainImageUrl: "https://example.com/a.jpeg" }, GOODS_ID).mainImageUrl, null);
 });

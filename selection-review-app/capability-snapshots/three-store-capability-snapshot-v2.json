@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-09T16:51:38.612Z",
+  "frozenAt": "2026-10-09T17:02:34.694Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 886,
-      "sha256": "db1023feccd6e5e12dda092191c04e95f53a0144c633d5cf183405b49daa291c",
+      "artifactCount": 888,
+      "sha256": "e94d58504fecfc2e1dca1539b79c6495e5b1aab84acc8daa290883888eca4606",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -56,7 +56,7 @@
       },
       {
         "path": "extension/1688-capture/collector-pinduoduo.js",
-        "sha256": "b3bdae8e1e66971384493d9e55d7ca22da219193b8b8ebde3b15afdec963b0b9"
+        "sha256": "29226ca4f90bdcf5c2a2cb1d70570c02de7a322b61772e4b801a513c0424d442"
       },
       {
         "path": "extension/1688-capture/collector.js",
@@ -424,7 +424,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "27462862c3d06742d5099be446a813cfdeacf71cfdc0c94a7716b04731d43684"
+        "sha256": "f5c978d49fcd3b9a8e6931c32c72e9d1377485b90d880f3874590beb99dbaba6"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -617,6 +617,10 @@
       {
         "path": "lib/http-api-boundary.mjs",
         "sha256": "3bff5e0df094fc8e9b5b6fb3ab44c77d547318b12b2dd75c0cbc275e40d2538b"
+      },
+      {
+        "path": "lib/image-fingerprint.mjs",
+        "sha256": "438185d154904c11a8b068be09564201646420e1825bff8760141b881d8f1e84"
       },
       {
         "path": "lib/keyword-evidence-orchestrator.mjs",
@@ -1116,7 +1120,7 @@
       },
       {
         "path": "lib/source-capture.mjs",
-        "sha256": "6d20a0d79173536d88ecab8fa1c9d667175ed4f2584a6382b96164ad2973a277"
+        "sha256": "8f96478a3ab967da9bd5ae0d75910d02c4301c735ac139ca3ede7c37aa990f1c"
       },
       {
         "path": "lib/store-binding.mjs",
@@ -1516,7 +1520,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "80510c19321a225f6182be799467904d8f84c81ddd456b228584452bb4661c70"
+        "sha256": "185ef5c3c389f1bc1121f2784b8263cb73454825c08df3c0fe30b8a2d4e14cab"
       },
       {
         "path": "src/App.jsx",
@@ -2903,6 +2907,10 @@
         "sha256": "892a0144fbdc18103336c7a4719a6cf86d5e90406c4eea221f4c704b885b646b"
       },
       {
+        "path": "tests/image-fingerprint.test.mjs",
+        "sha256": "f88e1841d79b8256df4a213739c5e08464a3c4e7dc208a21945214e1705b6c0f"
+      },
+      {
         "path": "tests/keyword-evidence-orchestrator.test.mjs",
         "sha256": "868d9170ea914ebc7174c76227d152088e119c66c6277f0b52a93bf455dd884c"
       },
@@ -3216,7 +3224,7 @@
       },
       {
         "path": "tests/pinduoduo-capture.test.mjs",
-        "sha256": "acc0b5a7cf3c711bb8bdfe355b48b32b2884cddf7e819c2d1f63d59718c28745"
+        "sha256": "9c58e8cc18b1fb000511d4216b3962239f03b3e899740a45346dc23bb3d23b1d"
       },
       {
         "path": "tests/platform-write-bindings.test.mjs",
@@ -3955,6 +3963,10 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/image-fingerprint.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/sku-choice-estimate.mjs",
           "status": "present_in_integration_source"
         },
@@ -4004,6 +4016,10 @@
         },
         {
           "path": "tests/helpers/a-supplier-image-search-fixture.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/image-fingerprint.test.mjs",
           "status": "present_in_integration_source"
         },
         {

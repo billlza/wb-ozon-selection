@@ -2653,6 +2653,8 @@ function markAStageCaptureNeedsOwnerSelection(current, session, evidence) {
     titleSource: evidence.titleSource,
     offerIdSource: evidence.offerIdSource,
     pageSelectedSkuId: evidence.pageSelectedSkuId,
+    mainImageUrl: evidence.mainImageUrl,
+    mainImageSource: evidence.mainImageSource,
     priceRanges: evidence.priceRanges,
     pageFields: evidence.pageFields,
     supplierAttributes: evidence.supplierAttributes,

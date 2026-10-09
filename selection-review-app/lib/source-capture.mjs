@@ -385,6 +385,10 @@ function sanitizeSupplierEvidence(input, expectedOfferId, normalizeSource, canon
   const unitDomesticFreightSource = text(pageFields.unitDomesticFreightSource, 180);
   if (unitProductPriceCny !== null && !unitProductPriceSource) throw new Error("invalid_capture");
   if (unitDomesticFreightCny !== null && !unitDomesticFreightSource) throw new Error("invalid_capture");
+  // The listing's own first picture, kept only from the platform's image hosts and only with the field it was read from.
+  const mainImageUrl = canonicalImageUrl(input.mainImageUrl);
+  const mainImageSource = text(input.mainImageSource, 180);
+  if (mainImageUrl !== null && !mainImageSource) throw new Error("invalid_capture");
 
   return {
     offerId,
@@ -396,6 +400,8 @@ function sanitizeSupplierEvidence(input, expectedOfferId, normalizeSource, canon
     titleSource: text(input.titleSource, 180) || null,
     offerIdSource: text(input.offerIdSource, 180) || null,
     pageSelectedSkuId: text(input.pageSelectedSkuId, 160) || null,
+    mainImageUrl,
+    mainImageSource: mainImageUrl === null ? null : mainImageSource,
     priceRanges,
     pageFields: {
       unitProductPriceCny,

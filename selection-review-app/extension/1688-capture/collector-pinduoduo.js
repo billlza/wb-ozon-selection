@@ -175,6 +175,10 @@ export async function collectPinduoduoPage(expectedGoodsId) {
   ].map(([value, source]) => [limitText(value, 800).replace(/\s*[-_|]\s*拼多多.*$/, "").trim(), source])
     .find(([value]) => value) || ["", null];
   const onSale = goods.isOnSale ?? goods.is_on_sale;
+  // 首图 is the gallery's first picture and nothing else: when that one entry is not a Pinduoduo image, there is no main
+  // image, rather than a later gallery picture or a SKU thumbnail standing in for it.
+  const gallery = Array.isArray(goods.topGallery) ? goods.topGallery : [];
+  const mainImageUrl = gallery.length ? imageUrlFrom(typeof gallery[0] === "string" ? gallery[0] : gallery[0]?.url) : null;
 
   return {
     status: "captured",
@@ -187,6 +191,8 @@ export async function collectPinduoduoPage(expectedGoodsId) {
       titleSource: titleChoice[1],
       offerIdSource: `rawData.goods.${declared[0][1]}`,
       pageSelectedSkuId: null,
+      mainImageUrl,
+      mainImageSource: mainImageUrl ? "rawData.goods.topGallery[0]" : null,
       priceRanges: [],
       pageFields: {
         unitProductPriceCny: null,
