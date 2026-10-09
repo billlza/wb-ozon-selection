@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-09T16:23:40.776Z",
+  "frozenAt": "2026-10-09T16:31:47.150Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 886,
-      "sha256": "e8393823e7266f018b46111c41cbc23ec0bd511afbe2a37f8c7d9d46a4d040eb",
+      "sha256": "e6753c6d84383c95012b971561e67f476e9e65b1b55499a98282e42d5ecd1e32",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -3216,7 +3216,7 @@
       },
       {
         "path": "tests/pinduoduo-capture.test.mjs",
-        "sha256": "3a8664dbeac61c2a9b359b993459586d9bc2859bceb355ab14bae8b7f1da82b9"
+        "sha256": "acc0b5a7cf3c711bb8bdfe355b48b32b2884cddf7e819c2d1f63d59718c28745"
       },
       {
         "path": "tests/platform-write-bindings.test.mjs",
