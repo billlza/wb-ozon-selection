@@ -259,7 +259,7 @@ export function classifyPinduoduoSource(value) {
       if (offerId) return { type: "detail", sourceUrl: `https://mobile.yangkeduo.com/goods.html?goods_id=${offerId}`, offerId };
       const token = url.searchParams.getAll("ps");
       return token.length === 1 && /^[A-Za-z0-9_-]{1,160}$/.test(token[0])
-        ? { type: "short", sourceUrl: `https://mobile.yangkeduo.com/goods2.html?ps=${token[0]}`, offerId: "" }
+        ? { type: "short", sourceUrl: `https://mobile.yangkeduo.com${url.pathname}?ps=${token[0]}`, offerId: "" }
         : null;
     }
     if (url.hostname !== "p.pinduoduo.com") return null;

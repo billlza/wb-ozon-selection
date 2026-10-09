@@ -83,8 +83,10 @@ export async function collectPinduoduoPage(expectedGoodsId) {
     for (const script of Array.from(document.querySelectorAll?.("script") || []).slice(0, 80)) {
       const content = script.textContent;
       if (typeof content !== "string" || !content || content.length > 5_000_000 || !content.includes('"initDataObj"')) continue;
-      for (const anchor of ['{"store":', '{"initDataObj":']) {
-        const start = content.indexOf(anchor);
+      // The assignment's own object first (its keys may come in any order), then the payload's key names as a fallback.
+      const assigned = content.search(/\brawData\s*=\s*\{/);
+      const starts = [assigned < 0 ? -1 : content.indexOf("{", assigned), content.indexOf('{"store":'), content.indexOf('{"initDataObj":')];
+      for (const start of starts) {
         if (start < 0) continue;
         const sliced = balancedJsonObject(content, start);
         if (!sliced) continue;
@@ -156,7 +158,8 @@ export async function collectPinduoduoPage(expectedGoodsId) {
       priceSource: price.source,
       stock,
       stockSource: stock === null ? null : `${path}.quantity`,
-      inStock: stock === null ? null : stock > 0,
+      // A SKU the page marks off sale cannot be bought, whatever stock figure it still carries.
+      inStock: rawSku.isOnsale === 0 || rawSku.isOnsale === false ? false : stock === null ? null : stock > 0,
       imageUrl: imageUrlFrom(first(rawSku.thumbUrl, rawSku.thumb_url, rawSku.skuThumbUrl)),
       weight: null,
       weightSource: null

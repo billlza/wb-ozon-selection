@@ -628,7 +628,7 @@ export const CAPABILITY_NODES = Object.freeze([
       capabilityRef("tests/a-supplier-image-search-runner.test.mjs", "test(", "图搜执行边界测试"),
       capabilityRef("tests/a-supplier-image-search-runtime-services.test.mjs", "test(", "图搜配置门禁测试"),
       capabilityRef("tests/a-supplier-image-search-api.test.mjs", "test(", "图搜未配置API测试")],
-    artifactRefs: ["extension/1688-capture/collector.js", "extension/1688-capture/collector-pinduoduo.js", "extension/1688-capture/capture-request.js", "extension/1688-capture/source-routing.js", "extension/1688-capture/manifest.json",
+    artifactRefs: ["extension/1688-capture/collector.js", "extension/1688-capture/collector-pinduoduo.js", "scripts/check-pinduoduo-saved-page.mjs", "extension/1688-capture/capture-request.js", "extension/1688-capture/source-routing.js", "extension/1688-capture/manifest.json",
       "schema/a-supplier-image-search-v1.schema.json", "tests/a-supplier-image-search-store.test.mjs", "tests/helpers/a-supplier-image-search-fixture.mjs",
       "tests/fixtures/a-supplier-1688-inline-context-fixture.mjs"]
   }),

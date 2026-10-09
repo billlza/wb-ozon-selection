@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-09T15:58:25.947Z",
+  "frozenAt": "2026-10-09T16:23:08.994Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 884,
-      "sha256": "afbd42539c6c7720f9a2cae7be29b12e18f10f3855212d8fa0573513ced1b2f7",
+      "artifactCount": 885,
+      "sha256": "a3b357db0e0cc62985ff544ad9c56ba46c64c88cd20c383e282f8c0cda02ee87",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -56,7 +56,7 @@
       },
       {
         "path": "extension/1688-capture/collector-pinduoduo.js",
-        "sha256": "699fb27e9e07bc389454d7740e2307c8ef6cc8f2211085ca000113ccb8d5b325"
+        "sha256": "b3bdae8e1e66971384493d9e55d7ca22da219193b8b8ebde3b15afdec963b0b9"
       },
       {
         "path": "extension/1688-capture/collector.js",
@@ -68,7 +68,7 @@
       },
       {
         "path": "extension/1688-capture/source-routing.js",
-        "sha256": "8a6ad4aed4183cd5b5f28b67747f4babf3be212e38fbd52267644b00ca80399f"
+        "sha256": "069e1d3de63b877e42c05b87a97fb87697806f13244ac710cb64c7c64d46e7a2"
       },
       {
         "path": "index.html",
@@ -424,7 +424,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "32d2e504b53244befd5fc1aa4f7258c27377b37d738cd341ede260786531c53b"
+        "sha256": "e4438c0cb131310528999a386cb66edac9471a65176557083a33da3b1a8a05d3"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -1116,7 +1116,7 @@
       },
       {
         "path": "lib/source-capture.mjs",
-        "sha256": "5b5933e5555e163792a6f0db2cee1b57f71b79043d78e2f7bb96747476be21d1"
+        "sha256": "6d20a0d79173536d88ecab8fa1c9d667175ed4f2584a6382b96164ad2973a277"
       },
       {
         "path": "lib/store-binding.mjs",
@@ -1441,6 +1441,10 @@
       {
         "path": "scripts/capability-source-snapshot.mjs",
         "sha256": "42c8b30cdb03b3558244d0cbbd5e96f6cccd01871da06174d55691fe88b4d4a4"
+      },
+      {
+        "path": "scripts/check-pinduoduo-saved-page.mjs",
+        "sha256": "dc0c378a3100987e7f7e928025421899575a70d83a09908d21c4d9928089da2b"
       },
       {
         "path": "scripts/ci-api-boundary.mjs",
@@ -3208,7 +3212,7 @@
       },
       {
         "path": "tests/pinduoduo-capture.test.mjs",
-        "sha256": "4db505fa1ae6271b0c685da7912c84ca8fe12ef5dc8bd70bebf8a9089b179a5a"
+        "sha256": "3a8664dbeac61c2a9b359b993459586d9bc2859bceb355ab14bae8b7f1da82b9"
       },
       {
         "path": "tests/platform-write-bindings.test.mjs",
@@ -3956,6 +3960,10 @@
         },
         {
           "path": "schema/a-supplier-image-search-v1.schema.json",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "scripts/check-pinduoduo-saved-page.mjs",
           "status": "present_in_integration_source"
         },
         {

@@ -97,7 +97,7 @@ function pinduoduoGoodsId(url) {
 /**
  * Pinduoduo's product page is its mobile page (mobile.yangkeduo.com/goods.html?goods_id=N). A link that already names
  * one goods_id is reduced to that canonical address, dropping share and tracking parameters. A share link that hides
- * the goods behind a token (p.pinduoduo.com/<token>, goods2.html?ps=<token>) is a short link: the extension has to
+ * the goods behind a token (p.pinduoduo.com/<token>, goods.html or goods2.html?ps=<token>) is a short link: the extension has to
  * open it and read the goods_id from where it lands, exactly like a qr.1688.com link.
  */
 export function normalizePinduoduoCaptureSource(value) {
@@ -110,9 +110,10 @@ export function normalizePinduoduoCaptureSource(value) {
     if (PINDUODUO_GOODS_HOSTS.has(url.hostname) && PINDUODUO_GOODS_PATHS.has(url.pathname)) {
       const offerId = pinduoduoGoodsId(url);
       if (offerId) return { type: "detail", sourceUrl: `https://mobile.yangkeduo.com/goods.html?goods_id=${offerId}`, offerId };
+      // Share links come as goods.html?ps= as well as goods2.html?ps=; the page they name is kept, only the host is fixed.
       const token = url.searchParams.getAll("ps");
       return token.length === 1 && /^[A-Za-z0-9_-]{1,160}$/.test(token[0])
-        ? { type: "short", sourceUrl: `https://mobile.yangkeduo.com/goods2.html?ps=${token[0]}`, offerId: "" }
+        ? { type: "short", sourceUrl: `https://mobile.yangkeduo.com${url.pathname}?ps=${token[0]}`, offerId: "" }
         : invalid;
     }
     if (url.hostname === "p.pinduoduo.com") {

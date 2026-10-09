@@ -78,6 +78,9 @@ test("Pinduoduo links reduce to one canonical goods page, share links stay short
     { type: "short", sourceUrl: "https://p.pinduoduo.com/AbC_12-x", offerId: "" });
   assert.deepEqual(normalizePinduoduoCaptureSource("https://mobile.yangkeduo.com/goods2.html?ps=Tok3n"),
     { type: "short", sourceUrl: "https://mobile.yangkeduo.com/goods2.html?ps=Tok3n", offerId: "" });
+  // Both share shapes the owner copies from the app (2026-10-09) keep the page they name.
+  assert.deepEqual(normalizePinduoduoCaptureSource("https://mobile.pinduoduo.com/goods.html?ps=Tok3n"),
+    { type: "short", sourceUrl: "https://mobile.yangkeduo.com/goods.html?ps=Tok3n", offerId: "" });
   for (const rejected of [
     `http://mobile.yangkeduo.com/goods.html?goods_id=${GOODS_ID}`,
     `https://mobile.yangkeduo.com/goods.html?goods_id=${GOODS_ID}&goods_id=1`,
@@ -103,6 +106,7 @@ test("the extension reads a Pinduoduo link exactly as the service does", () => {
     `https://mobile.pinduoduo.com/goods2.html?goods_id=${GOODS_ID}`,
     "https://p.pinduoduo.com/AbC_12-x",
     "https://mobile.yangkeduo.com/goods2.html?ps=Tok3n",
+    "https://mobile.yangkeduo.com/goods.html?ps=Tok3n",
     `https://mobile.yangkeduo.com/goods.html?goods_id=${GOODS_ID}&goods_id=1`,
     `http://mobile.yangkeduo.com/goods.html?goods_id=${GOODS_ID}`,
     "https://p.pinduoduo.com/a/b"
@@ -221,4 +225,37 @@ test("failure wording names Pinduoduo for a Pinduoduo job and stays word for wor
   assert.equal(sourceCaptureFailureMessage("short_link_resolution_failed", "", "pinduoduo"), "拼多多短链没有落到可核验的商品详情页");
   assert.equal(sourceCaptureFailureMessage("site_login_required"), "1688页面需要先登录");
   assert.equal(sourceCaptureFailureMessage("extension_not_installed", "", "pinduoduo"), "未检测到本机1688采集扩展");
+});
+
+test("the collector reads the goods page shape found on the owner's saved pages and leaves buyer data alone", async () => {
+  // Shape recorded from two real goods pages on 2026-10-09 (field names and value types only; all values here are synthetic):
+  // other keys before store, both skuId and skuID, prices as yuan strings, oldGroupPrice in fen, a coupon priceDisplay,
+  // weight 0 meaning "not stated", and buyer data (uin, neighborGroup) inside the same goods object.
+  const model = {
+    env: { synthetic: true },
+    store: { initDataObj: { mall: { mallID: 1, mallName: "合成店铺" }, goods: {
+      goodsID: Number(GOODS_ID), goodsName: "合成测试 三色背心", isOnSale: true, uin: "SYNTHETICUIN0000000000000000000000",
+      neighborGroup: { nickname: "合成拼友" }, minGroupPrice: "19.90", maxGroupPrice: "21.90",
+      goodsProperty: [{ key: "面料", values: ["牛津布"], ref_pid: 1, reference_id: 2 }],
+      skus: [
+        { skuId: 7001, skuID: 7001, goodsId: Number(GOODS_ID), quantity: 120, isOnsale: 1, groupPrice: "19.90", normalPrice: "25.90",
+          oldGroupPrice: 2290, price: 0, marketPrice: 0, weight: 0, priceDisplay: { prefix: "券后", price: "15.9" },
+          thumbUrl: "https://img.pddpic.com/mms-material-img/synthetic-b.jpeg",
+          specs: [{ spec_key: "颜色", spec_value: "粉色", spec_key_id: 1, spec_value_id: 11 }] },
+        { skuId: 7002, skuID: 7002, goodsId: Number(GOODS_ID), quantity: 3, isOnsale: 0, groupPrice: "21.90", normalPrice: "27.90",
+          specs: [{ spec_key: "颜色", spec_value: "蓝色", spec_key_id: 1, spec_value_id: 12 }] }
+      ] } } }
+  };
+  const script = `window.rawData=${JSON.stringify(model)};`;
+  const result = await collectFrom(pageDocument(["var other = 1;", script]));
+  assert.equal(result.status, "captured", JSON.stringify(result));
+  const [pink, blue] = result.evidence.skus;
+  assert.deepEqual([pink.sourceSkuId, pink.priceCny, pink.priceSource, pink.stock, pink.inStock, pink.weight],
+    ["7001", 19.9, "rawData.goods.skus[0].groupPrice", 120, true, null]);
+  assert.deepEqual([blue.priceCny, blue.inStock], [21.9, false]);
+  assert.equal(result.evidence.title, "合成测试 三色背心");
+  assert.deepEqual(result.evidence.supplierAttributes, { 面料: "牛津布" });
+  const serialized = JSON.stringify(result);
+  for (const buyerData of ["SYNTHETICUIN", "合成拼友", "合成店铺", "券后"]) assert.equal(serialized.includes(buyerData), false, buyerData);
+  assert.equal(sanitizePinduoduoEvidence(result.evidence, GOODS_ID).skus.length, 2);
 });
