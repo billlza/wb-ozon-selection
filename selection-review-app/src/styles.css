@@ -1260,6 +1260,8 @@ label em { color: var(--red); font-style: normal; font-size: 9px; }
 .product-capture-blocked { color: #a86a12; font-weight: 700; }
 .product-step-result { margin: 6px 0 0; font-size: 13px; }
 .product-step-result[role="alert"] { color: #b3261e; font-weight: 700; }
+/* 顶部提示位的报错同样要像报错：黑色正文字的拒绝原因，主人看过去也认不出来（2026-10-09）。 */
+.product-page-alert { color: #b3261e; font-weight: 700; }
 .product-capture button { justify-self: start; }
 /* 重新采集：打开之后先把会作废的东西说出来，再给按钮——和「淘汰」同一个形状。 */
 .product-recapture-confirm { display: flex; flex-direction: column; gap: 5px; padding: 7px 9px; border: 1px solid var(--line-dark); border-radius: 10px; background: #fffdf5; }

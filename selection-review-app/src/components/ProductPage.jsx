@@ -2051,7 +2051,7 @@ export default function ProductPage({
       </li>)}
     </ol>
 
-    {error && noticeAt === null ? <p role="alert">{error}</p> : null}
+    {error && noticeAt === null ? <p role="alert" className="product-page-alert">{error}</p> : null}
     {notice && noticeAt === null ? <p role="status" className="product-notice">{notice}</p> : null}
 
     {typeof onCreateSiblingSku === 'function' &&

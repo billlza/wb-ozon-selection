@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-09T16:45:37.655Z",
+  "frozenAt": "2026-10-09T16:51:38.612Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 886,
-      "sha256": "c0505d6df1d9ef5b27d0f09bda869376e5e7c21c5a63e177d9b9e27f3db9e0b1",
+      "sha256": "db1023feccd6e5e12dda092191c04e95f53a0144c633d5cf183405b49daa291c",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -1696,7 +1696,7 @@
       },
       {
         "path": "src/components/ProductPage.jsx",
-        "sha256": "60ec2a041dd106d63901cd22f5d66b56221882b5fe6043db5f607bbfe5ed3cb9"
+        "sha256": "a36bf89992c4d9ea1026e279447e17ab5f9d74a62af35c5bd724d6d3c6948752"
       },
       {
         "path": "src/components/ProductionOwnerDecisionForm.jsx",
@@ -1824,7 +1824,7 @@
       },
       {
         "path": "src/styles.css",
-        "sha256": "3acd3758e80fadca61226d378283492ec308a585d35f0ddcf4911de93a160e55"
+        "sha256": "a92c481c9da2b9f45542204baddf32260ec53cadd2e160592b746f4ed0820b63"
       },
       {
         "path": "src/wbPresentation.js",
