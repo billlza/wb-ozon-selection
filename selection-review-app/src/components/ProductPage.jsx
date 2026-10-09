@@ -241,12 +241,17 @@ export const CAPTURE_REVIEW_BLOCKED_MESSAGE =
   "插件领走了上一次采集，但一直没有把结果传回来，服务端只能记成「结果未知」。软件不会替你猜这次采到了什么，所以在你确认之前，这件商品不能再申请采集。";
 export const CAPTURE_REVIEW_ACTION_LABEL = "这次采集没有结果，我确认并重新申请";
 
+/** 货源平台由链接本身决定：拼多多的商品页和分享短链叫拼多多，其余（包括还没填链接）照旧叫 1688。 */
+export const supplySiteName = value =>
+  /^https:\/\/(?:mobile\.yangkeduo\.com|mobile\.pinduoduo\.com|p\.pinduoduo\.com)\//i.test(String(value ?? "").trim()) ? "拼多多" : "1688";
+
 /** The capture job in the owner's words; a failed run stays visible as history, never as the current state. */
 export function captureStatusLine(candidate) {
   const capture = candidate?.sourceCapture;
   if (!isObject(capture)) return "还没有申请过插件采集。";
-  if (capture.status === "captured_waiting_owner_selection") return "插件已采到1688页面数据，等你选具体规格。";
-  if (capture.jobStatus === "claimed" || capture.status === "extension_running") return "插件已领取本次采集，正在读取1688页面。";
+  const site = supplySiteName(capture.sourceUrl || candidate?.sourceUrl);
+  if (capture.status === "captured_waiting_owner_selection") return `插件已采到${site}页面数据，等你选具体规格。`;
+  if (capture.jobStatus === "claimed" || capture.status === "extension_running") return `插件已领取本次采集，正在读取${site}页面。`;
   if (capture.status === "waiting_extension") return "已排队，等插件领取本次采集。";
   const reason = textOf(capture.reason) || textOf(capture.failureCode);
   if (captureNeedsOwnerReview(candidate)) return `上一次采集的结果未知：${reason || "服务端没有收到结果"}。`;
@@ -946,10 +951,10 @@ function SkuChoiceSection({ candidate, table, chosen, saving, recapturable = fal
   return <section className="product-section product-sku-choice" aria-label="选规格">
     <h3>选哪个规格上架</h3>
     {/* 一个重量都没采到时，「按利润挑」这句话就是假的，不能照说。 */}
-    <p className="product-section-hint">{`插件已经把这件1688货源的 ${table.total} 个规格采回来了。${gap?.all === true
+    <p className="product-section-hint">{`插件已经把这件${supplySiteName(capture.sourceUrl)}货源的 ${table.total} 个规格采回来了。${gap?.all === true
       ? "它们货价不同、重量也不同，但这一次没有采到重量，所以现在还挑不了利润。"
-      : "它们货价不同、重量不同，所以运费和利润也不同——这一步就是让你按利润挑，而不是自己去1688页面上对着表格数。"}`}</p>
-    <p className="product-sku-offer">货源 1688 / {textOf(capture.offerId) || "未取得"}
+      : `它们货价不同、重量不同，所以运费和利润也不同——这一步就是让你按利润挑，而不是自己去${supplySiteName(capture.sourceUrl)}页面上对着表格数。`}`}</p>
+    <p className="product-sku-offer">货源 {supplySiteName(capture.sourceUrl)} / {textOf(capture.offerId) || "未取得"}
       {` · 目标售价 ${RUB(table.sources.targetSalePriceRub)}`}
       {dayOf(capture.observedAt) ? ` · ${dayOf(capture.observedAt)} 采到` : ""}</p>
 
@@ -1558,7 +1563,7 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
             {finite(benchmark.currentPrice) === null ? "" : ` ${benchmark.currentPrice} ${benchmark.currency === "RUB" ? "卢布" : benchmark.currency ?? ""}`}
             {textOf(benchmark.collectedOn) ? `，快照采于 ${benchmark.collectedOn}` : ""}。
           </p>
-          <p>{`你的货：1688 ${textOf(supply.offerId) || "编号未取得"}`}
+          <p>{`你的货：${supplySiteName(supply.productUrl)} ${textOf(supply.offerId) || "编号未取得"}`}
             {spec === null ? "，还没指定变体" : ` ${spec.label}，货价 ${money(spec.priceCny) ?? PENDING}${declaredText(spec.priceBasis)}` +
               `，打包 ${spec.weightKg} 公斤${declaredText(spec.weightBasis)} · ${size}`}。</p>
         </span>
@@ -1624,11 +1629,12 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
 const NUMBER_PATTERN = /^\d+(?:\.\d+)?$/;
 const positiveInput = value => NUMBER_PATTERN.test(String(value).trim()) && Number(value) > 0;
 const nonNegativeInput = value => NUMBER_PATTERN.test(String(value).trim()) && Number(value) >= 0;
-const supplyUrlInput = value => /^https:\/\/(?:detail\.1688\.com\/offer\/\d+\.html(?:[?#].*)?|qr\.1688\.com\/s\/[A-Za-z0-9_-]{1,160}\/?)$/i.test(String(value).trim());
+const supplyUrlInput = value => /^https:\/\/(?:detail\.1688\.com\/offer\/\d+\.html(?:[?#].*)?|qr\.1688\.com\/s\/[A-Za-z0-9_-]{1,160}\/?)$/i.test(String(value).trim()) ||
+  /^https:\/\/(?:(?:mobile\.yangkeduo\.com|mobile\.pinduoduo\.com)\/goods[12]?\.html\?.*\b(?:goods_id=\d{1,40}|ps=[A-Za-z0-9_-]{1,160})|p\.pinduoduo\.com\/[A-Za-z0-9_-]{1,160}\/?$)/i.test(String(value).trim());
 
 export function supplierDraftFormErrors(form) {
   const errors = {};
-  if (!supplyUrlInput(form.sourceUrl)) errors.sourceUrl = "请粘贴1688商品详情链接或分享短链";
+  if (!supplyUrlInput(form.sourceUrl)) errors.sourceUrl = "请粘贴1688或拼多多的商品链接或分享短链";
   if (!positiveInput(form.goodsPriceRmb)) errors.goodsPriceRmb = "请填写大于0的货价";
   if (!nonNegativeInput(form.domesticShippingRmb)) errors.domesticShippingRmb = "请填写国内运费，包邮填0";
   if (!positiveInput(form.packedWeightKg)) errors.packedWeightKg = "请填写大于0的打包重量";
@@ -1924,10 +1930,10 @@ export default function ProductPage({
    * below 选规格, still complete, because changing the target price or the packing size changes every row of that table.
    */
   const findBody = <>
-    <p className="product-section-hint">把1688上找到的这件货填进来。下面每个数字都算你自己填的，软件只按它们算钱，不会替你猜。</p>
+    <p className="product-section-hint">把1688或拼多多上找到的这件货填进来。下面每个数字都算你自己填的，软件只按它们算钱，不会替你猜。</p>
     <div className={`product-form${highlight === "form" ? " product-next" : ""}`}>
-      <Field id="supply-source-url" label="1688 商品链接" value={form.sourceUrl} error={errors.sourceUrl}
-        hint="详情页链接或分享短链都可以" placeholder="https://detail.1688.com/offer/…" onChange={change("sourceUrl")} />
+      <Field id="supply-source-url" label="1688 / 拼多多 商品链接" value={form.sourceUrl} error={errors.sourceUrl}
+        hint="1688 或拼多多的商品链接、分享短链都可以" placeholder="https://detail.1688.com/offer/… 或 https://mobile.yangkeduo.com/goods.html?goods_id=…" onChange={change("sourceUrl")} />
       <Field id="supply-goods-price" label="货价（元）" value={form.goodsPriceRmb} error={errors.goodsPriceRmb} type="number" onChange={change("goodsPriceRmb")} />
       <Field id="supply-domestic-shipping" label="国内运费（元）" value={form.domesticShippingRmb} error={errors.domesticShippingRmb}
         hint="包邮填 0" type="number" onChange={change("domesticShippingRmb")} />
@@ -1960,7 +1966,7 @@ export default function ProductPage({
     {draft === null ? null : <PricingGuidance guidance={view?.supplierDraftEstimateV1?.pricingGuidance ?? null} />}
 
     <div className={`product-capture${highlight === "capture" ? " product-next" : ""}`} aria-label="插件采集">
-      <h4>1688 采集</h4>
+      <h4>{supplySiteName(candidate.sourceCapture?.sourceUrl || form.sourceUrl)} 采集</h4>
       <p className="product-capture-extension">插件状态：{extensionStatus?.label ?? "插件未安装或未连接"}</p>
       {extensionConnected ? null : <p className="product-capture-hint">还没连上插件：打开 Chrome 的 chrome://extensions，开启开发者模式，点「加载已解压的扩展程序」，选择本项目的 extension/1688-capture 目录。</p>}
       <p className="product-capture-status">{captureStatusLine(candidate)}</p>

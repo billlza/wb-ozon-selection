@@ -1,11 +1,14 @@
 import { collect1688Page } from "./collector.js";
 import { collectOzonPage } from "./collector-ozon.js";
+import { collectPinduoduoPage } from "./collector-pinduoduo.js";
 import {
   classify1688NavigationOutcome,
-  classify1688Source,
+  classifyPinduoduoNavigation,
+  classifySupplierSource,
   observed1688TabAddress,
   shouldWaitFor1688Destination,
-  validateResolved1688Source
+  validateResolved1688Source,
+  validateResolvedPinduoduoSource
 } from "./source-routing.js";
 import {
   canonicalOzonCaptureSource,
@@ -41,6 +44,7 @@ function inspectCaptureTab(tab, payload) {
   }
   const address = observed1688TabAddress(tab).value;
   if (!address) return null;
+  if (classifySupplierSource(payload.sourceUrl)?.platform === "pinduoduo") return inspectPinduoduoTab(tab, address, payload);
   const resolved = validateResolved1688Source(payload.sourceUrl, address, payload.expectedOfferId);
   // The offer document has committed — tab.url is this offer and nothing else is pending — so the collector can start.
   // Waiting for the whole page to reach complete is what actually stopped the first real captures: a 1688 detail page
@@ -56,6 +60,18 @@ function inspectCaptureTab(tab, payload) {
   if (shouldWaitFor1688Destination(diagnostics, tab.status)) return null;
   if (diagnostics.redirectClassification === "login_required") throw failure("site_login_required");
   if (diagnostics.redirectClassification === "verification_required") throw failure("site_verification_required");
+  throw failure("short_link_resolution_failed");
+}
+
+// A Pinduoduo share link is followed only to its goods page; a stop anywhere else ends the job with its reason.
+function inspectPinduoduoTab(tab, address, payload) {
+  const resolved = validateResolvedPinduoduoSource(payload.sourceUrl, address, payload.expectedOfferId);
+  if (resolved && !tab.pendingUrl) return resolved;
+  const outcome = classifyPinduoduoNavigation(address, payload.expectedOfferId);
+  if (outcome === "different_offer") throw failure("wrong_offer");
+  if (outcome === "login_required") throw failure("site_login_required");
+  if (outcome === "verification_required") throw failure("site_verification_required");
+  if (outcome === "allowed_detail" || (outcome === "intermediate_page" && tab.status !== "complete")) return null;
   throw failure("short_link_resolution_failed");
 }
 
@@ -104,8 +120,9 @@ function validatedCollectedResult(collected, resolved, payload) {
     }
     return { status: "captured", evidence: { ...evidence, productUrl: resolved.sourceUrl } };
   }
-  const source = classify1688Source(evidence?.sourceUrl);
-  if (evidence?.offerId !== resolved.offerId || source?.type !== "detail" || source.sourceUrl !== resolved.sourceUrl) {
+  const source = classifySupplierSource(evidence?.sourceUrl);
+  if (evidence?.offerId !== resolved.offerId || source?.type !== "detail" || source.sourceUrl !== resolved.sourceUrl ||
+      source.platform !== classifySupplierSource(payload.sourceUrl)?.platform) {
     throw failure("wrong_offer");
   }
   return { status: "captured", resolvedSourceUrl: resolved.sourceUrl, evidence: { ...evidence, sourceUrl: resolved.sourceUrl } };
@@ -189,7 +206,7 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
     const capture = async () => {
       const url = isOzonCaptureJob(payload)
         ? canonicalOzonCaptureSource(payload.productUrl, payload.expectedProductId)
-        : classify1688Source(payload.sourceUrl).sourceUrl;
+        : classifySupplierSource(payload.sourceUrl).sourceUrl;
       const tab = await chromeApi.tabs.create({ url, active: false });
       if (!Number.isInteger(tab.id)) throw failure("system_error");
       if (signal.aborted) {
@@ -201,9 +218,10 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       const resolved = await waitForCaptureTab(chromeApi, tabId, payload, { ...waitOptions, signal });
       assertNotCancelled();
       const isOzon = isOzonCaptureJob(payload);
+      const pinduoduo = !isOzon && classifySupplierSource(payload.sourceUrl)?.platform === "pinduoduo";
       const execution = await chromeApi.scripting.executeScript({
         target: { tabId }, world: "ISOLATED",
-        func: isOzon ? collectOzonPage : collect1688Page,
+        func: isOzon ? collectOzonPage : pinduoduo ? collectPinduoduoPage : collect1688Page,
         args: [isOzon ? payload.expectedProductId : resolved.offerId]
       });
       assertNotCancelled();

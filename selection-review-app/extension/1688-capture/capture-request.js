@@ -1,4 +1,4 @@
-import { classify1688Source } from "./source-routing.js";
+import { classifySupplierSource } from "./source-routing.js";
 
 export const SUPPLIER_CAPTURE_REQUEST_TYPE = "SELECTION_REVIEW_1688_CAPTURE_REQUEST";
 export const SUPPLIER_CAPTURE_MODE = "a_supplier_capture";
@@ -61,9 +61,9 @@ const ERROR_MESSAGES = Object.freeze({
   capture_mode_invalid: "采集模式无效",
   revision_invalid: "采集修订号无效",
   extension_version_mismatch: "采集作业要求的插件版本与当前版本不一致",
-  source_url_invalid: "1688来源链接不在允许范围内",
-  short_link_resolution_not_allowed: "当前作业未授权解析1688短链",
-  expected_offer_invalid: "1688精确链接与作业锁定的offer不一致"
+  source_url_invalid: "1688或拼多多来源链接不在允许范围内",
+  short_link_resolution_not_allowed: "当前作业未授权解析1688或拼多多短链",
+  expected_offer_invalid: "精确商品链接与作业锁定的商品编号不一致"
 });
 
 export function captureRequestErrorMessage(code) {
@@ -90,7 +90,7 @@ export function validateSupplierCaptureRequest({ payload, senderUrl = "", manife
   if (payload.requiredExtensionVersion !== manifestVersion || !manifestVersion) {
     return { ok: false, code: "extension_version_mismatch" };
   }
-  const source = classify1688Source(payload.sourceUrl);
+  const source = classifySupplierSource(payload.sourceUrl);
   if (!source) return { ok: false, code: "source_url_invalid" };
   if (typeof payload.expectedOfferId !== "string") return { ok: false, code: "expected_offer_invalid" };
   if (source.type === "short") {

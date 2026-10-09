@@ -31,6 +31,12 @@ export function canonicalSupplierImageUrl(value) {
   return canonicalCaptureImageUrl(value, host => host === "alicdn.com" || host.endsWith(".alicdn.com"));
 }
 
+// Pinduoduo serves product pictures from its own image hosts; nothing else on its pages counts as a product image.
+export function canonicalPinduoduoImageUrl(value) {
+  return canonicalCaptureImageUrl(value, host => host === "pddpic.com" || host.endsWith(".pddpic.com") ||
+    host.endsWith(".yangkeduo.com"));
+}
+
 function canonicalCaptureImageUrl(value, allowedHost) {
   if (typeof value !== "string") return null;
   try {

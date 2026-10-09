@@ -20,6 +20,7 @@ import {
   recommendSupplierOption
 } from "./supplier-selection-flow.mjs";
 import { assertValidSupplierOption, UNKNOWN } from "./supplier-option.mjs";
+import { extractPinduoduoGoodsId, supplierCapturePlatform } from "./source-capture.mjs";
 
 export const REAL_A_B_C1_FLOW_VERSION = "real-a-b-c1-flow-v1.1";
 
@@ -43,6 +44,7 @@ function deepFreeze(value) {
 }
 
 function offerIdFromUrl(value) {
+  if (supplierCapturePlatform(value) === "pinduoduo") return extractPinduoduoGoodsId(value) || null;
   return new URL(value).pathname.match(/\/offer\/(\d+)\.html/i)?.[1] || null;
 }
 
@@ -82,9 +84,10 @@ function supplierOption(normalized, candidate, confirmedAt) {
   const capturedAttributes = saved ? {} : capturedSupplierAttributes(candidate);
   const variantAttributes = readConfirmedSupplierVariantAttributes(candidate, supplier);
   const declaredPowerProfile = readConfirmedSupplierPowerProfile(candidate);
+  const platform = supplierCapturePlatform(supplier.productUrl) === "pinduoduo" ? "pinduoduo" : "1688";
   const option = {
-    supplierOptionId: `supplier-option:1688:${offerId}`,
-    sourcePlatform: "1688",
+    supplierOptionId: `supplier-option:${platform}:${offerId}`,
+    sourcePlatform: platform,
     productUrl: supplier.productUrl,
     offerId,
     supplierSalesEvidence: UNKNOWN,

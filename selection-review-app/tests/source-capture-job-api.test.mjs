@@ -88,7 +88,7 @@ function patch(pathname, body) {
   });
 }
 
-function heartbeat(version = "1.2.7") {
+function heartbeat(version = "1.2.8") {
   return post("/api/extension/heartbeat", {
     version,
     backgroundReady: true,
@@ -96,7 +96,7 @@ function heartbeat(version = "1.2.7") {
   }, { Origin: extensionOrigin });
 }
 
-function claimJob(jobId, version = "1.2.7") {
+function claimJob(jobId, version = "1.2.8") {
   return post(`/api/extension/capture-jobs/${jobId}/claim`, { version }, { Origin: extensionOrigin });
 }
 
@@ -186,7 +186,7 @@ test("A确认只建立本次作业，明确领取一次并原子保存SKU，心�
   assert.equal(queued.status, "supplier_capture_job_queued");
   assert.equal(queued.captureJob.status, "queued");
   assert.equal(queued.captureJob.attempt, 0);
-  assert.equal(queued.captureJob.requiredExtensionVersion, "1.2.7");
+  assert.equal(queued.captureJob.requiredExtensionVersion, "1.2.8");
   assert.equal(queued.candidate.sourceCapture.status, "waiting_extension");
   assert.equal(queued.bStarted, false);
   assert.equal(queued.c1Created, false);
@@ -343,7 +343,7 @@ test("A确认只建立本次作业，明确领取一次并原子保存SKU，心�
   assert.equal((await repeat.json()).code, "previous_capture_requires_review");
   assert.equal(await readFile(dataFile, "utf8"), beforeRepeat);
   assert.equal(timedOut.workflowStatus, "codex_processing");
-  assert.equal((await (await heartbeat("1.2.7")).json()).captureJob, null, "unknown_outcome不得自动重新领取");
+  assert.equal((await (await heartbeat("1.2.8")).json()).captureJob, null, "unknown_outcome不得自动重新领取");
 
   // 等插件的过程中主人改了别的资料，商品修订号就会前进。收口只认这条采集记录本身（captureId），不再因为修订号变了
   // 就放弃：否则候选永远停在 waiting_extension，previous_capture_requires_review 会拒绝之后的每一次采集申请。
@@ -368,5 +368,76 @@ test("A确认只建立本次作业，明确领取一次并原子保存SKU，心�
   assert.equal(driftRetry.status, 202, "旧作业已收口，新的采集申请必须被接受");
   assert.equal((await driftRetry.json()).captureJob.status, "queued");
 
+  assert.equal(stderr.join(""), "");
+});
+
+test("拼多多货源链接走同一条作业：A确认建作业、插件领取一次、只按拼多多规则核验回传", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "source-capture-job-pdd-"));
+  const dataFile = path.join(directory, "candidates.json");
+  // Synthetic goods id and share token only.
+  const goodsUrl = "https://mobile.yangkeduo.com/goods.html?goods_id=123456789012";
+  const pdd = (id) => ({ ...candidate(id), sourceUrl: "https://p.pinduoduo.com/SyntheticTok" });
+  await writeFile(dataFile, JSON.stringify({
+    meta: { version: 2, title: "test", updatedAt: "2026-08-19T00:00:00.000Z", automationStarted: false },
+    rules: {}, candidates: [pdd("PDD-1"), pdd("PDD-WRONG")], dispatches: [], nodeDispatches: [], workflowComments: [],
+    controlAlerts: [], evidencePacks: []
+  }));
+  const child = spawn(process.execPath, [path.join(appDir, "server.mjs"), "--api-only"], {
+    cwd: appDir,
+    env: {
+      ...process.env,
+      SELECTION_REVIEW_DATA_FILE: dataFile,
+      SELECTION_REVIEW_STORE_BINDINGS_JSON: JSON.stringify([{ targetStore: "dandanshu", platform: "ozon", storeRef: SYNTHETIC_STORE_REF }]),
+      SELECTION_REVIEW_API_PORT: String(port),
+      SELECTION_REVIEW_ALLOWED_ORIGINS: baseUrl,
+      SELECTION_REVIEW_ALLOWED_EXTENSION_ORIGINS: extensionOrigin,
+      SELECTION_REVIEW_AUTO_DELIVER: "off",
+      SELECTION_REVIEW_CODEX_DISPATCH: "off"
+    },
+    stdio: ["ignore", "ignore", "pipe"]
+  });
+  const stderr = [];
+  child.stderr.on("data", (chunk) => stderr.push(String(chunk)));
+  t.after(() => stopApiProcess(child));
+  await waitForHealth(child, stderr);
+
+  const submission = (dataRevision, candidateId) => ({ ...aSubmission(dataRevision, candidateId),
+    supplierConfirmation: { productUrl: "https://p.pinduoduo.com/SyntheticTok", ownerSupplyConfirmed: false } });
+  const pddEvidence = () => ({ ...evidence(), offerId: "123456789012", sourceUrl: goodsUrl, title: "合成拼多多宠物背心",
+    titleSource: "rawData.goods.goodsName", offerIdSource: "rawData.goods.goodsID" });
+  async function claimFor(candidateId) {
+    const queuedResponse = await post(`/api/candidates/${candidateId}/lifecycle/a-confirm`, submission(1, candidateId));
+    assert.equal(queuedResponse.status, 202, await queuedResponse.clone().text());
+    const queued = await queuedResponse.json();
+    const claimResponse = await claimJob(queued.captureJob.jobId);
+    assert.equal(claimResponse.status, 200);
+    return (await claimResponse.json()).captureJob;
+  }
+
+  const job = await claimFor("PDD-1");
+  assert.equal(job.sourceUrl, "https://p.pinduoduo.com/SyntheticTok");
+  assert.equal(job.allowShortLinkResolution, true);
+  const resultResponse = await post("/api/candidates/PDD-1/source-capture/result", {
+    captureId: job.captureId, token: job.token, dataRevision: job.dataRevision, status: "captured",
+    resolvedSourceUrl: `${goodsUrl}&refer_share_id=synthetic`, evidence: pddEvidence()
+  }, { Origin: extensionOrigin });
+  assert.equal(resultResponse.status, 200);
+  const captured = (await resultResponse.json()).candidate.sourceCapture;
+  assert.equal(captured.status, "captured_waiting_owner_selection");
+  assert.equal(captured.offerId, "123456789012");
+  assert.equal(captured.sourceUrl, goodsUrl);
+  assert.equal(captured.skuChoices.length, 2);
+
+  // A 1688 page reported for a Pinduoduo job is not this goods, whatever its evidence says.
+  const wrongJob = await claimFor("PDD-WRONG");
+  const wrongResponse = await post("/api/candidates/PDD-WRONG/source-capture/result", {
+    captureId: wrongJob.captureId, token: wrongJob.token, dataRevision: wrongJob.dataRevision, status: "captured",
+    resolvedSourceUrl: "https://detail.1688.com/offer/876240928352.html", evidence: evidence()
+  }, { Origin: extensionOrigin });
+  assert.equal(wrongResponse.status, 200);
+  const rejected = (await wrongResponse.json()).candidate.sourceCapture;
+  assert.equal(rejected.status, "failed");
+  assert.equal(rejected.failureCode, "short_link_resolution_failed");
+  assert.match(rejected.reason, /^拼多多短链/);
   assert.equal(stderr.join(""), "");
 });

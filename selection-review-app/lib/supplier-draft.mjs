@@ -1,4 +1,4 @@
-import { normalize1688CaptureSource } from './source-capture.mjs';
+import { normalizeSupplierCaptureSource } from './source-capture.mjs';
 import { estimateDiscoveredProduct, parseSizeLimitCm, parseWeightLimitKg, pricingGuidance, roundDownCents } from './a-discovery-estimate.mjs';
 
 /**
@@ -51,9 +51,9 @@ export function normalizeSupplierDraftInput(input) {
   if (!Number.isInteger(input.dataRevision) || input.dataRevision < 0) {
     reject('保存找货资料必须提供当前数据修订号', 'supplier_draft_revision_required');
   }
-  const source = normalize1688CaptureSource(input.sourceUrl);
+  const source = normalizeSupplierCaptureSource(input.sourceUrl);
   if (source.type === 'invalid') {
-    reject('1688链接必须是detail.1688.com商品详情链接或qr.1688.com分享短链', 'supplier_draft_source_url_invalid');
+    reject('货源链接必须是1688商品详情链接或分享短链，或拼多多商品链接或分享短链', 'supplier_draft_source_url_invalid');
   }
   const goodsPriceRmb = cents(positive(input.goodsPriceRmb, '货价', 'supplier_draft_goods_price_invalid'));
   const domesticShippingRmb = cents(nonNegative(input.domesticShippingRmb, '国内运费', 'supplier_draft_domestic_shipping_invalid'));
