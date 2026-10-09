@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-09T05:57:21.043Z",
+  "frozenAt": "2026-10-09T15:09:42.467Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 882,
-      "sha256": "6b0a94bf5386b2a9c146d367ee7ed1792444c595b733fb0aa445057f6662b94d",
+      "artifactCount": 883,
+      "sha256": "b1ed166aee23752f1510af1d3930fba7e69c01c82df441bff4bd64b43ee0bd68",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -320,7 +320,7 @@
       },
       {
         "path": "lib/c1-ozon-attribute-proposal.mjs",
-        "sha256": "eaf28d0aafddee04165ff850a2b1526c4794d15ac563625152519578336f68fc"
+        "sha256": "37a8fd2297ea49465d059a9c2c1c7c89b0842e3d04184e6d9132bbe2d695c8d7"
       },
       {
         "path": "lib/c1-pricing-result-reuse.mjs",
@@ -420,7 +420,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "6be515a29a11954556621da2c74bcbda100f7b0f209b255306d8612815a99831"
+        "sha256": "164473b528586d74d54b20ddd62e51d320116d2a6af1b438c71496b1b9c494b9"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -1508,7 +1508,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "cc22b10af91892ade87a8def0f3be5eb557c09bcdbb52410633f3cd5013cca7b"
+        "sha256": "e5875e61e904adbc9226766cd33e5ed156893b38857a14e2b78d6ab74a435a9e"
       },
       {
         "path": "src/App.jsx",
@@ -2217,6 +2217,10 @@
       {
         "path": "tests/c1-ozon-attribute-mapping-use-case.test.mjs",
         "sha256": "9bfa049b9bb0f4624aacdf7ba70ab746c2cf4c9a6ddfa1abe6273d27dc5d4153"
+      },
+      {
+        "path": "tests/c1-ozon-attribute-proposal.test.mjs",
+        "sha256": "a3c6a26eac901be2c5028e0f4ee6b80d28b3c8ba799a6b5f711c26a2aadee619"
       },
       {
         "path": "tests/c1-paid-draft-owner-api.test.mjs",
@@ -5982,6 +5986,7 @@
         "tests/c1-frozen-supply-attribute-backfill-use-case.test.mjs",
         "tests/c1-attribute-routes-source-contract.test.mjs",
         "tests/c1-ozon-attribute-mapping-use-case.test.mjs",
+        "tests/c1-ozon-attribute-proposal.test.mjs",
         "tests/ozon-dictionary-value-reader.test.mjs",
         "tests/c1-draft-runtime-services.test.mjs",
         "tests/c1-keyword-handoff-retry-http.test.mjs",

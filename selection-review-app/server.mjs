@@ -6417,7 +6417,22 @@ async function handleApi(req, res, pathname) {
     // 对标页面上同名属性的值，按属性名对齐；它们是备选，默认不勾选。
     const labels = new Set(schema.attributes.map(item => item.label));
     const comparableAttributes = new Map();
-    for (const item of [...(current.lifecycleV11?.opportunityPackage?.salesSnapshots ?? []), ...(current.salesSnapshotsV11 ?? [])]) {
+    const comparableSnapshots = [...(current.lifecycleV11?.opportunityPackage?.salesSnapshots ?? []), ...(current.salesSnapshotsV11 ?? [])];
+    // 对标页面的全部俄语属性是模型的主要素材（主人2026-10-09定的做法），同一页面只送一次。
+    const comparableListings = [];
+    const listedFrom = new Set();
+    for (const item of comparableSnapshots) {
+      const from = String(item?.platformProductId ?? item?.snapshotId ?? "");
+      if (!from || listedFrom.has(from)) continue;
+      const attributes = Object.fromEntries(Object.entries(item?.attributes ?? {}).filter(([, value]) => typeof value === "string"));
+      if (Object.keys(attributes).length === 0) continue;
+      listedFrom.add(from);
+      comparableListings.push({ from, attributes });
+    }
+    const supplierReference = typeof current.sourceCapture?.title === "string" && current.sourceCapture.title.trim()
+      ? { platform: /yangkeduo\.com|pinduoduo\.com/i.test(String(current.sourceCapture.sourceUrl ?? current.sourceUrl ?? "")) ? "pinduoduo" : "1688",
+        title: current.sourceCapture.title } : null;
+    for (const item of comparableSnapshots) {
       for (const [key, value] of Object.entries(item?.attributes ?? {})) {
         if (!labels.has(key) || typeof value !== "string") continue;
         for (const one of value.split(",")) {
@@ -6450,7 +6465,7 @@ async function handleApi(req, res, pathname) {
           .slice(0, OZON_ATTRIBUTE_PROPOSAL_MAX_ATTRIBUTES),
         facts, categoryLabel: schema.categoryName ?? category, store: schema.store, category,
         candidateId: current.id, skuPackageId: sku.skuPackageId, dataRevision: String(current.dataRevision),
-        comparableAttributes
+        comparableAttributes, comparableListings, supplierReference
       });
       // 主人签字定下的值（品牌就是这样）——它不缺依据，只缺「平台给这个值的编号」。
       // 这一步**不经过模型**：拿声明里的那个值去字典里逐字搜，搜到就把编号补上，

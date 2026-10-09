@@ -68,17 +68,57 @@ function sha256(value) { return createHash("sha256").update(JSON.stringify(value
 /**
  * 网关要求每次调用都交代**送出去的是哪些证据**，并逐条声明它获准发给第三方 AI。
  *
- * 这里送的只有两样：Ozon 公开类目属性表，和本品**已经核实过的中文事实**（来自 1688 公开商品页）。
- * 两样都是公开商品资料，不含凭证、价格策略或店铺身份，所以 authorizedForAi 为真是说得出口的。
+ * 这里送四样：Ozon 公开类目属性表、本品**已经核实过的中文事实**（来自货源公开商品页）、
+ * 对标竞品页面上公开展示的俄语属性，以及货源公开商品页的标题。
+ * 四样都是公开商品资料，不含凭证、价格策略或店铺身份，所以 authorizedForAi 为真是说得出口的。
  * 将来要送别的，这里必须重新想一遍再加。
  */
-function evidenceRefsFor(attributes, facts) {
+function evidenceRefsFor(attributes, facts, comparableListings = [], supplierReference = null) {
   return [
     { id: `ozon-category-attributes:${sha256(attributes).slice(0, 16)}`, kind: "ozon_category_attributes",
       contentSha256: sha256(attributes), authorizedForAi: true },
     { id: `c1-verified-facts:${sha256(facts).slice(0, 16)}`, kind: "c1_verified_product_facts",
-      contentSha256: sha256(facts), authorizedForAi: true }
+      contentSha256: sha256(facts), authorizedForAi: true },
+    // 对标页面上公开展示的俄语属性，和 C1 文案请求送的竞品文字是同一类公开材料。
+    ...(comparableListings.length > 0 ? [{ id: `ozon-comparable-attributes:${sha256(comparableListings).slice(0, 16)}`,
+      kind: "public_competitor_text", contentSha256: sha256(comparableListings), authorizedForAi: true }] : []),
+    // 货源（1688/拼多多）公开商品页的标题，只作中文对照。
+    ...(supplierReference ? [{ id: `supplier-listing-text:${sha256(supplierReference).slice(0, 16)}`,
+      kind: "public_supplier_listing_text", contentSha256: sha256(supplierReference), authorizedForAi: true }] : [])
   ];
+}
+
+export const OZON_ATTRIBUTE_PROPOSAL_MAX_COMPARABLE_LISTINGS = 5;
+export const OZON_ATTRIBUTE_PROPOSAL_MAX_COMPARABLE_TERMS = 80;
+const COMPARABLE_VALUE_MAX_LENGTH = 300;
+
+/**
+ * 对标页面上**全部**俄语属性词，按页面分组送给模型——不只是和本类目属性同名的那几条。
+ * 2026-10-09 主人定的做法：属性词以竞品的俄语属性词为主要素材，货源的中文资料只用来对照，
+ * 一起洗出符合本商品事实、符合 Ozon 填写要求的属性值。
+ */
+export function normalizeComparableListings(listings) {
+  if (!Array.isArray(listings)) return [];
+  const result = [];
+  for (const listing of listings) {
+    if (result.length >= OZON_ATTRIBUTE_PROPOSAL_MAX_COMPARABLE_LISTINGS) break;
+    if (!isObject(listing) || !isObject(listing.attributes)) continue;
+    const terms = [];
+    for (const [name, value] of Object.entries(listing.attributes)) {
+      if (terms.length >= OZON_ATTRIBUTE_PROPOSAL_MAX_COMPARABLE_TERMS) break;
+      if (!nonEmpty(name) || !nonEmpty(value)) continue;
+      terms.push({ name: name.trim().slice(0, 120), value: value.trim().slice(0, COMPARABLE_VALUE_MAX_LENGTH) });
+    }
+    if (terms.length === 0) continue;
+    result.push({ from: nonEmpty(listing.from) ? String(listing.from).trim().slice(0, 120) : null, attributes: terms });
+  }
+  return result;
+}
+
+function normalizeSupplierReference(reference) {
+  if (!isObject(reference) || !nonEmpty(reference.title)) return null;
+  return { platform: nonEmpty(reference.platform) ? String(reference.platform).trim().slice(0, 40) : null,
+    title: reference.title.trim().slice(0, 800) };
 }
 
 /**
@@ -89,19 +129,20 @@ function evidenceRefsFor(attributes, facts) {
  */
 export function buildOzonAttributeChoiceRequest({ rows, categoryLabel, candidateId, skuPackageId, dataRevision }) {
   const text = [
-    "下面每一行是一个 Ozon 属性、它依据的那条中文商品事实，以及该属性字典里**真实存在**的候选值。",
-    "请为每一行从候选里挑出**最贴合那条中文事实**的一个。",
+    "下面每一行是一个 Ozon 属性、它依据的那条中文商品事实、对标竞品在这个属性上写的俄语值，以及该属性字典里**真实存在**的候选值。",
+    "请为每一行从候选里挑出一个：竞品写的值是首选参考，和中文事实相符时，优先挑与竞品值相同或最接近的候选。",
     "规则：",
     "1. chosenValue 必须**逐字**来自该行的 candidates，一个字都不能改（候选是中文的，就回中文）。",
     "2. 拿不准、或候选里没有一个真的贴合那条中文事实，就把 chosenValue 留成空字符串——**宁可不挑，不要猜**。",
     "2b. 但 required 为 true 的属性不填就发不出商品：尽最大努力挑一个确实说得通的，实在没有才留空。",
-    "3. 注意区分：这件商品自己的属性要贴合它自己的中文事实，不要选一个只是「同类商品常见」的值。",
+    "3. 竞品的值和这件商品的中文事实不符时（例如材质、款式不同），按中文事实挑，不要照抄竞品。",
     `类目：${categoryLabel}`,
     JSON.stringify(rows.map((item) => ({
       attributeId: item.attributeId,
       label: item.labelZh || item.label,
       required: item.required === true,
       chineseFact: item.sourceFactValue,
+      comparableValues: Array.isArray(item.comparableValues) ? item.comparableValues : [],
       // 候选一律用**中文**给模型：中文事实配中文候选，比让它跨语言猜可靠得多。
       // 中文取不到的候选退回俄文原值，并如实标出来，不拿俄文冒充中文。
       candidates: item.candidates.map((x) => x.valueZh || x.value)
@@ -124,25 +165,34 @@ export function buildOzonAttributeChoiceRequest({ rows, categoryLabel, candidate
   };
 }
 
-export function buildOzonAttributeProposalRequest({ attributes, facts, categoryLabel, candidateId, skuPackageId, dataRevision }) {
+export function buildOzonAttributeProposalRequest({ attributes, facts, categoryLabel, candidateId, skuPackageId, dataRevision,
+  comparableListings = [], supplierReference = null }) {
+  const listings = normalizeComparableListings(comparableListings);
+  const supplier = normalizeSupplierReference(supplierReference);
   const text = [
-    "下面是一个 Ozon 俄罗斯电商类目的属性清单，以及一件商品**已经核实过的中文事实**。",
-    "请为每个属性挑出最合适的那条中文事实，并给出它在 Ozon 上对应的**俄文属性值**。",
+    "下面是一个 Ozon 俄罗斯电商类目的属性清单、对标竞品页面上的俄语属性词、货源商品页的中文资料，以及本商品**已经核实过的中文事实**。",
+    "做法：以竞品的俄语属性词为主要素材，对照货源中文资料和已核实事实，为本商品洗出每个属性的**俄文属性值**。",
     "规则：",
-    "1. 只做翻译与配对，**不得创造任何商品事实**；中文事实里没有的信息一律不要补。",
-    "2. 找不到合适事实的属性，**直接不要出现在结果里**——宁可少给，不要猜。",
-    "2b. 但 required 为 true 的属性**不填就发不出商品**：请尽最大努力从事实里找依据，",
+    "1. 竞品的俄语属性词是首选措辞：竞品写的值和本商品事实相符时，直接用竞品的俄语原词。",
+    "2. 竞品的值和本商品事实不符时（例如材质、款式、尺寸不同），不要照抄，改写成符合本商品事实的俄文值。",
+    "3. 货源中文资料和已核实事实用来对照核实，**不得创造任何商品事实**；两者都没有的信息一律不要补。",
+    "4. 找不到依据的属性，**直接不要出现在结果里**——宁可少给，不要猜。",
+    "4b. 但 required 为 true 的属性**不填就发不出商品**：请尽最大努力从事实里找依据，",
     "    实在没有直接对应的，也可以用类目路径这类间接但真实的依据，只要它确实支持这个值。",
-    "3. 俄文值必须写成 **Ozon 属性字典里的那个词本身**——尽量短、不要加任何修饰词。",
+    "5. 俄文值必须写成 **Ozon 属性字典里的那个词本身**——尽量短、不要加任何修饰词。",
     "   例：面料写 Оксфорд（不是 Оксфордская ткань）；类型写 Одежда（软件会自动补全成字典里的完整值）。",
-    "4. 一个属性只给**一个**值，不要给逗号分隔的列表；多个颜色/季节就挑最有代表性的那一个。",
-    "5. 属性号必须逐字抄自属性清单里的 attributeId，**不要挑错属性**（季节和动物性别是两个不同的属性）。",
-    "6. sourceFactPath 必须逐字抄自下面事实清单里的 factPath，不得改写。",
+    "6. 一个属性只给**一个**值，不要给逗号分隔的列表；多个颜色/季节就挑最有代表性的那一个。",
+    "7. 属性号必须逐字抄自属性清单里的 attributeId，**不要挑错属性**（季节和动物性别是两个不同的属性）。",
+    "8. sourceFactPath 填支持这个值的那条已核实事实，必须逐字抄自下面事实清单里的 factPath，不得改写。",
     `类目：${categoryLabel}`,
     `属性清单（共 ${attributes.length} 个）：`,
     JSON.stringify(attributes.map((item) => ({
       attributeId: item.fieldKey, label: item.labelZh || item.label, required: item.required === true
     }))),
+    `对标竞品页面上的俄语属性词（共 ${listings.length} 个页面）：`,
+    JSON.stringify(listings),
+    `货源商品页中文资料：`,
+    JSON.stringify(supplier ?? {}),
     `已核实的中文事实（共 ${facts.length} 条）：`,
     JSON.stringify(facts.map((item) => ({ factPath: item.factPath, value: item.value }))),
     "输出一个 JSON 对象 {\"mappings\":[...]}，每项只有 attributeId、russianValue、sourceFactPath 三个键。",
@@ -159,7 +209,7 @@ export function buildOzonAttributeProposalRequest({ attributes, facts, categoryL
     taskType: OZON_ATTRIBUTE_PROPOSAL_TASK_TYPE,
     model: OZON_ATTRIBUTE_PROPOSAL_MODEL,
     input: { text, images: [] },
-    evidenceRefs: evidenceRefsFor(attributes, facts),
+    evidenceRefs: evidenceRefsFor(attributes, facts, listings, supplier),
     outputSchema: structuredClone(OUTPUT_SCHEMA)
   };
 }
@@ -282,6 +332,8 @@ export function createC1OzonAttributeProposer({
      * @param attributes  冻结 schema 的属性（fieldKey/label/dictionaryId/required）
      * @param facts       计划里已确认且非 unknown 的字符串事实（factPath/value）
      * @param comparableAttributes  已采到的对标页面上「属性名 → [{value, from}]」，按属性名对齐
+     * @param comparableListings    对标页面的**全部**俄语属性 [{from, attributes:{名:值}}]，作为模型的主要素材
+     * @param supplierReference     货源商品页中文资料 {platform, title}，只作对照
      *
      * 两轮：第一轮模型给短词，第二轮它在**字典真实候选**里挑。中间夹一层确定性捞回。
      *
@@ -291,7 +343,8 @@ export function createC1OzonAttributeProposer({
      *    那是**别人家商品**的属性：对标写「真皮 + ABS 塑料」，我们是牛津布；
      *    对标写 Жакет（夹克），我们是 Жилет（背心）。抄错材质是买家收货要退、平台按属性不符处罚的事。
      */
-    async propose({ attributes, facts, categoryLabel, store, category, candidateId, skuPackageId, dataRevision, comparableAttributes = new Map() }) {
+    async propose({ attributes, facts, categoryLabel, store, category, candidateId, skuPackageId, dataRevision, comparableAttributes = new Map(),
+      comparableListings = [], supplierReference = null }) {
       if (!Array.isArray(attributes) || attributes.length === 0) fail("INPUT_INVALID", "没有可映射的类目属性");
       if (!Array.isArray(facts) || facts.length === 0) fail("INPUT_INVALID", "没有可当依据的已确认事实");
       if (attributes.length > OZON_ATTRIBUTE_PROPOSAL_MAX_ATTRIBUTES) {
@@ -322,7 +375,10 @@ export function createC1OzonAttributeProposer({
         }
       }
 
-      const first = await translate({ attributes, facts, categoryLabel, candidateId, skuPackageId, dataRevision });
+      const first = await translate({ attributes, facts, categoryLabel, candidateId, skuPackageId, dataRevision,
+        comparableListings, supplierReference });
+      const comparableValuesFor = (attribute) => (comparableAttributes.get(attribute?.label) ?? [])
+        .map((item) => item?.value).filter(nonEmpty).slice(0, 10);
 
       const searched = new Map();
       async function search(attributeId, value) {
@@ -377,7 +433,8 @@ export function createC1OzonAttributeProposer({
           // 字典整份拿得到：直接让模型在真实候选里挑，不用它自己写的词。
           needChoice.push({ attributeId: id, label: row.label, labelZh: row.labelZh, required: row.required,
             sourceFactPath: proposed.sourceFactPath,
-            sourceFactValue: factByPath.get(proposed.sourceFactPath), candidates: full.candidates });
+            sourceFactValue: factByPath.get(proposed.sourceFactPath), comparableValues: comparableValuesFor(attribute),
+            candidates: full.candidates });
         } else if (proposed && factByPath.has(proposed.sourceFactPath)) {
           const sourceFactValue = factByPath.get(proposed.sourceFactPath);
           if (row.dictionaryId === 0) {
@@ -393,7 +450,7 @@ export function createC1OzonAttributeProposer({
                 dictionaryEvidenceRef: candidates[0].dictionaryEvidenceRef ?? null };
             } else if (candidates.length > 1) {
               needChoice.push({ attributeId: id, label: row.label, labelZh: row.labelZh, required: row.required,
-                sourceFactPath: proposed.sourceFactPath, sourceFactValue, candidates });
+                sourceFactPath: proposed.sourceFactPath, sourceFactValue, comparableValues: comparableValuesFor(attribute), candidates });
             } else {
               row.rejectedByDictionary = proposed.russianValue;
             }
@@ -429,7 +486,8 @@ export function createC1OzonAttributeProposer({
         }
       }
 
-      // 对标页面上同名属性的值 —— 按属性名对齐，仍要过字典。默认不勾选。
+      // 竞品词已经作为主要素材交给模型洗过，洗出来的结果就是上面默认勾选的 suggestion。
+      // 这里再把对标页面上同名属性的原值列出来，供主人改选；它们没有本商品自己的事实依据，所以不默认勾选。
       for (const row of rows) {
         const attribute = attributes.find((item) => String(item.fieldKey) === row.attributeId);
         for (const captured of (comparableAttributes.get(attribute?.label) ?? [])) {

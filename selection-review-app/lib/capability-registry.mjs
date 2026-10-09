@@ -1852,6 +1852,7 @@ export const CAPABILITY_ARTIFACT_ASSIGNMENTS = Object.freeze([
       "tests/c1-frozen-supply-attribute-backfill-use-case.test.mjs",
       "tests/c1-attribute-routes-source-contract.test.mjs",
       "tests/c1-ozon-attribute-mapping-use-case.test.mjs",
+      "tests/c1-ozon-attribute-proposal.test.mjs",
       "tests/ozon-dictionary-value-reader.test.mjs",
       "tests/c1-draft-runtime-services.test.mjs",
       "tests/c1-keyword-handoff-retry-http.test.mjs",
