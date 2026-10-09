@@ -1,6 +1,6 @@
 import { createInitialCandidate } from './candidate-initialization.mjs';
 import { currentSalesSnapshot } from './discovery-market-snapshot.mjs';
-import { normalize1688CaptureSource } from './source-capture.mjs';
+import { normalizeSupplierCaptureSource } from './source-capture.mjs';
 import { inForceSkuUniformSupply } from './sku-choice-estimate.mjs';
 import { isCompleteStoreRef, sameStoreRef, STORE_PLATFORMS } from './store-binding.mjs';
 import { parentCardBinding } from './sibling-sku-card-guard.mjs';
@@ -52,7 +52,7 @@ export function createSiblingSkuCandidate({ document, parentCandidateId, input, 
     fail('SIBLING_PARENT_IMPORT_UNVERIFIED', '原商品尚无已接受导入的持久回执');
   }
   const capture = parent.sourceCapture;
-  const source = normalize1688CaptureSource(capture?.sourceUrl);
+  const source = normalizeSupplierCaptureSource(capture?.sourceUrl);
   if (capture?.mode !== 'a_supplier_capture' || capture.status !== 'captured_waiting_owner_selection' ||
       source.type !== 'detail' || source.offerId !== capture.offerId || !text(capture.captureId) ||
       !Array.isArray(capture.selectedSkuIds) || !capture.selectedSkuIds.includes(input.supplierSkuId) ||

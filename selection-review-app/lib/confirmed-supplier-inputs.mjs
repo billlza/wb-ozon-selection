@@ -81,8 +81,10 @@ export function readConfirmedSupplierTextReferences(candidate) {
   if (selection === null) fail("CONFIRMED_SUPPLIER_TEXT_SOURCE_MISMATCH");
   const { capture } = selection;
   const option = supply.supplierOption;
-  if (option.sourcePlatform !== "1688" || capture.offerId !== option.offerId ||
-      capture.sourceUrl !== option.productUrl || option.productUrl !== `https://detail.1688.com/offer/${option.offerId}.html` ||
+  const canonicalProductUrl = { "1688": `https://detail.1688.com/offer/${option.offerId}.html`,
+    pinduoduo: `https://mobile.yangkeduo.com/goods.html?goods_id=${option.offerId}` }[option.sourcePlatform];
+  if (!canonicalProductUrl || capture.offerId !== option.offerId ||
+      capture.sourceUrl !== option.productUrl || option.productUrl !== canonicalProductUrl ||
       supply.ownerSupplyConfirmation.supplierOptionId !== option.supplierOptionId) fail("CONFIRMED_SUPPLIER_TEXT_SOURCE_MISMATCH");
   const result = [];
   if (selection.apiEvidence) {

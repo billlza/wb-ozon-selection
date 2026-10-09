@@ -225,7 +225,7 @@ test('商品页显示中文标题、店铺和六步导航，当前停在找货',
 
 test('找货表单先按已保存的逐项资料预填，有找货方案后按方案预填', async () => {
   const prefilledFromFields = await render(props());
-  assert.match(prefilledFromFields, /1688 商品链接/);
+  assert.match(prefilledFromFields, /1688 \/ 拼多多 商品链接/);
   assert.match(prefilledFromFields, /id="supply-source-url"[^>]*value=""/);
   // The all-in purchase price minus the saved domestic shipping is the goods price the owner had declared.
   assert.match(prefilledFromFields, /id="supply-goods-price"[^>]*value="15\.9"/);
@@ -234,11 +234,11 @@ test('找货表单先按已保存的逐项资料预填，有找货方案后按�
   assert.match(prefilledFromFields, /id="supply-length"[^>]*value="75"/);
   assert.match(prefilledFromFields, /id="supply-width"[^>]*value="21"/);
   assert.match(prefilledFromFields, /id="supply-height"[^>]*value="4"/);
-  assert.match(prefilledFromFields, /请粘贴1688商品详情链接或分享短链/);
+  assert.match(prefilledFromFields, /请粘贴1688或拼多多的商品链接或分享短链/);
   const saved = await render(props({ view: { supplierDraftV1: draft, supplierDraftEstimateV1: okEstimate, marketSnapshot } }));
   assert.match(saved, /id="supply-source-url"[^>]*value="https:\/\/detail\.1688\.com\/offer\/876240928352\.html"/);
   assert.match(saved, /id="supply-target-price"[^>]*value="1850"/);
-  assert.doesNotMatch(saved, /请粘贴1688商品详情链接或分享短链/);
+  assert.doesNotMatch(saved, /请粘贴1688或拼多多的商品链接或分享短链/);
   assert.match(saved, /市场快照：Seerfar 2026-09-10 · 售价 1850 卢布 · 30 天销量 330 · 评价 371/);
   assert.match(saved, /按你填的到手总价 ¥18\.86：单件利润 ¥41\.26 · 利润率 28% · 达到本店利润门槛/);
   assert.match(saved, /采购上限 ¥60\.12 · GUOO Economy Small · 计费 1\.3 公斤 · 运费 ¥54\.50 · 佣金 14%/);

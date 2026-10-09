@@ -30,7 +30,7 @@ test('a stale or absent candidate cannot receive preparation for a different rev
 
 test('browser readiness cannot be inferred from an old extension heartbeat or a supplied ready flag', () => {
   const input = fixture();
-  input.document.runtime.extensionHeartbeat = { backgroundReady: true, version: '1.2.7' };
+  input.document.runtime.extensionHeartbeat = { backgroundReady: true, version: '1.2.8' };
   input.pageContractVerified = true;
   assert.equal(readSupplierImageSearchPreparation(input).canAuthorize, false);
   assert.throws(() => requireSupplierImageSearchPreparation(input), /PAGE_CONTRACT_UNCONFIGURED/);

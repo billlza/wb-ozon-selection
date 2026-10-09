@@ -1,7 +1,7 @@
 import { adapt1688CaptureToSupplierOption } from './supplier-option.mjs';
 import { readAProductDetailSupplierEvidence } from './a-product-detail-evidence.mjs';
 import { currentSalesSnapshot } from "./discovery-market-snapshot.mjs";
-import { sourceCaptureFailureDestinationLabel } from "./source-capture.mjs";
+import { normalizePinduoduoCaptureSource, sourceCaptureFailureDestinationLabel } from "./source-capture.mjs";
 import { STORE_PLATFORMS, isCompleteStoreRef, sameStoreRef } from "./store-binding.mjs";
 
 export const REAL_A_CONFIRMATION_CARD_VERSION = "real-a-confirmation-card-v1.1";
@@ -54,9 +54,19 @@ function exact1688Url(value) {
   return /^https:\/\/detail\.1688\.com\/offer\/\d+\.html(?:[?#].*)?$/i.test(String(value || "").trim());
 }
 
+// Like a 1688 detail link with its query, a Pinduoduo goods link is exact when it names exactly one goods_id.
+function exactPinduoduoUrl(value) {
+  return normalizePinduoduoCaptureSource(String(value || "").trim()).type === "detail";
+}
+
+function exactSupplierUrl(value) {
+  return exact1688Url(value) || exactPinduoduoUrl(value);
+}
+
 function aSupplierInputUrl(value) {
   const input = String(value || "").trim();
-  return exact1688Url(input) || /^https:\/\/qr\.1688\.com\/s\/[A-Za-z0-9_-]{1,160}\/?$/i.test(input);
+  return exactSupplierUrl(input) || /^https:\/\/qr\.1688\.com\/s\/[A-Za-z0-9_-]{1,160}\/?$/i.test(input) ||
+    normalizePinduoduoCaptureSource(input).type === "short";
 }
 
 function field(value, source, status = known(value) ? "available" : "missing") {
@@ -271,7 +281,7 @@ export function validateRealAConfirmationSubmission(card, input) {
   if (sales.validityStatus !== "current") {
     push("salesReview.validityStatus", "销售快照时效", "当前快照必须经系统确认仍然有效");
   }
-  if (!exact1688Url(supplier.productUrl)) push("productUrl", "精确1688供应链接", "必须是detail.1688.com的准确商品链接");
+  if (!exactSupplierUrl(supplier.productUrl)) push("productUrl", "精确供应链接", "必须是detail.1688.com或拼多多goods_id的准确商品链接");
   if (!String(supplier.supplierSkuId || "").trim()) push("supplierSkuId", "具体供应SKU", "必须锁定具体供应SKU");
   if (!String(supplier.variantKey || "").trim()) push("variantKey", "规格/变体", "必须明确具体规格或变体");
   if (!positive(supplier.unitProductPrice)) push("unitProductPrice", "商品价", "必须填写大于0的单件商品价");

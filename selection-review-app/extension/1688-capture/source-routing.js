@@ -226,3 +226,89 @@ export function isAllowed1688NavigationHost(value) {
     return false;
   }
 }
+
+const PINDUODUO_GOODS_HOSTS = new Set(["mobile.yangkeduo.com", "mobile.pinduoduo.com"]);
+const PINDUODUO_GOODS_PATHS = new Set(["/goods.html", "/goods1.html", "/goods2.html"]);
+
+function isPinduoduoHost(host) {
+  return host === "yangkeduo.com" || host.endsWith(".yangkeduo.com") || host === "pinduoduo.com" || host.endsWith(".pinduoduo.com");
+}
+
+/** A Pinduoduo goods page names exactly one numeric goods_id; anything else is not a product identity. */
+export function pinduoduoGoodsId(value) {
+  if (typeof value !== "string") return "";
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return "";
+    if (!PINDUODUO_GOODS_HOSTS.has(url.hostname) || !PINDUODUO_GOODS_PATHS.has(url.pathname)) return "";
+    const ids = url.searchParams.getAll("goods_id");
+    return ids.length === 1 && /^\d{1,40}$/.test(ids[0]) ? ids[0] : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Mirrors the service's normalizePinduoduoCaptureSource: the same link must mean the same goods on both sides. */
+export function classifyPinduoduoSource(value) {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
+    if (PINDUODUO_GOODS_HOSTS.has(url.hostname) && PINDUODUO_GOODS_PATHS.has(url.pathname)) {
+      const offerId = pinduoduoGoodsId(url.href);
+      if (offerId) return { type: "detail", sourceUrl: `https://mobile.yangkeduo.com/goods.html?goods_id=${offerId}`, offerId };
+      const token = url.searchParams.getAll("ps");
+      return token.length === 1 && /^[A-Za-z0-9_-]{1,160}$/.test(token[0])
+        ? { type: "short", sourceUrl: `https://mobile.yangkeduo.com/goods2.html?ps=${token[0]}`, offerId: "" }
+        : null;
+    }
+    if (url.hostname !== "p.pinduoduo.com") return null;
+    const token = url.pathname.match(/^\/([A-Za-z0-9_-]{1,160})\/?$/)?.[1] || "";
+    return token ? { type: "short", sourceUrl: `https://p.pinduoduo.com/${token}`, offerId: "" } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function validateResolvedPinduoduoSource(originalSource, finalUrl, expectedOfferId = "") {
+  const original = classifyPinduoduoSource(originalSource);
+  const resolvedOfferId = pinduoduoGoodsId(finalUrl);
+  if (!original || !resolvedOfferId) return null;
+  if (original.type === "detail" && original.offerId !== resolvedOfferId) return null;
+  if (expectedOfferId && String(expectedOfferId) !== resolvedOfferId) return null;
+  return {
+    offerId: resolvedOfferId,
+    sourceUrl: `https://mobile.yangkeduo.com/goods.html?goods_id=${resolvedOfferId}`
+  };
+}
+
+/**
+ * Where a Pinduoduo tab has got to, as one fixed word. A share link passes through p.pinduoduo.com or a goods2 token
+ * page before the goods page; the login and verification pages are where Pinduoduo stops a browser it does not trust.
+ */
+export function classifyPinduoduoNavigation(value, expectedOfferId = "") {
+  try {
+    if (typeof value !== "string") return "invalid";
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return "invalid";
+    const host = url.hostname.toLowerCase();
+    const pathname = url.pathname.toLowerCase();
+    const goodsId = pinduoduoGoodsId(url.href);
+    if (goodsId) return expectedOfferId && String(expectedOfferId) !== goodsId ? "different_offer" : "allowed_detail";
+    if (!isPinduoduoHost(host)) return "non_whitelisted_destination";
+    if (/(?:^|\/)(?:login|passport)[^/]*$/.test(pathname)) return "login_required";
+    if (/(?:captcha|verif|risk|punish|security)/.test(pathname)) return "verification_required";
+    if (host === "p.pinduoduo.com" || (PINDUODUO_GOODS_HOSTS.has(host) && PINDUODUO_GOODS_PATHS.has(pathname))) return "intermediate_page";
+    return "non_whitelisted_destination";
+  } catch {
+    return "invalid";
+  }
+}
+
+/** Which supplier site a job's saved link belongs to. 1688 is tried first and its rules are unchanged. */
+export function classifySupplierSource(value) {
+  const alibaba = classify1688Source(value);
+  if (alibaba) return { platform: "1688", ...alibaba };
+  const pinduoduo = classifyPinduoduoSource(value);
+  return pinduoduo ? { platform: "pinduoduo", ...pinduoduo } : null;
+}

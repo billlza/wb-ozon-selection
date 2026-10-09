@@ -97,10 +97,15 @@ import {
 } from "./lib/codex-dispatcher.mjs";
 import {
   extract1688OfferId,
+  extractPinduoduoGoodsId,
   normalize1688CaptureSource,
+  normalizeSupplierCaptureSource,
   resolveCapturedSku,
   resolveCapturedSkus,
   sanitize1688Evidence,
+  sanitizePinduoduoEvidence,
+  supplierCapturePlatform,
+  supplierPlatformLabel,
   sanitizeSourceCaptureFailureResult,
   sourceCaptureFailureDestinationLabel,
   sourceCaptureFailureMessage
@@ -681,7 +686,7 @@ function activeDispatchForCandidate(data, candidateId) {
 const SOURCE_CAPTURE_TTL_MS = 3 * 60 * 1000;
 const SOURCE_CAPTURE_JOB_QUEUE_TTL_MS = Math.max(50, Number(process.env.SELECTION_REVIEW_SOURCE_JOB_QUEUE_TTL_MS || 2 * 60 * 1000));
 const SOURCE_CAPTURE_JOB_EXECUTION_TTL_MS = Math.max(50, Number(process.env.SELECTION_REVIEW_SOURCE_JOB_EXECUTION_TTL_MS || 60 * 1000));
-const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.2.7";
+const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.2.8";
 /** Marks a sales-capture session that is a leased, claimable page-read job rather than a bare legacy session. */
 const OZON_PAGE_READ_CAPTURE_KIND = "ozon_page_read";
 const EXTENSION_HEARTBEAT_TTL_MS = 75 * 1000;
@@ -1186,7 +1191,7 @@ async function enqueueASupplierCaptureJob({ candidateId, requestRevision, reques
     const data = await readData();
     const current = data.candidates.find((item) => item.id === candidateId);
     if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
-    const requestedSource = normalize1688CaptureSource(requestedSourceUrl);
+    const requestedSource = normalizeSupplierCaptureSource(requestedSourceUrl);
     if (Number(current.dataRevision) !== existing.dataRevision || requestedSource.sourceUrl !== existing.sourceUrl ||
         current.sourceCapture?.captureId !== existing.captureId) {
       throw httpError(409, "当前资料与已有采集作业不一致，不能沿用旧作业", { code: "capture_job_state_conflict" });
@@ -1194,9 +1199,9 @@ async function enqueueASupplierCaptureJob({ candidateId, requestRevision, reques
     return { candidate: publicCandidate(current, data.rules), captureJob: sourceCaptureJobPublic(existing), duplicate: true };
   }
   ensureCaptureControlAvailable(candidateId);
-  const source = normalize1688CaptureSource(requestedSourceUrl);
+  const source = normalizeSupplierCaptureSource(requestedSourceUrl);
   if (source.type === "invalid") {
-    throw httpError(422, "A阶段供应链接不是允许的1688短链或精确商品链接", { code: "source_url_invalid" });
+    throw httpError(422, "A阶段供应链接不是允许的1688或拼多多短链或精确商品链接", { code: "source_url_invalid" });
   }
   const session = {
     captureId: `SCJ-${randomUUID()}`,
@@ -2553,7 +2558,7 @@ function capturedSkuLabel(sku) {
 
 function markSourceCaptureFailure(current, session, code, detail = "", observedAt = now(), failureDiagnostics = null) {
   const failureDestinationLabel = sourceCaptureFailureDestinationLabel(failureDiagnostics, code);
-  const reason = sourceCaptureFailureMessage(code, failureDestinationLabel || detail);
+  const reason = sourceCaptureFailureMessage(code, failureDestinationLabel || detail, supplierCapturePlatform(session.sourceUrl) || "1688");
   // This rewrites sourceCapture whole, so a late closure on the record the owner already reviewed would erase that
   // review and let previous_capture_requires_review block the product again — the very dead end of 2026-09-11. Only a
   // rewrite of the same captureId can concern that record, and the owner's own acknowledgement survives it.
@@ -2662,7 +2667,7 @@ function markAStageCaptureNeedsOwnerSelection(current, session, evidence) {
   current.dataRevision = Number(current.dataRevision || 0) + 1;
   current.updatedAt = timestamp;
   current.lastModifiedBy = "system";
-  addHistory(current, "system", "aSupplierCaptureCompleted", `已取得1688精确链接offer/${evidence.offerId}及${evidence.skus.length}个真实SKU；等待主人多选，未自动选择、确认供应方案、运行B/C1或派发任务`, timestamp);
+  addHistory(current, "system", "aSupplierCaptureCompleted", `已取得${supplierPlatformLabel(supplierCapturePlatform(evidence.sourceUrl))}精确链接offer/${evidence.offerId}及${evidence.skus.length}个真实SKU；等待主人多选，未自动选择、确认供应方案、运行B/C1或派发任务`, timestamp);
 }
 
 function markSourceCaptureNeedsSelection(current, session, evidence, resolution) {
@@ -4899,10 +4904,12 @@ async function handleApi(req, res, pathname) {
       let evidence;
       try {
         const resolvedSourceUrl = String(input.resolvedSourceUrl || session.sourceUrl || "").trim();
-        const resolvedOfferId = extract1688OfferId(resolvedSourceUrl);
+        // The platform is fixed by the link the owner saved, never by where the extension says it landed.
+        const pinduoduo = session.mode === "a_supplier_capture" && supplierCapturePlatform(session.sourceUrl) === "pinduoduo";
+        const resolvedOfferId = pinduoduo ? extractPinduoduoGoodsId(resolvedSourceUrl) : extract1688OfferId(resolvedSourceUrl);
         if (!resolvedOfferId) throw new Error(session.mode === "a_supplier_capture" ? "short_link_resolution_failed" : "wrong_offer");
         if (session.expectedOfferId && session.expectedOfferId !== resolvedOfferId) throw new Error("wrong_offer");
-        evidence = sanitize1688Evidence(input.evidence, resolvedOfferId);
+        evidence = pinduoduo ? sanitizePinduoduoEvidence(input.evidence, resolvedOfferId) : sanitize1688Evidence(input.evidence, resolvedOfferId);
       } catch (error) {
         const code = String(error?.message || "invalid_capture");
         markSourceCaptureFailure(current, session, code, "扩展回传未通过服务端校验");
@@ -5451,7 +5458,7 @@ async function handleApi(req, res, pathname) {
     }
     if (input.decision !== "reject") {
       const requestedSourceUrl = String(input.supplierConfirmation?.productUrl || snapshotCandidate.sourceUrl || "").trim();
-      const requestedSource = normalize1688CaptureSource(requestedSourceUrl);
+      const requestedSource = normalizeSupplierCaptureSource(requestedSourceUrl);
       const capture = snapshotCandidate.sourceCapture;
       const detailEvidence = readAProductDetailSupplierEvidence(snapshotCandidate);
       if (detailEvidence && requestedSource.sourceUrl !== detailEvidence.supplierOption.productUrl) {
@@ -5459,7 +5466,7 @@ async function handleApi(req, res, pathname) {
       }
       const captureReadyForSameSource = capture?.mode === "a_supplier_capture" &&
         capture?.status === "captured_waiting_owner_selection" &&
-        normalize1688CaptureSource(capture.sourceUrl).sourceUrl === requestedSource.sourceUrl;
+        normalizeSupplierCaptureSource(capture.sourceUrl).sourceUrl === requestedSource.sourceUrl;
       if (requestedSource.type !== "invalid" && !captureReadyForSameSource && !detailEvidence) {
         const queued = await enqueueASupplierCaptureJob({
           candidateId: snapshotCandidate.id,
