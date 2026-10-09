@@ -37,16 +37,19 @@ console.log(JSON.stringify({
   cardsWithReport: cards.filter(card => card.getAttribute("data-aplus-report")).length,
   firstCardFieldNames: model ? Object.keys(model) : null,
   firstCardQuantityFacts: model ? { priceInfo: model.priceInfo ?? null, priceDesc: model.priceDesc ?? null, quantityPrices: model.quantityPrices ?? null } : null,
-  firstReportKeys: report.split("^").map(part => part.split(/[:=]/)[0]).filter(Boolean).slice(0, 40),
+  // Only the leading name of each segment: "sessionId@…" and similar carry session values that must not be printed.
+  firstReportKeys: report.split(/[\^;]/).map(part => part.match(/^[A-Za-z_][A-Za-z0-9_.-]{0,40}/)?.[0]).filter(Boolean).slice(0, 60),
   firstReportHasQueryUrl: /query_url/.test(report),
   firstReportHasCosScore: /cosScore/.test(report)
 }, null, 2));
 
+// The same reading as the collector: query_url ends at the next ^, ; or & (inside sp_expo_data the fields are ;-separated).
 const echoed = (() => {
-  const raw = report.match(/query_url["']?\s*[:=]\s*["']?([^\^&"'\s,}]+)/)?.[1];
+  const raw = report.match(/(?:^|[\^&{,;"\s@=])query_url["']?\s*[:=]\s*["']?([^\^&"'\s,;}]+)/)?.[1];
   let value = raw || "";
-  for (let round = 0; round < 3 && /%[0-9A-Fa-f]{2}/.test(value); round += 1) value = decodeURIComponent(value);
-  try { const url = new URL(value); return `${url.origin}${url.pathname}`; } catch { return ""; }
+  try { for (let round = 0; round < 3 && /%[0-9A-Fa-f]{2}/.test(value); round += 1) value = decodeURIComponent(value); }
+  catch { return ""; }
+  try { const url = new URL(value.split(/[;\s"'^,}]/)[0]); return `${url.origin}${url.pathname}`; } catch { return ""; }
 })();
 const expected = expectedArgument || echoed;
 const previous = { window: globalThis.window, document: globalThis.document, now: Date.now };

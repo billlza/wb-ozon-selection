@@ -140,15 +140,21 @@ test("a start signal only starts its own kind of job", async () => {
 // ---- the collector, on a synthetic result page ----
 
 const escape = value => JSON.stringify(value);
-function card(index, offerId, fields = {}, { cos = null, query = IMAGE, member = "b2b-2200000000001" } = {}) {
+function card(index, offerId, fields = {}, { cos = null, query = IMAGE, member = "b2b-2200000000001", shape = "plain" } = {}) {
   const props = { offerId, title: `合成<font color="red">同款</font> ${index}`, offerUrl: `https://dj.1688.com/ci_bb?a=${index}&eurl=secret`,
     offerPicUrl: `//cbu01.alicdn.com/img/ibank/O1CN01synthetic${index}.jpg?w=220`, imgUrl: "https://cbu01.alicdn.com/thumb.jpg",
     priceInfo: { price: "32.68", priceType: "normal", priceDescription: "运费5元" }, priceDesc: [{ showText: "2件起批" }],
     saleQuantity: "1.2万+", shopName: "合成店铺", province: "浙江", city: "金华", isAd: false, superFactory: false,
     loginId: "secret-login-id", memberId: member, sessionId: "secret-session", eurl: "https://click.example/?token=secret",
     expoStr: "secret-expo", ...fields };
-  const report = [`query_url:${encodeURIComponent(encodeURIComponent(query))}`, "simScore:0.5",
-    ...(cos === null ? [] : [`relevanceScores:{"cosScore":${cos},"other":1}`]), "sessionId:secret-session"].join("^");
+  // "sp_expo": the shape on the owner's saved page — @-named segments, and inside sp_expo_data ;-separated fields with
+  // query_url encoded once and the scores as an encoded object.
+  const report = shape === "sp_expo"
+    ? ["sessionId@secret-session", "traceId@secret-trace", `sp_expo_data@offerId:${offerId};query_url:${encodeURIComponent(query)};` +
+      `queryEngine:cbu_picture;relevanceScores:${encodeURIComponent(JSON.stringify(cos === null ? { other: 1 } : { cosScore: cos, other: 1 }))};` +
+      "imageSessionId:secret-image-session", "serverTrackId@secret-track"].join("^")
+    : [`query_url:${encodeURIComponent(encodeURIComponent(query))}`, "simScore:0.5",
+      ...(cos === null ? [] : [`relevanceScores:{"cosScore":${cos},"other":1}`]), "sessionId:secret-session"].join("^");
   const attributes = { "data-renderkey": `1_${index}_normal_${member}_${offerId}`, "data-index": String(index),
     "data-ftk-fiber-props": escape(props), "data-aplus-report": report };
   return { getAttribute: name => attributes[name] ?? null, hasAttribute: name => Object.hasOwn(attributes, name), querySelector: () => null };
@@ -196,6 +202,19 @@ test("the collector keeps only product facts, most similar first, and never the 
   const accepted = sanitizeSupplierImageMatchEvidence(evidence, IMAGE);
   assert.equal(accepted.items.length, 20);
   assert.equal(accepted.items[0].sourceUrl, "https://detail.1688.com/offer/700000000001.html");
+});
+
+test("on the saved-page report shape the searched picture ends at the next ; and the encoded score is read", async () => {
+  const sp = { shape: "sp_expo" };
+  const result = await onPage([card(0, "700000000000", {}, { ...sp, cos: 0.95 }), card(1, "700000000001", {}, { ...sp, cos: 0.46 }),
+    card(2, "700000000002", {}, { ...sp })]);
+  assert.equal(result.status, "captured", JSON.stringify(result));
+  assert.equal(result.evidence.searchImageUrl, IMAGE);
+  assert.deepEqual(result.evidence.items.map(item => [item.offerId, item.vendorSimilarity]),
+    [["700000000000", 0.95], ["700000000001", 0.46], ["700000000002", null]]);
+  assert.equal(JSON.stringify(result.evidence).includes("secret"), false);
+  assert.deepEqual(await onPage([card(0, "700000000000", {}, { ...sp, query: "https://img.pddpic.com/garner-api-new/other.jpeg" })]),
+    { status: "failed", failureCode: "wrong_query" });
 });
 
 test("the collector refuses another picture, an unreadable page and an empty page, and never calls an empty page no match", async () => {

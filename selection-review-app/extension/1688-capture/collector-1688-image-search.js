@@ -52,15 +52,31 @@ export async function collect1688ImageSearchPage(expectedImageUrl, maxResults = 
     }
     return current;
   };
-  // data-aplus-report is a ^-separated key:value string; the searched picture comes back as query_url.
+  // Decodes every readable %XX run and leaves a broken one as it is, so one stray "%" cannot hide the rest of a report.
+  const looseDecode = (value) => {
+    let current = value;
+    for (let round = 0; round < 3 && /%[0-9A-Fa-f]{2}/.test(current); round += 1) {
+      current = current.replace(/(?:%[0-9A-Fa-f]{2})+/g, (run) => { try { return decodeURIComponent(run); } catch { return run; } });
+    }
+    return current;
+  };
+  // data-aplus-report is a ^-separated string; inside its sp_expo_data segment the fields are ;-separated, e.g.
+  // "…;query_url:https%3A%2F%2Fimg.pddpic.com%2F….jpeg;queryEngine:…;relevanceScores:%7B…". The searched picture comes
+  // back as query_url and ends at the next separator; the score may sit inside an encoded object.
   const searchedImage = (report) => {
-    const raw = report.match(/(?:^|[\^&{,"\s])query_url["']?\s*[:=]\s*["']?([^\^&"'\s,}]+)/)?.[1] || "";
-    return raw ? canonicalPinduoduoImage(decodeRepeatedly(raw)) : null;
+    for (const text of [report, looseDecode(report)]) {
+      const raw = text.match(/(?:^|[\^&{,;"\s@=])query_url["']?\s*[:=]\s*["']?([^\^&"'\s,;}]+)/)?.[1];
+      if (raw) return canonicalPinduoduoImage(decodeRepeatedly(raw).split(/[;\s"'^,}]/)[0]);
+    }
+    return null;
   };
   const vendorSimilarity = (report) => {
-    const raw = report.match(/cosScore["']?\s*[:=]\s*["']?(\d+(?:\.\d+)?)/)?.[1];
-    const parsed = raw === undefined ? NaN : Number(raw);
-    return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : null;
+    for (const text of [report, looseDecode(report)]) {
+      const raw = text.match(/cosScore["']?\s*[:=]\s*["']?(\d+(?:\.\d+)?)/)?.[1];
+      const parsed = raw === undefined ? NaN : Number(raw);
+      if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) return parsed;
+    }
+    return null;
   };
   // The offer object may sit at the top of the props or one level down.
   const offerModel = (props) => [props, props?.data, props?.item, props?.offer, props?.props?.data]

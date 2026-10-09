@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-09T17:54:01.777Z",
+  "frozenAt": "2026-10-09T23:05:50.061Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 896,
-      "sha256": "0798971122b718d6df3ee002653171431b17064aaff3d92675642f2365230dba",
+      "sha256": "059b9da6fba227387a38140f72ad0d6cf88a8ea7f92ede6edee378bde9183ebb",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -52,7 +52,7 @@
       },
       {
         "path": "extension/1688-capture/collector-1688-image-search.js",
-        "sha256": "37af9958de35cd2c7ae96d3a9a8c6891066791b871865eddc1e30807bb86c3dc"
+        "sha256": "32113f0ad1872c92132eaca7107584cba4345f0425c55785960d536cb913d004"
       },
       {
         "path": "extension/1688-capture/collector-ozon.js",
@@ -1456,7 +1456,7 @@
       },
       {
         "path": "scripts/check-1688-image-search-saved-page.mjs",
-        "sha256": "1ca5c23813421af99f5087ef68300c0faaf1a5240de52c05e3926de3cce73bae"
+        "sha256": "a08e3337fbe03edc5137c4d01f7f2b2a2e95eb5d095958a0a173095d63cd5724"
       },
       {
         "path": "scripts/check-pinduoduo-saved-page.mjs",
@@ -3560,7 +3560,7 @@
       },
       {
         "path": "tests/supplier-image-match-extension.test.mjs",
-        "sha256": "2c3ca4bf0260d1efd6a6a1d69a17e4ecea3c800d281fde394a51f2c8440ceba1"
+        "sha256": "1485fd14213e45104a1e1c2261c6fa6096a2ff72c9059b5187b57c1664e81102"
       },
       {
         "path": "tests/supplier-image-match-ui.test.mjs",
