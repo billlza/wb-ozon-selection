@@ -560,8 +560,17 @@ export function registerOwnerWrittenInventoryInDocument({document,job,observatio
   // 与 resumeDRemainingInventoryInDocument:198-201 同样把「导入结果已观察」落成 checkpoint：
   // 商品确实是本轮导入建的，product_id 是真读到的，这一条必须留痕。
   const imported = c.observationHistory.find(value=>value.queryKind === 'import_task' && value.result.classification === 'imported');
-  requireCondition(imported && state.checkpoints.length === 2, 'OWNER_STOCK_IMPORT_SOURCE_CONFLICT');
-  state.checkpoints.push({...clone(imported.result.importObservation),observedAt:imported.observedAt});
+  let importCheckpoint = imported ? {...clone(imported.result.importObservation),observedAt:imported.observedAt} : null;
+  if (!imported && dPlatformStateReconciliationsFor(candidate, c.taskId).some(entry=>entry.productId === c.productId)) {
+    // 按平台现状收口：导入任务已经读不到，这一格由价格那次只读查询核实的商品现状落——
+    // 同一商品号、同一货号、0 错误、未归档、价格已生效（adapter observePriceSent），并指向那次查询的回执。
+    const price = c.observationHistory.findLast(value=>value.queryKind === 'price_state' && value.result.priceSent === 'verified');
+    if (price) importCheckpoint = {kind:'import_result_observed',taskId:c.taskId,productId:c.productId,
+      merchantSku:request.merchantSku,itemCount:1,status:'imported',errorCount:0,
+      requestReceiptRef:price.result.requestReceiptRef,observedAt:price.observedAt};
+  }
+  requireCondition(importCheckpoint && state.checkpoints.length === 2, 'OWNER_STOCK_IMPORT_SOURCE_CONFLICT');
+  state.checkpoints.push(importCheckpoint);
   state.step = 'import_result_observed';
   state.executionRevision += 1;
   c.status = 'owner_stock_registered';
@@ -616,7 +625,10 @@ export function readOwnerStockDecision({document,job,observationJobId,checkedAt,
     request.inventoryWrite.warehouseId, {productId:c.productId, offerId:request.merchantSku});
   if (observed === 'unknown') return {decision:'mismatch', observed, authorizedStock};
   if (observed === authorizedStock) return {decision:'register', observed, authorizedStock};
-  if (observed === 0) return {decision:'software_write', observed, authorizedStock};
+  // 走过「按平台现状收口」的这一轮只许登记：回读到 0 也停下报主人，不由软件写。
+  if (observed === 0 && dPlatformStateReconciliationsFor(current.candidate, c.taskId).length === 0) {
+    return {decision:'software_write', observed, authorizedStock};
+  }
   return {decision:'mismatch', observed, authorizedStock};
 }
 
@@ -671,6 +683,79 @@ export function reobserveDUnknownOutcomeInDocument({document,job,observedAt,acto
   state.attempt.reason=null;state.attempt.failure=null;state.attempt.completedAt=null;
   state.continuationBlocked=false;state.blockReason=null;
   c.status='waiting_import';
+  state.attempt.platformContinuation=clone(c);
+  state.settledAt=observedAt;
+  return {archive,candidate,state};
+}
+
+export const D_PLATFORM_STATE_RECONCILIATION_FIELD = 'dPlatformStateReconciliationV1';
+export const D_PLATFORM_STATE_RECONCILIATION_LIMIT = 3;
+
+/** 这一轮导入任务曾经读到「已导入、平台给了商品号」的那一次观察（取最近一次）。 */
+export function importedProductObservation(continuation) {
+  return continuation?.observationHistory?.findLast(entry => entry.queryKind === 'import_task' &&
+    entry.result?.importObservation?.status === 'imported' && id(entry.result.importObservation.productId)) ?? null;
+}
+
+/** 这个导入任务走过的「按平台现状收口」。走过的话，库存只许登记成主人填写，回读到 0 也不由软件写。 */
+export function dPlatformStateReconciliationsFor(candidate, taskId) {
+  return (candidate?.lifecycleV11?.[D_PLATFORM_STATE_RECONCILIATION_FIELD] ?? []).filter(entry => entry.taskId === taskId);
+}
+
+/**
+ * 「按平台现状收口」——主人显式点击的收口动作。
+ *
+ * 由来：2026-09-24 背心的导入被平台接受（商品号 6440150538 已建出），导入任务上挂了 2 条错误，停在 unknown_outcome。
+ * 之后商品在平台上审核通过、在售、0 错误，库存是主人在后台填的（与授权锁定值相同）。
+ * 「按新分类重新观察一次」要重读那个导入任务，可 Ozon 只保留导入任务一段时间，过期后读不到，
+ * 重新观察只会再判一次 unknown_outcome，而且同一个任务号只能重新观察一次。
+ *
+ * 这里不再读导入任务，改读平台上这件商品的现状：
+ *  - 用观察记录里平台已经给出的商品号，接着走价格、库存两次只读查询（同一条观察链、同一份策略和预算）；
+ *  - 商品号、货号、0 错误、未归档、价格已生效由价格那次查询核实，核实不了就照旧停在 unknown_outcome；
+ *  - 库存只认「回读值 === 授权锁定值」→ 登记为主人填写；回读到 0 也**不由软件写**，和其他不一致一样停下报主人。
+ * 只读：这一步本身不发请求，不重发导入、不写库存、不生成生产记录、不改授权。
+ * 只读查询没有副作用，所以核实不了时主人可以再点，但同一个导入任务最多 D_PLATFORM_STATE_RECONCILIATION_LIMIT 次。
+ */
+export function reconcileDUnknownOutcomeFromPlatformStateInDocument({document,job,observedAt,actorId,policy,reconciliationId}) {
+  const candidate=document.candidates.find(value=>value.id === job.candidateId);
+  requireCondition(job.jobType === 'd_production_execution' && job.status === 'unknown_outcome' &&
+    job.externalRequestState === 'unknown_outcome' && job.failureClass === 'd-platform-unknown-outcome' &&
+    typeof actorId === 'string' && actorId.trim().length > 0 &&
+    typeof reconciliationId === 'string' && reconciliationId.trim().length > 0 && time(observedAt), 'RECONCILE_SOURCE_INVALID');
+  const sku=candidate?.lifecycleV11?.skuPackage,state=sku?.dSoftwareExecution,c=state?.platformContinuation;
+  requireCondition(state?.schemaVersion === 'd-software-execution-state-v2' && state.status === 'unknown_outcome' &&
+    state.attempt?.status === 'unknown_outcome' && c?.status === 'unknown_outcome' &&
+    c.inventoryWriteState === 'not_sent' && sku.productionRecord === null && state.attempt.productionRecord === null &&
+    state.platformWrites === 1 && state.softwareJobRef?.jobId === job.jobId && state.checkpoints.length === 2, 'RECONCILE_STATE_INVALID');
+  // 平台必须已经把商品建出来过：观察记录里有「已导入 + 商品号」的那一次。
+  const imported=importedProductObservation(c);
+  requireCondition(imported !== null && (c.productId === null || c.productId === imported.result.importObservation.productId),
+    'RECONCILE_NO_PLATFORM_PRODUCT');
+  assertDPlatformObservationPolicy(policy);
+  requireCondition(c.policy === null || isDeepStrictEqual(c.policy,policy), 'RECONCILE_POLICY_CONFLICT');
+  // 价格、库存两次查询都要盖得住。
+  requireCondition(c.queryCount + 2 <= policy.maxQueries &&
+    Date.parse(policy.expiresAt)-Date.parse(observedAt) >= 2*policy.intervalMs, 'RECONCILE_POLICY_WINDOW_INVALID');
+  const previous=dPlatformStateReconciliationsFor(candidate,c.taskId);
+  requireCondition(previous.length < D_PLATFORM_STATE_RECONCILIATION_LIMIT, 'RECONCILE_LIMIT_REACHED');
+  requireCondition(!previous.some(entry=>entry.reconciliationId === reconciliationId), 'RECONCILE_ALREADY_DONE');
+  const last=c.observationHistory.at(-1);
+  const productId=imported.result.importObservation.productId;
+  const archive={schemaVersion:'d-platform-state-reconciliation-v1',reconciliationId,reconciledAt:observedAt,
+    reconciledByActorId:actorId,taskId:c.taskId,productId,sourceDJobId:job.jobId,
+    priorQueryKind:last?.queryKind ?? null,priorClassification:last?.result?.classification ?? null,priorGapCode:last?.result?.gapCode ?? null,
+    // 明细不复制进归档，只留指针（同 reobserve 的教训）。
+    importObservationJobId:imported.jobId,importObservationFingerprint:fingerprintCanonicalRecord(imported),
+    priorAttemptReason:state.attempt.reason??null,priorSettledAt:state.settledAt,
+    inventoryWrite:'owner_registration_only',
+    policyRef:policy.policyRef,policyVersion:policy.version,policyExpiresAt:policy.expiresAt};
+  candidate.lifecycleV11[D_PLATFORM_STATE_RECONCILIATION_FIELD]=[...(candidate.lifecycleV11[D_PLATFORM_STATE_RECONCILIATION_FIELD] ?? []),archive];
+  state.status='waiting_platform';state.attempt.status='waiting_platform';
+  state.attempt.reason=null;state.attempt.failure=null;state.attempt.completedAt=null;
+  state.continuationBlocked=false;state.blockReason=null;
+  // 不读导入任务：直接从「平台已给商品号」那一格接着读价格。
+  c.productId=productId;c.status='waiting_price';
   state.attempt.platformContinuation=clone(c);
   state.settledAt=observedAt;
   return {archive,candidate,state};

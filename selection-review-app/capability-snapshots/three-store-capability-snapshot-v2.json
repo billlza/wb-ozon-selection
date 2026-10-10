@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T01:37:40.022Z",
+  "frozenAt": "2026-10-10T04:51:29.867Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 901,
-      "sha256": "9d991e625bfd3191d64e54094e31d64be6bde6c53d618cb04ecd70afde01745d",
+      "artifactCount": 903,
+      "sha256": "180833bcd55dafbe02f0226d54084caa2dfe5f461eeb334bea1b42aad4fd0836",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -428,7 +428,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "ac622011bfd19d89ecfd29d3a106e0bb7335ef805d5c42e5f1a66957fa365020"
+        "sha256": "eef383db7ba9326bae6211a4837192154124b45ddf033efdb823c2adb7b177a9"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -492,7 +492,7 @@
       },
       {
         "path": "lib/d-e-runtime-view.mjs",
-        "sha256": "772596107197346a4315dc3dd6e57faa27b24932be552734ed0cce6c1d3ecf9c"
+        "sha256": "cee8e9f276cf2cd3c95b3c32329cfd80a110d144e21196c69d363014c6423e99"
       },
       {
         "path": "lib/d-e-software-closure.mjs",
@@ -532,7 +532,7 @@
       },
       {
         "path": "lib/d-platform-observation-contract.mjs",
-        "sha256": "7895cc7439a49388294aaa1fff4d1c49e013d4fe82faba7f0fbb67636393b905"
+        "sha256": "4656772f9e14aae5e85747b26bd37e17985b534d8c3fc0e910f8a9f3117b1ca4"
       },
       {
         "path": "lib/d-platform-observation-policy.mjs",
@@ -541,6 +541,10 @@
       {
         "path": "lib/d-platform-observation-use-case.mjs",
         "sha256": "919ad078c33023544a3c93b35733b0622df0201a341a700ecc0660679c4d589b"
+      },
+      {
+        "path": "lib/d-platform-state-reconciliation-use-case.mjs",
+        "sha256": "fac97314850b2e9dc3b1944c718a038ca5df0913f36e0feed921d006e1ac97ca"
       },
       {
         "path": "lib/d-production-job-cursor.mjs",
@@ -1544,11 +1548,11 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "002a05498eb1c3e1dd54963f6264ff68d5df19f4be8c85ad3f2c625448405e55"
+        "sha256": "b7cded912ae42392d7921590f256470f16327d3f0e934974f5f7ecfcd96db68d"
       },
       {
         "path": "src/App.jsx",
-        "sha256": "5c13144fbb898eca4762ec7f12f2733d92757677642144d3b6c7e83da77d8964"
+        "sha256": "ee7b69c4ccbf102a1333fc69fd9763eb315beb4973dbef50c7d1b4f52626f205"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1560,7 +1564,7 @@
       },
       {
         "path": "src/api.js",
-        "sha256": "2ba97734bdae4ee38f178037a758dd26e7a81428de7c996998444274c2f1e813"
+        "sha256": "47c33d53e7345db39e54dbd4211dbe83f6753088e462a84a117352139fa353cf"
       },
       {
         "path": "src/bExactCommissionInput.js",
@@ -1628,7 +1632,7 @@
       },
       {
         "path": "src/components/CandidateDetail.jsx",
-        "sha256": "cf57cf919c18299c87bf2e4d5a7088fb8127064369f5e81eb557d5d01227c44a"
+        "sha256": "f9a5e4201926c1889c8b1c86586d0fb06b0084754f764b1690c575101d3440e5"
       },
       {
         "path": "src/components/CandidateRail.jsx",
@@ -1636,7 +1640,7 @@
       },
       {
         "path": "src/components/DESoftwareRuntimeCard.jsx",
-        "sha256": "a798f42eddb6cd74c6c914b1a1e8f1bdf17eef32b4786a799f39b9a7f796197f"
+        "sha256": "e0ca6243dde587d7031ee0545d4a7d7eb09d6895341b66a4355a949476f1de4f"
       },
       {
         "path": "src/components/DailyProgress.jsx",
@@ -1780,7 +1784,7 @@
       },
       {
         "path": "src/dESoftwareRuntimeView.js",
-        "sha256": "c678a589d941d924ec1f7a3e8a813aeee65116bcedaf7746d890b26d590ca3f4"
+        "sha256": "4598874c230a26d15dff96bf7454a6f59b224963c8048d0ece13bd8fbad0e3ca"
       },
       {
         "path": "src/executionRuntimeView.js",
@@ -2537,6 +2541,10 @@
       {
         "path": "tests/d-platform-observation-runtime.test.mjs",
         "sha256": "77a0b7c55498e0ecfab126c387a044c82f2722d8259299fbbde6e21e41f670f7"
+      },
+      {
+        "path": "tests/d-platform-state-reconciliation.test.mjs",
+        "sha256": "782e0bf219ca68890135cae0d261193d6f48b180a9b2a4fef1775fa952533976"
       },
       {
         "path": "tests/d-production-job-cursor.test.mjs",
@@ -6296,6 +6304,7 @@
         "lib/d-platform-observation-use-case.mjs",
         "lib/d-initial-import-recovery-use-case.mjs",
         "lib/d-unknown-outcome-reobservation-use-case.mjs",
+        "lib/d-platform-state-reconciliation-use-case.mjs",
         "lib/d-execution-request-codec.mjs",
         "lib/d-executable-request-contract.mjs",
         "lib/production-authorization-snapshot.mjs",
@@ -6305,6 +6314,7 @@
         "tests/d-platform-observation-job-store.test.mjs",
         "tests/d-remaining-inventory-admission.test.mjs",
         "tests/d-owner-stock-registration.test.mjs",
+        "tests/d-platform-state-reconciliation.test.mjs",
         "tests/d-initial-import-stop-contract.test.mjs",
         "tests/fixtures/d-platform-observation-runtime-fixture.mjs",
         "tests/helpers/d-synthetic-completion-adapter.mjs",

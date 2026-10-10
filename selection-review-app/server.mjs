@@ -301,6 +301,7 @@ import { createDProductionRoundUseCase, DProductionRoundError } from "./lib/d-pr
 import { createProductionAuthorizationRollbackUseCase, ProductionAuthorizationRollbackError } from "./lib/production-authorization-rollback-use-case.mjs";
 import { createDInitialImportRecoveryUseCase, DInitialImportRecoveryError } from "./lib/d-initial-import-recovery-use-case.mjs";
 import { createDUnknownOutcomeReobservationUseCase, DUnknownOutcomeReobservationError } from "./lib/d-unknown-outcome-reobservation-use-case.mjs";
+import { createDPlatformStateReconciliationUseCase, DPlatformStateReconciliationError } from "./lib/d-platform-state-reconciliation-use-case.mjs";
 import { C1KeywordContinuationRevisionConflictError, createKeywordEvidenceRuntimeServices } from "./lib/keyword-evidence-runtime-services.mjs";
 
 import { createRuntimeHealth } from './lib/runtime-health.mjs';
@@ -624,6 +625,8 @@ const dInitialImportRecoveryUseCase = createDInitialImportRecoveryUseCase({ repo
   serverClock: now, loadDPlatformObservationPolicy: dPlatformObservationPolicyResolver, jobStore: softwareJobStore });
 // 与恢复用例同一接线：同一个策略解析器实例、同一个作业仓库。
 const dUnknownOutcomeReobservationUseCase = createDUnknownOutcomeReobservationUseCase({ repository: businessStateRepository,
+  serverClock: now, loadDPlatformObservationPolicy: dPlatformObservationPolicyResolver, jobStore: softwareJobStore });
+const dPlatformStateReconciliationUseCase = createDPlatformStateReconciliationUseCase({ repository: businessStateRepository,
   serverClock: now, loadDPlatformObservationPolicy: dPlatformObservationPolicyResolver, jobStore: softwareJobStore });
 const runtimeArchitecture = assertRuntimeBoundaries({
   configuration: runtimeConfiguration,
@@ -7072,6 +7075,7 @@ async function handleApi(req, res, pathname) {
   const productionAuthorizationRollbackRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/d\/authorization-rollback$/);
   const dInitialImportRecoveryRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/d\/initial-import-recovery$/);
   const dUnknownOutcomeReobservationRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/d\/unknown-outcome-reobservation$/);
+  const dPlatformStateReconciliationRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/d\/platform-state-reconciliation$/);
   const accountReadRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/account-read\/(authorize|continue)$/);
   if (req.method === "POST" && accountReadRoute) {
     const contentType = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
@@ -7142,6 +7146,28 @@ async function handleApi(req, res, pathname) {
     }
     const after = await readData(), current = after.candidates.find(item => item.id === input.candidateId);
     if (!current) throw httpError(500, "重新观察结果待核对：当前商品独立回读缺失");
+    return json(res, 200, { ...execution, candidate: publicSavedDECandidate(current, after) });
+  }
+  if (req.method === "POST" && dPlatformStateReconciliationRoute) {
+    const contentType = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+    if (contentType !== "application/json") throw httpError(415, "按平台现状收口只接受当前页面的确认提交");
+    const origin = String(req.headers.origin || "");
+    if (origin && !allowedReviewOrigins.has(origin)) throw httpError(403, "按平台现状收口拒绝其他网页来源");
+    const input = await requestBody(req);
+    if (!input || typeof input !== "object" || Array.isArray(input) || input.candidateId !== dPlatformStateReconciliationRoute[1]) {
+      throw httpError(400, "收口请求必须准确对应当前商品");
+    }
+    const actor = runtimeIdentityProvider.resolveActor({ request: req });
+    let execution;
+    try { execution = await dPlatformStateReconciliationUseCase.reconcile({ actor, input }); }
+    catch (error) {
+      if (!(error instanceof DPlatformStateReconciliationError)) throw error;
+      const status = error.code === "OWNER_REQUIRED" ? 403 : error.code === "CANDIDATE_NOT_FOUND" || error.code === "JOB_NOT_FOUND" ? 404
+        : ["CANDIDATE_CHANGED", "ALREADY_RECONCILING", "RECONCILE_LIMIT_REACHED"].includes(error.code) ? 409 : error.code === "INPUT_INVALID" ? 400 : 422;
+      return json(res, status, { code: error.code, message: error.message, externalRequests: 0, platformWrites: 0 });
+    }
+    const after = await readData(), current = after.candidates.find(item => item.id === input.candidateId);
+    if (!current) throw httpError(500, "收口结果待核对：当前商品独立回读缺失");
     return json(res, 200, { ...execution, candidate: publicSavedDECandidate(current, after) });
   }
   if (req.method === "POST" && productionAuthorizationRollbackRoute) {

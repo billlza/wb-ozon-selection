@@ -120,6 +120,10 @@ export function dESavedJobRuntimeDisplay(view) {
     canReobserveUnknownOutcome: view.canReobserveUnknownOutcome === true,
     reobservationBlocker: view.canReobserveUnknownOutcome === true ? null : view.reobservationBlocker ?? null,
     reobservation: view.unknownOutcomeReobservation ?? null,
+    canReconcileFromPlatformState: view.canReconcileFromPlatformState === true,
+    platformStateReconciliationBlocker: view.canReconcileFromPlatformState === true ? null : view.platformStateReconciliationBlocker ?? null,
+    platformStateReconciliation: view.platformStateReconciliation ?? null,
+    platformStateReconciliationAttemptsLeft: view.platformStateReconciliationAttemptsLeft ?? null,
     canRecoverInitialImport: view.canRecoverInitialImport === true,
     recoveryBlocker: view.canRecoverInitialImport === true ? null : view.recoveryBlocker ?? null,
     recovery: view.initialImportRecovery ?? null };

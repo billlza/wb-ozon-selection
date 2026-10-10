@@ -260,6 +260,10 @@ export const api = {
     request(`/api/candidates/${encodeURIComponent(candidateId)}/lifecycle/d/unknown-outcome-reobservation`, {
       method: "POST", body: JSON.stringify({ candidateId, confirmPlatformAlreadyCreatedProduct: true, ...payload })
     }),
+  reconcileDFromPlatformState: (candidateId, payload) =>
+    request(`/api/candidates/${encodeURIComponent(candidateId)}/lifecycle/d/platform-state-reconciliation`, {
+      method: "POST", body: JSON.stringify({ candidateId, confirmPlatformStateMatchesThisRound: true, ...payload })
+    }),
   recoverDInitialImport: (candidateId, payload) =>
     request(`/api/candidates/${encodeURIComponent(candidateId)}/lifecycle/d/initial-import-recovery`, {
       method: "POST", body: JSON.stringify({ candidateId, confirmImportAlreadyAcceptedByPlatform: true, ...payload })

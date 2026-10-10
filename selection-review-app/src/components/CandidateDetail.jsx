@@ -37,7 +37,7 @@ function ReviewList({ items }) {
   return <ul className="compact-list">{items.map((item) => <li key={typeof item === "string" ? item : item.label}>{typeof item === "string" ? item : item.label}</li>)}</ul>;
 }
 
-export default function CandidateDetail({ candidate, seerfarRuntime, onRealAConfirm, onContinueSavedDE, onDispatchDProductionRound, onRollbackProductionAuthorization, onRecoverDInitialImport, onReobserveDUnknownOutcome, onAuthorizeAccountRead, onContinueAccountRead, realAConfirming = false }) {
+export default function CandidateDetail({ candidate, seerfarRuntime, onRealAConfirm, onContinueSavedDE, onDispatchDProductionRound, onRollbackProductionAuthorization, onRecoverDInitialImport, onReobserveDUnknownOutcome, onReconcileDFromPlatformState = null, onAuthorizeAccountRead, onContinueAccountRead, realAConfirming = false }) {
   const dimensions = candidate.dimensionsCm || {};
   const rightsCompliance = candidateRightsCompliancePresentation(candidate);
   return (
@@ -80,7 +80,8 @@ export default function CandidateDetail({ candidate, seerfarRuntime, onRealAConf
             onDispatchNewRound={onDispatchDProductionRound ? payload => onDispatchDProductionRound(candidate.id, payload) : null}
             onRollbackAuthorization={onRollbackProductionAuthorization ? payload => onRollbackProductionAuthorization(candidate.id, payload) : null}
             onRecoverInitialImport={onRecoverDInitialImport ? payload => onRecoverDInitialImport(candidate.id, payload) : null}
-            onReobserveUnknownOutcome={onReobserveDUnknownOutcome ? payload => onReobserveDUnknownOutcome(candidate.id, payload) : null} />
+            onReobserveUnknownOutcome={onReobserveDUnknownOutcome ? payload => onReobserveDUnknownOutcome(candidate.id, payload) : null}
+            onReconcileFromPlatformState={onReconcileDFromPlatformState ? payload => onReconcileDFromPlatformState(candidate.id, payload) : null} />
           <LifecycleStatusCard candidate={candidate} />
           <LifecycleEntryPreview preview={candidate.lifecycleEntryPreview} />
           {candidate.supplierImageSearchPreparation?.status === 'not_configured' ? (
