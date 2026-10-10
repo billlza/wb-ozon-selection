@@ -5,6 +5,7 @@ import { createLatestRead, createSelectionGuard, openSavedCandidate, runMutation
 import { validateCandidateCommentReceipt } from "./commentInput.js";
 import { c2ReferenceFailureMessage } from "./c2UploadInput.js";
 import { IMAGE_MATCH_CHANNEL, OZON_IMAGE_MATCH_CHANNEL, OZON_PAGE_READ_CHANNEL, startQueuedSupplierCapture } from "./captureStart.js";
+import { createIntakeJobBridge } from "./intakeJobBridge.js";
 import { firstInQueue, matchesQueue } from "./candidateViews";
 import AddCandidateModal from "./components/AddCandidateModal";
 import CandidateDetail, { CandidateReview } from "./components/CandidateDetail";
@@ -85,6 +86,14 @@ export default function App() {
   const accountReads=useRef(createLatestRead());
   const accountOwner=state.runtimeArchitecture?.currentUser?.authenticated===true&&state.runtimeArchitecture.currentUser.roles.includes('owner');
   const accountOwnerId=accountOwner?state.runtimeArchitecture.currentUser.userId:null;
+  // 录入流水线：工作台开着的这一页替录入泵把排好的作业编号递给插件（src/intakeJobBridge.js）；主人登录后才递。
+  useEffect(() => {
+    if (!accountOwnerId) return undefined;
+    const bridge = createIntakeJobBridge({ readQueue: () => api.getIntakeQueue({ bridge: true }),
+      onAck: ack => api.reportIntakeStart(ack).catch(() => {}) });
+    bridge.start();
+    return () => bridge.stop();
+  }, [accountOwnerId]);
   useEffect(() => {
     if (view !== 'product' || !accountOwnerId || !selectedId) return undefined;
     let cancelled = false;

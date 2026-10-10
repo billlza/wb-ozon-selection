@@ -46,6 +46,7 @@ export const API_PROCESS_TESTS = Object.freeze([
   "source-capture-review-api.test.mjs",
   "structured-dispatch-integration.test.mjs",
   "supplier-image-match-api.test.mjs",
+  "intake-api.test.mjs",
 ]);
 
 export const SOURCE_CONTRACT_TESTS = Object.freeze([

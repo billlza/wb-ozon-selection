@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T04:51:30.602Z",
+  "frozenAt": "2026-10-10T05:19:13.255Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 914,
-      "sha256": "0077e59aa008d37b7e4b21981da716e11ba73ea7d833377a286f861abb77a534",
+      "artifactCount": 923,
+      "sha256": "b26bc64db281cc8fbcce420378fdc809575375dc77ba5a280c7f32fc20c686cd",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -100,7 +100,7 @@
       },
       {
         "path": "lib/a-discovery-estimate.mjs",
-        "sha256": "2fae66fb68d3502921923a5587cbec4c9171ddd7ef6720281b6b7e7870f7d916"
+        "sha256": "c45d1877fbf60a4783083f3321328dd5e0cabd697f3320652d673364bfff4a81"
       },
       {
         "path": "lib/a-discovery-runtime-services.mjs",
@@ -436,7 +436,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "972ab2ac1469bf11c93e9540a8228aa554ea36bbdd1035aed25e78637410e97b"
+        "sha256": "12e4bd9c5918452c228c828d498701abec1b6f638d39be94232e04d6b2ca3c4b"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -445,6 +445,10 @@
       {
         "path": "lib/cargo-facts-declaration.mjs",
         "sha256": "2839c846d45a375a75d2cd053029be7554dc729eb2e41af6a06f8a53bcda1649"
+      },
+      {
+        "path": "lib/category-default-dimensions.mjs",
+        "sha256": "718d0884ae73fee4e74585e9a13e0064194b4a27a4f3f250df0bce9da752fe52"
       },
       {
         "path": "lib/codex-dispatcher.mjs",
@@ -641,6 +645,14 @@
       {
         "path": "lib/image-match-record.mjs",
         "sha256": "8a32108a337bc8f6dbcb78f47df5cab4cfd220b3035a1344e4774c44aa5e76be"
+      },
+      {
+        "path": "lib/intake-pipeline.mjs",
+        "sha256": "7446c046efe8757f0328dd988b1bbcae06ed7fa3cd8566243828aa9dfb27b4ae"
+      },
+      {
+        "path": "lib/intake-rough-profit.mjs",
+        "sha256": "4d26754e7c30a9a81015992ad5402d114afde878c54021f94e79913a0f12457d"
       },
       {
         "path": "lib/keyword-evidence-orchestrator.mjs",
@@ -1516,7 +1528,7 @@
       },
       {
         "path": "scripts/ci-test-suites.mjs",
-        "sha256": "7dcb5c5f235c8033106910fd449435348745a592f8e0c308a22e73819ba5a365"
+        "sha256": "3c45ec48c317ba6703070edf8c4cbe94cd6464ed7332984e9ce079d623c4c825"
       },
       {
         "path": "scripts/deploy-local-runtime.sh",
@@ -1576,11 +1588,11 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "7dedbebd101a872fd8f5d198da82574f996754a2541716a48aa2bf8c67a21543"
+        "sha256": "f0e3e40277cc6b867bb8fe8be16a25370cefdb1354072d167048aab28559a83d"
       },
       {
         "path": "src/App.jsx",
-        "sha256": "09862caed8cec8604097970f84c23698ed1d00189fd6fe35d123366a84f4593a"
+        "sha256": "45bfdca9f95f506511a645fbaaf232dc0caa2c3ad80352f78144f5a9eeb62145"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1592,7 +1604,7 @@
       },
       {
         "path": "src/api.js",
-        "sha256": "8dd7541968acac420a09f9425dbced5e5962373620be1a0a651298e9d0fda305"
+        "sha256": "f0af3566894848fcfc542a8e6eda73fe2c0a71682e710f93088282100b8dc911"
       },
       {
         "path": "src/bExactCommissionInput.js",
@@ -1839,6 +1851,10 @@
         "sha256": "654f5c1c5654b2a9f5968776117ab41ceee0d4051cb07f0fafde0a6626c3abfa"
       },
       {
+        "path": "src/intakeJobBridge.js",
+        "sha256": "df4cc25d6ca6e5b7880e345ac52f3fe530b8cbe12cd294fdcab7bbf961623396"
+      },
+      {
         "path": "src/keywordSoftwareRuntimeView.js",
         "sha256": "0ac4ea2ea2d9767403a9b0d96f0717cf67427756f61795b64cad5c4e63971833"
       },
@@ -1909,6 +1925,10 @@
       {
         "path": "tests/a-discovery-contract.test.mjs",
         "sha256": "c18f2a075512a6d171b2485307379e5c348484046184efbca39948b60d3210c6"
+      },
+      {
+        "path": "tests/a-discovery-estimate-assumed-dimensions.test.mjs",
+        "sha256": "c8b554e177c5f1da0be543dfeb66058a593cb182a255e71c1be9f44d31ad5f81"
       },
       {
         "path": "tests/a-discovery-estimate-store.test.mjs",
@@ -2981,6 +3001,22 @@
       {
         "path": "tests/image-fingerprint.test.mjs",
         "sha256": "c5b1cc53dc78ed2d9a0883d05779bede3b4bddba5fc0a45325f3e3b6de5c8d52"
+      },
+      {
+        "path": "tests/intake-api.test.mjs",
+        "sha256": "e2265ee142d9b65bbd5ea952734c6a4a25c7032f33bdae7a85d66e12ff883596"
+      },
+      {
+        "path": "tests/intake-job-bridge.test.mjs",
+        "sha256": "6284ba64cfebf029ac7bb0a1b7d7f56a2012bae9eabc7425e90b9fef317b7d90"
+      },
+      {
+        "path": "tests/intake-pipeline.test.mjs",
+        "sha256": "37f8c060da5eb03c182ee71e06722daf4cbd0d89962765f96560d5dcb375756c"
+      },
+      {
+        "path": "tests/intake-rough-profit.test.mjs",
+        "sha256": "82f90890243800aff338836f069eef7c314877df377a344e806b211c6a28dcc2"
       },
       {
         "path": "tests/keyword-evidence-orchestrator.test.mjs",
@@ -4087,6 +4123,14 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/intake-pipeline.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "lib/intake-rough-profit.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/ozon-same-product-match.mjs",
           "status": "present_in_integration_source"
         },
@@ -4135,6 +4179,10 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "src/intakeJobBridge.js",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "src/ozonImageMatchView.js",
           "status": "present_in_integration_source"
         },
@@ -4176,6 +4224,22 @@
         },
         {
           "path": "tests/image-fingerprint.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/intake-api.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/intake-job-bridge.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/intake-pipeline.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/intake-rough-profit.test.mjs",
           "status": "present_in_integration_source"
         },
         {
@@ -6077,6 +6141,7 @@
         "lib/seerfar-web-discovery-contract.mjs",
         "lib/a-discovery-estimate.mjs",
         "lib/a-discovery-estimate-store.mjs",
+        "lib/category-default-dimensions.mjs",
         "lib/discovery-market-snapshot.mjs",
         "lib/supplier-draft.mjs",
         "lib/sku-choice-estimate.mjs",
@@ -6110,6 +6175,7 @@
         "tests/seerfar-web-discovery-contract.test.mjs",
         "tests/a-discovery-estimate.test.mjs",
         "tests/a-discovery-estimate-store.test.mjs",
+        "tests/a-discovery-estimate-assumed-dimensions.test.mjs",
         "tests/discovery-market-snapshot.test.mjs",
         "tests/supplier-draft.test.mjs",
         "tests/supplier-draft-api.test.mjs",

@@ -402,5 +402,12 @@ export const api = {
     request(`/api/candidates/${id}/listing-readback`, {
       method: "POST",
       body: JSON.stringify(payload)
-    })
+    }),
+  // 录入页：贴链接、看「找货中」、对一件点「重跑」、整页提示上点「接着找」，以及开始信号桥的回执。
+  submitIntakeLinks: (links) => request("/api/intake/links", { method: "POST", body: JSON.stringify({ links }) }),
+  getIntakeQueue: ({ bridge = false } = {}) => request(`/api/intake/queue${bridge ? "?bridge=1" : ""}`),
+  retryIntake: (candidateId, dataRevision) =>
+    request(`/api/intake/${encodeURIComponent(candidateId)}/retry`, { method: "POST", body: JSON.stringify({ dataRevision }) }),
+  resumeIntake: () => request("/api/intake/resume", { method: "POST", body: "{}" }),
+  reportIntakeStart: (ack) => request("/api/intake/start-ack", { method: "POST", body: JSON.stringify(ack) })
 };
