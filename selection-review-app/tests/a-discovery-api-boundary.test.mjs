@@ -58,7 +58,8 @@ test('real default-off discovery API enforces owner, source and closed input wit
 
 /**
  * The desk's one click over the real API. The round is fully configured so the whole saved path runs, but the one
- * configured credential alias answers exactly as a missing keychain item does, so the job stops before any request:
+ * configured credential alias answers exactly as a missing OS credential item does (macOS security exits 44; Linux
+ * secret-tool exits 1 silently), so the job stops before any request:
  * no external call, no platform write, and the points the owner would have spent are never spent here.
  */
 test('一次 start 请求把这一轮建好、许可并开始；重复同一个幂等键只留一个批次和一份许可',async t=>{
@@ -68,7 +69,7 @@ test('一次 start 请求把这一轮建好、许可并开始；重复同一个�
   await writeFile(preload,`import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';import {writeFileSync} from 'node:fs';
 const counts={network:0,keychain:0};const save=()=>writeFileSync(${JSON.stringify(probe)},JSON.stringify(counts));
 cp.execFile=(...args)=>{const callback=args[args.length-1];counts.keychain++;save();
-const error=new Error('SYNTHETIC_KEYCHAIN_ITEM_ABSENT');error.code=44;if(typeof callback==='function')callback(error,'','');};
+const error=new Error('SYNTHETIC_KEYCHAIN_ITEM_ABSENT');error.code=process.platform==='linux'?1:44;if(typeof callback==='function')callback(error,'','');};
 syncBuiltinESMExports();globalThis.fetch=async()=>{counts.network++;save();throw new Error('UNEXPECTED_TEST_EXTERNAL_ACTION');};`);
   const contractVersion='linkfox-discovery-93a1dbf-v1';
   const connector={provider:'linkfox',bindingId:'route:synthetic-start',configurationVersion:'version:1',gatewayOrigin:'https://tool-gateway.linkfox.com',

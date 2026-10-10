@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import { execFile as execFileCallback } from "node:child_process";
-import { promisify } from "node:util";
+import { CredentialStoreError, createOsCredentialStore, credentialStoreBackendFor } from "./credential-store.mjs";
 
 import { createSeerfarOpenApiTransport, SeerfarTransportError, SEERFAR_OPEN_API_BASE } from "./seerfar-open-api-transport.mjs";
 
@@ -27,13 +26,20 @@ function safeRequestId(value) {
   return `seerfar-http:${createHash("sha256").update(String(value || "unknown")).digest("hex").slice(0, 20)}`;
 }
 
+const SEERFAR_CREDENTIAL_ENTRY = Object.freeze({ service: SEERFAR_KEYCHAIN_SERVICE, account: SEERFAR_KEYCHAIN_ACCOUNT });
+
 function keychainFailure(error) {
-  if (error instanceof SeerfarTransportError) return error;
-  // security exit 44 is errSecItemNotFound; 51/128 are denied interaction/authentication.
-  if (error?.code === 44) return new SeerfarTransportError('credential_missing');
-  if ([51,128].includes(error?.code)) return new SeerfarTransportError('credential_access_denied');
+  if (error instanceof CredentialStoreError) {
+    if (error.code === "credential_missing") return new SeerfarTransportError("credential_missing");
+    if (error.code === "credential_access_denied") return new SeerfarTransportError("credential_access_denied");
+  }
   return error;
 }
+
+function credentialStoreFor({ credentialStore, execFileImpl, platform }) {
+  return credentialStore ?? createOsCredentialStore({ ...(platform ? { platform } : {}), ...(execFileImpl ? { execFileImpl } : {}) });
+}
+
 function networkFailure(error, controller, signal) {
   if (signal?.aborted) return signal.reason;
   if (controller.signal.aborted) return new SeerfarTransportError('network_timeout');
@@ -42,17 +48,9 @@ function networkFailure(error, controller, signal) {
   return error;
 }
 
-export async function readSeerfarKeychainSecret({ execFileImpl = promisify(execFileCallback) } = {}) {
+export async function readSeerfarKeychainSecret({ execFileImpl, platform, credentialStore } = {}) {
   try {
-    const result = await execFileImpl("/usr/bin/security", [
-      "find-generic-password",
-      "-w",
-      "-s",
-      SEERFAR_KEYCHAIN_SERVICE,
-      "-a",
-      SEERFAR_KEYCHAIN_ACCOUNT
-    ], { encoding: "utf8", maxBuffer: 64 * 1024 });
-    const output=typeof result === "string" ? result : result?.stdout;
+    const output = await credentialStoreFor({ credentialStore, execFileImpl, platform }).readSecret(SEERFAR_CREDENTIAL_ENTRY, { maxBuffer: 64 * 1024 });
     if(typeof output !== "string") throw new TypeError("SEERFAR_KEYCHAIN_RESULT_INVALID");
     const secret = output.trim();
     if (!secret) throw new SeerfarTransportError("credential_missing");
@@ -60,31 +58,22 @@ export async function readSeerfarKeychainSecret({ execFileImpl = promisify(execF
   } catch (error) { throw keychainFailure(error); }
 }
 
-export async function inspectSeerfarKeychainEntry({ execFileImpl = promisify(execFileCallback) } = {}) {
+export async function inspectSeerfarKeychainEntry({ execFileImpl, platform, credentialStore } = {}) {
   try {
-    await execFileImpl("/usr/bin/security", [
-      "find-generic-password",
-      "-s",
-      SEERFAR_KEYCHAIN_SERVICE,
-      "-a",
-      SEERFAR_KEYCHAIN_ACCOUNT
-    ], { encoding: "utf8", maxBuffer: 64 * 1024 });
-    return true;
+    return await credentialStoreFor({ credentialStore, execFileImpl, platform }).hasSecret(SEERFAR_CREDENTIAL_ENTRY, { maxBuffer: 64 * 1024 });
   } catch (error) {
-    const failure=keychainFailure(error);
-    if (failure instanceof SeerfarTransportError && failure.code === "credential_missing") return false;
-    throw failure;
+    throw keychainFailure(error);
   }
 }
 
-export async function inspectSeerfarRuntimeConfiguration({ keychainEntryReader = inspectSeerfarKeychainEntry } = {}) {
+export async function inspectSeerfarRuntimeConfiguration({ keychainEntryReader = inspectSeerfarKeychainEntry, platform = process.platform } = {}) {
   const value=await keychainEntryReader();
   if (typeof value !== 'boolean') throw new TypeError('SEERFAR_CONFIGURATION_RESULT_INVALID');
   const configured=value;
   return Object.freeze({
     connectorVersion: SEERFAR_RUNTIME_CONNECTOR_VERSION,
     configured,
-    credentialLocation: configured ? "macos_keychain" : "not_configured",
+    credentialLocation: configured ? credentialStoreBackendFor(platform) ?? "unsupported_platform" : "not_configured",
     service: SEERFAR_KEYCHAIN_SERVICE,
     account: SEERFAR_KEYCHAIN_ACCOUNT,
     secretExposed: false
