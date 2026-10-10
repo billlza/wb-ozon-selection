@@ -6,7 +6,7 @@ import { createProductionPlan, projectProductionPlanInputs, fingerprintProductio
 import { assertValidProductionAuthorization } from "./production-authorization.mjs";
 import { assertCurrentProductionExecutionBinding } from "./platform-write-preflight.mjs";
 import { assetTransportPrewriteFailure, isAssetTransportPrewriteFailure, isProductionExecutionPrewriteFailure } from "./production-execution-failure.mjs";
-import { isCanonicalFrozenRef } from "./production-contract-primitives.mjs";
+import { isCanonicalFrozenRef, dProductionJobRound } from "./production-contract-primitives.mjs";
 
 export const ALIYUN_OSS_D_ASSET_INTEGRATION_VERSION = "aliyun-oss-d-asset-integration-v1";
 
@@ -60,8 +60,9 @@ function assertSoftwareJobReference(candidate, softwareJobRef) {
       ![softwareJobRef.jobId, softwareJobRef.workerId, softwareJobRef.leaseId].every(isCanonicalFrozenRef) ||
       !Number.isSafeInteger(softwareJobRef.revision) || softwareJobRef.revision < 0 ||
       sku.dHandoff?.schemaVersion !== "c2-d-handoff-v2" || sku.dHandoff.softwareJobCreated !== true ||
-      softwareJobRef.jobId !== sku.dHandoff.softwareJobRef?.jobId || softwareJobRef.revision !== sku.dHandoff.softwareJobRef.resultRevision ||
-      softwareJobRef.jobId !== `d-production-job:${fingerprintProductionAuthorization(sku.productionAuthorization)}`) {
+      softwareJobRef.revision !== sku.dHandoff.softwareJobRef?.resultRevision ||
+      dProductionJobRound(sku.dHandoff.softwareJobRef.jobId, fingerprintProductionAuthorization(sku.productionAuthorization)) !== 1 ||
+      dProductionJobRound(softwareJobRef.jobId, fingerprintProductionAuthorization(sku.productionAuthorization)) === null) {
     throw new Error("OSS_D_SOFTWARE_JOB_REFERENCE_REQUIRED");
   }
   return true;

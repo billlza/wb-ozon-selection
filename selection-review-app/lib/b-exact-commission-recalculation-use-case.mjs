@@ -66,9 +66,13 @@ export function createBExactCommissionRecalculationUseCase({ repository, runtime
             candidate.eliminatedAt = observedAt;
             candidate.eliminationReason = `B阶段利润未达到当前门槛：单件利润${computed.profitModel.unitProfitRmb}元，利润率${(computed.profitModel.profitMargin * 100).toFixed(1)}%`;
           }
+          // 这一次到底用了哪一种费用证据，跟着结果一起回去。复算接受店里的实收费率和官方费率表两种，
+          // 两种都算正式B，但不是一回事；不带上这一项，页面只能说「复算成功了」，主人会当成拿到了平台实收。
+          const usedFee = computed.systemEvidenceBundle.platformFeeEvidence;
           return { candidate, result: { schemaVersion: "b-exact-commission-recalculation-v1",
             status: passed ? "passed" : "rejected", priorSystemEvidenceBundle,
             priorTechnicalFailure: recovered.priorTechnicalFailure,
+            commissionEvidenceMode: usedFee.commissionEvidenceMode, commissionRate: usedFee.commissionRate,
             newBundleRef: computed.systemEvidenceBundle.bundleId, profitModelVersion: computed.profitModel.profitModelVersion,
             c1HandoffId: computed.c1Handoff?.handoffId ?? null, externalAccesses: [], platformWrites: 0 } };
         }

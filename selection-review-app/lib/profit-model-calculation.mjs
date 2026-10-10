@@ -70,11 +70,13 @@ export function validateProfitCalculation(model) {
   }
   const result = pricing.evaluatedAtMarketPrice;
   const current = [FORMAL_COMMISSION_CALCULATION_VERSION, PROFIT_CALCULATION_VERSION].includes(calculation.version);
+  // 只有主人授权的估算佣金算条件测算。`official_reference`（主人已保存的官方费表版本命中的费率）在
+  // lib/profit-model.mjs 里和 `exact` 同级形成正式计算，这里必须认同一套，否则同一份记录建得出来却校验不过。
   const conditional = current && model.commissionMode === "estimated";
-  if (current && (!["exact", "estimated"].includes(model.commissionMode) ||
+  if (current && (!["exact", "estimated", "official_reference"].includes(model.commissionMode) ||
       model.calculationType !== (conditional ? "conditional" : "formal") ||
       model.exactCommissionRequiredForFormalB !== conditional)) {
-    errors.push({ path: "calculationType", message: "当前正式计算须有精确佣金；估算只能保存条件测算和正式B证据缺口" });
+    errors.push({ path: "calculationType", message: "当前正式计算须有精确佣金或官方费表费率；估算只能保存条件测算和正式B证据缺口" });
   }
   const exactPrice = result.unroundedMarketReferencePriceCny;
   const exactProfit = result.unroundedUnitProfitCny;

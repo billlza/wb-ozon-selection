@@ -8,7 +8,8 @@ import { historicalAuthorizedProductionFixture } from "./helpers/c2-software-fix
 import { createFinalProductPlanConfirmationCard } from "../lib/final-product-plan-confirmation-card.mjs";
 import { commitSingleOwnerProductionAuthorization, createProductionAuthorization, commitProductionOwnerDecision, commitProductionAuthorizationHandoff,
   validateProductionAuthorization, assertCurrentProductionAuthorization } from "../lib/production-authorization.mjs";
-import { createJsonBusinessStateRepository } from "../lib/business-state-repository.mjs";
+import { createJsonBusinessStateRepository, createMemoryBusinessStateRepository } from "../lib/business-state-repository.mjs";
+import { PRODUCTION_EXACT_COMMISSION_REQUIRED } from "../lib/commission-estimate-authorization.mjs";
 import { loadPublishedSchemaValidator } from "./helpers/published-schema-validator.mjs";
 import { assertValidLifecyclePackage } from "../lib/product-lifecycle-schema.mjs";
 import { fingerprintCanonicalRecord } from "../lib/production-contract-primitives.mjs";
@@ -227,4 +228,37 @@ test("production final card rejects normalized impossible dates and new binding 
     const binding = { bindingId, configurationVersion: "config-v1", warehouseId: "10001" };
     assert.equal(isProductionExecutionBinding(binding), false); assert.equal(schemaValidator(binding), false);
   }
+});
+
+/**
+ * 钱的闸门在上架这一刻。
+ *
+ * 这道闸门加在服务端的提交路径上，不是页面上藏个按钮：`commitSingleOwnerProductionAuthorization` 在它那一次
+ * 原子事务的 `mutate` 里读仓库当时的记录来判，所以直接打接口、拿一份过期的页面来提交，都一样被拦。拦下来
+ * 的那一次什么都没落盘——下面逐字比较了整份快照。
+ */
+test("佣金还是估算时，生产授权在服务端被拒绝，稳定码可被页面识别，且一个字节都没落盘", async () => {
+  const base = fixture();
+  const document = await base.repository.readSnapshot();
+  const sku = document.candidates[0].lifecycleV11.skuPackage;
+  const model = sku.profitModels.find(item => item.profitModelVersion === sku.activeProfitModelVersion);
+  // 把当前生效那一份利润记录换成「条件测算 + 估算佣金」，别的一概不动：确认卡、冻结素材、指纹都还是原来那些。
+  Object.assign(model, { commissionMode: "estimated", calculationType: "conditional", exactCommissionRequiredForFormalB: true });
+  const repository = createMemoryBusinessStateRepository(document);
+  const before = await repository.readSnapshot();
+  await assert.rejects(() => commitSingleOwnerProductionAuthorization({ ...base.args, repository }), error => {
+    assert.equal(error.code, PRODUCTION_EXACT_COMMISSION_REQUIRED);
+    assert.equal(error.code, "PRODUCTION_AUTHORIZATION_EXACT_COMMISSION_REQUIRED");
+    assert.equal(error.exactCommissionRequiredForProduction, true);
+    assert.equal(error.ownerNextStep, "b_exact_commission_recalculate");
+    assert.equal(error.commissionMode, "estimated");
+    return true;
+  });
+  // 没有授权、没有 D 交接、没有软件作业、没有审计记录——拒绝发生在任何东西落盘之前。
+  assert.deepEqual(await repository.readSnapshot(), before);
+  // 换回精确佣金，同一份输入就该照常保存：这道闸门只拦估算佣金这一件事。
+  const exactDocument = await base.repository.readSnapshot();
+  const committed = await commitSingleOwnerProductionAuthorization({ ...base.args, repository: createMemoryBusinessStateRepository(exactDocument) });
+  assert.equal(committed.status, "committed");
+  assert.equal(committed.candidate.lifecycleV11.skuPackage.productionAuthorization.schemaVersion, "production-authorization-v1.2");
 });

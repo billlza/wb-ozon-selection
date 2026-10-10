@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createHash } from "node:crypto";
 
-import { scoreAndGroupKeywordEvidence, KEYWORD_SCORING_COMPONENTS, validateKeywordScoredSnapshot } from "../lib/keyword-evidence-scoring.mjs";
+import { scoreAndGroupKeywordEvidence, KEYWORD_SCORING_VERSION, KEYWORD_SCORING_COMPONENTS, validateKeywordScoredSnapshot } from "../lib/keyword-evidence-scoring.mjs";
 import { prepareKeywordEvidence } from "../lib/keyword-evidence-orchestrator.mjs";
-import { validateKeywordEvidenceSnapshot } from "../lib/keyword-evidence-snapshot.mjs";
+import { createKeywordEvidenceSnapshot, keywordScoringGroupLimits, validateKeywordEvidenceSnapshot } from "../lib/keyword-evidence-snapshot.mjs";
 
 const NOW = "2026-08-23T06:00:00.000Z";
 const identity = { candidateId: "CX-K3-001", parentOpportunityId: "opportunity:CX-K3-001", skuPackageId: "sku:CX-K3-001:1", dataRevision: 9 };
@@ -103,11 +104,14 @@ function score(prep, metrics) {
   });
 }
 
-test("scoringVersion与九组件权重固定为100", async () => {
+test("版本化数量策略与Schema一致，九组件权重仍为100", async () => {
   assert.equal(Object.values(KEYWORD_SCORING_COMPONENTS).reduce((a, b) => a + b, 0), 100);
-  const schema = JSON.parse(await readFile(new URL("../schema/keyword-scoring-v1.schema.json", import.meta.url), "utf8"));
-  assert.equal(schema.properties.scoringVersion.const, "keyword-scoring-v1");
-  assert.deepEqual(schema.properties.weights.const, KEYWORD_SCORING_COMPONENTS);
+  for (const version of ["keyword-scoring-v1", KEYWORD_SCORING_VERSION]) {
+    const schema = JSON.parse(await readFile(new URL(`../schema/${version}.schema.json`, import.meta.url), "utf8"));
+    assert.equal(schema.properties.scoringVersion.const, version);
+    assert.deepEqual(schema.properties.weights.const, KEYWORD_SCORING_COMPONENTS);
+    assert.deepEqual(schema.properties.groupLimits.const, keywordScoringGroupLimits(version));
+  }
 });
 
 test("语义79即使热度满分也不能进入title/tag，只能描述", async () => {
@@ -165,7 +169,7 @@ test("非exact提供伪竞品共识或数量时明确拒绝", async () => {
   }
 });
 
-test("19个结构合适唯一词即可达到三个minimum并ready", async () => {
+test("19个唯一词按现行上限分组且无需补齐旧minimum", async () => {
   const candidates = Array.from({ length: 19 }, (_, i) => raw(`minimum keyword ${String(i).padStart(2, "0")}`, "exact_match", Math.floor(i / 2) + 1));
   const frozenComparables = Array.from({ length: 10 }, (_, group) => ({
     competitorRef: `competitor:${group + 1}`, comparabilityStatus: "proven", comparabilityEvidenceRefs: [`compare:${group + 1}`], matchType: "exact_match",
@@ -182,8 +186,17 @@ test("19个结构合适唯一词即可达到三个minimum并ready", async () => 
   const snapshot = score(prep, prep.rawCandidatePool.map((c) => metric(c, 90)));
   assert.equal(snapshot.status, "ready");
   assert.deepEqual(Object.fromEntries(Object.entries(snapshot.groups).map(([k, v]) => [k, v.length])), {
-    title_keywords: 3, attribute_and_tag_keywords: 6, description_long_tail: 10
+    title_keywords: 5, attribute_and_tag_keywords: 12, description_long_tail: 2
   });
+  const keywords = Object.values(snapshot.groups).flat();
+  const historicalReady = historicalV1(snapshot, {
+    title_keywords: keywords.slice(0, 3), attribute_and_tag_keywords: keywords.slice(3, 9), description_long_tail: keywords.slice(9)
+  });
+  assert.equal(historicalReady.status, "ready");
+  assert.equal(validateKeywordScoredSnapshot(historicalReady, { currentBinding, asOf: NOW }).valid, true);
+  const historicalShortfall = historicalV1(snapshot);
+  assert.equal(historicalShortfall.status, "needs_review");
+  assert.equal(validateKeywordScoredSnapshot(historicalShortfall, { currentBinding, asOf: NOW }).valid, true);
 });
 
 test("同词不同matchType跨组只保留一次，重复证据进入rejected", async () => {
@@ -282,8 +295,9 @@ test("数量不足不填充，上限截断稳定并保存拒绝理由", async ()
   const small = [raw("only one")];
   const smallPrep = await validPreparation(small);
   const partial = score(smallPrep, [metric(small[0], 90)]);
-  assert.equal(partial.status, "partial_ready");
-  assert.ok(partial.scoringContext.gaps.length > 0);
+  assert.equal(partial.status, "ready");
+  assert.deepEqual(partial.scoringContext.gaps, []);
+  assert.equal(Object.values(partial.groups).flat().length, 1);
 
   const manyInputCandidates = Array.from({ length: 40 }, (_, i) => raw(`keyword ${String(i).padStart(2, "0")}`, "exact_match", Math.floor(i / 4) + 1));
   const frozenComparables = Array.from({ length: 10 }, (_, group) => ({
@@ -358,8 +372,8 @@ test("K3扩展字段、载荷指纹、状态、gaps及绑定篡改均可发现",
     (copy) => { copy.groups.title_keywords[0].matchType = "invalid"; },
     (copy) => { copy.groups.title_keywords[0].components.searchDemand.period = null; },
     (copy) => { copy.scoringContext.scoringPayloadFingerprint = "changed"; },
-    (copy) => { copy.status = "ready"; },
-    (copy) => { copy.scoringContext.gaps = []; },
+    (copy) => { copy.status = "partial_ready"; },
+    (copy) => { copy.scoringContext.gaps = [{ group: "title_keywords", requiredMin: 3, actual: 3, missing: 0 }]; },
     (copy) => { copy.scoringContext.preparationFingerprint = "changed"; }
   ];
   for (const mutate of cases) {
@@ -372,4 +386,73 @@ test("K3扩展字段、载荷指纹、状态、gaps及绑定篡改均可发现",
     });
     assert.equal(validation.valid, false);
   }
+});
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])]));
+}
+function digest(value) { return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex"); }
+
+function historicalV1(snapshot, historicalGroups = snapshot.groups) {
+  const groups = structuredClone(historicalGroups);
+  for (const item of Object.values(groups).flat()) item.scoringVersion = "keyword-scoring-v1";
+  const context = structuredClone(snapshot.scoringContext);
+  context.scoringVersion = "keyword-scoring-v1";
+  context.groupLimits = keywordScoringGroupLimits(context.scoringVersion);
+  context.gaps = Object.entries(context.groupLimits).filter(([group, limit]) => groups[group].length < limit.min)
+    .map(([group, limit]) => ({ group, requiredMin: limit.min, actual: groups[group].length, missing: limit.min - groups[group].length }));
+  context.scoringPayloadFingerprint = digest({ groups, rejected: context.rejected, gaps: context.gaps,
+    preparationFingerprint: context.preparationFingerprint, metricEvidenceFingerprint: context.metricEvidenceFingerprint });
+  return createKeywordEvidenceSnapshot({
+    snapshotId: `keyword-evidence:${identity.candidateId}:${identity.dataRevision}:${digest({ preparation: context.preparationFingerprint, metrics: context.metricEvidenceFingerprint }).slice(0, 16)}`,
+    identity, bindings, collectedAt: NOW, expiresAt: snapshot.validity.expiresAt, asOf: NOW,
+    sourceAttempts: snapshot.sourceAttempts, groups, scoringContext: context,
+    statusOverride: context.gaps.length === 0 ? "ready" : Object.values(groups).some(items => items.length === 0) ? "partial_ready" : "needs_review"
+  });
+}
+
+test("新评分一词ready，历史v1一词仍partial_ready且新旧ID不碰撞", async () => {
+  const candidate = raw("one traceable title");
+  const prep = await validPreparation([candidate]);
+  const current = score(prep, [metric(candidate, 90)]);
+  assert.equal(current.status, "ready");
+  assert.equal(current.scoringContext.scoringVersion, "keyword-scoring-v2");
+  assert.deepEqual(current.groups.attribute_and_tag_keywords, []);
+  assert.deepEqual(current.groups.description_long_tail, []);
+  const historical = historicalV1(current);
+  const before = JSON.stringify(historical);
+  assert.equal(historical.status, "partial_ready");
+  assert.deepEqual(historical.scoringContext.gaps.map(item => item.missing), [2, 6, 10]);
+  assert.equal(validateKeywordScoredSnapshot(historical, { currentBinding, asOf: NOW }).valid, true);
+  assert.equal(JSON.stringify(historical), before);
+  assert.notEqual(current.snapshotId, historical.snapshotId);
+  assert.deepEqual(score(prep, [metric(candidate, 90)]), current);
+});
+
+test("未知评分版本、错配数量策略和混合词版本均拒绝", async () => {
+  const candidate = raw("version binding");
+  const prep = await validPreparation([candidate]);
+  const snapshot = score(prep, [metric(candidate, 90)]);
+  for (const change of [
+    copy => { copy.scoringContext.scoringVersion = "keyword-scoring-v999"; },
+    copy => { copy.scoringContext.groupLimits = keywordScoringGroupLimits("keyword-scoring-v1"); },
+    copy => { copy.groups.title_keywords[0].scoringVersion = "keyword-scoring-v1"; }
+  ]) {
+    const copy = structuredClone(snapshot); change(copy);
+    const { snapshotFingerprint, ...payload } = copy;
+    copy.snapshotFingerprint = digest(payload);
+    assert.equal(validateKeywordScoredSnapshot(copy, { currentBinding, asOf: NOW }).valid, false);
+  }
+});
+
+test("只有描述限定词不满足标题最低要求，不伪造标题词", async () => {
+  const candidate = raw("description only");
+  const prep = await validPreparation([candidate]);
+  const snapshot = score(prep, [metric(candidate, 75)]);
+  assert.equal(snapshot.status, "partial_ready");
+  assert.deepEqual(snapshot.scoringContext.gaps, [{ group: "title_keywords", requiredMin: 1, actual: 0, missing: 1 }]);
+  assert.deepEqual(snapshot.groups.title_keywords, []);
+  assert.equal(snapshot.groups.description_long_tail.length, 1);
 });

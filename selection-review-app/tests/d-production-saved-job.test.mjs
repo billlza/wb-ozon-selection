@@ -216,3 +216,30 @@ test("receipt persistence failure propagates and keeps the last certain checkpoi
   assert.deepEqual(f.calls, ["/v3/product/import"]);
   assert.equal(saved.runtime.softwareJobs.find(job => job.jobId === f.job.jobId).status, "waiting_platform");
 });
+
+test('confirmed D creation with unverified CDN media queues E once and preserves the raw pending observation', async () => {
+  const f = await savedFixture();let factories = 0, observed;
+  const input = { ...f.input, createAdapter: async ({ request }) => {
+    factories++;
+    const adapter = createSyntheticDCompletionAdapter({ request });
+    return { ...adapter, readbackSellerApi: async query => {
+      observed = structuredClone(await adapter.readbackSellerApi(query));
+      observed.mediaObservation = { sourceProtocol: 'ozon-product-attributes-v4',
+        primaryImageUrl: 'https://cdn.example.com/new/main.jpg', images: ['https://cdn.example.com/new/detail.jpg'] };
+      observed.moderationStatus = 'in_moderation';observed.validationStatus = 'processing';observed.saleStatus = 'unknown';
+      return observed;
+    } };
+  } };
+  const results = await Promise.all([runPersistedDExecution(input), runPersistedDExecution(input)]);
+  assert.equal(results.filter(value => value.status === 'succeeded').length, 1);
+  assert.equal(results.filter(value => value.status === 'idempotent_replay').length, 1);
+  assert.equal(factories, 1);
+  const saved = await f.repository.readSnapshot(), sku = saved.candidates[0].lifecycleV11.skuPackage;
+  assert.equal(sku.productionRecord.status, 'validation_or_moderation');
+  assert.equal(sku.eVerificationRecord, null);
+  assert.deepEqual(sku.dSoftwareExecution.attempt.immediateReadback, observed);
+  assert.equal(saved.runtime.softwareJobs.filter(job => job.jobType === 'e_independent_readback').length, 1);
+  assert.equal(saved.runtime.softwareJobs.find(job => job.jobType === 'e_independent_readback').status, 'queued');
+  assert.equal((await runPersistedDExecution(input)).status, 'idempotent_replay');
+  assert.equal(factories, 1);assert.deepEqual(await f.repository.readSnapshot(), saved);
+});

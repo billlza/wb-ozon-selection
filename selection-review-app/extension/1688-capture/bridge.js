@@ -1,6 +1,9 @@
 const ROUTES = Object.freeze({
   SELECTION_REVIEW_1688_CAPTURE_REQUEST: "SELECTION_REVIEW_1688_CAPTURE_ACK",
-  SELECTION_REVIEW_OZON_CAPTURE_REQUEST: "SELECTION_REVIEW_OZON_CAPTURE_ACK"
+  SELECTION_REVIEW_OZON_CAPTURE_REQUEST: "SELECTION_REVIEW_OZON_CAPTURE_ACK",
+  SELECTION_REVIEW_1688_IMAGE_MATCH_REQUEST: "SELECTION_REVIEW_1688_IMAGE_MATCH_ACK",
+  SELECTION_REVIEW_OZON_IMAGE_MATCH_REQUEST: "SELECTION_REVIEW_OZON_IMAGE_MATCH_ACK",
+  SELECTION_REVIEW_SEERFAR_WEB_REQUEST: "SELECTION_REVIEW_SEERFAR_WEB_ACK"
 });
 const STATUS_PING = "SELECTION_REVIEW_EXTENSION_STATUS_PING";
 const STATUS_RESPONSE = "SELECTION_REVIEW_EXTENSION_STATUS_RESPONSE";
@@ -13,10 +16,14 @@ async function readBackgroundStatus() {
     return {
       backgroundReady: response?.accepted === true,
       serviceConnected: response?.serviceConnected === true,
+      // What the last capture ended as, in the worker's own words. Without it the page can only report the server-side
+      // timeout and never the extension's own reason — exactly how a whole afternoon went into guessing (2026-09-11).
+      lastCaptureCode: typeof response?.lastCaptureCode === "string" ? response.lastCaptureCode : "",
+      captureActive: response?.captureActive === true,
       backgroundError: response?.accepted === true ? "" : response?.code === "extension_identity_rejected" ? "插件身份未获服务端允许，禁止领取作业" : "插件后台或评审台连接尚未确认"
     };
   } catch {
-    return { backgroundReady: false, serviceConnected: false, backgroundError: "插件后台没有响应" };
+    return { backgroundReady: false, serviceConnected: false, lastCaptureCode: "", captureActive: false, backgroundError: "插件后台没有响应" };
   }
 }
 

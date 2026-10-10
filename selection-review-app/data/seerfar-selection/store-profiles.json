@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "seerfar-store-selection-profiles-v1",
+  "note": "每家店的 Seerfar 自动选品档案（方案 B）。类目写 Seerfar 会员前台「热销榜单选品」里的中文类目：可以写完整路径（用 \" > \" 连接），也可以只写其中一级的名字，商品路径里有这一级就算在内。positioning 是店铺定位，presaleMaxDays 是货源预售最多能等几天，seedPolicy 是从本店销量里挑爆款的门槛。这里是默认值，主人在工作台里改的会另存版本、优先生效。改完换一个 version。",
+  "profiles": [
+    {
+      "schemaVersion": "seerfar-store-selection-profile-v1",
+      "targetStore": "miska",
+      "version": "miska-2026-10-10-draft-3",
+      "positioning": "女生用户：杂物、家居摆设、小玩意、宠物用品（竞争小的非标品）",
+      "categoryPaths": ["装饰和房间内饰", "收藏品", "纪念品和礼品", "收纳", "家居香水", "服装首饰", "发饰", "宠物用品 > 宠物服装和靴子 > 宠物服装", "宠物用品 > 携带和睡眠配件 > 宠物躺床"],
+      "excludedCategoryPaths": ["家用照明", "家居照明配饰和配件"],
+      "priceRub": { "min": 800, "max": 5000 },
+      "maxWeightGrams": 2000,
+      "presaleMaxDays": 14,
+      "minMonthlySales": 10,
+      "picksPerRound": 5,
+      "similarPriceBandRate": 0.3,
+      "seedPolicy": { "maxSeeds": 3, "hotMinUnits": 3, "risingMinUnits": 2, "risingMinRatio": 2, "potentialMinViews": 2000, "potentialMinToCartRate": 0.01, "potentialMaxUnits": 1 },
+      "note": "草稿，等主人确认：按主人 2026-10-10 的定位「女生杂物、家居、摆设、奇奇怪怪小玩意（竞争小的非标品）」，宠物用品也保留（主人 2026-10-10：「要，也属于女生这个用户画像的」），两条宠物类目是 2026-09 真实 Seerfar 查询里的写法。类目名取自 Ozon 中国卖家类目表的中文名，还要和 Seerfar 类目选择器里的写法核对；灯具带电，先排除。销量线放低到 10 件，因为非标冷门品本来就卖得少。"
+    },
+    {
+      "schemaVersion": "seerfar-store-selection-profile-v1",
+      "targetStore": "dandanshu",
+      "version": "dandanshu-2026-10-10-draft-2",
+      "positioning": "玩具大类",
+      "categoryPaths": ["玩具", "积木玩具套装", "拼图， 模型", "棋盘和纸牌游戏", "儿童创意活动与发展", "教学玩具"],
+      "excludedCategoryPaths": ["无线电遥控玩具"],
+      "priceRub": { "min": 600, "max": 3000 },
+      "maxWeightGrams": 1000,
+      "presaleMaxDays": 14,
+      "minMonthlySales": 30,
+      "picksPerRound": 5,
+      "similarPriceBandRate": 0.3,
+      "seedPolicy": { "maxSeeds": 3, "hotMinUnits": 5, "risingMinUnits": 3, "risingMinRatio": 2, "potentialMinViews": 3000, "potentialMinToCartRate": 0.01, "potentialMaxUnits": 2 },
+      "note": "草稿，等主人确认：按主人 2026-10-10 的定位「玩具大类」。类目名取自 Ozon 中国卖家类目表的中文名，还要和 Seerfar 写法核对；遥控玩具带电池，先排除。价格带参照本店近 4 周每件约 80 元（约 900 卢布）。"
+    }
+  ]
+}

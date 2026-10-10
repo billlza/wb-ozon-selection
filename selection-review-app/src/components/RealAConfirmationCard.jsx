@@ -16,6 +16,7 @@ const EVIDENCE_STATUS_LABELS = {
   metadata_only: "只有摘要",
   invalid: "证据无效",
   expired: "已经过期",
+  refresh_due: "到了复查提示时间（非失效、非阻断）",
   scope_mismatch: "适用范围不匹配",
   missing: "尚未准备"
 };

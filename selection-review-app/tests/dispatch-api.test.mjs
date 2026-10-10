@@ -11,6 +11,8 @@ const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const port = Number(process.env.SELECTION_REVIEW_TEST_PORT);
 if (!Number.isSafeInteger(port) || port < 1 || port > 65535 || [4317, 4318, 4173].includes(port)) throw new Error("TEST_REQUIRES_ISOLATED_PORT");
 const baseUrl = `http://127.0.0.1:${port}`;
+const LEGACY_DISPATCH_ID = "D-LEGACY-HISTORY";
+const LEGACY_DISPATCH_DISABLED = "旧派发通道已停用：当前不派发 Codex 任务，历史派发只读。";
 
 async function waitForHealth(child, stderr) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -38,7 +40,18 @@ test("新版候选进入软件状态机且任何旧Codex入口都不能推动", 
   await writeFile(dataFile, JSON.stringify({
     meta: { version: 2, title: "test", updatedAt: "2026-08-22T08:00:00.000Z", automationStarted: false },
     rules: {},
-    candidates: []
+    candidates: [],
+    dispatches: [{
+      id: LEGACY_DISPATCH_ID,
+      candidateId: null,
+      dataRevision: 1,
+      scope: "candidate",
+      assigneeRole: "listing_task",
+      assigneeTitle: "上架",
+      status: "received",
+      message: "历史派发只保留为只读记录",
+      pendingApproval: { requestId: "legacy-approval-1", tool: "shell", summary: "历史权限请求" }
+    }]
   }));
 
   const child = spawn(process.execPath, [path.join(appDir, "server.mjs"), "--api-only"], {
@@ -97,7 +110,22 @@ test("新版候选进入软件状态机且任何旧Codex入口都不能推动", 
   assert.equal(state.meta.automationStarted, false);
   assert.equal(state.summary.dispatch.processingCounts.dispatched, 0);
 
+  const bytesBeforeLegacyCalls = await readFile(dataFile);
+  for (const [route, body] of [
+    ["desktop-turn", { turnId: "legacy-desktop-turn", dataRevision: 1 }],
+    ["approval", { requestId: "legacy-approval-1", decision: "accept" }],
+    ["claim", { runId: "legacy-run", currentStep: "历史派发不应被重新领取" }]
+  ]) {
+    const response = await post(`/api/dispatches/${LEGACY_DISPATCH_ID}/${route}`, body);
+    assert.equal(response.status, 409, `旧派发通道${route}必须在停用时拒绝`);
+    assert.equal((await response.json()).message, LEGACY_DISPATCH_DISABLED);
+  }
+  assert.deepEqual(await readFile(dataFile), bytesBeforeLegacyCalls, "停用的旧派发通道不得写入任何业务数据");
+
   const persisted = JSON.parse(await readFile(dataFile, "utf8"));
-  assert.equal(persisted.dispatches.length, 0);
+  assert.equal(persisted.dispatches.length, 1);
+  assert.equal(persisted.dispatches[0].id, LEGACY_DISPATCH_ID);
+  assert.equal(persisted.dispatches[0].status, "received");
+  assert.equal(persisted.dispatches[0].runId, undefined);
   assert.equal(persisted.candidates[0].executionRuntime.codexWakeupCount, 0);
 });

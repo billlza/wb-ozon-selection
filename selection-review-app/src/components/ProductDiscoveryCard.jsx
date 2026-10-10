@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { STORE_LABELS } from '../constants.js';
-import { errorMessage, safeWebUrl } from '../formState.js';
+import { errorMessage, safeImageUrl, safeWebUrl } from '../formState.js';
+import { discoveryFailureLabel } from '../../lib/global-notices.mjs';
 
 const statusLabels = {queued:'等待软件执行',claimed:'正在读取',waiting_platform:'等待查询结果',completed:'已保存查询结果',
   failed:'本次查询失败，已停止',unknown_outcome:'请求结果未知，需核对'};
@@ -20,14 +21,27 @@ const configurationLabels = {
   PLAN_NOT_SUPPORTED:'已配置服务不能执行计划中的全部查询：维护人员需核对计划与服务能力。'
 };
 const newKey = () => `product-discovery:${crypto.randomUUID()}`;
+/** Provider routes report a missing count as null or as the literal 'unknown'; the owner reads one Chinese word for both. */
+const productFact = value => value === null || value === undefined || value === 'unknown' ? '未知' : value;
+const DEFAULT_PERMIT_WINDOW_MS = 2 * 60 * 60 * 1000;
+/** Prefilled permit expiry for the datetime-local input: two hours ahead in the viewer's local time, still editable. */
+export function defaultPermitExpiryLocal(now = Date.now()) {
+  const at = new Date(now + DEFAULT_PERMIT_WINDOW_MS); at.setSeconds(0, 0);
+  const pad = value => String(value).padStart(2, '0');
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
 
-function BatchCard({ entry, onAuthorize, onContinue, onOpenCandidate }) {
+function BatchCard({ entry, onAuthorize, onContinue, onSelect, onTranslate, onEstimate, onOpenCandidate }) {
   const {batch,jobs,canAuthorize,candidateImport} = entry;
-  const [expiresAt,setExpiresAt] = useState('');
+  const imported = new Map((entry.importedCandidates ?? []).map(value=>[value.marketProductId,value.candidateId]));
+  const selections = new Map((entry.selections ?? []).map(value=>[value.marketProductId,value]));
+  const [expiresAt,setExpiresAt] = useState(defaultPermitExpiryLocal);
   const [confirmed,setConfirmed] = useState(false);
   const [key,setKey] = useState(newKey);
   const [saving,setSaving] = useState(false);
   const [error,setError] = useState(null);
+  const [translation,setTranslation] = useState(null);
+  const [estimateSummary,setEstimateSummary] = useState(null);
   async function run(action,input) {
     if(saving)return;
     setSaving(true);setError(null);
@@ -38,6 +52,26 @@ function BatchCard({ entry, onAuthorize, onContinue, onOpenCandidate }) {
   const expiry = Date.parse(expiresAt);
   const seerfar = batch.plan.provider === 'seerfar';
   const marketResult = receipt => seerfar ? receipt?.steps.find(step => step.method === 'category_detail')?.result : receipt?.steps[0]?.result;
+  const translated = product => typeof product.titleZh === 'string' && product.titleZh.trim() !== '';
+  // Only market products carry a Russian marketplace title; 1688 supplier rows are excluded here and on the server.
+  const marketProducts = jobs.filter(({job})=>job.scopeBinding?.request?.method!=='supplier_search')
+    .flatMap(({receipt})=>marketResult(receipt)?.products ?? []).filter(product=>typeof product.productId==='string');
+  const pendingTranslations = new Set(marketProducts.filter(product=>!translated(product)).map(product=>product.productId)).size;
+  const estimableProducts = new Set(marketProducts.map(product=>product.productId)).size;
+  async function translate() {
+    if(saving||typeof onTranslate!=='function')return;
+    setSaving(true);setError(null);
+    try {const result=await onTranslate({batchId:batch.batchId,expectedRevision:batch.revision});setTranslation(result?.operationResult ?? null);}
+    catch(cause){setError(errorMessage(cause));}
+    finally{setSaving(false);}
+  }
+  async function estimate() {
+    if(saving||typeof onEstimate!=='function')return;
+    setSaving(true);setError(null);
+    try {const result=await onEstimate({batchId:batch.batchId,expectedRevision:batch.revision});setEstimateSummary(result?.operationResult ?? null);}
+    catch(cause){setError(errorMessage(cause));}
+    finally{setSaving(false);}
+  }
   return <article className="inspector-section">
     <h3>{batch.plan.direction} · {STORE_LABELS[batch.targetStore]}</h3>
     <p>最多查询 {batch.plan.budget.maxRequests} 次，批准上限 {batch.plan.budget.maxCredits} {seerfar ? 'Seerfar 点数' : 'LinkFox 积分'}；最多保存 {batch.plan.selection.maxCandidates} 件待核验商品。</p>
@@ -48,7 +82,7 @@ function BatchCard({ entry, onAuthorize, onContinue, onOpenCandidate }) {
     {entry.configurationBlocker==='PLAN_NOT_CONFIGURED'?<p role="alert">该批次的查询配置已变更或移除，已停止新授权和未发送查询；维护人员需核对当前计划。</p>:null}
     {entry.configurationBlocker?.startsWith('EVIDENCE_')?<p role="alert">{configurationLabels[entry.configurationBlocker]}</p>:null}
     {canAuthorize?<>
-      <label>本轮查询许可截止时间<input type="datetime-local" value={expiresAt} onChange={event=>{setExpiresAt(event.target.value);setConfirmed(false);setKey(newKey());}}/></label>
+      <label>本轮查询许可截止时间（已默认 2 小时后，可改）<input type="datetime-local" value={expiresAt} onChange={event=>{setExpiresAt(event.target.value);setConfirmed(false);setKey(newKey());}}/></label>
       <label><input type="checkbox" checked={confirmed} onChange={event=>setConfirmed(event.target.checked)}/>
         我同意按上面的范围和积分上限执行这一轮搜索</label>
       <button type="button" className="button primary" disabled={saving||!confirmed||!Number.isFinite(expiry)||expiry<=Date.now()}
@@ -57,24 +91,55 @@ function BatchCard({ entry, onAuthorize, onContinue, onOpenCandidate }) {
     </>:null}
     {jobs.map(({job,receipt,canContinue})=><div key={job.jobId}>
       <p>{methodLabels[job.scopeBinding.request.method]}：{statusLabels[job.status]}</p>
-      {receipt?.failureClass?<p role="alert">停止原因：{receipt.failureClass}。本次请求不会自动重发。</p>:null}
+      {receipt?.failureClass?<p role="alert">停止原因：{discoveryFailureLabel(receipt.failureClass).reason}（{receipt.failureClass}）。本次请求不会自动重发；{discoveryFailureLabel(receipt.failureClass).hint}</p>:null}
       {marketResult(receipt)?.status==='true_empty'?<p>本次查询明确返回零结果。</p>:null}
-      {marketResult(receipt)?.products?.length?<details><summary>查看本次发现材料</summary>
-        {seerfar ? <p>{marketResult(receipt).schemaVersion === 'seerfar-discovery-market-result-v2'
+      {marketResult(receipt)?.products?.length?<details open={job.status==='completed'}><summary>查看本次发现材料</summary>
+        {seerfar ? <p>{['seerfar-discovery-market-result-v2','seerfar-discovery-market-result-v3'].includes(marketResult(receipt).schemaVersion)
           ? `服务返回日期窗：${marketResult(receipt).dateRange.startDate ?? '起始日期未知'} 至 ${marketResult(receipt).dateRange.endDate ?? '结束日期未知'}`
           : '旧版回执未保存日期窗及评价字段。'}；类目材料尚未核实同款，不代表核心市场样本。</p> : null}
-        <ul>{marketResult(receipt).products.map(product=><li key={product.productId}>
-          <a href={safeWebUrl(product.productUrl)} target="_blank" rel="noreferrer">{product.title}</a> · {product.price} {product.currency ?? '币种待核实'}
-          {seerfar ? <><br/>服务返回销量（估算）：{product.salesCount ?? '未知'}；评价数：{product.reviewCount ?? '未知'}；评分：{product.reviewRating ?? '未知'}
-            <br/>卖家身份未核实
-            <details><summary>查看来源证据</summary>
-              <p>服务返回卖家原码：{product.rawSellerType ?? '未知'}；未映射为卖家身份。</p>
-              <p>来源：{product.providerRecordRef}</p>
-            </details></> : null}
+        <ul className="discovery-product-list">{marketResult(receipt).products.map(product=><li key={product.productId} className="discovery-product">
+          {safeImageUrl(product.imageUrl)
+            ? <img className="discovery-product-thumb" src={safeImageUrl(product.imageUrl)} alt="" width="72" height="72" loading="lazy" referrerPolicy="no-referrer"/>
+            : <span className="discovery-product-thumb discovery-product-no-image">无图</span>}
+          <div className="discovery-product-body">
+            <p className="discovery-product-title"><a href={safeWebUrl(product.productUrl)} target="_blank" rel="noreferrer">{product.title}</a></p>
+            <p className="discovery-product-facts">售价 {product.price} 卢布 · 销量 {productFact(product.salesCount)} · 营收 {productFact(product.revenue)} · 评价 {productFact(product.reviewCount)} · 评分 {productFact(product.reviewRating)}</p>
+            <p className="discovery-product-category">类目：{product.categoryPath?.cnTitlePath ?? '未知'}</p>
+            <p className="discovery-product-translation">中文标题：{typeof product.titleZh==='string'&&product.titleZh.trim()!==''?product.titleZh:'待翻译'}</p>
+            {product.estimate?<p className="discovery-product-estimate">{product.estimate.summary}
+              {product.estimate.outcome==='excluded_negative'?<span className="discovery-chip discovery-chip-bad">负利润已排除</span>:null}
+              {product.estimate.freight?.oversize?<span className="discovery-chip discovery-chip-warn">超抛</span>:null}
+              {product.estimate.outcome==='needs_data'&&product.estimate.freight?.route===null?<span className="discovery-chip discovery-chip-warn">待补尺寸</span>:null}
+            </p>:null}
+            {seerfar ? <><p className="discovery-product-source">卖家身份未核实</p>
+              <details><summary>查看来源证据</summary>
+                <p>服务返回卖家原码：{product.rawSellerType ?? '未知'}；未映射为卖家身份。</p>
+                <p>来源：{product.providerRecordRef}</p>
+              </details></> : null}
+            <div className="discovery-product-action">
+              {imported.has(product.productId)?<><br/><span>已在评审台。</span><button type="button" className="button secondary" onClick={()=>onOpenCandidate(imported.get(product.productId))}>查看</button></>
+                :product.estimate?.outcome==='excluded_negative'?<><br/><span>预估负利润，已排除</span></>
+                :selections.get(product.productId)?.status==='all_duplicates'?<><br/><span>该商品已存在于记录（含已淘汰），未重复建卡。</span></>
+                :['blocked','failed'].includes(selections.get(product.productId)?.status)?<><br/><span role="alert">保存失败：{selections.get(product.productId).failureClass}</span></>
+                :job.status==='completed'&&typeof onSelect==='function'?<><br/><button type="button" className="button secondary" disabled={saving}
+                  onClick={()=>run(onSelect,{batchId:batch.batchId,expectedRevision:batch.revision,marketProductId:product.productId})}>选这个</button></>:null}
+            </div>
+          </div>
         </li>)}</ul></details>:null}
       {canContinue?<button type="button" className="button secondary" disabled={saving}
         onClick={()=>run(onContinue,{batchId:batch.batchId,expectedRevision:batch.revision,jobId:job.jobId})}>执行已批准且尚未发送的查询</button>:null}
     </div>)}
+    <div className="discovery-translation">
+      <button type="button" className="button secondary" disabled={saving||pendingTranslations===0} onClick={translate}>翻译标题（{pendingTranslations} 条待翻）</button>
+      <p>中文标题只用于本页浏览，不写入商品资料，也不改变原始标题。</p>
+      {translation?<p>已翻译 {translation.translated} 条 · 本次用 {translation.usage?.totalTokens ?? 0} tokens
+        {translation.cached?`（已缓存 ${translation.cached} 条，未重复翻译）`:''}{translation.remaining?`（还有 ${translation.remaining} 条待翻）`:''}</p>:null}
+    </div>
+    <div className="discovery-estimate">
+      <button type="button" className="button secondary" disabled={saving||estimableProducts===0} onClick={estimate}>算利润区间</button>
+      <p>只用公开售价、官方佣金表、官方汇率和已保存资费表估算采购上限；缺任一项只标记待补数据，不猜数字。估算不是正式利润结论。</p>
+      {estimateSummary?<p>已估算 {estimateSummary.estimated} 条 · 负利润 {estimateSummary.negative} 条 · 待补数据 {estimateSummary.needsData} 条</p>:null}
+    </div>
     {candidateImport?.status==='imported'?<button type="button" className="button primary" onClick={()=>onOpenCandidate(candidateImport.candidateId)}>查看待核验商品</button>:null}
     {candidateImport?.status==='all_duplicates'?<p>本轮结果已存在于记录中，未重复建卡或恢复已淘汰商品。</p>:null}
     {['blocked','failed'].includes(candidateImport?.status)?<p role="alert">查询结果已保留，保存候选未完成：{candidateImport.failureClass}</p>:null}
@@ -82,7 +147,7 @@ function BatchCard({ entry, onAuthorize, onContinue, onOpenCandidate }) {
   </article>;
 }
 
-export default function ProductDiscoveryCard({view,onCreate,onAuthorize,onContinue,onOpenCandidate}) {
+export default function ProductDiscoveryCard({view,onCreate,onAuthorize,onContinue,onSelect,onTranslate,onEstimate,onOpenCandidate}) {
   const [planKey,setPlanKey] = useState('');
   const [targetStore,setTargetStore] = useState('');
   const [key,setKey] = useState(newKey);
@@ -117,7 +182,7 @@ export default function ProductDiscoveryCard({view,onCreate,onAuthorize,onContin
     {view.runtimeStatus==='failed'?<p role="alert">发现服务因技术异常停止，请保留当前批次核对。</p>:null}
     {view.lastAdmissionRejection?<p role="alert">已批准作业未执行：{view.lastAdmissionRejection.code}</p>:null}
     {view.batches.map(entry=><BatchCard key={`${entry.batch.batchId}:${entry.batch.revision}`} entry={entry} onAuthorize={onAuthorize}
-      onContinue={onContinue} onOpenCandidate={onOpenCandidate}/>) }
+      onContinue={onContinue} onSelect={onSelect} onTranslate={onTranslate} onEstimate={onEstimate} onOpenCandidate={onOpenCandidate}/>) }
     {view.hasMore?<p>当前显示最近 100 个批次，更早记录仍被保留。</p>:null}
   </section>;
 }

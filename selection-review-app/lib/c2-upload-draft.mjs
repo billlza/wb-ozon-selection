@@ -18,10 +18,10 @@ function currentSource(candidate, expectedRevision) {
     sourceCandidateRevision: expectedRevision,
     sourceSkuRevision: sku.dataRevision,
     sourceC1Fingerprint: c2.softwareState.sourceC1Fingerprint,
-    requirementsFingerprint: c2.mediaRequirements?.requirementsFingerprint
+    schemaEvidenceRef: c2.targetContext?.schemaEvidenceRef
   };
   if (!Number.isSafeInteger(source.sourceSkuRevision) ||
-      [source.candidateId, source.skuPackageId, source.sourceC1Fingerprint, source.requirementsFingerprint].some(value => typeof value !== "string" || !value)) {
+      [source.candidateId, source.skuPackageId, source.sourceC1Fingerprint, source.schemaEvidenceRef].some(value => typeof value !== "string" || !value)) {
     throw c2DraftError("c2_upload_source_incomplete", "当前C2缺少素材绑定所需的完整来源记录");
   }
   return source;
@@ -40,22 +40,7 @@ export function assertCurrentC2UploadDraft(candidate, { dataRevision, draftRevis
   return { source, draft };
 }
 
-function slotsFor(candidate) {
-  const media = candidate.lifecycleV11.skuPackage.c2FinalAssets.mediaRequirements;
-  if (!Array.isArray(media?.imageSlots) || !Array.isArray(media.videoSlots)) throw c2DraftError("c2_upload_media_missing", "当前平台媒体槽位未取得");
-  const slots = [...media.imageSlots, ...media.videoSlots];
-  if (!slots.length || new Set(slots.map(slot => slot.slotId)).size !== slots.length || slots.some(slot =>
-    !["image", "video"].includes(slot.mediaType) || !Number.isSafeInteger(slot.maxCount) || slot.maxCount < 0)) {
-    throw c2DraftError("c2_upload_media_invalid", "当前平台媒体槽位或数量边界无效");
-  }
-  return slots;
-}
-
-function mediaCapacity(slots, mediaType) {
-  const capacity = slots.filter(slot => slot.mediaType === mediaType).reduce((total, slot) => total + slot.maxCount, 0);
-  if (!Number.isSafeInteger(capacity)) throw c2DraftError("c2_upload_media_invalid", "平台媒体总数量边界无效");
-  return capacity;
-}
+// 槽位合同已废止：平台从没给过槽位或张数上限，选几张、按什么顺序由主人自己定，第一张就是主图。
 
 export function reserveC2Upload(candidate, { dataRevision, draftRevision, uploadId, fileName, mediaType, contentType, startedAt }) {
   const { source, draft: existing } = assertCurrentC2UploadDraft(candidate, { dataRevision, draftRevision });
@@ -64,9 +49,6 @@ export function reserveC2Upload(candidate, { dataRevision, draftRevision, upload
   if (draft.uploads.some(upload => upload.uploadId === uploadId)) throw c2DraftError("c2_upload_duplicate", "该上传编号已经登记，不能重复写入");
   if (draft.uploads.some(upload => upload.status === "uploading")) throw c2DraftError("c2_upload_unfinished", "本清单仍有未确认结果的上传，请先处理该记录");
   if (draft.uploads.length >= MAX_UPLOAD_RECORDS) throw c2DraftError("c2_upload_storage_limit", "本草稿已达到本地上传记录上限，需要先归整素材");
-  const slots = slotsFor(candidate);
-  const selectedCount = draft.selection.filter(selected => draft.uploads.find(upload => upload.assetId === selected.assetId)?.mediaType === mediaType).length;
-  if (selectedCount >= mediaCapacity(slots, mediaType)) throw c2DraftError("c2_upload_media_limit", "当前清单已达到该媒体类型的平台槽位数量上限");
   const assetId = `c2-local:${uploadId}`;
   draft.uploads.push({ uploadId, assetId, fileName, mediaType, contentType, status: "uploading", stagedAt: startedAt });
   draft.revision += 1;
@@ -84,7 +66,7 @@ export function settleC2Upload(draft, { uploadId, asset, failureCode, rejectedCo
       throw c2DraftError("c2_upload_receipt_invalid", "本地文件回执与登记不一致");
     }
     Object.assign(upload, asset, { status: "ready", settledAt });
-    next.selection.push({ assetId: upload.assetId, slotId: null, order: next.selection.length + 1 });
+    next.selection.push({ assetId: upload.assetId, order: next.selection.length + 1 });
   } else {
     if (!["upload_incomplete", "file_storage_unconfirmed", "upload_rejected"].includes(failureCode)) throw c2DraftError("c2_upload_failure_invalid", "上传失败类型未明确");
     if (failureCode === "upload_rejected") {
@@ -100,22 +82,16 @@ export function settleC2Upload(draft, { uploadId, asset, failureCode, rejectedCo
 export function saveC2UploadSelection(candidate, { dataRevision, draftRevision, selection }) {
   const { draft } = assertCurrentC2UploadDraft(candidate, { dataRevision, draftRevision });
   if (!draft || !Array.isArray(selection)) throw c2DraftError("c2_upload_selection_invalid", "素材选择清单无效", 400);
-  const slots = slotsFor(candidate);
   if (draft.uploads.some(upload => upload.status === "uploading")) throw c2DraftError("c2_upload_unfinished", "尚有上传未结束，不能修改清单");
   if (new Set(selection.map(item => item?.assetId)).size !== selection.length) throw c2DraftError("c2_upload_selection_invalid", "素材不能重复", 400);
   for (const [index, item] of selection.entries()) {
     const asset = draft.uploads.find(upload => upload.assetId === item?.assetId && upload.status === "ready");
-    if (!asset || Object.keys(item).some(key => !["assetId", "slotId", "order"].includes(key)) || item.order !== index + 1 ||
-        (item.slotId !== null && !slots.some(slot => slot.slotId === item.slotId && slot.mediaType === asset.mediaType))) {
-      throw c2DraftError("c2_upload_selection_invalid", "素材身份、槽位或顺序不属于当前清单", 400);
+    if (!asset || Object.keys(item).some(key => !["assetId", "order"].includes(key)) || item.order !== index + 1) {
+      throw c2DraftError("c2_upload_selection_invalid", "素材身份或顺序不属于当前清单", 400);
     }
   }
-  for (const slot of slots) {
-    if (selection.filter(item => item.slotId === slot.slotId).length > slot.maxCount) throw c2DraftError("c2_upload_media_limit", `槽位${slot.slotId}超出平台数量上限`);
-  }
-  for (const mediaType of ["image", "video"]) {
-    const count = selection.filter(item => draft.uploads.find(upload => upload.assetId === item.assetId).mediaType === mediaType).length;
-    if (count > mediaCapacity(slots, mediaType)) throw c2DraftError("c2_upload_media_limit", "素材总数超出该媒体类型的平台槽位数量上限");
+  if (selection.length > 0 && draft.uploads.find(upload => upload.assetId === selection[0].assetId)?.mediaType !== "image") {
+    throw c2DraftError("c2_upload_selection_invalid", "主人排第一张的必须是图片，它就是主图", 400);
   }
   return { ...structuredClone(draft), revision: draft.revision + 1, selection: structuredClone(selection) };
 }
@@ -125,7 +101,7 @@ export function selectedC2DraftAssets(draft) {
   return draft.selection.map(item => {
     const asset = draft.uploads.find(upload => upload.assetId === item.assetId && upload.status === "ready");
     if (!asset) throw c2DraftError("c2_upload_selection_invalid", "已保存清单引用了未完成的文件");
-    return { ...structuredClone(asset), slotId: item.slotId, order: item.order };
+    return { ...structuredClone(asset), order: item.order };
   });
 }
 
@@ -135,15 +111,19 @@ export function resolveRegisteredC2FinalAsset(candidate, finalAsset) {
   const authorization = sku?.productionAuthorization;
   const draft = candidate?.lifecycleV11?.c2UploadDraft;
   const scope = authorization?.lockedScope;
+  // 不再比对登记时的 C1 版本：C1 改版后主人可以复用原来那次素材确认
+  // （审计事件 c2_final_uploads_confirmation_reused），此时上传登记仍指向旧 C1，而授权、
+  // 素材域和当前 C1 都已刷新，这条比对必然失败。文件身份由下面十个字段对 draft 登记和授权
+  // 冻结清单双向逐字段比对保证，其中含 sha256，比来源指纹更硬。
   if (!draft || draft.candidateId !== candidate.id || draft.skuPackageId !== sku.skuPackageId ||
-      draft.sourceC1Fingerprint !== authorization.sourceC1Fingerprint || draft.requirementsFingerprint !== scope.mediaRequirementsFingerprint) {
-    throw c2DraftError("c2_final_registration_mismatch", "最终素材登记不属于当前授权的商品或C1资料");
+      draft.schemaEvidenceRef !== scope.schemaEvidenceRef) {
+    throw c2DraftError("c2_final_registration_mismatch", "最终素材登记不属于当前授权的商品或Schema证据");
   }
   const registered = selectedC2DraftAssets(draft).find(asset => asset.assetId === finalAsset?.assetId);
   const frozen = scope.finalUploads.find(asset => asset.assetId === finalAsset?.assetId);
-  const fields = ["assetId", "assetRef", "fileName", "mediaType", "assetVersion", "sha256", "byteSize", "width", "height", "slotId", "order"];
+  const fields = ["assetId", "assetRef", "fileName", "mediaType", "assetVersion", "sha256", "byteSize", "width", "height", "order"];
   if (!registered || !frozen || fields.some(field => registered[field] !== finalAsset[field] || frozen[field] !== finalAsset[field])) {
-    throw c2DraftError("c2_final_registration_mismatch", "最终素材文件、顺序或槽位与已确认登记不一致");
+    throw c2DraftError("c2_final_registration_mismatch", "最终素材文件或顺序与已确认登记不一致");
   }
   return registered;
 }

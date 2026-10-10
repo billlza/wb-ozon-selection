@@ -1,9 +1,9 @@
+import { allocatedTestPorts } from './helpers/api-process-lifecycle.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,writeFile,readFile,rename,rm} from 'node:fs/promises';
 import path from 'node:path';
 import {tmpdir} from 'node:os';
-import http from 'node:http';
 import {pathToFileURL} from 'node:url';
 import {productionOwnerDecisionHttpFixture,startSavedDEApi} from './helpers/d-e-saved-api-fixture.mjs';
 import {createADiscoveryRuntimeFixture} from './fixtures/a-discovery-runtime-fixture.mjs';
@@ -13,15 +13,14 @@ import {createAProductDetailApplicationUseCase} from '../lib/a-product-detail-ap
 import {createActorContext} from '../lib/runtime-identity.mjs';
 import {buildRealAConfirmationCard} from '../lib/real-a-confirmation-card.mjs';
 const at='2026-09-08T12:00:00.000Z';
-async function freePort(){const server=http.createServer();await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});const port=server.address().port;await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));assert.ok(![4317,4318,4173].includes(port));return port;}
 async function start(t){
  const base=await productionOwnerDecisionHttpFixture(),document={...base.document,candidates:[],runtime:{softwareJobs:[],softwareJobAuthorizationRecords:[],softwareJobCredentialBindings:[],operationAudit:[],idempotencyRecords:[]}};
  base.binding={...base.binding,storeRef:{...base.binding.storeRef,stableStoreId:'miska'}};
  const directory=await mkdtemp(path.join(tmpdir(),'a-detail-http-state-')),probeDirectory=await mkdtemp(path.join(tmpdir(),'a-detail-http-probe-'));
  const probe=path.join(probeDirectory,'counts.json'),preload=path.join(probeDirectory,'deny-external.mjs');await writeFile(probe,JSON.stringify({credentials:0,network:0}));
  await writeFile(preload,`import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';import {writeFileSync} from 'node:fs';const NativeDate=Date;const at=NativeDate.parse(${JSON.stringify(at)});globalThis.Date=class extends NativeDate{constructor(...args){super(...(args.length?args:[at]));}static now(){return at;}};const counts={credentials:0,network:0};function deny(kind){counts[kind]++;writeFileSync(${JSON.stringify(probe)},JSON.stringify(counts));throw new Error('UNEXPECTED_TEST_EXTERNAL_ACTION');}cp.execFile=()=>deny('credentials');syncBuiltinESMExports();globalThis.fetch=async()=>deny('network');`);
- const port=await freePort();let dependencyPort=await freePort();while(port===dependencyPort)dependencyPort=await freePort();
- const env={SELECTION_REVIEW_TEST_GATEWAY_PORT:String(dependencyPort),NODE_OPTIONS:`--import=${pathToFileURL(preload).href}`,
+ const { api: port, gateway: dependencyPort } = allocatedTestPorts();
+ const env={SELECTION_REVIEW_TEST_GATEWAY_PORT:String(dependencyPort),NODE_OPTIONS:`${process.env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(preload).href}`,
   SELECTION_REVIEW_A_DISCOVERY_SERVICE_BINDINGS_JSON:'[]',SELECTION_REVIEW_A_DISCOVERY_CONNECTOR_BINDINGS_JSON:'[]',SELECTION_REVIEW_A_DISCOVERY_CREDENTIAL_BINDINGS_JSON:'[]',SELECTION_REVIEW_A_DISCOVERY_PLANS_JSON:'[]',
   SELECTION_REVIEW_A_PRODUCT_DETAIL_SERVICE_BINDINGS_JSON:'[]',SELECTION_REVIEW_A_PRODUCT_DETAIL_CONNECTOR_BINDINGS_JSON:'[]',SELECTION_REVIEW_A_PRODUCT_DETAIL_CREDENTIAL_BINDINGS_JSON:'[]'};
  const previous=Object.fromEntries(Object.keys(env).map(key=>[key,process.env[key]]));let api;

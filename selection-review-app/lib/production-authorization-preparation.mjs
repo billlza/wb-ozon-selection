@@ -10,6 +10,7 @@ export const PRODUCTION_AUTHORIZATION_PREPARATION_VERSION = "c2-production-autho
 export const PRODUCTION_AUTHORIZATION_PENDING_INPUTS_VERSION = "c2-authorization-pending-inputs-v1";
 export const PRODUCTION_AUTHORIZATION_FINAL_CARD_INPUT_SNAPSHOT_VERSION = "c2-final-card-input-snapshot-v1";
 export const PRODUCTION_AUTHORIZATION_FINAL_MANIFEST_VERSION = "c2-final-manifest-v1";
+export const PRODUCTION_AUTHORIZED_MEDIA_VERSION = "production-authorized-media-v1";
 export const PRODUCTION_AUTHORIZATION_VERSION = "production-authorization-v1.2";
 export const DRAFT_ONLY_PUBLISH_SCOPE = "create_draft_only";
 export const VALIDATION_MODERATION_PUBLISH_SCOPE = "create_and_allow_validation_moderation";
@@ -56,9 +57,9 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const NOT_APPLICABLE = "not_applicable";
 const PREPARATION_FIELDS = Object.freeze([
   "schemaVersion", "status", "skuPackageId", "sourceDataRevision", "resultDataRevision",
-  "sourceC1Fingerprint", "mediaRequirementsFingerprint", "finalManifestVersion",
+  "sourceC1Fingerprint", "authorizedMediaFingerprint", "finalManifestVersion",
   "finalManifestSha256", "finalUploadsFingerprint", "mainImageAssetId", "videoDisposition",
-  "ownerConfirmationAt", "targetContext", "frozenC1Handoff", "mediaRequirements", "finalUploads",
+  "ownerConfirmationAt", "targetContext", "frozenC1Handoff", "finalUploads",
   "effectiveVideoRequirement", "ownerVideoRequirement", "ownerFinalUploadConfirmation",
   "finalCardInputSnapshot", "finalCardInputFingerprint", "ownerFinalCardAuthorizationDecision",
   "pendingAuthorizationInputs", "preparationFingerprint", "productionAuthorizationCreated", "dHandoffCreated"
@@ -70,16 +71,15 @@ const FINAL_CARD_FIELDS = Object.freeze([
 ]);
 const FINAL_UPLOAD_FIELDS = Object.freeze([
   "assetId", "mediaType", "assetRef", "fileName", "assetVersion", "sha256", "sourceEvidenceRef",
-  "stableUrlEvidenceRef", "usageAuthorization", "sourceType", "order", "role", "slotId", "byteSize",
+  "stableUrlEvidenceRef", "usageAuthorization", "sourceType", "order", "role", "byteSize",
   "width", "height", "addedAt", "lifecycleArea", "ownerConfirmed", "productionEligible"
 ]);
 const TARGET_CONTEXT_FIELDS = Object.freeze([
-  "platform", "targetStore", "storeRef", "categoryId", "schemaRevision",
-  "schemaEvidenceRef", "schemaEvidenceVersion", "mediaRequirementsFingerprint"
+  "platform", "targetStore", "storeRef", "schemaRevision", "schemaEvidenceRef"
 ]);
 const OWNER_UPLOAD_CONFIRMATION_FIELDS = Object.freeze([
   "status", "confirmedBy", "confirmedAt", "approvedManifestVersion", "approvedManifestSha256",
-  "approvedMediaRequirementsFingerprint", "approvedAssetIds", "approvedMainImageAssetId",
+  "approvedAuthorizedMediaFingerprint", "approvedAssetIds", "approvedMainImageAssetId",
   "approvedVideoDisposition", "confirmationNote"
 ]);
 
@@ -157,16 +157,58 @@ export function fingerprintFinalUploads(finalUploads) {
   return sha256({ collected: [], aiDrafts: [], finalUploads });
 }
 
-export function fingerprintMediaRequirements(mediaRequirements) {
-  if (!isObject(mediaRequirements)) {
-    throw new Error("PRODUCTION_AUTHORIZATION_PREPARATION_INVALID:mediaRequirements");
+/**
+ * 主人授权的那批图的身份：按主人给的顺序取实际公网地址，第一张是主图，其余按序进图库。
+ * 接受最终素材对象数组（要求 order 从 1 连续）或已经排好序的地址数组，两边算出来必须一致，
+ * 这样从主人确认、授权、计划投影一直到 D 真正拼 import 请求那一刻都能拿同一个值对照。
+ */
+export function authorizedMediaUrls(assets) {
+  if (!Array.isArray(assets) || assets.length === 0) {
+    throw new Error("PRODUCTION_AUTHORIZED_MEDIA_INVALID:empty");
   }
-  const { requirementsFingerprint: _ignored, ...core } = mediaRequirements;
-  return sha256(core);
+  return assets.map((asset, index) => {
+    if (typeof asset === "string") {
+      if (!nonEmptyString(asset)) throw new Error(`PRODUCTION_AUTHORIZED_MEDIA_INVALID:[${index}]`);
+      return asset;
+    }
+    if (!isObject(asset) || !nonEmptyString(asset.assetRef) || asset.order !== index + 1) {
+      throw new Error(`PRODUCTION_AUTHORIZED_MEDIA_INVALID:[${index}]`);
+    }
+    return asset.assetRef;
+  });
+}
+
+/**
+ * 「主人授权的那批图」和「手上这批图」必须是同一批：地址、顺序、张数一处不差。
+ * 每一道还要往下走的闸门都重算一次，别人中途换掉任何一张地址都会在这里停住。
+ */
+export function assertAuthorizedMediaUnchanged(assets, expectedFingerprint, label) {
+  let actual = null;
+  try {
+    actual = fingerprintAuthorizedMedia(assets);
+  } catch (error) {
+    throw new Error(`PRODUCTION_AUTHORIZED_MEDIA_INVALID:${label}:${error.message}`);
+  }
+  if (!SHA256_PATTERN.test(String(expectedFingerprint || "")) || actual !== expectedFingerprint) {
+    throw new Error(`PRODUCTION_AUTHORIZED_MEDIA_DRIFT:${label}`);
+  }
+  return actual;
+}
+
+export function fingerprintAuthorizedMedia(assets) {
+  const urls = authorizedMediaUrls(assets);
+  if (new Set(urls).size !== urls.length) {
+    throw new Error("PRODUCTION_AUTHORIZED_MEDIA_INVALID:duplicate");
+  }
+  return sha256({
+    schemaVersion: PRODUCTION_AUTHORIZED_MEDIA_VERSION,
+    primaryImage: urls[0],
+    images: urls.slice(1)
+  });
 }
 
 export function fingerprintFinalManifest({
-  mediaRequirementsFingerprint,
+  authorizedMediaFingerprint,
   effectiveVideoRequirement,
   mainImageAssetId,
   videoDisposition,
@@ -174,7 +216,7 @@ export function fingerprintFinalManifest({
 }) {
   return sha256({
     schemaVersion: PRODUCTION_AUTHORIZATION_FINAL_MANIFEST_VERSION,
-    mediaRequirementsFingerprint,
+    authorizedMediaFingerprint,
     effectiveVideoRequirement,
     mainImageAssetId,
     videoDisposition,
@@ -228,7 +270,7 @@ function validateFinalUploads(preparation) {
     if (!hasExactKeys(asset, FINAL_UPLOAD_FIELDS) || !nonEmptyString(asset.assetId) || !["image", "video"].includes(asset.mediaType) ||
         !nonEmptyString(asset.assetRef) || !nonEmptyString(asset.assetVersion) || !nonEmptyString(asset.sha256) ||
         !nonEmptyString(asset.fileName) || !nonEmptyString(asset.sourceEvidenceRef) ||
-        !nonEmptyString(asset.stableUrlEvidenceRef) || !nonEmptyString(asset.role) || !nonEmptyString(asset.slotId) ||
+        !nonEmptyString(asset.stableUrlEvidenceRef) || asset.role !== (index === 0 ? "main_image" : "gallery_image") ||
         !Number.isInteger(asset.order) || asset.order < 1 || !isoDateTime(asset.addedAt) ||
         asset.ownerConfirmed !== true || asset.productionEligible !== true || asset.lifecycleArea !== "finalUploads" ||
         asset.sourceType !== "owner_provided_final_upload" ||
@@ -255,11 +297,16 @@ function validateFinalUploads(preparation) {
     if (asset.role === "main_image") mainImages += 1;
     if (asset.mediaType === "video") videos += 1;
   }
-  if (mainImages !== 1 || !assets.every((asset, index) => asset.order === index + 1)) {
+  // 主人给的第一张就是主图；软件不许重排，也不许自己挑另一张当主图。
+  if (mainImages !== 1 || !assets.every((asset, index) => asset.order === index + 1) ||
+      assets[0].mediaType !== "image" || assets[0].role !== "main_image") {
     throw new Error("PRODUCTION_AUTHORIZATION_MEDIA_INVALID:mainImageOrOrder");
   }
-  if (assets.find((asset) => asset.role === "main_image").assetId !== preparation.mainImageAssetId) {
+  if (assets[0].assetId !== preparation.mainImageAssetId) {
     throw new Error("PRODUCTION_AUTHORIZATION_MEDIA_DRIFT:mainImageAssetId");
+  }
+  if (fingerprintAuthorizedMedia(assets) !== preparation.authorizedMediaFingerprint) {
+    throw new Error("PRODUCTION_AUTHORIZATION_MEDIA_DRIFT:authorizedMediaFingerprint");
   }
   if (preparation.videoDisposition === "includes_video" && videos === 0) {
     throw new Error("PRODUCTION_AUTHORIZATION_MEDIA_INVALID:videoRequired");
@@ -280,7 +327,7 @@ function validateFinalUploads(preparation) {
       confirmation.approvedMainImageAssetId !== preparation.mainImageAssetId ||
       confirmation.approvedVideoDisposition !== preparation.videoDisposition ||
       confirmation.approvedManifestSha256 !== preparation.finalManifestSha256 ||
-      confirmation.approvedMediaRequirementsFingerprint !== preparation.mediaRequirementsFingerprint) {
+      confirmation.approvedAuthorizedMediaFingerprint !== preparation.authorizedMediaFingerprint) {
     throw new Error("PRODUCTION_AUTHORIZATION_MEDIA_DRIFT:ownerFinalUploadConfirmation");
   }
 }
@@ -314,7 +361,7 @@ export function validateProductionAuthorizationPreparation({
     throw new Error("PRODUCTION_AUTHORIZATION_PREPARATION_INVALID:manifestOrVideoRequirement");
   }
   for (const field of [
-    "sourceC1Fingerprint", "mediaRequirementsFingerprint", "finalManifestSha256",
+    "sourceC1Fingerprint", "authorizedMediaFingerprint", "finalManifestSha256",
     "finalUploadsFingerprint", "finalCardInputFingerprint", "preparationFingerprint"
   ]) {
     assertSha256(preparation[field], field);
@@ -339,32 +386,24 @@ export function validateProductionAuthorizationPreparation({
   if (!hasExactKeys(target, TARGET_CONTEXT_FIELDS)) {
     throw new Error("PRODUCTION_AUTHORIZATION_PREPARATION_INVALID:targetContext");
   }
+  const schemaRules = snapshot.c1Snapshot?.inputSnapshots?.platformSchemaRules;
   if (!sameJson(snapshot.identity, preparation.frozenC1Handoff?.identity) ||
       !sameJson(snapshot.canonicalC1, preparation.frozenC1Handoff) ||
       target.platform !== snapshot.identity.platform ||
       target.storeRef !== snapshot.identity.storeRef.stableStoreId ||
       target.targetStore !== snapshot.identity.storeRef.stableStoreId ||
-      target.schemaRevision !== preparation.mediaRequirements?.schemaRevision ||
-      target.schemaEvidenceRef !== preparation.mediaRequirements?.evidenceRef ||
-      target.schemaEvidenceVersion !== preparation.mediaRequirements?.evidenceVersion ||
-      target.mediaRequirementsFingerprint !== preparation.mediaRequirementsFingerprint ||
-      target.categoryId !== preparation.mediaRequirements?.categoryId ||
-      preparation.mediaRequirements?.platform !== target.platform ||
-      preparation.mediaRequirements?.targetStore !== target.targetStore ||
-      preparation.mediaRequirements?.storeRef !== target.storeRef ||
-      preparation.mediaRequirements?.sourceDataRevision !== preparation.sourceDataRevision) {
+      !nonEmptyString(target.schemaRevision) || !nonEmptyString(target.schemaEvidenceRef) ||
+      target.schemaRevision !== schemaRules?.schemaRevision ||
+      target.schemaEvidenceRef !== schemaRules?.evidenceId ||
+      target.schemaEvidenceRef !== preparation.frozenC1Handoff?.schemaSnapshotRef) {
     throw new Error("PRODUCTION_AUTHORIZATION_PREPARATION_INVALID:canonicalBinding");
-  }
-  if (preparation.mediaRequirements?.requirementsFingerprint !== preparation.mediaRequirementsFingerprint ||
-      fingerprintMediaRequirements(preparation.mediaRequirements) !== preparation.mediaRequirementsFingerprint) {
-    throw new Error("PRODUCTION_AUTHORIZATION_PREPARATION_DRIFT:mediaRequirementsFingerprint");
   }
   const expectedC1Fingerprint = fingerprintC1Snapshot(snapshot.identity, snapshot.c1Snapshot);
   if (preparation.sourceC1Fingerprint !== expectedC1Fingerprint ||
       preparation.finalCardInputFingerprint !== fingerprintFinalCardInputSnapshot(snapshot) ||
       preparation.finalUploadsFingerprint !== fingerprintFinalUploads(preparation.finalUploads) ||
       preparation.finalManifestSha256 !== fingerprintFinalManifest({
-        mediaRequirementsFingerprint: preparation.mediaRequirementsFingerprint,
+        authorizedMediaFingerprint: preparation.authorizedMediaFingerprint,
         effectiveVideoRequirement: preparation.effectiveVideoRequirement,
         mainImageAssetId: preparation.mainImageAssetId,
         videoDisposition: preparation.videoDisposition,

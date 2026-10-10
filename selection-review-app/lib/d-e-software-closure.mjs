@@ -13,7 +13,7 @@ import {
   fingerprintProductionPlan,
   validateProductionPlanAuthorizationBinding
 } from "./production-plan.mjs";
-import { assertCurrentPlatformWritePreflight, assertCurrentProductionExecutionBinding, assertCurrentDExecutionContext } from "./platform-write-preflight.mjs";
+import { assertCurrentPlatformWritePreflight, assertCurrentProductionExecutionBinding, assertCurrentDExecutionContext, isStoreIdentityAnchored } from "./platform-write-preflight.mjs";
 import { buildOzonSellerImportRequest } from "./ozon-seller-api-production-adapter.mjs";
 import { resolveFinalUploads as resolveOzonFinalUploads } from "./ozon-seller-api-de-adapter.mjs";
 import { formatDReadbackMismatchReason } from "./production-execution-failure.mjs";
@@ -22,7 +22,7 @@ import {
   assertValidProductionRecord
 } from "./draft-production-execution.mjs";
 import { verifySystemCreatedListing, systemCreatedReadbackGaps, projectProductionReadbackExpectation,
-  productionReadbackContentGaps, validateProductionReadbackExpectation } from "./e-stage-readback.mjs";
+  observedMediaSequence, observedWarehouseAvailableStock, validateProductionReadbackExpectation } from "./e-stage-readback.mjs";
 
 export const D_SOFTWARE_EXECUTION_VERSION = "d-software-execution-v2";
 export const E_SYSTEM_READBACK_VERSION = "e-system-readback-v1";
@@ -66,9 +66,11 @@ function validPreflight(plan, inputs, preflight, gaps) {
       preflight.sourceProductionPlanFingerprint !== fingerprintProductionPlan(plan)) {
     gaps.push(gap("preflight_stale", "platformWritePreflight", "前检不属于当前ProductionPlan"));
   }
+  // 同 draft 写入口：仓库反推下 observedStoreRef 恒为 null，身份靠 verifiedVia 那条锚成立；其余路径不变。
   if (preflight.targetPlatform !== inputs.platform || preflight.storeIdentity.expectedStore !== inputs.store ||
       preflight.storeIdentity.observedStore !== inputs.store || preflight.storeIdentity.status !== "matched" ||
-      !sameStoreRef(preflight.storeIdentity.expectedStoreRef, inputs.storeRef) || !sameStoreRef(preflight.storeIdentity.observedStoreRef, inputs.storeRef)) {
+      !sameStoreRef(preflight.storeIdentity.expectedStoreRef, inputs.storeRef) ||
+      !isStoreIdentityAnchored({ via: preflight.storeIdentity.verifiedVia, observedStoreRef: preflight.storeIdentity.observedStoreRef, expectedStoreRef: inputs.storeRef })) {
     gaps.push(gap("store_identity_not_ready", "platformWritePreflight.storeIdentity", "Seller API店铺身份未与授权店铺一致"));
   }
   if (preflight.permission.status !== "verified" || preflight.connectionStatus.api.status !== "connected") {
@@ -295,8 +297,19 @@ function readbackMatches(request, observation) {
       observation.currentPrice.currency !== request.platformWritePrice.currency) errors.push("currentPrice");
   if (observation.currentStock !== 100) errors.push("currentStock");
   if (observation.imageCount !== request.finalUploads.length) errors.push("imageCount");
-  errors.push(...productionReadbackContentGaps(request.independentReadback.expectation, observation));
-  if (!nonEmpty(observation.moderationStatus) || observation.moderationStatus === "unknown" || !nonEmpty(observation.validationStatus) || observation.validationStatus === "unknown" || !nonEmpty(observation.saleStatus) || observation.saleStatus === "unknown") errors.push("platformStatus");
+  // D proves the authorized creation and stock write. CDN identity, image order and sale eligibility
+  // remain E acceptance checks; keep the original observed media and statuses in immediateReadback.
+  const media = observedMediaSequence(observation.mediaObservation);
+  if (media === null) errors.push("media_identity_unverified");
+  else {
+    if (new Set(media).size !== media.length) errors.push("media_duplicate");
+    if (media.length !== request.finalUploads.length || observation.imageCount !== media.length) errors.push("imageCount");
+  }
+  const stock = observedWarehouseAvailableStock(observation.inventoryObservation, request.inventoryWrite.warehouseId,
+    { productId: observation.platformProductId, offerId: observation.merchantSku });
+  if (stock === "unknown") errors.push("warehouse_identity_or_quantity_unverified");
+  else if (stock !== observation.currentStock) errors.push("warehouse_stock_mismatch");
+  if (![observation.moderationStatus, observation.validationStatus, observation.saleStatus].every(nonEmpty)) errors.push("platformStatus");
   if (!Array.isArray(observation.errors) || observation.errors.length !== 0 || !nonEmpty(observation.platformEvidenceRef)) errors.push("platformEvidence");
   return errors;
 }

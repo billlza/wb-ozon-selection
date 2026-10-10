@@ -18,17 +18,21 @@ function isolatedEnvironment() {
 test("API test inventory contains every separately isolated suite once", () => {
   assert.deepEqual([...API_PROCESS_TESTS].sort(), [
     "a-discovery-api-boundary.test.mjs", "a-product-detail-api-boundary.test.mjs", "a-supplier-image-search-api.test.mjs",
-    "b-exact-commission-recalculation-http.test.mjs", "c1-keyword-handoff-retry-http.test.mjs", "c1-paid-draft-owner-api.test.mjs",
-    "c2-upload-api.test.mjs", "collaboration-api.test.mjs", "d-e-saved-continuation-api.test.mjs", "dispatch-api.test.mjs",
-    "dispatch-delivery-integration.test.mjs", "extension-heartbeat-api.test.mjs", "final-pricing-review-api.test.mjs",
-    "keyword-evidence-runtime-http.test.mjs",
+    "b-exact-commission-recalculation-http.test.mjs", "c1-completed-editorial-api.test.mjs",
+    "c1-draft-result-read-api.test.mjs", "c1-editorial-review-api.test.mjs", "c1-keyword-handoff-retry-http.test.mjs",
+    "c1-local-content-flow-api.test.mjs", "c1-local-preparation-api.test.mjs", "c1-paid-draft-owner-api.test.mjs",
+    "c2-upload-api.test.mjs", "collaboration-api.test.mjs", "d-batch-import-api.test.mjs", "d-e-saved-continuation-api.test.mjs", "dispatch-api.test.mjs",
+    "dispatch-delivery-integration.test.mjs", "extension-heartbeat-api.test.mjs", "final-pricing-review-api.test.mjs", "gate1-api.test.mjs",
+    "intake-api.test.mjs", "keyword-evidence-runtime-http.test.mjs",
     "lifecycle-c-stage-generic-api.test.mjs", "lifecycle-e-readback-generic-api.test.mjs",
     "local-owner-access-api.test.mjs", "ozon-account-preparation-api-boundary.test.mjs", "ozon-account-read-api-boundary.test.mjs",
     "ozon-sales-capture-api.test.mjs", "phase-2a-api-guards.test.mjs", "production-owner-decision-api.test.mjs", "real-a-b-c1-api.test.mjs",
-    "recovery-classification.test.mjs", "runtime-package-api.test.mjs", "seerfar-software-api-guard.test.mjs", "source-capture-api.test.mjs",
-    "source-capture-job-api.test.mjs", "source-capture-restart-reconciliation.test.mjs",
-    "store-binding-api.test.mjs", "structured-dispatch-integration.test.mjs"
-  ]);
+    "recovery-classification.test.mjs", "runtime-health-api.test.mjs", "runtime-package-api.test.mjs", "seerfar-software-api-guard.test.mjs", "sibling-batch-c1-preview-api.test.mjs", "sibling-batch-commercial-api.test.mjs", "sibling-c1-color-api.test.mjs", "sibling-sku-api.test.mjs",
+    "source-capture-api.test.mjs", "source-capture-job-api.test.mjs", "source-capture-recapture-api.test.mjs",
+    "source-capture-restart-reconciliation.test.mjs", "source-capture-review-api.test.mjs",
+    "store-binding-api.test.mjs", "structured-dispatch-integration.test.mjs",
+    "supplier-draft-api.test.mjs", "supplier-image-match-api.test.mjs", "sibling-preparation-api.test.mjs"
+  ].sort());
   assert.equal(new Set(ISOLATED_TESTS).size, API_PROCESS_TESTS.length + SOURCE_CONTRACT_TESTS.length + SUBPROCESS_TESTS.length);
   assert.equal(Object.isFrozen(API_PROCESS_TESTS), true);
 });

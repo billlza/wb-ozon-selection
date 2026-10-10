@@ -93,8 +93,9 @@ test('completed pre-PA evidence remains current when the saved revision is older
     requestsSent: 3, observedMethods: ['roles', 'seller_info', 'warehouse_list'], companyCurrency: 'CNY', canContinue: false})]),
     onAuthorize: async () => { throw new Error('Rendering must not authorize'); }});
   assert.match(html, /三项账户资料已保存/); assert.match(html, /方法权限、公司币种、指定仓库/);
-  assert.match(html, /后台写入价格的币种仍需独立核验/);
-  assert.match(html, /原生产任务保持等待/);
+  assert.match(html, /已读取的公司币种：CNY。/);
+  assert.match(html, /账户资料已保存；能否继续生产，以生产任务的当前校验结果为准/);
+  assert.doesNotMatch(html, /后台写入价格的币种仍需独立核验|原生产任务保持等待|后台连接|网页登录|上架成功/);
   assert.doesNotMatch(html, /<form|type="checkbox"|授权读取一次|继续已授权/);
 });
 

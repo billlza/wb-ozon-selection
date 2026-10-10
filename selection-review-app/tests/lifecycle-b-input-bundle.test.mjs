@@ -14,6 +14,7 @@ import {
   validateLifecycleBOtherCosts
 } from "../lib/lifecycle-b-input-bundle.mjs";
 import { GLOBAL_PRICING_POLICY_VERSION } from "../lib/global-pricing-policy.mjs";
+import { GUOO_MAIN_QUOTE_CALCULATION_RULE_STATUS } from "../lib/guoo-tariff-reader.mjs";
 
 const createdAt = "2026-08-18T02:00:00.000Z";
 
@@ -30,6 +31,34 @@ test("历史GUOO默认计费证据保留但不能复用于新正式利润", () =
   assert.deepEqual(evidence, before);
   assert.equal(validateLifecycleEvidenceData("logistics_tariff", { ...logistics.evidenceData,
     calculationRuleStatus: "legacy_unverified" }).valid, false);
+});
+
+test("只有逐格核对过报价公式的那一次国欧读取能进正式计算，存下来的旧读取结果照旧被拒", () => {
+  // 三份证据包只差 calculationRuleStatus 一个字段：核对过的可用，写着 legacy_unverified 的和
+  // 根本没有这个字段的（更早的读取器留下的）都不可用，而且理由要说得出是哪一种。
+  const cases = [
+    [GUOO_MAIN_QUOTE_CALCULATION_RULE_STATUS, true, "current"],
+    ["legacy_unverified", false, "legacy_unverified"],
+    [undefined, false, "legacy_unverified"],
+  ];
+  for (const [calculationRuleStatus, usable, status] of cases) {
+    const evidence = packs();
+    const logistics = evidence.find(pack => pack.kind === "logistics_tariff");
+    logistics.sourceType = "guoo_current_tariff_xlsx";
+    if (calculationRuleStatus !== undefined) logistics.evidenceData.calculationRuleStatus = calculationRuleStatus;
+    const readiness = inspectLifecycleBInputReadiness({ candidate: candidate(), evidencePacks: evidence, asOf: createdAt });
+    assert.equal(readiness.fields.find(field => field.key === "logistics_tariff").status, status, String(calculationRuleStatus));
+    assert.equal(readiness.ready, usable, String(calculationRuleStatus));
+    if (usable) {
+      const bundle = createLifecycleBInputBundle({ otherCosts: currentCosts(), candidate: candidate(), evidencePacks: evidence,
+        normalizedSubmission: normalizedSubmission(), createdAt });
+      assert.equal(bundle.logisticsEvidence.evidenceId, "EP-LOGISTICS");
+      assert.equal(bundle.logisticsEvidence.tariff.calculationRuleStatus, GUOO_MAIN_QUOTE_CALCULATION_RULE_STATUS);
+    } else {
+      assert.throws(() => createLifecycleBInputBundle({ otherCosts: currentCosts(), candidate: candidate(), evidencePacks: evidence,
+        normalizedSubmission: normalizedSubmission(), createdAt }), /SYSTEM_EVIDENCE_GAP/);
+    }
+  }
 });
 
 function candidate() {
@@ -154,7 +183,6 @@ test("B preserves actual C1 Schema content without importing payload identity or
   const actualContent = {
     categoryId: "category:synthetic:music-box", categoryName: "Music box", descriptionCategoryId: "17001", typeId: "93001",
     writeBindings: { schemaRevision: "ozon-music-box-2026-08-18", evidenceRef: "EP-SCHEMA", content: {} },
-    mediaRequirements: { schemaVersion: "c2-media-requirements-v1", imageSlots: [{ slotId: "main", minCount: 1, maxCount: 1 }] },
     categoryRestrictions: { status: "confirmed", restrictions: [] }, platformCompliance: { status: "confirmed", assessment: "allowed" }
   };
   Object.assign(evidencePacks[3].evidenceData, actualContent, {
@@ -169,10 +197,11 @@ test("B preserves actual C1 Schema content without importing payload identity or
   assert.equal(bundle.platformSchemaEvidence.platform, "ozon");
   assert.equal(bundle.platformSchemaEvidence.store, "dandanshu");
   assert.deepEqual(bundle.platformSchemaEvidence.storeRef, SYNTHETIC_STORE_REF);
+  assert.equal(bundle.platformSchemaEvidence.ruleVersion, evidencePacks[3].scope.ruleVersion);
   assert.equal(bundle.platformSchemaEvidence.collectedAt, createdAt);
   assert.equal(Object.hasOwn(bundle.platformSchemaEvidence, "productionAuthorized"), false);
   assert.equal(Object.hasOwn(bundle.platformSchemaEvidence, "confirmedBy"), false);
-  assert.equal(Object.isFrozen(bundle.platformSchemaEvidence.mediaRequirements.imageSlots), true);
+  assert.equal(Object.hasOwn(bundle.platformSchemaEvidence, "mediaRequirements"), false);
   assert.deepEqual(evidencePacks, before);
   const absent = createLifecycleBInputBundle({ otherCosts: currentCosts(), candidate: candidate(), evidencePacks: packs(), normalizedSubmission: normalizedSubmission(), createdAt });
   for (const field of Object.keys(actualContent)) assert.equal(Object.hasOwn(absent.platformSchemaEvidence, field), false);
@@ -501,4 +530,93 @@ test("旧v1.1无政策冻结包仍按历史数字严格只读验证", () => {
   assert.equal(JSON.stringify(legacy), bytes);
   const broken = structuredClone(legacy); delete broken.platformFeeEvidence.otherCosts;
   assert.equal(validateLifecycleBInputBundle(broken).valid, false);
+});
+
+const OZON_OFFICIAL_SHA = "b".repeat(64);
+
+function ozonOfficialCommissionPack() {
+  const base = packs()[0];
+  return {
+    ...base,
+    id: "EP-COMMISSION-OFFICIAL",
+    sourceType: "ozon_official_commission_table",
+    sourceRef: `ozon-official-commission:2026-08-01:sha256:${OZON_OFFICIAL_SHA}:1500_5000`,
+    commissionCatalogRef: {
+      effectiveFrom: "2026-08-01",
+      fileSha256: OZON_OFFICIAL_SHA,
+      sourceUrl: "https://docs.ozon.ru/common/pravila-raboty/komissii/",
+      priceTier: "1500_5000",
+      matchedRow: { typeRu: "Лежанки для животных", typeZh: "宠物躺床", mpCategoryZh: "宠物用品" }
+    },
+    evidenceData: {
+      ...structuredClone(base.evidenceData),
+      commissionRate: 0.155,
+      commissionEvidenceMode: "official_reference",
+      officialCommissionBinding: { schemaVersion: "ozon-official-commission-binding-v1", candidateId: "TEST-A-ONE-CARD", candidateRevision: 7, priceRub: 2490 },
+      estimateAuthorized: false,
+      exactCommissionRequiredAtC: true
+    }
+  };
+}
+
+test("官方费表佣金证据可以冻结进B输入包，并原样保留命中行的版本引用", () => {
+  const official = ozonOfficialCommissionPack();
+  const evidencePacks = [official, ...packs().slice(1)];
+  assert.equal(isLifecycleEvidenceTraceValid(official), true);
+  assert.equal(validateLifecycleEvidenceData("commission", official.evidenceData).valid, true);
+  assert.equal(inspectCommissionCatalogValidity({ pack: official, currentCommissionCatalogs: [], asOf: createdAt }).status, "not_applicable");
+  assert.equal(inspectLifecycleBInputReadiness({ candidate: candidate(), evidencePacks, asOf: createdAt }).ready, true);
+  const bundle = createLifecycleBInputBundle({ otherCosts: currentCosts(), candidate: candidate(), evidencePacks, normalizedSubmission: normalizedSubmission(), createdAt });
+  assert.equal(bundle.platformFeeEvidence.evidenceId, "EP-COMMISSION-OFFICIAL");
+  assert.equal(bundle.platformFeeEvidence.commissionEvidenceMode, "official_reference");
+  assert.equal(bundle.platformFeeEvidence.commissionRate, 0.155);
+  assert.equal(bundle.platformFeeEvidence.estimateAuthorized, false);
+  assert.equal(Object.hasOwn(bundle.platformFeeEvidence, "commissionEstimateAuthorization"), false);
+  assert.deepEqual(bundle.platformFeeEvidence.commissionCatalogRef, official.commissionCatalogRef);
+  assert.deepEqual(bundle.platformFeeEvidence.officialCommissionBinding, official.evidenceData.officialCommissionBinding);
+  assert.equal(validateLifecycleBInputBundle(bundle).valid, true);
+  const rebound = structuredClone(bundle); rebound.platformFeeEvidence.officialCommissionBinding.candidateId = "another-sku";
+  assert.equal(validateLifecycleBInputBundle(rebound).valid, false);
+  const retiered = structuredClone(bundle); retiered.platformFeeEvidence.commissionCatalogRef.priceTier = "le2000";
+  assert.equal(validateLifecycleBInputBundle(retiered).valid, false);
+});
+
+test("官方费表证据缺版本引用、价格档、命中行或绑定都不能进入正式计算", () => {
+  const freeze = (pack) => createLifecycleBInputBundle({ otherCosts: currentCosts(), candidate: candidate(),
+    evidencePacks: [pack, ...packs().slice(1)], normalizedSubmission: normalizedSubmission(), createdAt });
+  for (const mutate of [
+    pack => { delete pack.commissionCatalogRef; },
+    pack => { pack.commissionCatalogRef.priceTier = "le2000"; },
+    pack => { pack.commissionCatalogRef.fileSha256 = "b".repeat(63); },
+    pack => { pack.commissionCatalogRef.effectiveFrom = "2026-08-01T00:00:00.000Z"; },
+    pack => { pack.commissionCatalogRef.sourceUrl = " "; },
+    pack => { pack.commissionCatalogRef.matchedRow = { typeRu: "Лежанки", typeZh: "宠物躺床" }; },
+    pack => { pack.commissionCatalogRef.matchedRow.mpCategoryZh = ""; },
+    pack => { pack.commissionCatalogRef.extra = true; },
+    pack => { pack.scope.platform = "wb"; },
+    pack => { pack.evidenceData.commissionEvidenceMode = "exact"; },
+    pack => { pack.evidenceData.commissionRate = 0; },
+    pack => { pack.evidenceData.commissionRate = 1; },
+    pack => { pack.evidenceData.estimateAuthorized = true; },
+    pack => { delete pack.evidenceData.officialCommissionBinding; },
+    pack => { pack.evidenceData.officialCommissionBinding.priceRub = 0; },
+    pack => { pack.expiresAt = null; }
+  ]) {
+    const pack = ozonOfficialCommissionPack(); mutate(pack);
+    assert.equal(isLifecycleEvidenceTraceValid(pack), false);
+    assert.throws(() => freeze(pack), /SYSTEM_EVIDENCE_GAP/);
+  }
+  // 绑定本身完好，但属于别的SKU或改价后的修订：证据保留，只是不能再复用。
+  for (const mutate of [
+    pack => { pack.evidenceData.officialCommissionBinding.candidateId = "another-sku"; },
+    pack => { pack.evidenceData.officialCommissionBinding.candidateRevision = 6; }
+  ]) {
+    const pack = ozonOfficialCommissionPack(); mutate(pack);
+    assert.equal(isLifecycleEvidenceTraceValid(pack), true);
+    assert.equal(inspectLifecycleBInputReadiness({ candidate: candidate(), evidencePacks: [pack, ...packs().slice(1)], asOf: createdAt }).ready, false);
+    assert.throws(() => freeze(pack), /SYSTEM_EVIDENCE_GAP/);
+  }
+  const strayBinding = packs()[0];
+  strayBinding.evidenceData.officialCommissionBinding = ozonOfficialCommissionPack().evidenceData.officialCommissionBinding;
+  assert.equal(validateLifecycleEvidenceData("commission", strayBinding.evidenceData).valid, false);
 });

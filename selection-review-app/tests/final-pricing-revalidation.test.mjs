@@ -133,3 +133,26 @@ test("owner supply SKU tampering fails as B input gap on reuse and rejection rec
   retry.candidate.lifecycleV11.skuPackage.selectedSupplySnapshot.ownerSupplyConfirmation.supplierSkuId = "other-sku";
   assert.throws(() => prepareFinalPricingRevision(retry), /B_INPUT_GAP/);
 });
+
+/**
+ * 上架前这道闸门只认 `exact`。2026-09-15 撤掉「合规」「媒体槽位」那几道没人批准过的门时，
+ * 这一道一并复核过：没有松。`official_reference`（主人保存的官方费表版本命中的费率）能形成正式 B，
+ * 但过不了最终定价复核——这就是那条分界线，钉在这里。
+ */
+test("final pricing still refuses an official_reference commission at the listing gate", () => {
+  const input = fixture();
+  const commission = input.evidencePacks.find(pack => pack.kind === "commission");
+  commission.evidenceData = {
+    ...commission.evidenceData,
+    commissionEvidenceMode: "official_reference",
+    officialCommissionBinding: { schemaVersion: "ozon-official-commission-binding-v1",
+      candidateId: input.candidate.id, candidateRevision: input.candidate.dataRevision, priceRub: 1831 },
+    estimateAuthorized: false,
+    exactCommissionRequiredAtC: true
+  };
+  assert.throws(() => prepareFinalPricingRevision(input), /FINAL_PRICING_EXACT_COMMISSION_REQUIRED/);
+
+  // 同一份输入换回 exact 就通得过，证明红的确实是佣金来源这一条，不是夹具本身坏了。
+  const exact = fixture();
+  assert.equal(prepareFinalPricingRevision(exact).status, "price_unchanged");
+});

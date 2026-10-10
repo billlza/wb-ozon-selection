@@ -53,6 +53,33 @@ function quotaRemaining(body) {
   return Number.isFinite(remaining) ? remaining : null;
 }
 function range() { return { min: null, max: null }; }
+// The provider's own filter slots and their units: price is RUB, weight is grams, volume is litres and
+// monthlySales counts units in the response date window. Owner conditions are copied into the slot as
+// given; no unit conversion, no rounding and no extra slot is filled from a declared one.
+const CATEGORY_FILTER_SLOTS = Object.freeze({ priceRub: "price", weightGrams: "weight", volumeLitres: "volume", salesCount: "monthlySales" });
+function filterBound(value) { return value === null || Number.isFinite(value) && value >= 0; }
+function categoryFilterSlots(filters) {
+  if (filters === undefined || filters === null) return {};
+  if (!isObject(filters) || Object.keys(filters).length === 0 ||
+    Object.keys(filters).some((key) => !Object.hasOwn(CATEGORY_FILTER_SLOTS, key))) throw new Error("SEERFAR_CATEGORY_FILTERS_INVALID");
+  const slots = {};
+  for (const [key, slot] of Object.entries(CATEGORY_FILTER_SLOTS)) {
+    if (!Object.hasOwn(filters, key)) continue;
+    const declared = filters[key];
+    if (!isObject(declared) || Object.keys(declared).length !== 2 || !Object.hasOwn(declared, "min") || !Object.hasOwn(declared, "max") ||
+      !filterBound(declared.min) || !filterBound(declared.max) || declared.min === null && declared.max === null ||
+      declared.min !== null && declared.max !== null && declared.min > declared.max) throw new Error("SEERFAR_CATEGORY_FILTERS_INVALID");
+    slots[slot] = { min: declared.min, max: declared.max };
+  }
+  return slots;
+}
+/** Read back from the payload that was actually sent, so the echo cannot drift from the request. */
+function appliedCategoryFilters(payload) {
+  const entries = Object.entries(CATEGORY_FILTER_SLOTS)
+    .filter(([, slot]) => payload[slot].min !== null || payload[slot].max !== null)
+    .map(([key, slot]) => [key, { min: payload[slot].min, max: payload[slot].max }]);
+  return entries.length === 0 ? null : Object.fromEntries(entries);
+}
 
 function marketSchema(condition) {
   if (!condition) throw new SeerfarTransportError('schema_error');
@@ -72,6 +99,15 @@ function marketMetric(row, field, integer = false) {
   if (!Object.hasOwn(row, field) || row[field] === null) return null;
   marketSchema(Number.isFinite(row[field]) && row[field] >= 0 && (!integer || Number.isSafeInteger(row[field])));
   return row[field];
+}
+const MARKET_DIMENSION_MM = /^\d+(?:\.\d+)?[x×]\d+(?:\.\d+)?[x×]\d+(?:\.\d+)?$/;
+// The provider writes the three sides as one millimetre string; real responses use the multiplication sign
+// ("487×223×1498", 2026-07-27 capture) while fixtures use "600x450x150". Both separators are accepted; the string is kept literal:
+// no unit conversion, no reordering and no guess about which side is length.
+function marketDimension(row) {
+  if (!Object.hasOwn(row, 'dimension') || row.dimension === null) return null;
+  marketSchema(typeof row.dimension === 'string' && row.dimension.length <= 64 && MARKET_DIMENSION_MM.test(row.dimension.trim()));
+  return row.dimension.trim();
 }
 function marketDate(value) {
   if (value === undefined || value === null) return null;
@@ -110,13 +146,15 @@ function categoryMarketResult(body, platform, payload, evidenceRef) {
       categoryPath: marketCategory(row.categoryInfo), sellerIdentity: 'unknown',
       reviewCount: marketMetric(row, 'reviewCount', true), reviewRating: marketMetric(row, 'reviewRating'),
       rawSellerType: marketMetric(row, 'sellerType', true),
+      // The provider declares weight in grams and volume in litres; both stay in the provider's own unit here.
+      weightGrams: marketMetric(row, 'weight'), volumeLitres: marketMetric(row, 'volume'), dimensionMm: marketDimension(row),
       providerRecordRef: `${evidenceRef}#product-${index}` };
   });
   marketSchema(new Set(marketProducts.map(row => row.productId)).size === marketProducts.length);
   const dateRange = { startDate: marketDate(body.data.startDate), endDate: marketDate(body.data.endDate) };
   marketSchema(dateRange.startDate === null || dateRange.endDate === null || dateRange.startDate <= dateRange.endDate);
-  return { marketProducts, dateRange, collection: { pageNumber: payload.page.pageNumber, pageSize: payload.page.pageSize,
-    hasNextPage: body.data.hasNextPage } };
+  return { marketProducts, dateRange, appliedFilters: appliedCategoryFilters(payload),
+    collection: { pageNumber: payload.page.pageNumber, pageSize: payload.page.pageSize, hasNextPage: body.data.hasNextPage } };
 }
 
 export function buildSeerfarProductPayload({ platform, sku, dateRange }) {
@@ -126,9 +164,10 @@ export function buildSeerfarProductPayload({ platform, sku, dateRange }) {
   return payload;
 }
 
-export function buildSeerfarCategoryPayload({ platform, categoryId, fulfillment }) {
+export function buildSeerfarCategoryPayload({ platform, categoryId, fulfillment, filters = null }) {
   if (!["ozon", "wb"].includes(platform) || !nonEmpty(categoryId) || !nonEmpty(fulfillment)) throw new Error("SEERFAR_CATEGORY_INPUT_INVALID");
   if (platform === "ozon" && !/^\d+(?:_\d+)+$/.test(categoryId)) throw new Error("SEERFAR_OZON_CATEGORY_ID_NOT_COMPOSITE");
+  const slots = categoryFilterSlots(filters);
   const payload = {
     categoryId, date: null, reviewCount: range(), reviewRating: range(), questionsAndAnswers: range(), price: range(),
     monthlyRevenue: range(), monthlySales: range(), monthlySalesRate: range(), weight: range(), volume: range(), grossMargin: range(), variants: range(),
@@ -136,6 +175,8 @@ export function buildSeerfarCategoryPayload({ platform, categoryId, fulfillment 
     page: { pageNumber: 1, pageSize: 20, orders: [{ field: "revenue", direction: "DESC" }] }
   };
   if (platform === "ozon") Object.assign(payload, { drr: range(), convToCartPdp: range(), returnCancellationRate: range(), labels: [], filterRemoveProduct: true, tag: "" });
+  // Declared conditions replace their own empty slot in place; every other slot stays an empty range.
+  Object.assign(payload, slots);
   return payload;
 }
 
@@ -153,7 +194,7 @@ function endpoint(operation, platform) {
 }
 function payloadFor(plan, request) {
   if (plan.operation === "product_detail") return buildSeerfarProductPayload({ platform: request.targetPlatform, sku: request.exactSku, dateRange: plan.dateRange });
-  if (plan.operation === "category_detail") return buildSeerfarCategoryPayload({ platform: request.targetPlatform, categoryId: plan.categoryId, fulfillment: request.fulfillment });
+  if (plan.operation === "category_detail") return buildSeerfarCategoryPayload({ platform: request.targetPlatform, categoryId: plan.categoryId, fulfillment: request.fulfillment, filters: plan.filters ?? null });
   if (plan.operation === "reverse_keywords") return buildSeerfarReversePayload({ skuIds: plan.skuIds });
   throw new Error("SEERFAR_OPERATION_INVALID");
 }

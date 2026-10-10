@@ -1,3 +1,4 @@
+import { assertDProductionJobReference, currentDProductionRound } from './d-e-software-job-handoff.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { sameStoreRef, isCompleteStoreRef } from './store-binding.mjs';
 import { fingerprintCanonicalRecord } from './production-contract-primitives.mjs';
@@ -75,12 +76,31 @@ export function sameAccountReadRouting(left, right) {
     .every(field => isDeepStrictEqual(left[field], right[field]));
 }
 
+/** Technical progress must not discard the account read made for this immutable production handoff. */
+export function validOzonAccountReadRevisions({ document, candidate }) {
+  const sku = candidate.lifecycleV11.skuPackage, authorization = sku.productionAuthorization;
+  const revisions = [candidate.dataRevision, authorization?.sourceCandidateRevision];
+  if (!authorization || !sku.dHandoff?.softwareJobRef) return revisions;
+  const job = currentDProductionRound(document, { authorizationRef: authorization.authorizationId,
+    authorizationFingerprint: fingerprintCanonicalRecord(authorization) });
+  try { assertDProductionJobReference({ document, candidate, job }); }
+  catch (error) {
+    if (error?.constructor === Error && error.message === 'D_JOB_HANDOFF_PERSISTED_SOURCE_CONFLICT') throw new OzonAccountReadError('PRODUCTION_HANDOFF_INVALID');
+    throw error;
+  }
+  if (job.candidateId !== candidate.id || job.skuPackageId !== sku.skuPackageId ||
+      job.revision !== authorization.resultCandidateRevision || job.scopeBinding.sourceRevision !== authorization.sourceCandidateRevision ||
+      job.scopeBinding.resultRevision !== job.revision || !isDeepStrictEqual(job.scopeBinding.identity, authorization.sourceIdentity) ||
+      !isDeepStrictEqual(job.scopeBinding.productionBinding, authorization.executionBinding)) throw new OzonAccountReadError('PRODUCTION_HANDOFF_INVALID');
+  return [...new Set([...revisions, job.revision])];
+}
+
 /** A later attempt supersedes earlier evidence even when the later attempt failed. */
 export function currentOzonAccountReadJobs({ document, candidate, binding }) {
   const jobs = document.runtime.softwareJobs === undefined ? [] : document.runtime.softwareJobs;
   if (!Array.isArray(jobs)) throw new OzonAccountReadError('REPOSITORY_INVALID');
   const sku = candidate.lifecycleV11.skuPackage;
-  const revisions = [candidate.dataRevision, sku.productionAuthorization?.sourceCandidateRevision];
+  const revisions = validOzonAccountReadRevisions({ document, candidate });
   const matches = jobs.filter(job => job.jobType === 'ozon_account_read' && job.candidateId === candidate.id &&
     job.skuPackageId === sku.skuPackageId && job.scopeBinding.supplierSkuId === sku.supplierSkuId &&
     revisions.includes(job.revision) && sameAccountReadRouting(job.scopeBinding, binding))

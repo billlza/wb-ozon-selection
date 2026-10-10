@@ -1,3 +1,4 @@
+import { productionEvidenceForSku } from "../fixtures/production-profit-evidence-fixture.mjs";
 import { createC2SoftwareContainer, prepareC2FinalUploadManifest, confirmC2SoftwareFinalUploads } from "../../lib/c2-software-orchestrator.mjs";
 import { createProductionAuthorization, assertValidProductionAuthorization, buildProductionOwnerDecisionSnapshot } from "../../lib/production-authorization.mjs";
 import { fingerprintCanonicalRecord } from "../../lib/production-contract-primitives.mjs";
@@ -5,7 +6,7 @@ import { createActorContext } from "../../lib/runtime-identity.mjs";
 import { createFinalProductPlanConfirmationCard } from "../../lib/final-product-plan-confirmation-card.mjs";
 import { createFormalC1C2Fixture } from "../fixtures/formal-c1-flow-fixture.mjs";
 import { attachSyntheticFinalPricingReview } from "../fixtures/final-pricing-review-fixture.mjs";
-export { packageFixture, fact, draft, syntheticContentRules } from "../fixtures/c2-source-package-fixture.mjs";
+export { packageFixture, fact, draft } from "../fixtures/c2-source-package-fixture.mjs";
 
 const NOW = "2026-08-22T06:00:00.000Z";
 
@@ -33,7 +34,7 @@ export function productionAuthorizationInputFixture({ publishScope = "create_and
     platformWritePrice: platformWritePrice ?? { amount: model.recommendedSalePriceCny, currency: "CNY" },
     priceConversion: structuredClone(priceConversion ?? model.priceConversion), publishScope, allowedWriteFields, exclusions, executionBinding: structuredClone(executionBinding) };
   const ownerActor = createActorContext({ userId: "synthetic-owner", sessionId: "synthetic-owner-session", actorType: "human", roles: ["owner"], source: "authenticated_identity_provider", authenticatedAt: at });
-  return { candidateId: skuPackage.g1Identity.candidateId, sourceCandidateRevision, currentCandidateRevision: sourceCandidateRevision, skuPackage, commercialDecision, ownerActor, authorizedAt: at };
+  return { ...productionEvidenceForSku(skuPackage, sourceCandidateRevision), candidateId: skuPackage.g1Identity.candidateId, sourceCandidateRevision, currentCandidateRevision: sourceCandidateRevision, skuPackage, commercialDecision, ownerActor, authorizedAt: at };
 }
 
 export function authorizedProductionFixture(options) {
@@ -77,10 +78,10 @@ export function historicalAuthorizedProductionFixture(options) {
     lockedScope: { candidateId, skuPackageId: source.skuPackageId, variantKey: source.variantKey, platform: sourceIdentity.platform,
       storeRef: structuredClone(sourceIdentity.storeRef), merchantSku: decision.merchantSku, supplierSkuId: sourceIdentity.supplierSkuId,
       warehouseRef: decision.warehouseRef, credentialAlias: decision.credentialAlias, schemaRevision: preparation.targetContext.schemaRevision,
-      schemaEvidenceRef: preparation.targetContext.schemaEvidenceRef, schemaEvidenceVersion: preparation.targetContext.schemaEvidenceVersion,
+      schemaEvidenceRef: preparation.targetContext.schemaEvidenceRef,
       activeProfitModelVersion: preparation.finalCardInputSnapshot.activeProfitModelVersion,
       buyerTargetPrice: structuredClone(decision.buyerTargetPrice), platformWritePrice: structuredClone(decision.platformWritePrice),
-      priceConversion: structuredClone(decision.priceConversion), stock: decision.stock, mediaRequirementsFingerprint: preparation.mediaRequirementsFingerprint,
+      priceConversion: structuredClone(decision.priceConversion), stock: decision.stock, authorizedMediaFingerprint: preparation.authorizedMediaFingerprint,
       finalManifestVersion: preparation.finalManifestVersion, finalManifestSha256: preparation.finalManifestSha256,
       finalUploadsFingerprint: preparation.finalUploadsFingerprint, mainImageAssetId: preparation.mainImageAssetId,
       videoDisposition: preparation.videoDisposition, effectiveVideoRequirement: structuredClone(preparation.effectiveVideoRequirement),
@@ -149,8 +150,7 @@ export function finalAssets() {
       usageAuthorization: { status: "owner_authorized_for_listing", evidenceRef: "owner-confirmation:shelf-final-v1" },
       sourceType: "owner_provided_final_upload",
       order: 1,
-      role: "main_image",
-      slotId: "main"
+      role: "main_image"
     },
     {
       assetId: "final:fixture:shelf:detail",
@@ -165,8 +165,7 @@ export function finalAssets() {
       usageAuthorization: { status: "owner_authorized_for_listing", evidenceRef: "owner-confirmation:shelf-final-v1" },
       sourceType: "owner_provided_final_upload",
       order: 2,
-      role: "detail_image",
-      slotId: "detail"
+      role: "gallery_image"
     }
   ];
 }
@@ -184,7 +183,7 @@ export function ownerDecision(manifest) {
     confirmedBy: "owner",
     approvedManifestVersion: manifest.schemaVersion,
     approvedManifestSha256: manifest.manifestSha256,
-    approvedMediaRequirementsFingerprint: manifest.mediaRequirementsFingerprint,
+    approvedAuthorizedMediaFingerprint: manifest.authorizedMediaFingerprint,
     approvedAssetIds: manifest.approvedAssetIds,
     approvedMainImageAssetId: manifest.mainImageAssetId,
     approvedVideoDisposition: manifest.videoDisposition

@@ -13,19 +13,6 @@ export function draft(text, factRefs = ["platformCategory.categoryName"], keywor
   return { status: "draft_only", text, factRefs, keywordEvidenceRefs, productionApproved: false };
 }
 
-// Synthetic limits exercise the contract; they are not marketplace policy evidence.
-export function syntheticContentRules(slots = [
-  { slotId: "main", mediaType: "image" }, { slotId: "detail", mediaType: "image" }, { slotId: "product-video", mediaType: "video" }
-]) {
-  return {
-    schemaVersion: "c2-media-content-rules-v1", status: "verified", evidenceRef: "media-rules:synthetic:fixture",
-    evidenceVersion: "synthetic-v1", checkedAt: "2026-01-01T00:00:00.000Z", validUntil: "2099-01-01T00:00:00.000Z",
-    slotRules: slots.map(slot => ({ ...slot, mimeTypes: slot.mediaType === "video" ? ["video/mp4"] : ["image/jpeg", "image/png", "image/webp"],
-      byteSize: { min: 1, max: 104857600 }, width: { min: 1, max: 4000 }, height: { min: 1, max: 4000 }, aspectRatio: { min: 0, max: "unrestricted" }
-    }))
-  };
-}
-
 
 export function packageFixture({ sku = "SHELF-WHITE", title = "Полка для ванной", candidateId = "candidate:fixture:bathroom-shelf", stableStoreId = "store:ozon:dandanshu", platformStoreId = "seller-dandanshu-001", mappingVersion = "stores-v1", executableOzon = false, historicalC1 = false } = {}) {
   const skuPackageId = `sku-lifecycle:FIXTURE-SHELF-001:${sku}`;
@@ -169,23 +156,6 @@ export function packageFixture({ sku = "SHELF-WHITE", title = "Полка для
         schemaRevision: "schema-v1",
         requiredFields: [],
         collectedAt: NOW,
-        mediaRequirements: {
-          schemaVersion: "c2-media-requirements-v1",
-          evidenceRef: schemaRef,
-          evidenceVersion: "media-requirements-v1",
-          platform: "ozon",
-          targetStore: stableStoreId,
-          storeRef: { stableStoreId, platformStoreId, mappingVersion },
-          categoryId: "category:ozon:bathroom-shelf",
-          schemaRevision: "schema-v1",
-          imageSlots: [
-            { slotId: "main", role: "main_image", minCount: 1, maxCount: 1 },
-            { slotId: "detail", role: "detail_image", minCount: 1, maxCount: 3 }
-          ],
-          videoSlots: [{ slotId: "product-video", role: "product_video", minCount: 0, maxCount: 1 }],
-          schemaVideoRequirement: { status: "not_required" },
-          contentRules: syntheticContentRules()
-        },
         unknownManifest: {
           schemaVersion: "c1-unknown-manifest-v1",
           blockingItems: []
@@ -238,17 +208,6 @@ export function packageFixture({ sku = "SHELF-WHITE", title = "Полка для
       providerJobRef
     },
     keywordEvidenceRefs: ["keyword:fixture:shelf"],
-    mediaRequirements: {
-      status: "confirmed",
-      schemaSnapshotRef: schemaRef,
-      sourceRefs: [schemaRef],
-      requiredSlots: [
-        { slotId: "main", mediaType: "image", required: true },
-        { slotId: "detail", mediaType: "image", required: true }
-      ],
-      videoRequirement: "not_required",
-      reason: null
-    },
     unknownManifest: [],
     seoEvidenceLayer: {
       draftVersion: "c1-ai-draft-receipt-v1",

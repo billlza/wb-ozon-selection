@@ -1,14 +1,14 @@
 import FormRevisionNotice, { useCandidateForm, useSubmit } from "./FormRevisionNotice.jsx";
 import { productionAuthorizationInputFromCard } from "../productionAuthorizationInput.js";
 
-export default function ProductionOwnerDecisionForm({ candidate, identity, onSave }) {
+export default function ProductionOwnerDecisionForm({ candidate, identity, onSave, showReadinessReason = true }) {
   const sku = candidate.lifecycleV11.skuPackage;
   const card = sku.productionConfirmationCard;
   const preparation = candidate.productionOwnerPreparation;
   const readiness = productionAuthorizationInputFromCard(candidate, card);
   const [form, setForm, guard] = useCandidateForm({ id: candidate.id, dataRevision: card.cardRevision }, {
     sourceCandidateRevision: candidate.dataRevision, sourceSkuRevision: sku.dataRevision,
-    merchantSku: "", bindingId: "", configurationVersion: "", confirmed: false
+    merchantSku: preparation?.commercialDraft?.merchantSku ?? "", bindingId: "", configurationVersion: "", confirmed: false
   });
   const { saving, error, run } = useSubmit();
   const sourceChanged = form.sourceCandidateRevision !== candidate.dataRevision || form.sourceSkuRevision !== sku.dataRevision;
@@ -32,7 +32,7 @@ export default function ProductionOwnerDecisionForm({ candidate, identity, onSav
   const scope = readiness.ready ? preparation.scope : null;
   return <form className="production-owner-decision-form" onSubmit={save}>
     <b>确认本件商品并通过进入生产授权</b>
-    <p>{readiness.reason}</p>
+    {showReadinessReason ? <p>{readiness.reason}</p> : null}
     <FormRevisionNotice guard={guard} disabled={saving} />
     {sourceChanged ? <p role="alert">商品资料已更新，旧输入仍保留。<button type="button" onClick={guard.reload}>核对后载入新版</button></p> : null}
     {identity?.canSaveProductionOwnerDecision !== true ? <p role="status">正式主人身份尚不可用，不能保存生产授权。</p> : null}
@@ -44,7 +44,7 @@ export default function ProductionOwnerDecisionForm({ candidate, identity, onSav
         {preparation.executionBindings.map(item => <option key={item.bindingId} value={item.bindingId}>{item.warehouseName}</option>)}
       </select></label>
       <p>买家目标成交价：{scope.buyerTargetPrice.amount} RUB · 后台写入价：{scope.platformWritePrice.amount} CNY。</p>
-      <p>价格来自当前已冻结利润方案；汇率为 1 CNY = {scope.priceConversion.rubPerCny} RUB。更改价格需要重新核算并形成新的利润版本。</p>
+      <p>如需改价，请先使用下方“调整售价”。</p>
       <p>范围：仅本件商品的建卡、标题、描述、属性、价格、库存 {scope.stock}、已确认图片及{scope.publishScope === "create_draft_only" ? "保存草稿" : "提交审核"}；不包含其他商品、独立激活或广告操作。</p>
       <label className="production-owner-scope-confirmation"><input type="checkbox" checked={form.confirmed} onChange={event => field("confirmed", event.target.checked)} /><span>我确认当前商品、仓库、以上价格、库存、最终图片顺序和执行范围，授权按此方案生产。</span></label>
     </fieldset> : null}

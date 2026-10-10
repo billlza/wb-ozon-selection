@@ -1,7 +1,7 @@
-import { normalize1688CaptureSource } from "./source-capture.mjs";
+import { normalize1688CaptureSource, normalizePinduoduoCaptureSource, supplierCapturePlatform } from "./source-capture.mjs";
 
 export const SUPPLIER_OPTION_SCHEMA_VERSION = "product-lifecycle-v1.1";
-export const SUPPLIER_SOURCE_PLATFORMS = Object.freeze(["1688"]);
+export const SUPPLIER_SOURCE_PLATFORMS = Object.freeze(["1688", "pinduoduo"]);
 export const UNKNOWN = "unknown";
 
 function isObject(value) {
@@ -16,9 +16,10 @@ function validOfferId(value) {
   return typeof value === "string" && /^\d{1,40}$/.test(value);
 }
 
-function valid1688ProductUrl(value, offerId) {
+function validSupplierProductUrl(value, offerId, platform) {
   if (!nonEmptyString(value) || !validOfferId(offerId)) return false;
-  const source = normalize1688CaptureSource(value);
+  const normalize = platform === "pinduoduo" ? normalizePinduoduoCaptureSource : normalize1688CaptureSource;
+  const source = normalize(value);
   // Frozen supply evidence must already be canonical. Never repair a supplied
   // URL by stripping credentials, query/fragment or resolving a different offer.
   return source.type === "detail" && source.sourceUrl === value && source.offerId === offerId;
@@ -75,7 +76,7 @@ function meaningfulVariantText(value) {
   return nonEmptyString(value) && ![UNKNOWN, "null", "undefined"].includes(value.trim().toLowerCase());
 }
 
-function derivedVariantKey(sku) {
+export function derivedVariantKey(sku) {
   if (meaningfulVariantText(sku.propPath)) return sku.propPath.trim();
   const attributes = isObject(sku.attributes) ? sku.attributes : {};
   const attributeKey = Object.entries(attributes)
@@ -121,10 +122,10 @@ export function validateSupplierOption(option) {
     push(errors, "SupplierOption.supplierOptionId", "必须是非空字符串");
   }
   if (!SUPPLIER_SOURCE_PLATFORMS.includes(option.sourcePlatform)) {
-    push(errors, "SupplierOption.sourcePlatform", "6A只接受1688");
+    push(errors, "SupplierOption.sourcePlatform", "6A只接受1688或拼多多");
   }
-  if (!valid1688ProductUrl(option.productUrl, option.offerId)) {
-    push(errors, "SupplierOption.productUrl", "必须是与offerId一致的规范1688 HTTPS商品详情链接");
+  if (!validSupplierProductUrl(option.productUrl, option.offerId, option.sourcePlatform)) {
+    push(errors, "SupplierOption.productUrl", "必须是与offerId一致、且属于该来源平台的规范HTTPS商品详情链接");
   }
   if (!validOfferId(option.offerId)) push(errors, "SupplierOption.offerId", "必须是1至40位数字字符串");
   if (!(option.supplierSalesEvidence === UNKNOWN || isObject(option.supplierSalesEvidence))) {
@@ -192,9 +193,11 @@ export function adapt1688CaptureToSupplierOption(evidence, { evidenceRef } = {})
     };
   });
 
+  // The captured canonical address decides the platform; a Pinduoduo goods page can never be filed as a 1688 offer.
+  const platform = supplierCapturePlatform(evidence.sourceUrl) === "pinduoduo" ? "pinduoduo" : "1688";
   const option = {
-    supplierOptionId: `supplier-option:1688:${evidence.offerId}`,
-    sourcePlatform: "1688",
+    supplierOptionId: `supplier-option:${platform}:${evidence.offerId}`,
+    sourcePlatform: platform,
     productUrl: evidence.sourceUrl,
     offerId: evidence.offerId,
     supplierSalesEvidence: isObject(evidence.supplierSalesEvidence)

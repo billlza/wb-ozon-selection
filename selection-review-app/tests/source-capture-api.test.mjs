@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { stopApiProcess } from "./helpers/api-process-lifecycle.mjs";
+import { stopApiProcess, allocatedTestPorts } from "./helpers/api-process-lifecycle.mjs";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const port = 20000 + (process.pid % 30000);
+const port = allocatedTestPorts().api;
 const baseUrl = `http://127.0.0.1:${port}`;
 const extensionOrigin = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 

@@ -1,0 +1,1224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "c1-editorial-source-v1",
+  "title": "主人确认的C1受控修订来源",
+  "description": "只保存可复验的原失败来源及主人确认；不表示模型回执成功或生产授权。跨字段一致性由领域合同复验。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "bundle",
+    "ownerConfirmation"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "c1-editorial-source-v1"
+    },
+    "bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request",
+        "receipt",
+        "sourceJob",
+        "correctionPlan"
+      ],
+      "properties": {
+        "request": {
+          "$ref": "c1-ai-draft-request-v1.schema.json"
+        },
+        "receipt": {
+          "$ref": "c1-ai-draft-receipt-v1.schema.json"
+        },
+        "sourceJob": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "jobId",
+            "candidateId",
+            "skuPackageId",
+            "revision",
+            "jobType",
+            "status",
+            "attempt",
+            "externalRequestState",
+            "failureClass",
+            "progressRef",
+            "resultRef",
+            "scopeBinding",
+            "admissionDecision",
+            "externalRequestRef",
+            "workerId",
+            "leaseId",
+            "startedAt",
+            "completedAt",
+            "resultEnvelope"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": "c1-editorial-rejected-job-v1"
+            },
+            "jobId": {
+              "$ref": "software-job-v1.schema.json#/properties/jobId"
+            },
+            "candidateId": {
+              "$ref": "software-job-v1.schema.json#/properties/candidateId"
+            },
+            "skuPackageId": {
+              "$ref": "software-job-v1.schema.json#/properties/skuPackageId"
+            },
+            "revision": {
+              "$ref": "software-job-v1.schema.json#/properties/revision"
+            },
+            "jobType": {
+              "const": "c1_ai_draft"
+            },
+            "status": {
+              "const": "failed"
+            },
+            "attempt": {
+              "const": 1
+            },
+            "externalRequestState": {
+              "const": "succeeded"
+            },
+            "failureClass": {
+              "const": "C1_AI_GATEWAY_RECEIPT_REJECTED"
+            },
+            "progressRef": {
+              "$ref": "software-job-v1.schema.json#/properties/progressRef"
+            },
+            "resultRef": {
+              "$ref": "software-job-v1.schema.json#/properties/resultRef"
+            },
+            "scopeBinding": {
+              "$ref": "software-job-v1.schema.json#/$defs/c1AiDraftScopeBinding"
+            },
+            "admissionDecision": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "schemaVersion",
+                "jobId",
+                "candidateId",
+                "skuPackageId",
+                "revision",
+                "jobType",
+                "authorizationRef",
+                "credentialAlias",
+                "authorizationFingerprint",
+                "credentialBindingFingerprint"
+              ],
+              "properties": {
+                "schemaVersion": {
+                  "const": "software-job-admission-v1"
+                },
+                "jobId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "candidateId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "skuPackageId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "jobType": {
+                  "const": "c1_ai_draft"
+                },
+                "authorizationRef": {
+                  "$ref": "c1-ai-authorized-execution-v1#/$defs/c1OpaqueAuthorizationId"
+                },
+                "credentialAlias": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "authorizationFingerprint": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "credentialBindingFingerprint": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              }
+            },
+            "externalRequestRef": {
+              "$ref": "software-job-v1.schema.json#/properties/externalRequestRef"
+            },
+            "workerId": {
+              "$ref": "software-job-v1.schema.json#/properties/workerId"
+            },
+            "leaseId": {
+              "$ref": "software-job-v1.schema.json#/properties/leaseId"
+            },
+            "startedAt": {
+              "$ref": "software-job-v1.schema.json#/properties/startedAt"
+            },
+            "completedAt": {
+              "$ref": "software-job-v1.schema.json#/properties/completedAt"
+            },
+            "resultEnvelope": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "schemaVersion",
+                "resultRef",
+                "jobId",
+                "jobType",
+                "candidateId",
+                "skuPackageId",
+                "revision",
+                "workerId",
+                "leaseId",
+                "externalRequestRef",
+                "externalRequestState",
+                "payloadKind",
+                "payload",
+                "payloadFingerprint",
+                "applicationDisposition",
+                "recordedAt"
+              ],
+              "properties": {
+                "schemaVersion": {
+                  "const": "software-job-result-envelope-v1"
+                },
+                "resultRef": {
+                  "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                },
+                "jobId": {
+                  "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                },
+                "jobType": {
+                  "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef",
+                  "not": {
+                    "enum": [
+                      "d_production_execution",
+                      "e_independent_readback"
+                    ]
+                  }
+                },
+                "candidateId": {
+                  "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                },
+                "skuPackageId": {
+                  "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "workerId": {
+                  "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                },
+                "leaseId": {
+                  "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                },
+                "externalRequestRef": {
+                  "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                },
+                "externalRequestState": {
+                  "enum": [
+                    "succeeded",
+                    "failed",
+                    "unknown_outcome"
+                  ]
+                },
+                "payloadKind": {
+                  "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                },
+                "payload": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "schemaVersion",
+                    "accounting",
+                    "errorCode"
+                  ],
+                  "properties": {
+                    "schemaVersion": {
+                      "const": "c1-ai-draft-software-failure-v1"
+                    },
+                    "accounting": {
+                      "$ref": "c1-ai-draft-receipt-v1.schema.json#/$defs/c1AiAccounting"
+                    },
+                    "errorCode": {
+                      "const": "C1_AI_GATEWAY_RECEIPT_REJECTED"
+                    },
+                    "providerOutcome": {
+                      "type": [
+                        "object",
+                        "null"
+                      ]
+                    },
+                    "serviceTiming": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "schemaVersion",
+                        "gatewayJobId",
+                        "startedAt",
+                        "completedAt"
+                      ],
+                      "properties": {
+                        "schemaVersion": {
+                          "const": "c1-service-timing-v1"
+                        },
+                        "gatewayJobId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "startedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "completedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                },
+                "payloadFingerprint": {
+                  "$ref": "software-job-admission-v1.schema.json#/$defs/sha256"
+                },
+                "applicationDisposition": {
+                  "const": "result_recorded_no_candidate_mutation"
+                },
+                "recordedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "jobType": {
+                        "const": "ozon_account_read"
+                      }
+                    }
+                  },
+                  "then": {},
+                  "else": {
+                    "properties": {
+                      "revision": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "jobType": {
+                        "const": "c1_ai_draft"
+                      }
+                    },
+                    "required": [
+                      "jobType"
+                    ]
+                  },
+                  "then": {
+                    "if": {
+                      "properties": {
+                        "externalRequestState": {
+                          "enum": [
+                            "failed",
+                            "unknown_outcome"
+                          ]
+                        }
+                      }
+                    },
+                    "then": {
+                      "properties": {
+                        "applicationDisposition": {
+                          "const": "result_recorded_no_candidate_mutation"
+                        }
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "externalRequestState": {
+                        "const": "succeeded"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "correctionPlan": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "requestFingerprint",
+            "sourceOutputFingerprint",
+            "sourceSoftwareJobId",
+            "items"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": "c1-draft-editorial-plan-v1"
+            },
+            "requestFingerprint": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "sourceOutputFingerprint": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "sourceSoftwareJobId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "items": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 62,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "originalText",
+                  "originalFactRefs",
+                  "originalAssertions",
+                  "correctedText",
+                  "factPaths",
+                  "explanation",
+                  "sourceRefs"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "originalText": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 6000
+                  },
+                  "originalFactRefs": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 60,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    }
+                  },
+                  "originalAssertions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 60,
+                    "items": {
+                      "$ref": "c1-ai-draft-receipt-v1.schema.json#/$defs/citedText/properties/assertions/items"
+                    }
+                  },
+                  "correctedText": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 6000
+                  },
+                  "factPaths": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 60,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "uniqueItems": true
+                  },
+                  "explanation": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  "sourceRefs": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 60,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "uniqueItems": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "ownerConfirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "candidateId",
+        "skuPackageId",
+        "sourceCandidateRevision",
+        "resultCandidateRevision",
+        "sourceSkuRevision",
+        "resultSkuRevision",
+        "editorialVersionId",
+        "outputFingerprint",
+        "confirmedByUserId",
+        "actorType",
+        "role",
+        "source",
+        "confirmedAt",
+        "productionAuthorizationGranted"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "c1-editorial-owner-confirmation-v1"
+        },
+        "candidateId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "skuPackageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "sourceCandidateRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resultCandidateRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sourceSkuRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resultSkuRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "editorialVersionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "outputFingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "confirmedByUserId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "actorType": {
+          "const": "human"
+        },
+        "role": {
+          "const": "owner"
+        },
+        "source": {
+          "const": "authenticated_identity_provider"
+        },
+        "confirmedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "productionAuthorizationGranted": {
+          "const": false
+        }
+      }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "bundle",
+        "ownerConfirmation"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "c1-editorial-source-v1"
+        },
+        "bundle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "request",
+            "receipt",
+            "sourceJob",
+            "correctionPlan"
+          ],
+          "properties": {
+            "request": {
+              "$ref": "c1-ai-draft-request-v1.schema.json"
+            },
+            "receipt": {
+              "$ref": "c1-ai-draft-receipt-v1.schema.json"
+            },
+            "sourceJob": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "schemaVersion",
+                "jobId",
+                "candidateId",
+                "skuPackageId",
+                "revision",
+                "jobType",
+                "status",
+                "attempt",
+                "externalRequestState",
+                "failureClass",
+                "progressRef",
+                "resultRef",
+                "scopeBinding",
+                "admissionDecision",
+                "externalRequestRef",
+                "workerId",
+                "leaseId",
+                "startedAt",
+                "completedAt",
+                "resultEnvelope"
+              ],
+              "properties": {
+                "schemaVersion": {
+                  "const": "c1-editorial-rejected-job-v1"
+                },
+                "jobId": {
+                  "$ref": "software-job-v1.schema.json#/properties/jobId"
+                },
+                "candidateId": {
+                  "$ref": "software-job-v1.schema.json#/properties/candidateId"
+                },
+                "skuPackageId": {
+                  "$ref": "software-job-v1.schema.json#/properties/skuPackageId"
+                },
+                "revision": {
+                  "$ref": "software-job-v1.schema.json#/properties/revision"
+                },
+                "jobType": {
+                  "const": "c1_ai_draft"
+                },
+                "status": {
+                  "const": "failed"
+                },
+                "attempt": {
+                  "const": 1
+                },
+                "externalRequestState": {
+                  "const": "succeeded"
+                },
+                "failureClass": {
+                  "const": "C1_AI_GATEWAY_RECEIPT_REJECTED"
+                },
+                "progressRef": {
+                  "$ref": "software-job-v1.schema.json#/properties/progressRef"
+                },
+                "resultRef": {
+                  "$ref": "software-job-v1.schema.json#/properties/resultRef"
+                },
+                "scopeBinding": {
+                  "$ref": "software-job-v1.schema.json#/$defs/c1AiDraftScopeBinding"
+                },
+                "admissionDecision": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "schemaVersion",
+                    "jobId",
+                    "candidateId",
+                    "skuPackageId",
+                    "revision",
+                    "jobType",
+                    "authorizationRef",
+                    "credentialAlias",
+                    "authorizationFingerprint",
+                    "credentialBindingFingerprint"
+                  ],
+                  "properties": {
+                    "schemaVersion": {
+                      "const": "software-job-admission-v1"
+                    },
+                    "jobId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "candidateId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "skuPackageId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "jobType": {
+                      "const": "c1_ai_draft"
+                    },
+                    "authorizationRef": {
+                      "$ref": "c1-ai-authorized-execution-v1#/$defs/c1OpaqueAuthorizationId"
+                    },
+                    "credentialAlias": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "authorizationFingerprint": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "credentialBindingFingerprint": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  }
+                },
+                "externalRequestRef": {
+                  "$ref": "software-job-v1.schema.json#/properties/externalRequestRef"
+                },
+                "workerId": {
+                  "$ref": "software-job-v1.schema.json#/properties/workerId"
+                },
+                "leaseId": {
+                  "$ref": "software-job-v1.schema.json#/properties/leaseId"
+                },
+                "startedAt": {
+                  "$ref": "software-job-v1.schema.json#/properties/startedAt"
+                },
+                "completedAt": {
+                  "$ref": "software-job-v1.schema.json#/properties/completedAt"
+                },
+                "resultEnvelope": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "schemaVersion",
+                    "resultRef",
+                    "jobId",
+                    "jobType",
+                    "candidateId",
+                    "skuPackageId",
+                    "revision",
+                    "workerId",
+                    "leaseId",
+                    "externalRequestRef",
+                    "externalRequestState",
+                    "payloadKind",
+                    "payload",
+                    "payloadFingerprint",
+                    "applicationDisposition",
+                    "recordedAt"
+                  ],
+                  "properties": {
+                    "schemaVersion": {
+                      "const": "software-job-result-envelope-v1"
+                    },
+                    "resultRef": {
+                      "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                    },
+                    "jobId": {
+                      "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                    },
+                    "jobType": {
+                      "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef",
+                      "not": {
+                        "enum": [
+                          "d_production_execution",
+                          "e_independent_readback"
+                        ]
+                      }
+                    },
+                    "candidateId": {
+                      "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                    },
+                    "skuPackageId": {
+                      "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "workerId": {
+                      "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                    },
+                    "leaseId": {
+                      "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                    },
+                    "externalRequestRef": {
+                      "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                    },
+                    "externalRequestState": {
+                      "enum": [
+                        "succeeded",
+                        "failed",
+                        "unknown_outcome"
+                      ]
+                    },
+                    "payloadKind": {
+                      "$ref": "software-job-admission-v1.schema.json#/$defs/strictRef"
+                    },
+                    "payload": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "schemaVersion",
+                        "accounting",
+                        "errorCode"
+                      ],
+                      "properties": {
+                        "schemaVersion": {
+                          "const": "c1-ai-draft-software-failure-v1"
+                        },
+                        "accounting": {
+                          "$ref": "c1-ai-draft-receipt-v1.schema.json#/$defs/c1AiAccounting"
+                        },
+                        "errorCode": {
+                          "const": "C1_AI_GATEWAY_RECEIPT_REJECTED"
+                        },
+                        "providerOutcome": {
+                          "type": [
+                            "object",
+                            "null"
+                          ]
+                        },
+                        "serviceTiming": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "schemaVersion",
+                            "gatewayJobId",
+                            "startedAt",
+                            "completedAt"
+                          ],
+                          "properties": {
+                            "schemaVersion": {
+                              "const": "c1-service-timing-v1"
+                            },
+                            "gatewayJobId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "startedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "completedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "payloadFingerprint": {
+                      "$ref": "software-job-admission-v1.schema.json#/$defs/sha256"
+                    },
+                    "applicationDisposition": {
+                      "const": "result_recorded_no_candidate_mutation"
+                    },
+                    "recordedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "jobType": {
+                            "const": "ozon_account_read"
+                          }
+                        }
+                      },
+                      "then": {},
+                      "else": {
+                        "properties": {
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "jobType": {
+                            "const": "c1_ai_draft"
+                          }
+                        },
+                        "required": [
+                          "jobType"
+                        ]
+                      },
+                      "then": {
+                        "if": {
+                          "properties": {
+                            "externalRequestState": {
+                              "enum": [
+                                "failed",
+                                "unknown_outcome"
+                              ]
+                            }
+                          }
+                        },
+                        "then": {
+                          "properties": {
+                            "applicationDisposition": {
+                              "const": "result_recorded_no_candidate_mutation"
+                            }
+                          }
+                        }
+                      },
+                      "else": {
+                        "properties": {
+                          "externalRequestState": {
+                            "const": "succeeded"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "correctionPlan": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "schemaVersion",
+                "requestFingerprint",
+                "sourceOutputFingerprint",
+                "sourceSoftwareJobId",
+                "items"
+              ],
+              "properties": {
+                "schemaVersion": {
+                  "const": "c1-draft-editorial-plan-v1"
+                },
+                "requestFingerprint": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "sourceOutputFingerprint": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "sourceSoftwareJobId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "items": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 62,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "path",
+                      "originalText",
+                      "originalFactRefs",
+                      "originalAssertions",
+                      "correctedText",
+                      "factPaths",
+                      "explanation",
+                      "sourceRefs"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      },
+                      "originalText": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 6000
+                      },
+                      "originalFactRefs": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 60,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        }
+                      },
+                      "originalAssertions": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 60,
+                        "items": {
+                          "$ref": "c1-ai-draft-receipt-v1.schema.json#/$defs/citedText/properties/assertions/items"
+                        }
+                      },
+                      "correctedText": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 6000
+                      },
+                      "factPaths": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 60,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "uniqueItems": true
+                      },
+                      "explanation": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000
+                      },
+                      "sourceRefs": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 60,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "uniqueItems": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "ownerConfirmation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "candidateId",
+            "skuPackageId",
+            "sourceCandidateRevision",
+            "resultCandidateRevision",
+            "sourceSkuRevision",
+            "resultSkuRevision",
+            "editorialVersionId",
+            "outputFingerprint",
+            "confirmedByUserId",
+            "actorType",
+            "role",
+            "source",
+            "confirmedAt",
+            "productionAuthorizationGranted"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": "c1-editorial-owner-confirmation-v1"
+            },
+            "candidateId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "skuPackageId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "sourceCandidateRevision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "resultCandidateRevision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sourceSkuRevision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "resultSkuRevision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "editorialVersionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "outputFingerprint": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "confirmedByUserId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "actorType": {
+              "const": "human"
+            },
+            "role": {
+              "const": "owner"
+            },
+            "source": {
+              "const": "authenticated_identity_provider"
+            },
+            "confirmedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "productionAuthorizationGranted": {
+              "const": false
+            }
+          }
+        }
+      }
+    },
+    "draftOnlySeo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "sourceType",
+        "formalProviderResultAccepted",
+        "reason",
+        "editorialSource"
+      ],
+      "properties": {
+        "status": {
+          "const": "draft_only"
+        },
+        "sourceType": {
+          "const": "owner_confirmed_editorial"
+        },
+        "formalProviderResultAccepted": {
+          "const": false
+        },
+        "reason": {
+          "type": "null"
+        },
+        "editorialSource": {
+          "$ref": "#/$defs/source"
+        }
+      }
+    },
+    "evidenceLayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "draftVersion",
+        "sourceType",
+        "editorialVersionId",
+        "requestId",
+        "requestFingerprint",
+        "sourceReceiptId",
+        "sourceSoftwareJobId",
+        "sourceGatewayJobId",
+        "sourceOutputFingerprint",
+        "outputFingerprint",
+        "createdAt",
+        "executionStatus",
+        "finalApprovalGranted"
+      ],
+      "properties": {
+        "draftVersion": {
+          "const": "c1-draft-editorial-version-v1"
+        },
+        "sourceType": {
+          "const": "owner_confirmed_editorial"
+        },
+        "editorialVersionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "requestFingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "sourceReceiptId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "sourceSoftwareJobId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "sourceGatewayJobId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "sourceOutputFingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "outputFingerprint": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "executionStatus": {
+          "const": "draft_only"
+        },
+        "finalApprovalGranted": {
+          "const": false
+        }
+      }
+    }
+  }
+}

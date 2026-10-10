@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { preparedFixture } from "./helpers/d-software-fixture.mjs";
+import { preparedFixture, capabilities as formalCapabilities } from "./helpers/d-software-fixture.mjs";
+import { OzonDEHttpTransportError } from '../lib/ozon-de-http-configuration.mjs';
+import { finalAssets as syntheticFinalAssets } from './helpers/c2-software-fixture.mjs';
+import { assertOzonInventoryPrerequisitePolicy, isCurrentInventoryPrerequisitePolicy,
+  OZON_STOCK_QUANT_SIZE_REMOVAL_REF } from "../lib/ozon-inventory-prerequisite-policy.mjs";
 import {
   createStoreIsolatedOzonSellerApiDEAdapter,
   inspectAdapterCapabilities,
@@ -84,6 +88,97 @@ const formalExecution = await preparedFixture({ merchantSku: "SUP-MUSIC-001",
 const executionContext = formalExecution.executionContext;
 const writeCapabilities = readyCapabilities({ assets: formalExecution.prepared.executableRequest.finalUploads,
   host: new URL(formalExecution.prepared.executableRequest.finalUploads[0].platformAcceptedUrl).hostname });
+
+test('batch adapter sends one multi-item task and classifies each offer without replaying failed members', async () => {
+  const assets = syntheticFinalAssets().map((asset, index) => ({ ...asset,
+    assetId: `${asset.assetId}:black`, assetRef: index === 0 ? 'https://assets.example.com/owner/black-main.jpg' : asset.assetRef,
+    sha256: index === 0 ? 'c'.repeat(64) : asset.sha256 }));
+  const second = await preparedFixture({ candidateId: 'candidate:batch-second', supplierSkuId: 'SHELF-BLACK',
+    merchantSku: 'MERCHANT-BLACK', assets, warehouseRef: executionBinding().warehouseRef,
+    credentialAlias: executionBinding().credentialAlias });
+  const member = source => ({ request: source.prepared.executableRequest, executionContext: source.executionContext,
+    colorKey: source === formalExecution ? 'white' : 'black', modelKey: 'same-product',
+    sourceTechnicalStatus: 'not_started' });
+  const members = [member(formalExecution), member(second)];
+  const capability = formalCapabilities('dandanshu', members.flatMap(value => value.request.finalUploads),
+    members[0].request);
+  capability.warehouseId = '70001';
+  capability.assetTransport.resolvedAssets = members.flatMap(value => value.request.finalUploads.map(asset => ({
+    assetId: asset.assetId, platformAcceptedUrl: asset.platformAcceptedUrl, sha256: asset.sha256,
+    order: asset.order, authorizationStatus: 'approved', stable: true, evidenceRef: `synthetic:${asset.assetId}`
+  })));
+  capability.productImport.endpoint = '/v3/product/import';
+  capability.productImport.maxItemsPerRequest = 2;
+  capability.productImport.limitEvidenceRef = 'synthetic:batch-limit';
+  capability.productImport.limitObservedAt = '2026-08-22T07:00:00.000Z';
+  capability.productImport.validUntil = '2026-09-01T00:00:00.000Z';
+  const calls = [], checkpoints = [];
+  const adapter = createStoreIsolatedOzonSellerApiDEAdapter({ adapterCapabilities: capability,
+    requestJson: async request => {
+      calls.push(request);
+      if (request.endpoint === '/v3/product/import') return { result: { task_id: 501 } };
+      return { result: { items: [
+        { offer_id: members[0].request.merchantSku, product_id: 910001, status: 'imported', errors: [] },
+        { offer_id: members[1].request.merchantSku, product_id: 0, status: 'failed', errors: [] }
+      ] } };
+    } });
+  const scope = { batchId: 'd-batch:synthetic', members, excludedOfferIds: ['MERCHANT-FIRST'], chunkIndex: 0 };
+  const receipt = await adapter.executeBatchImport(scope, { persistCheckpoint: async event => checkpoints.push(event) });
+  assert.equal(receipt.status, 'waiting_platform');
+  assert.deepEqual(checkpoints.map(event => event.kind), ['batch_import_intent', 'batch_import_task_received']);
+  assert.equal(calls[0].body.items.length, 2);
+  const observed = await adapter.observeBatchImportTask({ batchId: scope.batchId, chunkIndex: 0,
+    taskId: receipt.taskId, offerIds: receipt.offerIds });
+  assert.deepEqual(observed.results.map(result => result.classification), ['imported', 'platform_failed']);
+  assert.deepEqual(calls.map(call => call.write), [true, false]);
+  for (const resultItems of [
+    [{ offer_id: scope.members[0].request.merchantSku, product_id: 910001, status: 'imported', errors: [] }],
+    [{ offer_id: scope.members[0].request.merchantSku, product_id: 910001, status: 'imported', errors: [] },
+      { offer_id: scope.members[0].request.merchantSku, product_id: 910001, status: 'imported', errors: [] }],
+    [{ offer_id: scope.members[0].request.merchantSku, product_id: 910001, status: 'imported', errors: [] },
+      { offer_id: 'UNEXPECTED', product_id: 910003, status: 'imported', errors: [] }]
+  ]) {
+    const unsafe = createStoreIsolatedOzonSellerApiDEAdapter({ adapterCapabilities: capability,
+      requestJson: async () => ({ result: { items: resultItems } }) });
+    const observation = await unsafe.observeBatchImportTask({ batchId: scope.batchId, chunkIndex: 0,
+      taskId: receipt.taskId, offerIds: receipt.offerIds });
+    assert.equal(observation.results.some(result => result.classification !== 'unknown_outcome'),
+      resultItems.every(item => item.offer_id !== 'UNEXPECTED') && resultItems.length === 1);
+    assert.equal(observation.results.some(result => result.classification === 'unknown_outcome'), true);
+  }
+  let currentTime = '2026-08-22T07:25:00.000Z';
+  const expiringMembers = members.map(value => ({ ...value,
+    executionContext: { ...value.executionContext, serverClock: () => currentTime } }));
+  const expiringCalls = [];
+  const expiringCapability = structuredClone(capability);
+  expiringCapability.productImport.validUntil = '2026-08-22T07:25:30.000Z';
+  const expiringAdapter = createStoreIsolatedOzonSellerApiDEAdapter({ adapterCapabilities: expiringCapability,
+    requestJson: async request => { expiringCalls.push(request); return { result: { task_id: 502 } }; } });
+  const rejected = await expiringAdapter.executeBatchImport({ ...scope, members: expiringMembers },
+    { persistCheckpoint: async event => {
+      if (event.kind === 'batch_import_intent') currentTime = expiringCapability.productImport.validUntil;
+    } });
+  assert.deepEqual(rejected, {status:'rejected_before_write',writeOccurred:false,
+    requestTransmission:'not_attempted',reasonCode:'OZON_BATCH_LIMIT_EVIDENCE_REQUIRED',retryAllowed:false});
+  assert.equal(expiringCalls.length, 0);
+  for (const [failure, expectedStatus] of [
+    [new OzonDEHttpTransportError('OZON_DE_CREDENTIAL_READ_FAILED'), 'rejected_before_write'],
+    [new OzonDEHttpTransportError('OZON_DE_HTTP_CONNECTION_FAILED',
+      {externalRequestState:'unknown_outcome',requestTransmission:'attempted'}), 'unknown_outcome'],
+    [Object.assign(new Error('untrusted transport'),{code:'OZON_DE_CREDENTIAL_READ_FAILED',
+      externalRequestState:'not_sent',requestTransmission:'not_attempted'}), 'unknown_outcome']
+  ]) {
+    const transport = createStoreIsolatedOzonSellerApiDEAdapter({adapterCapabilities:capability,
+      requestJson:async()=>{throw failure;}});
+    const events=[];
+    const outcome=await transport.executeBatchImport(scope,{persistCheckpoint:async event=>events.push(event)});
+    assert.equal(outcome.status,expectedStatus);
+    assert.deepEqual(events.map(event=>event.kind),['batch_import_intent']);
+    if(expectedStatus==='rejected_before_write')
+      assert.deepEqual([outcome.writeOccurred,outcome.requestTransmission,outcome.reasonCode],
+        [false,'not_attempted','OZON_DE_CREDENTIAL_READ_FAILED']);
+  }
+});
 
 function executableRequest({ store, warehouseId, offerId } = {}) {
   const request = structuredClone(formalExecution.prepared.executableRequest);
@@ -170,6 +265,8 @@ function readbackResponses({ offerId = "SUP-MUSIC-001", productId = "910001", sa
     "/v3/product/info/list": {
       items: [{
         offer_id: offerId, id: Number(productId), sku: 810001, name: "Музыкальная шкатулка", is_archived: false,
+        primary_image: [primaryImage],
+        images: primaryInImages ? [primaryImage, "https://cdn.ozon/detail.jpg"] : ["https://cdn.ozon/detail.jpg"],
         statuses: { moderate_status: "approved", validation_status: "success", status_name: saleStatus, status_description: "" },
         errors: structuredClone(infoErrors)
       }]
@@ -200,6 +297,49 @@ test("capability inspection requires exact store, warehouse, protocols, and four
   const crossStore = capabilityInput();
   crossStore.storeIdentity.observedStore = "miska";
   assert.equal(inspectAdapterCapabilities(crossStore).status, "not_ready");
+});
+
+test("能力检查认两条身份锚：仓库反推要求观察引用为空，其余路径仍比对店铺引用", () => {
+  const identityBlocked = (input) => inspectAdapterCapabilities(input).gaps.some((item) => item.code === "store_identity_not_verified");
+
+  // 仓库反推（主人2026-09-16决定）：Ozon 不发店铺编号，observedStoreRef 恒为 null 才是正确状态，放行。
+  const warehouse = capabilityInput();
+  Object.assign(warehouse.storeIdentity, { verifiedVia: "scoped_warehouse", observedStoreRef: null });
+  assert.equal(inspectAdapterCapabilities(warehouse).status, "ready");
+  assert.equal(inspectAdapterCapabilities(warehouse).storeIdentity.verifiedVia, "scoped_warehouse");
+
+  // 锁：声称仓库反推、同时又带着店铺引用，是矛盾不是更强的证据，必须仍然拦住。
+  const contradictory = capabilityInput();
+  contradictory.storeIdentity.verifiedVia = "scoped_warehouse";
+  assert.ok(identityBlocked(contradictory), "仓库反推不得同时声称观测到店铺引用");
+
+  // 非仓库锚点维持原规则：没有观察引用就是没锚住（未声明、明写原路径、none、未知值都一样）。
+  for (const via of [undefined, "platform_store_id", "none", "owner_says_so"]) {
+    const bare = capabilityInput();
+    bare.storeIdentity.observedStoreRef = null;
+    if (via !== undefined) bare.storeIdentity.verifiedVia = via;
+    assert.ok(identityBlocked(bare), `非仓库锚点下空引用必须拦住：${String(via)}`);
+  }
+  const otherStoreRef = capabilityInput();
+  otherStoreRef.storeIdentity.observedStoreRef = { ...otherStoreRef.storeIdentity.observedStoreRef, platformStoreId: "seller-miska-001" };
+  assert.ok(identityBlocked(otherStoreRef), "非仓库锚点下引用不一致必须拦住");
+
+  // 锁：'none' 就是没有锚点。旁边挂一个真实可对上的 observedStoreRef 也不放行——Ozon 从不返回店铺
+  // 编号，那个引用只可能是人手填的。认不出来的锚点名同样不放行（这道门自己不查取值合法性）。
+  for (const via of ["none", "owner_says_so"]) {
+    const refWithoutAnchor = capabilityInput();
+    refWithoutAnchor.storeIdentity.verifiedVia = via;
+    assert.deepEqual(refWithoutAnchor.storeIdentity.observedStoreRef, executionBinding("dandanshu").storeRef);
+    assert.ok(identityBlocked(refWithoutAnchor), `${via} 配一个对得上的店铺引用仍然不算锚住`);
+  }
+
+  // 仓库反推只替换"店铺引用比对"这一项，其余身份条件一个都不放过。
+  for (const patch of [{ status: "unknown" }, { observedStore: "miska" }, { expectedStore: "miska" },
+    { credentialAlias: "credential-alias:another" }, { evidenceRef: "" }]) {
+    const partial = capabilityInput();
+    Object.assign(partial.storeIdentity, { verifiedVia: "scoped_warehouse", observedStoreRef: null }, patch);
+    assert.ok(identityBlocked(partial), JSON.stringify(patch));
+  }
 });
 
 test("final upload resolution accepts only capability-approved stable HTTPS URLs", () => {
@@ -417,7 +557,7 @@ test("independent readback works in a fresh adapter without process-local submis
   assert.deepEqual(result.currentPrice, { amount: 117.85, currency: "CNY" });
   assert.equal(result.currentStock, 100);
   assert.equal(result.imageCount, 2);
-  assert.deepEqual(result.mediaObservation, { sourceProtocol: "ozon-product-attributes-v4", primaryImageUrl: "https://cdn.ozon/main.jpg", images: ["https://cdn.ozon/detail.jpg"] });
+  assert.deepEqual(result.mediaObservation, { sourceProtocol: "ozon-product-info-v3", primaryImageUrl: "https://cdn.ozon/main.jpg", images: ["https://cdn.ozon/detail.jpg"] });
   assert.deepEqual(result.inventoryObservation, { sourceProtocol: "ozon-product-stocks-by-warehouse-fbs-v2", hasNext: false, rows: [{ warehouseId: "70001", productId: "910001", sku: "810001", offerId: "SUP-MUSIC-001", freeStock: 100, present: 103, reserved: 3 }] });
   assert.equal(result.moderationStatus, "approved");
   assert.equal(result.validationStatus, "success");
@@ -458,7 +598,7 @@ test("exact warehouse readback uses free_stock and never derives it from aggrega
 
 test("readback preserves duplicate media and refuses ambiguous or contradictory product identity", async () => {
   for (const images of [["https://cdn.ozon/detail.jpg", "https://cdn.ozon/detail.jpg"], ["https://cdn.ozon/detail.jpg", "https://cdn.ozon/main.jpg"]]) {
-    const responses = readbackResponses(); responses["/v4/product/info/attributes"].result[0].images = images;
+    const responses = readbackResponses(); responses["/v3/product/info/list"].items[0].images = images;
     const adapter = createStoreIsolatedOzonSellerApiDEAdapter({ adapterCapabilities: readyCapabilities(), requestJson: async ({ endpoint }) => structuredClone(responses[endpoint]) });
     const result = await adapter.readbackSellerApi(independentReadbackQuery());
     assert.deepEqual(result.mediaObservation.images, images); assert.equal(result.imageCount, 3);
@@ -473,6 +613,31 @@ test("readback preserves duplicate media and refuses ambiguous or contradictory 
   const conflicting = readbackResponses(); conflicting["/v4/product/info/attributes"].result[0].product_id = 999999;
   const conflictingAdapter = createStoreIsolatedOzonSellerApiDEAdapter({ adapterCapabilities: readyCapabilities(), requestJson: async ({ endpoint }) => structuredClone(conflicting[endpoint]) });
   await assert.rejects(() => conflictingAdapter.readbackSellerApi(independentReadbackQuery()), /IDENTITY_MISMATCH: attributes/);
+});
+
+test('media reads the documented info arrays without relying on contradictory attribute image types', async () => {
+  const responses = readbackResponses();
+  responses['/v4/product/info/attributes'].result[0].images = [{ default: false, file_name: 'ambiguous.png', index: 1 }];
+  responses['/v4/product/info/attributes'].result[0].primary_image = 'https://other.example/attribute-main.png';
+  const calls = [], adapter = createStoreIsolatedOzonSellerApiDEAdapter({ adapterCapabilities: readyCapabilities(),
+    requestJson: async request => { calls.push(request); return structuredClone(responses[request.endpoint]); } });
+  const result = await adapter.readbackSellerApi(independentReadbackQuery());
+  assert.deepEqual(result.mediaObservation, { sourceProtocol: 'ozon-product-info-v3', primaryImageUrl: 'https://cdn.ozon/main.jpg', images: ['https://cdn.ozon/detail.jpg'] });
+  assert.equal(result.imageCount, 2);
+  assert.deepEqual(calls.map(call => call.endpoint), Object.values(OZON_DE_READBACK_ENDPOINTS));
+  assert.ok(calls.every(call => call.write === false));
+});
+
+test('info media with missing, multiple or malformed primary images stays unknown without an attribute fallback', async () => {
+  for (const primary of [undefined, null, [], ['https://cdn.ozon/main.jpg', 'https://cdn.ozon/other.jpg'],
+    'https://cdn.ozon/main.jpg', [123], ['http://cdn.ozon/main.jpg']]) {
+    const responses = readbackResponses(); responses['/v3/product/info/list'].items[0].primary_image = primary;
+    const adapter = createStoreIsolatedOzonSellerApiDEAdapter({ adapterCapabilities: readyCapabilities(),
+      requestJson: async request => structuredClone(responses[request.endpoint]) });
+    const result = await adapter.readbackSellerApi(independentReadbackQuery());
+    assert.equal(result.mediaObservation.primaryImageUrl, 'unknown'); assert.equal(result.imageCount, 'unknown');
+    assert.deepEqual(result.mediaObservation.images, ['https://cdn.ozon/detail.jpg']);
+  }
 });
 
 test("independent readback retains primary and ordered images with only the leading primary repetition normalized", async () => {
@@ -498,9 +663,12 @@ test("independent readback uses actual info errors and never queries a fabricate
   const driftResponses = readbackResponses();driftResponses["/v5/product/info/prices"].items[0].product_id = 999999;
   const driftAdapter=createStoreIsolatedOzonSellerApiDEAdapter({adapterCapabilities:readyCapabilities(),requestJson:async({endpoint})=>structuredClone(driftResponses[endpoint])});
   await assert.rejects(()=>driftAdapter.readbackSellerApi(independentReadbackQuery()),/IDENTITY_MISMATCH: prices/);
-  const errors=[{code:'failed_update'}],responses=readbackResponses({infoErrors:errors}),calls=[];
+  const errors=[{code:'failed_update',level:'ERROR',message:'private user@example.com'}],responses=readbackResponses({infoErrors:errors}),calls=[];
   const adapter=createStoreIsolatedOzonSellerApiDEAdapter({adapterCapabilities:readyCapabilities(),requestJson:async({endpoint})=>{calls.push(endpoint);return structuredClone(responses[endpoint]);}});
-  const observed=await adapter.readbackSellerApi(independentReadbackQuery());assert.deepEqual(observed.errors,errors);assert.equal(calls.includes('/v3/product/list'),false);
+  const observed=await adapter.readbackSellerApi(independentReadbackQuery());
+  assert.deepEqual(observed.errors,[{code:'failed_update',level:'ERROR'}]);
+  assert.equal(JSON.stringify(observed).includes('user@example.com'),false);
+  assert.equal(calls.includes('/v3/product/list'),false);
 });
 
 test("missing or malformed info error lists stay unknown in independent readback", async () => {
@@ -589,7 +757,7 @@ test('v5 price requires its documented numeric nested amount and exact currency 
 
 test('human sale labels and contradictory media representations do not create an on-sale or media identity claim',async()=>{
  for(const saleStatus of ['Продается','selling','on_sale','active','не продается']){
-  const responses=readbackResponses({saleStatus});responses['/v3/product/info/list'].items[0].statuses.moderate_status=true;responses['/v3/product/info/list'].items[0].statuses.validation_status=123;responses['/v4/product/info/attributes'].result[0].images=[{file_name:'https://cdn.ozon/detail.jpg'}];
+  const responses=readbackResponses({saleStatus});responses['/v3/product/info/list'].items[0].statuses.moderate_status=true;responses['/v3/product/info/list'].items[0].statuses.validation_status=123;responses['/v3/product/info/list'].items[0].images=[{file_name:'https://cdn.ozon/detail.jpg'}];
   const adapter=createStoreIsolatedOzonSellerApiDEAdapter({adapterCapabilities:readyCapabilities(),requestJson:async({endpoint})=>responses[endpoint]});
   const result=await adapter.readbackSellerApi(independentReadbackQuery());assert.equal(result.saleStatus,'unknown');assert.equal(result.moderationStatus,'unknown');assert.equal(result.validationStatus,'unknown');assert.equal(result.mediaObservation.images,'unknown');assert.equal(result.imageCount,'unknown');
  }
@@ -619,7 +787,7 @@ function phasedAdapter(responses = {}, options = {}) {
       if (Object.hasOwn(responses, request.endpoint)) return structuredClone(responses[request.endpoint]);
       if (request.endpoint === '/v3/product/import') return { result: { task_id: 501 } };
       if (request.endpoint === '/v1/product/import/info') return { result: { items: [{ offer_id: 'SUP-MUSIC-001', product_id: 910001, status: 'imported', errors: [] }] } };
-      if (request.endpoint === '/v3/product/info/list') return { items: [{ offer_id: 'SUP-MUSIC-001', id: 910001, statuses: { status: 'synthetic_price_sent' }, errors: [] }] };
+      if (request.endpoint === '/v3/product/info/list') return { items: [{ offer_id: 'SUP-MUSIC-001', id: 910001, is_archived: false, is_autoarchived: false, statuses: { status: 'synthetic_price_sent' }, errors: [] }] };
       if (request.endpoint === OZON_DE_READBACK_ENDPOINTS.stocks) return readbackResponses()[request.endpoint];
       if (request.endpoint === '/v2/products/stocks') return { result: [{ offer_id: 'SUP-MUSIC-001', product_id: 910001, warehouse_id: 70001, updated: true, errors: [] }] };
       throw new Error('unexpected request');
@@ -631,6 +799,73 @@ async function prerequisiteObservations(fixture) {
   return { priceSentObservation: await fixture.adapter.observePriceSent(query),
     inventoryPrerequisiteObservation: await fixture.adapter.observeInventoryPrerequisites(query) };
 }
+
+test('price-sent evidence requires explicit non-archived flags before any stock write', async () => {
+  for (const patch of [{ is_archived: true }, { is_autoarchived: true }, { is_archived: undefined },
+    { is_autoarchived: undefined }, { is_archived: null }, { is_autoarchived: 'false' }]) {
+    const item = { offer_id: 'SUP-MUSIC-001', id: 910001, is_archived: false, is_autoarchived: false,
+      statuses: { status: 'synthetic_price_sent' }, errors: [], ...patch };
+    const f = phasedAdapter({ '/v3/product/info/list': { items: [item] } });
+    const observed = await f.adapter.observePriceSent(taskQuery({ productId: '910001' }));
+    assert.equal(observed.priceSent, 'unknown');
+    assert.deepEqual(f.calls.map(call => [call.endpoint, call.write]), [['/v3/product/info/list', false]]);
+    assert.deepEqual(f.checkpoints, []);
+  }
+  const current = phasedAdapter();
+  assert.equal((await current.adapter.observePriceSent(taskQuery({ productId: '910001' }))).priceSent, 'verified');
+});
+
+test('v2 inventory policy documents the removed field and preserves all other prerequisite requirements', () => {
+  const policy = { ...structuredClone(prerequisitePolicy), schemaVersion: 'ozon-inventory-prerequisite-policy-v2',
+    stockRequest: { identityField: 'offer_id', quantSize: 'not_applicable', officialEvidenceRef: OZON_STOCK_QUANT_SIZE_REMOVAL_REF } };
+  assert.deepEqual(assertOzonInventoryPrerequisitePolicy(policy), policy);
+  assert.equal(isCurrentInventoryPrerequisitePolicy(policy), true);
+  for (const change of [
+    value => { value.stockRequest.quantSize = null; }, value => { value.stockRequest.quantSize = 1; },
+    value => { delete value.stockRequest.officialEvidenceRef; },
+    value => { value.stockRequest.officialEvidenceRef = 'evidence:unverified:removal'; },
+    value => { value.priceSent.acceptedValues = []; }, value => { value.reserved.endpoint = '/v4/product/info/stocks'; }
+  ]) {
+    const changed = structuredClone(policy); change(changed);
+    assert.throws(() => assertOzonInventoryPrerequisitePolicy(changed), /OZON_DE_INVENTORY_POLICY_INVALID/);
+  }
+});
+
+test('v2 stock requests omit quant_size for either supported identity field', async () => {
+  for (const identityField of ['offer_id', 'product_id']) {
+    const capabilities = structuredClone(writeCapabilities);
+    capabilities.inventoryWrite.prerequisitePolicy = { ...structuredClone(prerequisitePolicy),
+      schemaVersion: 'ozon-inventory-prerequisite-policy-v2', stockRequest: {
+        identityField, quantSize: 'not_applicable', officialEvidenceRef: OZON_STOCK_QUANT_SIZE_REMOVAL_REF } };
+    const f = phasedAdapter({}, { adapterCapabilities: capabilities }), observation = await prerequisiteObservations(f);
+    f.calls.length = 0;
+    const result = await f.adapter.executeRemainingInventory(executableRequest(), { observation,
+      persistCheckpoint: f.persistCheckpoint, assertRemainingInventoryAuthorization: async () => {} });
+    assert.equal(result.status, 'accepted');
+    assert.equal(f.calls.length, 1); assert.equal(f.calls[0].endpoint, '/v2/products/stocks');
+    assert.deepEqual(f.calls[0].body, { stocks: [{ [identityField]: identityField === 'offer_id' ? 'SUP-MUSIC-001' : 910001,
+      stock: executableRequest().stock, warehouse_id: 70001 }] });
+    assert.equal(Object.hasOwn(f.calls[0].body.stocks[0], 'quant_size'), false);
+    assert.deepEqual(f.checkpoints.map(value => value.kind), ['stock_intent', 'stock_receipt_observed']);
+  }
+});
+
+test('historical v1 quant policy stays readable but cannot issue a current stock request or intent', async () => {
+  for (const quantSize of [1, 2]) {
+    const capabilities = structuredClone(writeCapabilities);
+    const policy = capabilities.inventoryWrite.prerequisitePolicy;
+    policy.stockRequest.quantSize = quantSize;
+    assert.deepEqual(assertOzonInventoryPrerequisitePolicy(policy), policy);
+    assert.equal(isCurrentInventoryPrerequisitePolicy(policy), false);
+    const f = phasedAdapter({}, { adapterCapabilities: capabilities });
+    await assert.rejects(() => f.adapter.observePriceSent(taskQuery({ productId: '910001' })), /OZON_DE_INVENTORY_POLICY_OUTDATED/);
+    const result = await f.adapter.executeRemainingInventory(executableRequest(), { observation: null,
+      persistCheckpoint: f.persistCheckpoint, assertRemainingInventoryAuthorization: async () => { throw new Error('must stop before authorization'); } });
+    assert.equal(result.status, 'blocked'); assert.equal(result.code, 'inventory_prerequisite_policy_outdated');
+    assert.equal(result.inventoryWriteState, 'not_sent'); assert.deepEqual(f.calls, []); assert.deepEqual(f.checkpoints, []);
+  }
+  assert.equal(isCurrentInventoryPrerequisitePolicy(prerequisitePolicy), true, 'a v1 policy that already omits quant_size retains its explicit behavior');
+});
 
 test('v3 import saves only the task receipt and waits without issuing a read or inventory write', async () => {
   for (const taskId of [501, Number.MAX_SAFE_INTEGER]) {
@@ -709,9 +944,41 @@ test('missing policy, forged success, policy drift, and incomplete reserved fact
     assert.equal(result.status, 'blocked'); assert.equal(result.inventoryWriteState, 'not_sent');
   }
   assert.equal(f.calls.length, 0); assert.equal(f.checkpoints.length, 0);
+});
+
+/**
+ * 库存前提（priceSent.acceptedValues 至今没有官方来源）只在发库存那一步才用得上。
+ * 它以前被算进「能力就绪」，于是把商品导入本身也一起挡住了；现在导入放行，发库存照旧挡死。
+ * 这条测试就是那道搬家的闸门：任何一头松了都会红。
+ */
+test('inventory prerequisite policy no longer blocks product import, and still blocks the stock write', async () => {
   const input = capabilityInput(); delete input.inventoryWrite.prerequisitePolicy;
-  assert.equal(inspectAdapterCapabilities(input).status, 'not_ready');
-  assert.ok(inspectAdapterCapabilities(input).gaps.some(gap => gap.code === 'inventory_prerequisite_policy_not_verified'));
+  const capabilities = inspectAdapterCapabilities(input);
+  assert.equal(capabilities.status, 'ready');
+  assert.equal(capabilities.gaps.length, 0);
+  assert.equal(capabilities.inventoryWrite.prerequisitePolicy, null);
+
+  const withPolicy = phasedAdapter(), observation = await prerequisiteObservations(withPolicy);
+  const policyless = phasedAdapter({}, { adapterCapabilities: inspectAdapterCapabilities({
+    ...capabilityInput({ assets: formalExecution.prepared.executableRequest.finalUploads,
+      host: new URL(formalExecution.prepared.executableRequest.finalUploads[0].platformAcceptedUrl).hostname }),
+    inventoryWrite: { ...writeCapabilities.inventoryWrite, status: 'verified', protocolVersion: 'ozon-products-stocks-v2',
+      evidenceRef: 'evidence:protocol:inventory', prerequisitePolicy: undefined } }) });
+  policyless.calls.length = 0;
+
+  // 导入这一步照常走完：证明挡住主人的确实只是那条搬走的检查。
+  const imported = await policyless.adapter.executeSellerApi(executableRequest(), { persistCheckpoint: policyless.persistCheckpoint });
+  assert.equal(imported.status, 'waiting_platform');
+
+  // 发库存这一步一步都不让过，而且没有产生任何库存意图。
+  await assert.rejects(() => policyless.adapter.observePriceSent(taskQuery({ productId: '910001' })), /OZON_DE_INVENTORY_POLICY_NOT_VERIFIED/);
+  const blocked = await policyless.adapter.executeRemainingInventory(executableRequest(), { observation,
+    persistCheckpoint: policyless.persistCheckpoint, assertRemainingInventoryAuthorization: async () => {} });
+  assert.equal(blocked.status, 'blocked');
+  assert.equal(blocked.code, 'inventory_prerequisite_policy_not_verified');
+  assert.equal(blocked.inventoryWriteState, 'not_sent');
+  assert.equal(policyless.checkpoints.some(event => event.kind === 'stock_intent'), false);
+  assert.equal(policyless.calls.some(call => call.endpoint === '/v2/products/stocks'), false);
 });
 
 test('continuation authorization is required and checked again after stock intent', async () => {

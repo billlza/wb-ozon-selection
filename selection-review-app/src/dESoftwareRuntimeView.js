@@ -110,5 +110,21 @@ export function dESavedJobRuntimeDisplay(view) {
       : view.currentVerified ? "当前商品已完成独立验证"
       : view.canContinueSaved ? "原任务可以继续" : "已保存任务的当前进展",
     canContinueSaved: view.canContinueSaved === true,
-    continuation: { jobId: view.continueJobId, expectedRevision: view.expectedRevision } };
+    continuation: { jobId: view.continueJobId, expectedRevision: view.expectedRevision },
+    canDispatchNewRound: view.canDispatchNewRound === true,
+    newRoundBlocker: view.d?.newRound?.canDispatch === false ? view.d.newRound.blocker ?? null : null,
+    newRound: { supersededJobId: view.newRoundSupersededJobId, expectedRevision: view.expectedRevision },
+    canRollbackAuthorization: view.canRollbackAuthorization === true,
+    rollbackBlocker: view.canRollbackAuthorization === true ? null : view.rollbackBlocker ?? null,
+    rollback: { authorizationId: view.rollbackAuthorizationId, expectedRevision: view.expectedRevision },
+    canReobserveUnknownOutcome: view.canReobserveUnknownOutcome === true,
+    reobservationBlocker: view.canReobserveUnknownOutcome === true ? null : view.reobservationBlocker ?? null,
+    reobservation: view.unknownOutcomeReobservation ?? null,
+    canReconcileFromPlatformState: view.canReconcileFromPlatformState === true,
+    platformStateReconciliationBlocker: view.canReconcileFromPlatformState === true ? null : view.platformStateReconciliationBlocker ?? null,
+    platformStateReconciliation: view.platformStateReconciliation ?? null,
+    platformStateReconciliationAttemptsLeft: view.platformStateReconciliationAttemptsLeft ?? null,
+    canRecoverInitialImport: view.canRecoverInitialImport === true,
+    recoveryBlocker: view.canRecoverInitialImport === true ? null : view.recoveryBlocker ?? null,
+    recovery: view.initialImportRecovery ?? null };
 }

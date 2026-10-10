@@ -1,4 +1,6 @@
 import { readAProductDetailSupplierEvidence } from './a-product-detail-evidence.mjs';
+import { platformOfStore } from "./store-registry.mjs";
+import { readConfirmedSupplierPowerProfile, readConfirmedSupplierVariantAttributes } from './confirmed-supplier-inputs.mjs';
 import { isDeepStrictEqual } from "node:util";
 import { createC1ProductPlan } from "./c1-product-plan.mjs";
 import { assessAStageMarket } from "./market-sample-policy.mjs";
@@ -19,6 +21,7 @@ import {
   recommendSupplierOption
 } from "./supplier-selection-flow.mjs";
 import { assertValidSupplierOption, UNKNOWN } from "./supplier-option.mjs";
+import { extractPinduoduoGoodsId, supplierCapturePlatform } from "./source-capture.mjs";
 
 export const REAL_A_B_C1_FLOW_VERSION = "real-a-b-c1-flow-v1.1";
 
@@ -42,6 +45,7 @@ function deepFreeze(value) {
 }
 
 function offerIdFromUrl(value) {
+  if (supplierCapturePlatform(value) === "pinduoduo") return extractPinduoduoGoodsId(value) || null;
   return new URL(value).pathname.match(/\/offer\/(\d+)\.html/i)?.[1] || null;
 }
 
@@ -49,13 +53,42 @@ function salesSnapshot(candidate, snapshotId) {
   return (candidate.salesSnapshotsV11 || []).find((snapshot) => snapshot.snapshotId === snapshotId) || null;
 }
 
+/**
+ * 1688 详情页采到的商品级属性。采集层一直有（这件小猫背心采到 17 项，含「面料=牛津布」），
+ * 但在 2026-09-17 之前它们**一个都没进冻结快照**：下面 material 被写死成 UNKNOWN，
+ * attributes 里只有两个内部记账对象。结果是 C1 的已确认事实里没有任何真实商品属性，
+ * 关键词无处可绑、Ozon 属性位也填不上。这里把它们照实带进来。
+ *
+ * 品牌两项**不带**：1688 卖家把「品牌」当成款式名随手写（这件写的是 WOSPORT，货是白牌），
+ * 而主人在 C1 签的品牌与权利声明才是唯一权威。把它提升成「已确认事实」会造出一条
+ * 和主人签字相矛盾的事实。原始采集仍原样留在 candidate.sourceCapture，保真不丢。
+ */
+const SUPPLIER_ATTRIBUTE_KEYS_NOT_FACTS = new Set(["品牌", "有可授权的自有品牌"]);
+
+function capturedSupplierAttributes(candidate) {
+  const raw = candidate?.sourceCapture?.supplierAttributes;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const kept = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (SUPPLIER_ATTRIBUTE_KEYS_NOT_FACTS.has(key)) continue;
+    if (typeof value !== "string" || !value.trim()) continue;
+    kept[key] = value.trim();
+  }
+  return kept;
+}
+
 function supplierOption(normalized, candidate, confirmedAt) {
   const supplier = normalized.supplierConfirmation;
   const offerId = offerIdFromUrl(supplier.productUrl);
   const evidenceRef = `owner-a-confirmation:${candidate.id}:${candidate.dataRevision}`;
+  const saved = readAProductDetailSupplierEvidence(candidate);
+  const capturedAttributes = saved ? {} : capturedSupplierAttributes(candidate);
+  const variantAttributes = readConfirmedSupplierVariantAttributes(candidate, supplier);
+  const declaredPowerProfile = readConfirmedSupplierPowerProfile(candidate);
+  const platform = supplierCapturePlatform(supplier.productUrl) === "pinduoduo" ? "pinduoduo" : "1688";
   const option = {
-    supplierOptionId: `supplier-option:1688:${offerId}`,
-    sourcePlatform: "1688",
+    supplierOptionId: `supplier-option:${platform}:${offerId}`,
+    sourcePlatform: platform,
     productUrl: supplier.productUrl,
     offerId,
     supplierSalesEvidence: UNKNOWN,
@@ -77,27 +110,34 @@ function supplierOption(normalized, candidate, confirmedAt) {
           otherPurchaseCosts: supplier.otherPurchaseCosts,
           actualPurchaseCost: supplier.actualPurchaseCost,
           currency: "CNY"
-        }
+        },
+        ...structuredClone(capturedAttributes),
+        ...structuredClone(variantAttributes ?? {})
       },
       unitProductPrice: supplier.unitProductPrice,
       unitDomesticFreight: supplier.unitDomesticFreight,
       actualPurchaseCost: supplier.actualPurchaseCost,
       weight: { value: supplier.weightKg, unit: "kg", evidenceRef },
       dimensions: { ...structuredClone(supplier.dimensionsCm), unit: "cm", evidenceRef },
-      material: UNKNOWN,
-      powerProfile: UNKNOWN,
+      // 面料就是材质，页面上采到什么就是什么；采不到才回 UNKNOWN，不替主人猜一个。
+      material: capturedAttributes["面料"] ?? UNKNOWN,
+      powerProfile: declaredPowerProfile ?? UNKNOWN,
       imageRefs: UNKNOWN
     }],
     captureTime: confirmedAt,
     evidenceRef
   };
-  const saved=readAProductDetailSupplierEvidence(candidate);
   if(saved){
     const original=saved.supplierOption.supplierSkus.find(sku=>sku.supplierSkuId===supplier.supplierSkuId);
     if(!original||original.variantKey!==supplier.variantKey)throw new Error('REAL_A_API_SUPPLIER_SOURCE_CHANGED');
     const confirmed=option.supplierSkus[0];
+    if (declaredPowerProfile && isObject(original.powerProfile) &&
+        typeof original.powerProfile.containsBattery === 'boolean' && original.powerProfile.containsBattery !== declaredPowerProfile.containsBattery) {
+      throw new Error('REAL_A_POWER_SOURCE_CONFLICT');
+    }
     const frozen={...structuredClone(saved.supplierOption),supplierSkus:[{...structuredClone(original),
       attributes:{...structuredClone(original.attributes),...confirmed.attributes},unitProductPrice:confirmed.unitProductPrice,
+      powerProfile: declaredPowerProfile ?? structuredClone(original.powerProfile),
       unitDomesticFreight:confirmed.unitDomesticFreight,actualPurchaseCost:confirmed.actualPurchaseCost,weight:confirmed.weight,dimensions:confirmed.dimensions}]};
     assertValidSupplierOption(frozen);return frozen;
   }
@@ -114,7 +154,7 @@ function opportunityPackage(candidate, normalized, confirmedAt) {
     entityType: "OpportunityPackage",
     parentOpportunityId: `opportunity:${candidate.id}`,
     directionName: candidate.productName,
-    targetPlatform: candidate.targetStore === "wb" ? "wb" : "ozon",
+    targetPlatform: platformOfStore(candidate.targetStore) ?? "ozon",
     targetStore: candidate.targetStore,
     dataRevision: candidate.dataRevision,
     businessPhase: "A",
@@ -506,7 +546,18 @@ export function prepareSavedConditionalBExactInputs({ candidate, evidencePacks, 
   }
   if (!inspectLifecycleBInputReadiness({ candidate, evidencePacks, currentCommissionCatalogs, asOf: processedAt }).ready) rejectB("B_EXACT_RECALCULATION_EVIDENCE_UNAVAILABLE");
   const evidence = createLifecycleBInputBundle({ candidate, evidencePacks, currentCommissionCatalogs, otherCosts, normalizedSubmission, createdAt: processedAt });
-  if (evidence.platformFeeEvidence.commissionEvidenceMode !== "exact") rejectB("B_EXACT_RECALCULATION_EXACT_EVIDENCE_REQUIRED");
+  // 复算的本意是「拿比主人签下的估算更好的证据，把那一次条件测算换掉」。比估算更好的证据有两种：
+  // 店里同类目在售商品的实收费率（exact），和主人保存的那一版Ozon官方费率表命中的费率（official_reference）。
+  // 两种都能形成正式B（lib/profit-model.mjs 里 conditional 只认 estimated），所以两种都放进来。
+  //
+  // 读取顺序没有被这里放宽：createLifecycleBInputBundle 仍然按 COMMISSION_EVIDENCE_STRENGTH 先挑 exact，
+  // 店里读得到实收就轮不到官方费表——这一行只决定「读回来的是什么就接不接」，不决定「先读谁」。
+  //
+  // estimated 仍然拒绝：用估算复算等于把主人已经签过的同一个数原样再签一次，换不出正式B，只会白走一遍。
+  // 正式 B 通过不授予生产权限；生产确认仍须校验同 SKU 冻结成本、原价格、当前适用证据及主人授权。
+  if (!["exact", "official_reference"].includes(evidence.platformFeeEvidence.commissionEvidenceMode)) {
+    rejectB("B_EXACT_RECALCULATION_EXACT_EVIDENCE_REQUIRED");
+  }
   return deepFreeze({ opportunityPackage: structuredClone(opportunity), skuPackage: structuredClone(sku),
     salesSelection: { salesSnapshotId }, evidence, priorTechnicalFailure: structuredClone(failure) });
 }

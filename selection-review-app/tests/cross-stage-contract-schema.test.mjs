@@ -216,13 +216,15 @@ test("C2公共Schema锁定canonical handoff、正式provider完成回执与空�
   assert.equal(canonical.additionalProperties, false);
   for (const field of [
     "identity", "frozenInputRevisionRefs", "handoffRevisionRefs", "frozenInputRefs", "schemaSnapshotRef",
-    "draftOnlySeo", "keywordEvidenceRefs", "mediaRequirements", "unknownManifest"
+    "draftOnlySeo", "keywordEvidenceRefs", "unknownManifest"
   ]) assert.ok(canonical.required.includes(field), field);
+  // 槽位合同已废止：canonical 交接不再携带任何媒体摘要。
+  assert.equal(Object.hasOwn(canonical.properties, "mediaRequirements"), false);
   assert.equal(canonical.properties.unknownManifest.maxItems, 0);
   assert.equal(canonical.properties.draftOnlySeo.$ref, "#/$defs/draftOnlySeo");
   assert.equal(canonical.properties.identity.$ref, "#/$defs/c2G1Identity");
 
-  const draft = c2.$defs.draftOnlySeo;
+  const draft = c2.$defs.draftOnlySeo.oneOf[0];
   assert.equal(draft.additionalProperties, false);
   assert.equal(draft.properties.status.const, "draft_only");
   assert.equal(draft.properties.formalProviderResultAccepted.const, true);
@@ -262,7 +264,7 @@ test("C2公共Schema锁定canonical handoff、正式provider完成回执与空�
 test("C2公共Schema拒绝旧宽draft状态、秘密形态引用和生产副作用", async () => {
   const c2 = await schema("c2-software-input-v1.schema.json");
   assert.equal(c2.$defs.seoDraft.properties.status.const, "draft_only");
-  assert.notEqual(c2.$defs.draftOnlySeo.properties.formalProviderResultAccepted.const, false);
+  assert.notEqual(c2.$defs.draftOnlySeo.oneOf[0].properties.formalProviderResultAccepted.const, false);
   assert.equal(c2.$defs.initialAssetRegions.properties.finalUploads.maxItems, 0);
   for (const rule of Object.values(c2.$defs.executionPolicy.properties)) assert.equal(rule.const, false);
 
@@ -318,7 +320,7 @@ test("C2公共Schema把冻结Schema、媒体摘要与正式关键词引用纳入
   const c2 = await schema("c2-software-input-v1.schema.json");
   assert.deepEqual(c2.$defs.verifiedFacts.required, [
     "exactSkuVerification", "productAttributes", "platformCategory", "schemaSnapshot", "batteryAssessment",
-    "categoryRestrictions", "platformCompliance", "mediaRequirements", "unknownManifest"
+    "categoryRestrictions", "platformCompliance", "unknownManifest"
   ]);
   assert.equal(c2.$defs.verifiedFacts.properties.schemaSnapshot.$ref, "#/$defs/frozenSchemaSnapshot");
   assert.equal(c2.$defs.frozenSchemaSnapshot.additionalProperties, false);
@@ -332,20 +334,20 @@ test("C2公共Schema把冻结Schema、媒体摘要与正式关键词引用纳入
   ]);
   assert.equal(c2.$defs.confirmedSourcedFact.properties.reason.oneOf[0].type, "null");
   assert.equal(c2.$defs.confirmedSourcedFact.properties.reason.oneOf[1].$ref, "#/$defs/formalFactString");
-  assert.equal(c2.$defs.mediaRequirements.additionalProperties, false);
-  assert.ok(c2.$defs.mediaRequirements.required.includes("schemaSnapshotRef"));
-  assert.ok(c2.$defs.mediaRequirements.required.includes("requiredSlots"));
-  assert.ok(c2.$defs.mediaRequirements.required.includes("videoRequirement"));
+  assert.equal(Object.hasOwn(c2.$defs, "mediaRequirements"), false);
+  assert.equal(Object.hasOwn(c2.$defs, "detailedMediaRequirements"), false);
+  assert.equal(c2.$defs.targetContext.additionalProperties, false);
+  assert.ok(c2.$defs.targetContext.required.includes("schemaEvidenceRef"));
+  assert.ok(c2.$defs.targetContext.required.includes("schemaRevision"));
   assert.equal(c2.$defs.canonicalHandoff.properties.keywordEvidenceRefs.minItems, 1);
   assert.equal(c2.$defs.canonicalHandoff.properties.keywordEvidenceRefs.uniqueItems, true);
   assert.equal(c2.$defs.canonicalHandoff.properties.unknownManifest.maxItems, 0);
   assert.equal(c2.$defs.verifiedFacts.properties.unknownManifest.items.$ref, "#/$defs/informationalUnknown");
-  assert.equal(c2.$defs.seoEvidenceLayer.additionalProperties, false);
+  assert.equal(c2.$defs.seoEvidenceLayer.oneOf[0].additionalProperties, false);
   for (const field of ["inputEvidenceRefs", "providerJobRef", "productionWrites"]) {
-    assert.ok(c2.$defs.seoEvidenceLayer.required.includes(field), field);
+    assert.ok(c2.$defs.seoEvidenceLayer.oneOf[0].required.includes(field), field);
   }
-  assert.equal(c2.$defs.seoEvidenceLayer.properties.productionWrites.const, 0);
-  assert.equal(c2.$defs.verifiedFacts.properties.mediaRequirements.$ref, "#/$defs/detailedMediaRequirements");
+  assert.equal(c2.$defs.seoEvidenceLayer.oneOf[0].properties.productionWrites.const, 0);
   for (const [field, definition] of Object.entries({
     exactSkuVerification: "exactSkuVerificationFacts",
     productAttributes: "productAttributeFacts",
@@ -437,23 +439,6 @@ function aa66ReadyProjection() {
     receiptRef: "receipt:c1-ai-content:SHELF-WHITE",
     providerJobRef
   };
-  const detailedMedia = {
-    schemaVersion: "c2-media-requirements-v1",
-    evidenceRef: schemaRef,
-    evidenceVersion: "media-requirements-v1",
-    platform: identity.platform,
-    targetStore: stableStoreId,
-    storeRef: stableStoreId,
-    categoryId: "category:ozon:bathroom-shelf",
-    schemaRevision: "schema-v1",
-    sourceDataRevision: expectedDataRevision,
-    imageSlots: [
-      { slotId: "main", role: "main_image", minCount: 1, maxCount: 1 },
-      { slotId: "detail", role: "detail_image", minCount: 1, maxCount: 3 }
-    ],
-    videoSlots: [{ slotId: "product-video", role: "product_video", minCount: 0, maxCount: 1 }],
-    schemaVideoRequirement: { status: "not_required" }
-  };
   const canonicalHandoff = {
     contractVersion: "g1-c1-domain-contract-v1",
     identity: structuredClone(identity),
@@ -474,17 +459,6 @@ function aa66ReadyProjection() {
     schemaSnapshotRef: schemaRef,
     draftOnlySeo,
     keywordEvidenceRefs: [keywordRef],
-    mediaRequirements: {
-      status: "confirmed",
-      schemaSnapshotRef: schemaRef,
-      sourceRefs: [schemaRef],
-      requiredSlots: [
-        { slotId: "main", mediaType: "image", required: true },
-        { slotId: "detail", mediaType: "image", required: true }
-      ],
-      videoRequirement: "not_required",
-      reason: null
-    },
     unknownManifest: []
   };
   const draft = (text) => ({
@@ -503,14 +477,13 @@ function aa66ReadyProjection() {
     productAttributes: { status: confirmedFact("all_required_fields_known"), material: confirmedFact("plastic") },
     platformCategory: {
       status: confirmedFact("identified"),
-      categoryId: confirmedFact(detailedMedia.categoryId, [schemaRef]),
+      categoryId: confirmedFact("category:ozon:bathroom-shelf", [schemaRef]),
       categoryName: confirmedFact("Polki", [schemaRef])
     },
     schemaSnapshot: { status: confirmedFact("frozen", [schemaRef]), schemaRevision: confirmedFact("schema-v1", [schemaRef]) },
     batteryAssessment: { status: confirmedFact("fact_available"), assessment: confirmedFact("no_battery") },
     categoryRestrictions: { status: confirmedFact("known", [schemaRef]), restrictions: confirmedFact([], [schemaRef]) },
     platformCompliance: { status: confirmedFact("known", [schemaRef]), assessment: confirmedFact({ status: "clear" }, [schemaRef]) },
-    mediaRequirements: detailedMedia,
     unknownManifest: [{
       fieldPath: "optionalMarketingClaim", reason: "not required for C2 handoff", sourceRefs: [schemaRef],
       blockingScope: "informational", blocksC2Handoff: false
@@ -702,23 +675,10 @@ function assertAa66ProjectionConsistency(ready) {
   assert.deepEqual(ready.c1.seoDraft.evidenceLayer.providerJobRef, job);
   assert.equal(ready.c1.seoDraft.evidenceLayer.aiReceiptId, canonical.draftOnlySeo.receiptRef);
   assert.equal(ready.c1.seoDraft.evidenceLayer.aiRequestId, canonical.draftOnlySeo.aiRequestId);
-  const detailed = ready.c1.verifiedFacts.mediaRequirements;
   assert.equal(canonical.schemaSnapshotRef, canonical.frozenInputRefs.schemaSnapshotRef);
-  assert.equal(canonical.schemaSnapshotRef, detailed.evidenceRef);
-  assert.equal(ready.c1.verifiedFacts.schemaSnapshot.schemaRevision.value, detailed.schemaRevision);
-  assert.equal(detailed.platform, ready.identity.platform);
-  assert.equal(detailed.targetStore, stableStoreId);
-  assert.equal(detailed.storeRef, stableStoreId);
-  assert.equal(detailed.sourceDataRevision, ready.expectedDataRevision);
-  const requiredSlots = [...detailed.imageSlots.map((slot) => ({ ...slot, mediaType: "image" })),
-    ...detailed.videoSlots.map((slot) => ({ ...slot, mediaType: "video" }))]
-    .filter((slot) => slot.minCount > 0)
-    .map((slot) => `${slot.mediaType}:${slot.slotId}`).sort();
-  assert.deepEqual(
-    canonical.mediaRequirements.requiredSlots.map((slot) => `${slot.mediaType}:${slot.slotId}`).sort(),
-    requiredSlots
-  );
-  assert.equal(canonical.mediaRequirements.videoRequirement, detailed.schemaVideoRequirement.status);
+  // 槽位合同已废止：C1 事实层和 canonical 交接都不再携带媒体摘要。
+  assert.equal(Object.hasOwn(ready.c1.verifiedFacts, "mediaRequirements"), false);
+  assert.equal(Object.hasOwn(canonical, "mediaRequirements"), false);
   assert.deepEqual(canonical.unknownManifest, []);
   assert.ok(ready.c1.verifiedFacts.unknownManifest.every(
     (entry) => entry.blockingScope === "informational" && entry.blocksC2Handoff === false
@@ -731,16 +691,23 @@ function assertAa66ProjectionConsistency(ready) {
 }
 
 test("aa66正式ready形状投影通过公共Schema并保留运行时同源边界", async () => {
-  const [c2, lifecycle] = await Promise.all([
+  const [c2, lifecycle, editorial, completedEditorial, c2Assets, siblingReuse] = await Promise.all([
     schema("c2-software-input-v1.schema.json"),
-    schema("product-lifecycle-v1.1.schema.json")
+    schema("product-lifecycle-v1.1.schema.json"),
+    schema("c1-editorial-source-v1.schema.json"),
+    schema("c1-editorial-source-v2.schema.json"),
+    schema("c2-asset-lifecycle-v1.1.schema.json"),
+    schema("c1-sibling-formal-reuse-v1.schema.json")
   ]);
-  const documents = new Map([[c2.$id, c2], [lifecycle.$id, lifecycle]]);
+  const documents = new Map([[c2.$id, c2], [lifecycle.$id, lifecycle], [editorial.$id, editorial], ["c1-editorial-source-v1.schema.json", editorial],
+    [completedEditorial.$id, completedEditorial], ["c1-editorial-source-v2.schema.json", completedEditorial],
+    [c2Assets.$id, c2Assets], ["c2-asset-lifecycle-v1.1.schema.json", c2Assets],
+    [siblingReuse.$id, siblingReuse], ["c1-sibling-formal-reuse-v1.schema.json", siblingReuse]]);
   const { ready } = aa66ReadyProjection();
   assertExactSchemaKeys(ready, c2, "ready");
   assertExactSchemaKeys(ready.c1, c2.$defs.c1Snapshot, "ready.c1");
   assertExactSchemaKeys(ready.c1.canonicalHandoff, c2.$defs.canonicalHandoff, "canonicalHandoff");
-  assertExactSchemaKeys(ready.c1.canonicalHandoff.draftOnlySeo, c2.$defs.draftOnlySeo, "draftOnlySeo");
+  assertExactSchemaKeys(ready.c1.canonicalHandoff.draftOnlySeo, c2.$defs.draftOnlySeo.oneOf[0], "draftOnlySeo");
   assertExactSchemaKeys(ready.c1.canonicalHandoff.draftOnlySeo.providerJobRef, c2.$defs.providerJobRef, "providerJobRef");
   assertExactSchemaKeys(ready.assets, c2.$defs.initialAssetRegions, "assets");
   assertExactSchemaKeys(ready.assets.collected[0], c2.$defs.collectedAsset, "collectedAsset");
@@ -801,9 +768,7 @@ test("aa66正式ready形状投影通过公共Schema并保留运行时同源边�
     (copy) => { copy.c1.canonicalHandoff.draftOnlySeo.providerJobRef.storeRef = "store:ozon:other"; },
     (copy) => { copy.c1.canonicalHandoff.draftOnlySeo.providerJobRef.authorizationRef.scope.storeRef = "store:ozon:other"; },
     (copy) => { copy.c1.canonicalHandoff.schemaSnapshotRef = "schema:other"; },
-    (copy) => { copy.c1.verifiedFacts.mediaRequirements.schemaRevision = "schema-v2"; },
-    (copy) => { copy.c1.verifiedFacts.mediaRequirements.sourceDataRevision += 1; },
-    (copy) => { copy.c1.canonicalHandoff.mediaRequirements.requiredSlots.pop(); },
+    (copy) => { copy.c1.verifiedFacts.schemaSnapshot.schemaRevision.value = "schema-v2"; },
     (copy) => { copy.assets.aiDrafts[0].assetId = copy.assets.collected[0].assetId; },
     (copy) => { copy.assets.finalUploads.push({ assetId: "forbidden" }); },
     (copy) => { copy.inputFingerprint = "0".repeat(64); }
@@ -895,8 +860,7 @@ test("aa66正式ready形状投影通过公共Schema并保留运行时同源边�
     (copy) => { copy.c1.verifiedFacts.productAttributes.material.reason = "credential=abc"; },
     (copy) => { copy.c1.verifiedFacts.unknownManifest[0].reason = "Bearer:abc"; },
     (copy) => { copy.c1.verifiedFacts.productAttributes.material.sourceRefs[0] = "https://example.test/a?accessToken=abc"; },
-    (copy) => { copy.c1.verifiedFacts.mediaRequirements.evidenceVersion = "clientSecret=abc"; },
-    (copy) => { copy.c1.verifiedFacts.mediaRequirements.imageSlots[0].role = "sessionCookie=abc"; }
+    (copy) => { copy.c1.verifiedFacts.platformCategory.categoryName.value = "clientSecret=abc"; }
   ]) {
     const rejected = structuredClone(ready);
     mutate(rejected);
@@ -936,7 +900,6 @@ function productionAuthorizationSchemaFixture() {
     sourceType: "owner_provided_final_upload",
     order: 1,
     role: "main_image",
-    slotId: "main",
     byteSize: 1024,
     width: 1000,
     height: 1000,
@@ -1009,12 +972,12 @@ function productionAuthorizationSchemaFixture() {
       publishScope: "create_draft_only",
       allowedWriteFields: ["title", "price", "stock", "assets.finalUploads"],
       exclusions: [],
-      mediaRequirementsFingerprint: "e".repeat(64),
+      authorizedMediaFingerprint: "e".repeat(64),
       finalManifestSha256: "f".repeat(64),
       finalUploadsFingerprint: "1".repeat(64),
       mainImageAssetId: "asset:main",
       videoDisposition: "excludes_video",
-      effectiveVideoRequirement: { status: "not_required", requiredBy: "schema", evidenceRefs: ["schema:evidence:1"] }
+      effectiveVideoRequirement: { status: "not_required", requiredBy: "default", evidenceRefs: [] }
     },
     sourceConfirmationCardId: "final-plan-card:sku:b1:8",
     sourcePreparationFingerprint: "a".repeat(64),
@@ -1038,19 +1001,18 @@ function productionAuthorizationSchemaFixture() {
       credentialAlias: identity.credentialAlias,
       schemaRevision: "schema-v1",
       schemaEvidenceRef: "schema:evidence:1",
-      schemaEvidenceVersion: "schema-evidence-v1",
       activeProfitModelVersion: "profit-v1",
       buyerTargetPrice: { amount: 1831, currency: "RUB" },
       platformWritePrice: { amount: 151.78, currency: "CNY" },
       priceConversion: { rubPerCny: 12.0637, evidenceRef: "fx:evidence:1", checkedAt: "2026-08-31T00:00:00.000Z" },
       stock: 37,
-      mediaRequirementsFingerprint: "e".repeat(64),
+      authorizedMediaFingerprint: "e".repeat(64),
       finalManifestVersion: "c2-final-manifest-v1",
       finalManifestSha256: "f".repeat(64),
       finalUploadsFingerprint: "1".repeat(64),
       mainImageAssetId: "asset:main",
       videoDisposition: "excludes_video",
-      effectiveVideoRequirement: { status: "not_required", requiredBy: "schema", evidenceRefs: ["schema:evidence:1"] },
+      effectiveVideoRequirement: { status: "not_required", requiredBy: "default", evidenceRefs: [] },
       finalUploads: [finalUpload],
       finalCardInputSnapshot,
       publishScope: "create_draft_only",
@@ -1087,8 +1049,8 @@ test("C2到D公共Schema区分历史交接与单D作业排队，交接本身零�
   assert.equal(authorization.$defs.lockedScope.additionalProperties, false);
   for (const field of [
     "candidateId", "skuPackageId", "variantKey", "platform", "storeRef", "merchantSku", "supplierSkuId",
-    "warehouseRef", "credentialAlias", "schemaRevision", "schemaEvidenceRef", "schemaEvidenceVersion",
-    "buyerTargetPrice", "platformWritePrice", "priceConversion", "stock", "mediaRequirementsFingerprint",
+    "warehouseRef", "credentialAlias", "schemaRevision", "schemaEvidenceRef",
+    "buyerTargetPrice", "platformWritePrice", "priceConversion", "stock", "authorizedMediaFingerprint",
     "finalManifestSha256", "finalUploadsFingerprint", "mainImageAssetId", "videoDisposition", "effectiveVideoRequirement", "finalUploads",
     "publishScope", "allowedWriteFields", "exclusions"
   ]) assert.ok(authorization.$defs.lockedScope.required.includes(field), field);
@@ -1288,6 +1250,12 @@ test("server只接原子授权处理器且旧入口永久零派发", async () =>
   assert.match(lifecycleRoute, /commitSingleOwnerProductionAuthorization/);
   assert.match(lifecycleRoute, /resolveProductionOwnerPreparation/);
   assert.match(lifecycleRoute, /production_authorization_reconfirmation_required/);
+  // 钱的闸门那一次拒绝，页面认的是 code 和 ownerNextStep 这两个 ASCII 标记，不靠那句中文；
+  // 回体还要照实说这一次零外部请求、零平台写入。
+  assert.match(lifecycleRoute, /ExactCommissionRequiredForProductionError/);
+  assert.match(lifecycleRoute, /code: error\.code, ownerNextStep: error\.ownerNextStep/);
+  assert.match(lifecycleRoute, /exactCommissionRequiredForProduction: true/);
+  assert.match(lifecycleRoute, /使用精确费用复算/u);
   assert.doesNotMatch(lifecycleRoute, /createCandidateDispatch|deliverDispatch|createProductionPlan|ExecutionIntent/);
   const legacyStart = source.indexOf('if (req.method === "POST" && productionAuthorizationRoute)');
   const legacyEnd = source.indexOf('const dispatchClaimRoute', legacyStart);

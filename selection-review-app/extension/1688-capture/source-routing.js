@@ -226,3 +226,237 @@ export function isAllowed1688NavigationHost(value) {
     return false;
   }
 }
+
+const PINDUODUO_GOODS_HOSTS = new Set(["mobile.yangkeduo.com", "mobile.pinduoduo.com"]);
+const PINDUODUO_GOODS_PATHS = new Set(["/goods.html", "/goods1.html", "/goods2.html"]);
+
+function isPinduoduoHost(host) {
+  return host === "yangkeduo.com" || host.endsWith(".yangkeduo.com") || host === "pinduoduo.com" || host.endsWith(".pinduoduo.com");
+}
+
+/** A Pinduoduo goods page names exactly one numeric goods_id; anything else is not a product identity. */
+export function pinduoduoGoodsId(value) {
+  if (typeof value !== "string") return "";
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return "";
+    if (!PINDUODUO_GOODS_HOSTS.has(url.hostname) || !PINDUODUO_GOODS_PATHS.has(url.pathname)) return "";
+    const ids = url.searchParams.getAll("goods_id");
+    return ids.length === 1 && /^\d{1,40}$/.test(ids[0]) ? ids[0] : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Mirrors the service's normalizePinduoduoCaptureSource: the same link must mean the same goods on both sides. */
+export function classifyPinduoduoSource(value) {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
+    if (PINDUODUO_GOODS_HOSTS.has(url.hostname) && PINDUODUO_GOODS_PATHS.has(url.pathname)) {
+      const offerId = pinduoduoGoodsId(url.href);
+      if (offerId) return { type: "detail", sourceUrl: `https://mobile.yangkeduo.com/goods.html?goods_id=${offerId}`, offerId };
+      const token = url.searchParams.getAll("ps");
+      return token.length === 1 && /^[A-Za-z0-9_-]{1,160}$/.test(token[0])
+        ? { type: "short", sourceUrl: `https://mobile.yangkeduo.com${url.pathname}?ps=${token[0]}`, offerId: "" }
+        : null;
+    }
+    if (url.hostname !== "p.pinduoduo.com") return null;
+    const token = url.pathname.match(/^\/([A-Za-z0-9_-]{1,160})\/?$/)?.[1] || "";
+    return token ? { type: "short", sourceUrl: `https://p.pinduoduo.com/${token}`, offerId: "" } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function validateResolvedPinduoduoSource(originalSource, finalUrl, expectedOfferId = "") {
+  const original = classifyPinduoduoSource(originalSource);
+  const resolvedOfferId = pinduoduoGoodsId(finalUrl);
+  if (!original || !resolvedOfferId) return null;
+  if (original.type === "detail" && original.offerId !== resolvedOfferId) return null;
+  if (expectedOfferId && String(expectedOfferId) !== resolvedOfferId) return null;
+  return {
+    offerId: resolvedOfferId,
+    sourceUrl: `https://mobile.yangkeduo.com/goods.html?goods_id=${resolvedOfferId}`
+  };
+}
+
+/**
+ * Where a Pinduoduo tab has got to, as one fixed word. A share link passes through p.pinduoduo.com or a goods2 token
+ * page before the goods page; the login and verification pages are where Pinduoduo stops a browser it does not trust.
+ */
+export function classifyPinduoduoNavigation(value, expectedOfferId = "") {
+  try {
+    if (typeof value !== "string") return "invalid";
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return "invalid";
+    const host = url.hostname.toLowerCase();
+    const pathname = url.pathname.toLowerCase();
+    const goodsId = pinduoduoGoodsId(url.href);
+    if (goodsId) return expectedOfferId && String(expectedOfferId) !== goodsId ? "different_offer" : "allowed_detail";
+    if (!isPinduoduoHost(host)) return "non_whitelisted_destination";
+    if (/(?:^|\/)(?:login|passport)[^/]*$/.test(pathname)) return "login_required";
+    if (/(?:captcha|verif|risk|punish|security)/.test(pathname)) return "verification_required";
+    if (host === "p.pinduoduo.com" || (PINDUODUO_GOODS_HOSTS.has(host) && PINDUODUO_GOODS_PATHS.has(pathname))) return "intermediate_page";
+    return "non_whitelisted_destination";
+  } catch {
+    return "invalid";
+  }
+}
+
+/** Which supplier site a job's saved link belongs to. 1688 is tried first and its rules are unchanged. */
+export function classifySupplierSource(value) {
+  const alibaba = classify1688Source(value);
+  if (alibaba) return { platform: "1688", ...alibaba };
+  const pinduoduo = classifyPinduoduoSource(value);
+  return pinduoduo ? { platform: "pinduoduo", ...pinduoduo } : null;
+}
+
+// ---- 1688 找同款：用首图在 1688 搜一次图 ----
+
+function canonicalPlatformImageUrl(value, allowedHost) {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port || !allowedHost(url.hostname)) return null;
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Mirrors canonicalPinduoduoImageUrl in lib/capture-evidence-sanitization.mjs: https, a Pinduoduo image host, no query. */
+export function canonicalPinduoduoImageUrl(value) {
+  return canonicalPlatformImageUrl(value, host => host === "pddpic.com" || host.endsWith(".pddpic.com") || host.endsWith(".yangkeduo.com"));
+}
+
+/**
+ * Mirrors canonicalImageSearchSourceUrl in lib/capture-evidence-sanitization.mjs: a product picture from Pinduoduo, 1688
+ * (alicdn) or Ozon (ir.ozone.ru) image hosts, https, no query. These are the only pictures a search may be run with.
+ */
+export function canonicalImageSearchSourceUrl(value) {
+  return canonicalPinduoduoImageUrl(value) ??
+    canonicalPlatformImageUrl(value, host => host === "alicdn.com" || host.endsWith(".alicdn.com")) ??
+    canonicalPlatformImageUrl(value, host => host === "ir.ozone.ru");
+}
+
+/** Mirrors supplierImageMatchSearchUrl in lib/supplier-image-match.mjs, character for character. */
+export function imageSearchUrl(imageUrl) {
+  const canonical = canonicalImageSearchSourceUrl(imageUrl);
+  if (!canonical || canonical !== imageUrl) return null;
+  return `https://s.1688.com/youyuan/index.htm?tab=imageSearch&imageAddress=${encodeURIComponent(canonical)}`;
+}
+
+const IMAGE_SEARCH_RESULT_PATHS = ["/kapp/1688-search/pc-image-search", "/kapp/1688-global/sales/search"];
+
+/**
+ * Where a 1688 image-search tab has got to, as one fixed word. s.1688.com/youyuan is only the entry address: 1688 sends
+ * the browser on to its air.1688.com result page, which is the one page the collector may read. Login and verification
+ * pages stop the job with their own reason; anything else is not this search.
+ */
+export function classify1688ImageSearchNavigation(value) {
+  try {
+    if (typeof value !== "string") return "invalid";
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return "invalid";
+    const host = url.hostname.toLowerCase();
+    const pathname = url.pathname.toLowerCase().replace(/\/+$/, "");
+    if (host === "s.1688.com" && pathname === "/youyuan/index.htm") return "entry";
+    if (host === "air.1688.com" && IMAGE_SEARCH_RESULT_PATHS.includes(pathname)) return "results";
+    if (!is1688Host(host)) return "non_whitelisted_destination";
+    if (LOGIN_HOSTS.has(host) || /(?:^|\/)(?:login|signin|passport)(?:\/|$)/.test(pathname)) return "login_required";
+    if (VERIFICATION_HOSTS.has(host) || /(?:captcha|verify|verification|punish|security)/.test(pathname)) return "verification_required";
+    return "non_whitelisted_destination";
+  } catch {
+    return "invalid";
+  }
+}
+
+/** The result page as a fixed marker (host and path only), so the address read after extraction can be compared. */
+export function imageSearchResultPage(value) {
+  if (classify1688ImageSearchNavigation(value) !== "results") return null;
+  const url = new URL(value);
+  return `https://${url.hostname.toLowerCase()}${url.pathname.toLowerCase().replace(/\/+$/, "")}`;
+}
+
+/** Mirrors normalizeOzonSearchQuery in lib/ozon-same-product-match.mjs, character for character. */
+export function normalizeOzonSearchQuery(value) {
+  if (typeof value !== "string") return null;
+  const query = value.normalize("NFC").replace(/[\u0000-\u001f\u007f\u00a0\u2000-\u200b\u2028\u2029\u202f\u3000]/g, " ")
+    .replace(/\s+/g, " ").trim();
+  if (query.length < 2 || query.length > 100 || !/\p{L}/u.test(query) || /[<>{}]|:\/\//.test(query)) return null;
+  return query;
+}
+
+/** Mirrors ozonSearchUrl in lib/ozon-same-product-match.mjs: Ozon's own site search, the words in its own text parameter. */
+export function ozonSearchUrl(query) {
+  const normalized = normalizeOzonSearchQuery(query);
+  if (!normalized || normalized !== query) return null;
+  return `https://www.ozon.ru/search/?${new URLSearchParams({ text: normalized, from_global: "true" })}`;
+}
+
+const foldOzonQuery = (value) => normalizeOzonSearchQuery(value)?.toLowerCase() ?? null;
+
+/**
+ * Where an Ozon search tab has got to, as one fixed word. Ozon answers a search on /search/ or moves it to a category
+ * page that keeps the same words in its text parameter; both are this search. A verification page stops the job with its
+ * own reason; another search or any other page is not this one.
+ */
+export function classifyOzonSearchNavigation(value, query) {
+  try {
+    if (typeof value !== "string") return "invalid";
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return "invalid";
+    const host = url.hostname.toLowerCase();
+    if (host !== "www.ozon.ru" && host !== "ozon.ru") return "non_whitelisted_destination";
+    if (/(?:captcha|challenge|antibot|\/abt\/)/i.test(url.pathname)) return "verification_required";
+    if (!/^\/(?:search|category\/[^/]+)\/?$/.test(url.pathname) || host !== "www.ozon.ru") return "non_whitelisted_destination";
+    const words = foldOzonQuery(url.searchParams.get("text"));
+    return words !== null && words === foldOzonQuery(query) ? "results" : "other_search";
+  } catch {
+    return "invalid";
+  }
+}
+
+/** The result page as a fixed marker (path and words only), so the address read after extraction can be compared. */
+export function ozonSearchResultPage(value, query) {
+  if (classifyOzonSearchNavigation(value, query) !== "results") return null;
+  const url = new URL(value);
+  return `https://www.ozon.ru${url.pathname.replace(/\/+$/, "")}/?text=${encodeURIComponent(foldOzonQuery(query))}`;
+}
+
+/** Mirrors OZON_IMAGE_SEARCH_ENTRY_URL in lib/ozon-search-query.mjs: an image search starts from Ozon's home page search bar. */
+export const OZON_IMAGE_SEARCH_ENTRY_URL = "https://www.ozon.ru/";
+
+/** Mirrors ozonImageSearchId in lib/ozon-search-query.mjs: the image_id Ozon gives one upload, hex with one x between. */
+export function ozonImageSearchId(value) {
+  return typeof value === "string" && /^[0-9a-f]{8,64}(?:x[0-9a-f]{8,64})?$/i.test(value) ? value : null;
+}
+
+/**
+ * Where an Ozon image-search tab has got to, as one fixed word: the home page it starts on ("entry"), the result page Ozon
+ * moves it to after the upload ("results", with a well-formed image_id), a verification page, or anywhere else.
+ */
+export function classifyOzonImageSearchNavigation(value) {
+  try {
+    if (typeof value !== "string") return "invalid";
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return "invalid";
+    const host = url.hostname.toLowerCase();
+    if (host !== "www.ozon.ru" && host !== "ozon.ru") return "non_whitelisted_destination";
+    if (/(?:captcha|challenge|antibot|\/abt\/)/i.test(url.pathname)) return "verification_required";
+    if (host !== "www.ozon.ru") return "non_whitelisted_destination";
+    if (url.pathname === "/") return "entry";
+    if (/^\/search-by-image\/?$/.test(url.pathname)) return ozonImageSearchId(url.searchParams.get("image_id")) ? "results" : "other_search";
+    return "non_whitelisted_destination";
+  } catch {
+    return "invalid";
+  }
+}
+
+/** The image-search result page as a fixed marker (path and Ozon's upload id only), so it can be compared after extraction. */
+export function ozonImageSearchResultPage(value) {
+  if (classifyOzonImageSearchNavigation(value) !== "results") return null;
+  return `https://www.ozon.ru/search-by-image?image_id=${new URL(value).searchParams.get("image_id")}`;
+}

@@ -104,6 +104,12 @@ test("the prepared package serves built UI and preserves both historical runtime
     const health = await (await fetch(`${base}/api/health`)).json();
     assert.equal(health.ok, true);
     assert.equal(health.dataVersion, 2);
+    assert.equal(health.ready, true);
+    assert.equal(health.readiness.fresh, true);
+    const live = await (await fetch(`${base}/api/live`)).json();
+    assert.equal(live.live, true);
+    const ready = await (await fetch(`${base}/api/ready`)).json();
+    assert.equal(ready.ready, true);
     const ownerAccess = await (await fetch(`${base}/api/owner-access`)).json();
     assert.equal(ownerAccess.status, "setup_required");
     assert.equal(ownerAccess.user, null);
@@ -127,7 +133,7 @@ test("the prepared package serves built UI and preserves both historical runtime
     assert.equal(state.summary.dispatch.processingCounts.actualRunning, 0);
     const heartbeat = await fetch(`${base}/api/extension/heartbeat`, { method: "POST",
       headers: { Origin: extensionOrigin, "Content-Type": "application/json" },
-      body: JSON.stringify({ version: "1.2.7", backgroundReady: true, observedAt: new Date().toISOString() }) });
+      body: JSON.stringify({ version: "1.4.1", backgroundReady: true, observedAt: new Date().toISOString() }) });
     assert.equal(heartbeat.status, 200);
     assert.equal((await heartbeat.json()).captureJob, null);
     assert.deepEqual(await fs.readFile(dataFile), bytes);

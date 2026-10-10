@@ -1,10 +1,9 @@
-import { syntheticContentRules } from "./helpers/c2-software-fixture.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { build } from "vite";
 import react from "@vitejs/plugin-react";
-import { newDraft, receiveDraft, createSubmitLock, createLatestRead, createSelectionGuard, shouldContinuePolling, optionalNumber, safeWebUrl, safeImageUrl, candidatePlatform, errorMessage } from "../src/formState.js";
+import { newDraft, receiveDraft, createSubmitLock, createLatestRead, createSelectionGuard, runMutation, shouldContinuePolling, optionalNumber, safeWebUrl, safeImageUrl, candidatePlatform, errorMessage } from "../src/formState.js";
 import { orderCandidates, firstInQueue } from "../src/candidateViews.js";
 import { api } from "../src/api.js";
 import { buildAConfirmationInput, selectAConfirmationSku } from "../src/aConfirmationInput.js";
@@ -78,7 +77,7 @@ test("估算佣金停在条件测算时页面不要求重复填写供货数据",
     } } };
   const before = JSON.stringify(candidate);
   const html = renderInspector(candidate);
-  assert.match(html, /条件测算已保存，等待精确佣金/);
+  assert.match(html, /条件测算已保存，等更好的费用证据/);
   assert.match(html, /条件单件利润/);
   assert.match(html, /未通过正式B，也未进入C1/);
   assert.doesNotMatch(html, /只需你完成这一项|旧资料提示|保存资料/);
@@ -92,11 +91,14 @@ test("精确证据齐备时同一商品卡提供本地复算按钮并遵守主�
     bExactCommissionRuntimeView: buildBExactCommissionRuntimeView({ candidate: f.candidate, evidencePacks: f.evidencePacks, rules: f.document.rules, observedAt: f.at }) };
   const before = structuredClone(candidate);
   const ready = renderInspector(candidate, { authenticated: true, roles: ["owner"] }, true);
-  assert.match(ready, /精确费用已齐，可以复算正式利润/);
-  assert.match(ready, /使用精确费用复算/);
-  assert.doesNotMatch(ready, /<button[^>]*disabled[^>]*>使用精确费用复算/);
+  assert.match(ready, /已经有更好的费用证据，可以重算利润/);
+  assert.match(ready, /用更好的费用证据重算/);
+  assert.doesNotMatch(ready, /<button[^>]*disabled[^>]*>用更好的费用证据重算/);
+  // 用的是哪一种证据，按钮旁边就说了：这一份固定件走的是店里的实收费率。
+  assert.match(ready, /这一次会用：店里同类目在售商品的实收费率/);
+  assert.doesNotMatch(ready, /公开费率表上写着的数/);
   const unauthenticated = renderInspector(candidate, { authenticated: false, roles: [] }, true);
-  assert.match(unauthenticated, /<button[^>]*disabled[^>]*>使用精确费用复算/);
+  assert.match(unauthenticated, /<button[^>]*disabled[^>]*>用更好的费用证据重算/);
   assert.doesNotMatch(ready, /保存资料|尚待接通|一次付费/);
   assert.deepEqual(candidate, before);
 });
@@ -127,18 +129,18 @@ test("商品实际显示保留未知采购价，中文缺口与素材标签不�
   c2.candidate.lifecycleV11.c2UploadDraft = {
     candidateId: c2.candidate.id, sourceCandidateRevision: c2.candidate.dataRevision, revision: 3,
     uploads: c2.assets.map(asset => ({ ...asset, status: "ready" })),
-    selection: c2.assets.map((asset, index) => ({ assetId: asset.assetId, slotId: asset.slotId, order: index + 1 }))
+    selection: c2.assets.map((asset, index) => ({ assetId: asset.assetId, order: index + 1 }))
   };
   const c2Before = structuredClone(c2.candidate);
   const c2Html = renderC2(c2.candidate);
-  assert.match(c2Html, /value="hero"[^>]*>主图 · 1–1<\/option>/);
-  assert.match(c2Html, /value="side"[^>]*>详情图 · 1–2<\/option>/);
+  // 槽位合同已废止：界面不再让主人挑槽位，排第一张就是主图。
+  assert.doesNotMatch(c2Html, /槽位|请选择用途/);
+  assert.match(c2Html, />主图 · /);
+  assert.match(c2Html, />图库图 · /);
   assert.doesNotMatch(c2Html, /main_image|detail_image/);
   for (const label of ["上移", "下移", "移出清单"]) assert.ok(c2Html.includes(`>${label}</button>`));
   assert.match(c2Html, /<label class="c2-owner-confirmation"><input type="checkbox"[^>]*\/><span>我确认/);
   assert.deepEqual(c2.candidate, c2Before);
-  c2.candidate.lifecycleV11.skuPackage.c2FinalAssets.mediaRequirements.imageSlots[1].role = "尺寸示意图";
-  assert.match(renderC2(c2.candidate), /尺寸示意图/);
 });
 
 test("新增商品实际表单提交符合服务契约，尺寸不重复且未知运费不变零", async () => {
@@ -285,6 +287,11 @@ test("D7数值、URL和平台店铺无静默兜底", () => {
   for(const value of ["javascript:alert(1)","data:image/png;base64,xx","file:///tmp/x","https://u:p@example.com/a","//evil.test/a"]) assert.equal(safeWebUrl(value),"");
   assert.equal(safeImageUrl("/product-images/candidate/photo.png"),"/product-images/candidate/photo.png");
   for(const value of ["/product-images/../secret","/product-images/%2e%2e/secret","/product-images/a\\b","/product-images//a","/product-images/\t../other"]) assert.equal(safeImageUrl(value),"");
+  // Real provider thumbnails come from the Ozon image CDN: that exact https origin passes unchanged, every look-alike is dropped.
+  assert.equal(safeImageUrl("https://ir.ozone.ru/s3/multimedia-1-v/wc300/13913276143.jpg"),"https://ir.ozone.ru/s3/multimedia-1-v/wc300/13913276143.jpg");
+  for(const value of ["http://ir.ozone.ru/x.jpg","https://ir.ozone.ru/x.jpg?token=1","https://ir.ozone.ru/x.jpg#f","https://ir.ozone.ru/a%20b.jpg",
+    "https://evil.test/ir.ozone.ru/x.jpg","https://ir.ozone.ru@evil.test/x.jpg","https://ir.ozone.ru/../x.jpg","https://ir.ozone.ru//x.jpg",
+    "https://cdn1.ozone.ru/x.jpg","https://ir.ozone.ru/"]) assert.equal(safeImageUrl(value),"");
   assert.equal(candidatePlatform({targetStore:"wb"}),"wb");
   assert.throws(()=>candidatePlatform({targetStore:"other"}),/不一致/);
   assert.throws(()=>candidatePlatform({targetStore:"wb",lifecycleV11:{skuPackage:{g1Identity:{platform:"ozon"}}}}),/不一致/);
@@ -378,54 +385,39 @@ test("D2/D6 A只回传明确选择和输入，不伪造证据与确认身份", (
 });
 
 function c2Fixture() {
-  const candidate={id:"A",dataRevision:8,lifecycleV11:{skuPackage:{c2FinalAssets:{mediaRequirements:{imageSlots:[{slotId:"hero",role:"main_image",mediaType:"image",minCount:1,maxCount:1},{slotId:"side",role:"detail_image",mediaType:"image",minCount:1,maxCount:2}],videoSlots:[],schemaVideoRequirement:{status:"not_required"}}}}}};
-  const assets=["hero","side"].map((slotId,i)=>({assetId:`asset:${i}`,slotId,mediaType:"image",fileName:`${i}.jpg`,assetRef:`/staged/${i}.jpg`,assetVersion:"v1",sha256:String(i).repeat(64),byteSize:2,width:2,height:3,sourceEvidenceRef:`upload:${i}`,sourceType:"owner_provided_final_upload",stagedAt:"2026-09-03T01:00:00Z"}));
-  candidate.lifecycleV11.skuPackage.c2FinalAssets.mediaRequirements.contentRules = syntheticContentRules([{slotId:"hero",mediaType:"image"},{slotId:"side",mediaType:"image"}]);
+  const candidate={id:"A",dataRevision:8,lifecycleV11:{skuPackage:{c2FinalAssets:{targetContext:{schemaEvidenceRef:"schema:evidence:1"}}}}};
+  const assets=[0,1].map((i)=>({assetId:`asset:${i}`,mediaType:"image",fileName:`${i}.jpg`,assetRef:`/staged/${i}.jpg`,assetVersion:"v1",sha256:String(i).repeat(64),byteSize:2,width:2,height:3,sourceEvidenceRef:`upload:${i}`,sourceType:"owner_provided_final_upload",stagedAt:"2026-09-03T01:00:00Z"}));
   return {candidate,assets,sourceRevision:8,draftRevision:3,ownerChecked:true};
 }
 
-test("D4 C2从Schema明确映射槽位，排序不能自动改角色，素材确认零授权", () => {
+test("D4 C2按主人给的顺序定主图，软件不重排也不改选，素材确认零授权", () => {
   const fixture=c2Fixture(), before=structuredClone(fixture);
   const input=buildC2FinalAssetInput(fixture);
   assert.deepEqual(fixture,before);assert.deepEqual(input.approvedAssetIds,["asset:0","asset:1"]);
   assert.equal(input.approvedMainImageAssetId,"asset:0");assert.equal(input.approvedVideoDisposition,"excludes_video");
-  assert.deepEqual(input.finalUploadAssets, [{ assetId: "asset:0", slotId: "hero", order: 1 }, { assetId: "asset:1", slotId: "side", order: 2 }]);
+  assert.deepEqual(input.finalUploadAssets, [{ assetId: "asset:0", order: 1 }, { assetId: "asset:1", order: 2 }]);
   assert.equal(input.draftRevision, 3);
   assert.equal(Object.hasOwn(input.finalUploadAssets[0], "assetRef"), false, "文件位置和证据必须由服务端已保存登记取得");
   assert.equal(Object.hasOwn(input,"productionAuthorization"),false);assert.equal(Object.hasOwn(input,"ownerConfirmation"),false);
-  for(const [change, reason] of [[v=>v.assets.reverse(),/首图/],[v=>delete v.assets[0].slotId,/槽位/],[v=>v.ownerChecked=false,/明确确认/],[v=>v.sourceRevision=7,/修订/],[v=>v.assets.push(v.assets[0]),/重复/]]) {
+  // 主人换顺序，主图就跟着换——软件照单执行，不自作主张。
+  const reordered=c2Fixture();reordered.assets.reverse();
+  assert.equal(buildC2FinalAssetInput(reordered).approvedMainImageAssetId,"asset:1");
+  for(const [change, reason] of [[v=>{v.assets[0].mediaType="video";},/第1位/],[v=>v.ownerChecked=false,/明确确认/],[v=>v.sourceRevision=7,/修订/],[v=>v.assets.push(v.assets[0]),/重复/],[v=>{v.assets.length=0;},/为空/]]) {
     const v=c2Fixture();change(v);assert.throws(()=>buildC2FinalAssetInput(v),reason);
   }
 });
 
-test("D4 条件视频、未选槽位及数量边界不能绕过", () => {
-  for (const ownerRequired of [false, true]) {
-    const fixture = c2Fixture();
-    const c2 = fixture.candidate.lifecycleV11.skuPackage.c2FinalAssets;
-    if (ownerRequired) c2.ownerVideoRequirement = { required: true };
-    else c2.mediaRequirements.schemaVideoRequirement.status = "required";
-    assert.throws(() => buildC2FinalAssetInput(fixture), /缺少视频/);
-    c2.mediaRequirements.videoSlots.push({ slotId: "demo", role: "video", mediaType: "video", minCount: 0, maxCount: 1 });
-    fixture.assets.push({ ...fixture.assets[0], assetId: "video:1", slotId: "demo", mediaType: "video", fileName: "demo.mp4" });
-    c2.mediaRequirements.contentRules.slotRules.push(...syntheticContentRules([{slotId:"demo",mediaType:"video"}]).slotRules);
-    const input = buildC2FinalAssetInput(fixture);
-    assert.equal(input.approvedVideoDisposition, "includes_video");
-    assert.equal(input.finalUploadAssets[2].order, 3);
-    assert.equal(Object.hasOwn(input, "productionAuthorization"), false);
-  }
-  for (const change of [
-    slots => slots.push({ slotId: "missing", role: "detail_image", mediaType: "image" }),
-    slots => slots.push({ ...slots[0] }),
-    slots => { slots[1].minCount = -1; },
-    slots => { slots[1].maxCount = 0; }
-  ]) {
-    const fixture = c2Fixture(); change(fixture.candidate.lifecycleV11.skuPackage.c2FinalAssets.mediaRequirements.imageSlots);
-    assert.throws(() => buildC2FinalAssetInput(fixture), /完整数量边界/);
-  }
-  const missing = c2Fixture(); missing.assets.pop();
-  assert.throws(() => buildC2FinalAssetInput(missing), /槽位 side 需要/);
-  const excess = c2Fixture(); excess.assets.push(...[2, 3].map(i => ({ ...excess.assets[1], assetId: `extra:${i}` })));
-  assert.throws(() => buildC2FinalAssetInput(excess), /槽位 side 需要/);
+test("D4 主人要求视频时缺少视频不能绕过", () => {
+  const fixture = c2Fixture();
+  const c2 = fixture.candidate.lifecycleV11.skuPackage.c2FinalAssets;
+  c2.ownerVideoRequirement = { required: true };
+  assert.throws(() => buildC2FinalAssetInput(fixture), /缺少视频/);
+  fixture.assets.push({ ...fixture.assets[0], assetId: "video:1", sha256: "9".repeat(64), mediaType: "video", fileName: "demo.mp4" });
+  const input = buildC2FinalAssetInput(fixture);
+  assert.equal(input.approvedVideoDisposition, "includes_video");
+  assert.equal(input.finalUploadAssets[2].order, 3);
+  assert.equal(input.finalUploadAssets[2].assetId, "video:1");
+  assert.equal(Object.hasOwn(input, "productionAuthorization"), false);
 });
 
 test("生产确认只读取服务端当前准备资料，旧决定和不完整默认值不能解锁", () => {
@@ -467,9 +459,15 @@ test("缺少当前准备DTO或只有旧主人确认时不能用B建议或truthy�
   }
 });
 
-test("扩展heartbeat或页面桥接不能冒充后台认证可用", () => {
+test("扩展后台应答就是已连接，后台不应答才说不可用", () => {
+  // Owner rule 2026-09-11: the status line reports the handshake it actually saw; one capture's outcome is reported by
+  // that capture's own result, never here.
   for(const options of [{liveVersion:EXPECTED_EXTENSION_VERSION,backgroundReady:true},{serverHeartbeat:{version:EXPECTED_EXTENSION_VERSION,fresh:true,backgroundReady:true}}]) {
-    const result=extensionConnectionStatus(options);assert.equal(result.code,"authentication_unverified");assert.match(result.label,/不可用/);
+    const result=extensionConnectionStatus(options);assert.equal(result.code,"connected");assert.equal(result.label,"插件已连接 · 等待采集任务");
+    assert.doesNotMatch(result.label,/不可用|未核验/);
+  }
+  for(const options of [{liveVersion:EXPECTED_EXTENSION_VERSION,backgroundReady:false},{serverHeartbeat:{version:EXPECTED_EXTENSION_VERSION,fresh:true,backgroundReady:false}}]) {
+    const result=extensionConnectionStatus(options);assert.equal(result.code,"background_unavailable");assert.match(result.label,/后台暂未响应/);
   }
 });
 
@@ -528,4 +526,30 @@ test("A卡区分技术证据与完整成本，旧卡及成本缺口不放行正�
   card.costPolicyReadiness = { ready: true, missing: [], code: null };
   assert.match(renderRealA(card), /完整成本策略已就绪/);
   assert.doesNotMatch(button(renderRealA(card), 'primary'), /disabled/);
+});
+
+test("写操作不走读取守卫：服务端已经答复后，中途取消不能把结果变成没发生", async () => {
+  // The 2026-09-11 regression: one confirmed round reached the server, a refresh cancelled the read guard while the
+  // answer was in flight, and the owner was told "这一轮没有创建成功". A write's answer belongs to the caller.
+  const reads = createLatestRead(), gate = deferred(), staleGate = deferred(), published = [];
+  const answered = { operationResult: { batch: { batchId: "a-discovery-batch:synthetic" }, resumed: false } };
+  let staleSignal;
+  const stale = reads.run(signal => { staleSignal = signal; return staleGate.promise; }, value => published.push(value));
+  const mutation = runMutation(() => gate.promise, { reads, isCurrent: () => true, publish: value => published.push(value) });
+  // A refresh or a view switch cancels the read guard while the write is in flight; this is the exact race that broke.
+  reads.cancel();
+  gate.resolve(answered);
+  assert.strictEqual(await mutation, answered);
+  assert.deepEqual(published, [answered]);
+  assert.equal(staleSignal.aborted, true);
+  staleGate.resolve({ stale: "view from before the write" });
+  assert.equal(await stale, null);
+  // Leaving the page keeps the server's answer; only the publishing stops.
+  const left = await runMutation(async () => answered, { reads, isCurrent: () => false, publish: () => { throw new Error("published after leaving"); } });
+  assert.strictEqual(left, answered);
+  // A real failure still reaches the caller instead of turning into a silent null.
+  await assert.rejects(runMutation(async () => { throw new Error("409 BATCH_CHANGED"); },
+    { reads, isCurrent: () => true, publish: () => { throw new Error("failed write published"); } }), /BATCH_CHANGED/);
+  // Publishing is optional; the request still runs and its answer is returned.
+  assert.strictEqual(await runMutation(async () => answered), answered);
 });

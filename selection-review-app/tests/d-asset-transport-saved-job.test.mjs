@@ -248,11 +248,12 @@ test("restart reconciliation keeps unknown job unchanged while a late JSON recei
       assert.equal(reconciledJob.status, "unknown_outcome");
     } }) }).run(f.runArgs);
     assert.equal(result.status, "verified");
-    const bytes = await fs.readFile(filePath, "utf8"), saved = stateOf(JSON.parse(bytes), f.d.job.jobId);
+    const bytes = await fs.readFile(filePath, "utf8");
+    const repository = createJsonBusinessStateRepository({ filePath }), restored = await repository.readSnapshot();
+    const saved = stateOf(restored, f.d.job.jobId);
     assert.deepEqual(saved.job, reconciledJob); assert.equal(saved.state.intent.ossWrites, 2);
     assert.equal(saved.state.continuationBlocked, true); assert.equal(saved.state.blockReason, "software_job_reconciliation_required");
-    assert.equal(saved.state.assetTransport.resolvedAssets.length, 2); assert.equal(Object.hasOwn(saved.sku, "dSoftwareExecution"), false); assertPublished(JSON.parse(bytes));
-    const repository = createJsonBusinessStateRepository({ filePath });
+    assert.equal(saved.state.assetTransport.resolvedAssets.length, 2); assert.equal(Object.hasOwn(saved.sku, "dSoftwareExecution"), false); assertPublished(restored);
     const replay = await f.runtime({ repository }).run({ ...f.runArgs, softwareJobContext: { ...f.runArgs.softwareJobContext, jobStore: f.createStore(repository) } });
     assert.equal(replay.status, "idempotent_replay"); assert.equal(await fs.readFile(filePath, "utf8"), bytes); assert.equal(f.counts().uploads, 1);
   } finally { await fs.rm(directory, { recursive: true, force: true }); }

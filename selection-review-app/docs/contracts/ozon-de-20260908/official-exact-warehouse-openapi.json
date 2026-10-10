@@ -1,0 +1,268 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/v2/product/info/stocks-by-warehouse/fbs": {
+      "post": {
+        "description": null,
+        "tags": [
+          "Prices&StocksAPI"
+        ],
+        "summary": "Получить информацию об остатках на складах продавца",
+        "operationId": "ProductAPI_GetProductInfoStocksByWarehouseFbsV2",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Client-Id"
+          },
+          {
+            "$ref": "#/components/parameters/Api-Key"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/v2GetProductInfoStocksByWarehouseFbsRequestV2"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Количество товаров на складах",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/v2GetProductInfoStocksByWarehouseFbsResponseV2"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Неверный параметр",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/rpcStatus"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Доступ запрещён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/rpcStatus"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Ответ не найден",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/rpcStatus"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Конфликт запроса",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/rpcStatus"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Внутренняя ошибка сервера",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/rpcStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "Client-Id": {
+        "description": "Идентификатор клиента.",
+        "in": "header",
+        "name": "Client-Id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "Api-Key": {
+        "description": "API-ключ.",
+        "in": "header",
+        "name": "Api-Key",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "v2GetProductInfoStocksByWarehouseFbsRequestV2": {
+        "required": [
+          "limit"
+        ],
+        "type": "object",
+        "oneOf": [
+          {
+            "title": "sku",
+            "required": [
+              "sku"
+            ]
+          },
+          {
+            "title": "offer_id",
+            "required": [
+              "offer_id"
+            ]
+          }
+        ],
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "description": "Указатель для выборки следующих данных."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "uint64",
+            "maximum": 1000,
+            "description": "Количество значений в ответе."
+          },
+          "offer_id": {
+            "type": "array",
+            "maxItems": 1000,
+            "description": "Идентификаторы товаров в системе продавца — артикул.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sku": {
+            "type": "array",
+            "maxItems": 1000,
+            "description": "Идентификаторы товаров в системе Ozon — SKU.",
+            "items": {
+              "type": "string",
+              "format": "int64"
+            }
+          }
+        }
+      },
+      "v2GetProductInfoStocksByWarehouseFbsResponseV2": {
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "description": "Указатель для выборки следующих данных."
+          },
+          "has_next": {
+            "type": "boolean",
+            "description": "`true`, если в ответе вернули не все товары.\n"
+          },
+          "products": {
+            "type": "array",
+            "description": "Остатки товаров.",
+            "items": {
+              "$ref": "#/components/schemas/v2GetProductInfoStocksByWarehouseFbsResponseV2Product"
+            }
+          }
+        }
+      },
+      "v2GetProductInfoStocksByWarehouseFbsResponseV2Product": {
+        "type": "object",
+        "properties": {
+          "free_stock": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Количество доступных для продажи товаров."
+          },
+          "offer_id": {
+            "type": "string",
+            "description": "Идентификатор товара в системе продавца — артикул."
+          },
+          "present": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Общее количество товара на складе."
+          },
+          "product_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Идентификатор товара в системе продавца — артикул."
+          },
+          "reserved": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Количество зарезервированных товаров на складе."
+          },
+          "sku": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Идентификатор товара в системе Ozon — SKU."
+          },
+          "warehouse_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Идентификатор склада."
+          },
+          "warehouse_name": {
+            "type": "string",
+            "description": "Название склада."
+          }
+        }
+      },
+      "rpcStatus": {
+        "type": "object",
+        "title": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Код ошибки."
+          },
+          "details": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/protobufAny"
+            },
+            "description": "Дополнительная информация об ошибке."
+          },
+          "message": {
+            "type": "string",
+            "description": "Описание ошибки."
+          }
+        }
+      },
+      "protobufAny": {
+        "type": "object",
+        "title": "object",
+        "properties": {
+          "typeUrl": {
+            "type": "string",
+            "description": "Тип протокола передачи данных."
+          },
+          "value": {
+            "type": "string",
+            "format": "byte",
+            "description": "Значение ошибки."
+          }
+        }
+      }
+    }
+  }
+}

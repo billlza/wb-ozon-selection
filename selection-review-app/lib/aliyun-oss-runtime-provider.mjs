@@ -1,5 +1,6 @@
 import { createAliyunOssClient, readAliyunOssKeychainSecret, uploadAliyunOssFinalAssets } from "./aliyun-oss-asset-transport.mjs";
 import { resolveRegisteredC2FinalAsset } from "./c2-upload-draft.mjs";
+import { CredentialStoreError } from "./credential-store.mjs";
 
 import { normalizeAliyunOssRuntimeConfiguration } from "./aliyun-oss-runtime-configuration.mjs";
 import { AliyunOssLocalPreparationError } from "./production-execution-failure.mjs";
@@ -23,8 +24,10 @@ export function createAliyunOssRuntimeProvider({ config = null, localAssetStore 
       if (["ENOENT", "EACCES", "EPERM", "EIO", "ENOTDIR"].includes(error?.code) && error?.constructor === Error) {
         throw new AliyunOssLocalPreparationError("OSS_LOCAL_ASSET_UNAVAILABLE");
       }
+      // c2_final_registration_mismatch 也属于本地准备失败：登记对不上就一张都不会传。
+      // 漏了它会让错误落进通用 unknown_outcome，把「其实一个请求都没发出去」这个事实丢掉。
       if (error?.constructor === Error && ["c2_upload_path_changed", "c2_upload_file_changed", "c2_upload_content_invalid",
-        "c2_upload_dimensions_unverified", "c2_upload_decoder_busy"].includes(error.extra?.code)) {
+        "c2_upload_dimensions_unverified", "c2_upload_decoder_busy", "c2_final_registration_mismatch"].includes(error.extra?.code)) {
         throw new AliyunOssLocalPreparationError("OSS_LOCAL_ASSET_INVALID");
       }
       throw error;
@@ -33,7 +36,8 @@ export function createAliyunOssRuntimeProvider({ config = null, localAssetStore 
   async function readConfiguredSecret(account, options) {
     try { return await secretReader(account, options); }
     catch (error) {
-      if (error?.constructor === Error && (Number.isInteger(error.code) || ["ENOENT", "EACCES", "EPERM", "ETIMEDOUT"].includes(error.code))) {
+      if (error instanceof CredentialStoreError && error.code !== "credential_read_cancelled" ||
+          error?.constructor === Error && (Number.isInteger(error.code) || ["ENOENT", "EACCES", "EPERM", "ETIMEDOUT"].includes(error.code))) {
         throw new AliyunOssLocalPreparationError("OSS_CREDENTIAL_UNAVAILABLE");
       }
       throw error;

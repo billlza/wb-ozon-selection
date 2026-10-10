@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "ozon-stock-change-evidence-v1",
+  "reviewedAt": "2026-09-22",
+  "endpoint": "/v2/products/stocks",
+  "scope": "Public official method-change announcements; not a complete current method schema, account permission, product observation or production authorization.",
+  "sources": [
+    {
+      "evidenceRef": "official:ozon-seller-api:stocks-quant-size-removed:2025-06-26",
+      "sourceUrl": "https://t.me/OzonEnSellerAPI/220",
+      "corroboratingSourceUrl": "https://t.me/OzonSellerAPI/505",
+      "publishedAt": "2025-06-26",
+      "excerpt": "Removed the stocks.quant_size parameter from the method request and the result.quant_size parameter from the method response.",
+      "claims": ["stocks.quant_size was removed from the request", "result.quant_size was removed from the response"]
+    },
+    {
+      "evidenceRef": "official:ozon-seller-api:stocks-description-update:2025-07-28",
+      "sourceUrl": "https://t.me/OzonEnSellerAPI/228",
+      "corroboratingSourceUrl": "https://t.me/OzonSellerAPI/518",
+      "publishedAt": "2025-07-28",
+      "excerpt": "Updated the method description.",
+      "claims": ["The method description changed; the announcement does not provide the changed description"]
+    },
+    {
+      "evidenceRef": "official:ozon-seller-api:stocks-archived-error:2026-07-21",
+      "sourceUrl": "https://t.me/OzonSellerAPI/670",
+      "publishedAt": "2026-07-21",
+      "excerpt": "В разделе Частые ошибки добавили описание ошибки PRODUCT_IS_ARCHIVED для метода /v2/products/stocks.",
+      "claims": ["The common-errors documentation added PRODUCT_IS_ARCHIVED for this method"]
+    }
+  ],
+  "implementationRule": { "quantSize": "not_applicable", "sendQuantSize": false },
+  "unknowns": [
+    "The complete current request required-fields schema was not retrieved in this review.",
+    "The 2025-07-28 announcement does not establish whether the earlier price_sent prerequisite changed.",
+    "These announcements do not establish a price_sent query-field mapping or accepted machine states.",
+    "These announcements do not establish any current product, warehouse stock, price, media or sale result."
+  ]
+}

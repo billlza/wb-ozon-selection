@@ -1,10 +1,11 @@
 import { isDeepStrictEqual } from 'node:util';
+import { prepareC1LocalDraftSource } from './c1-local-draft-source.mjs';
 import { recoverC1KeywordHandoffTechnicalFailure } from './software-execution-state.mjs';
 import { executeBusinessMutation } from "./business-mutation-transaction.mjs";
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from "./business-state-repository.mjs";
 import { assertCurrentC1AiDraftRequest, validateC1AiDraftRequest } from "./c1-ai-draft-contract.mjs";
 import { prepareCurrentC1AiDraftRequest, assertCurrentC1AiDraftRequestSources, assertC1DraftExecutionBinding } from "./c1-ai-draft-request-source.mjs";
-import { C1AiGatewayError } from "./c1-ai-gateway.mjs";
+import { C1AiGatewayError, C1_AI_GATEWAY_TOTAL_TIMEOUT_MS, buildC1GatewayJob } from "./c1-ai-gateway.mjs";
 import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
 import { authorizeOperation, workerSatisfiesCapabilities } from "./runtime-identity.mjs";
 import { createRepositoryBackedSoftwareJobStore, assertC1PaidKeywordContinuationResult } from "./software-job-repository.mjs";
@@ -50,16 +51,18 @@ export function prepareC1DraftSoftwareExecution({ candidate, request, expectedRe
     throw new Error("C1_DRAFT_CANDIDATE_REVISION_CONFLICT");
   }
   assertCurrentC1AiDraftRequest({ skuPackage: candidate.lifecycleV11?.skuPackage, request });
+  buildC1GatewayJob({ candidateId: candidate.id, dataRevision: expectedRevision, request });
   const jobInput = buildJobInput({ request, expectedRevision, authorizationRef, credentialAlias, jobId, ownerUserId, requestedByUserId, idempotencyKey });
   return Object.freeze({ request: structuredClone(request), jobInput, jobRef: jobReference(jobInput) });
 }
 
 /** The injected gateway receives only a saved request, a persisted execution DTO and a credential alias. */
-export function createC1DraftSoftwareUseCase({ repository, runtimeMode, serverClock, workerRegistry = null, requestGateway = null, executionBinding = null }) {
+export function createC1DraftSoftwareUseCase({ repository, runtimeMode, serverClock, workerRegistry = null, requestGateway = null, readGatewayResult = null, executionBinding = null }) {
   if (!["local_development", "central_test", "central_production"].includes(runtimeMode)) throw new Error("C1_DRAFT_RUNTIME_MODE_INVALID");
   if (runtimeMode === "local_development") assertBusinessStateRepositoryBoundary(repository);
   else assertCentralPersistenceBoundary(repository);
-  if (typeof serverClock !== "function" || (requestGateway !== null && typeof requestGateway !== "function")) {
+  if (typeof serverClock !== "function" || (requestGateway !== null && typeof requestGateway !== "function") ||
+      (readGatewayResult !== null && typeof readGatewayResult !== "function")) {
     throw new Error("C1_DRAFT_DEPENDENCY_INVALID");
   }
   const configuredBinding = executionBinding === null ? null : assertC1DraftExecutionBinding(executionBinding);
@@ -83,12 +86,31 @@ export function createC1DraftSoftwareUseCase({ repository, runtimeMode, serverCl
         (["queued", "claimed", "waiting_platform", "unknown_outcome"].includes(job.status) ||
           (job.status === "completed" && job.resultEnvelope?.applicationDisposition !== "applied")))) throw new Error("C1_DRAFT_CURRENT_JOB_UNRESOLVED");
     const request = prepareCurrentC1AiDraftRequest(current, observedAt);
+    buildC1GatewayJob({ candidateId: current.id, dataRevision: current.dataRevision, request });
     current.lifecycleV11.c1AiDraftRequestV1 = structuredClone(request);
     return { candidate: current, result: { status: "awaiting_paid_confirmation", requestRef: request.requestId,
       requestFingerprint: request.requestFingerprint, request, providerCalls: 0 } };
   }
 
   const useCase = {
+    async prepareLocal({ actor, input }) {
+      input = structuredClone(input); actor = structuredClone(actor);
+      closed(input, ["candidateId", "expectedRevision", "idempotencyKey", "auditEventId"], "C1_DRAFT_PREPARE_INPUT_INVALID");
+      authorizeOperation({ actor, requiredRoles: ["owner"] });
+      if (actor.actorType !== "human" || actor.source !== "authenticated_identity_provider") throw new Error("C1_DRAFT_AUTHENTICATED_OWNER_REQUIRED");
+      const { candidate } = await candidateSnapshot(input.candidateId);
+      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: ["owner"], action: "c1_local_draft_prepare",
+        candidateId: input.candidateId, skuPackageId: candidate.lifecycleV11.skuPackage.skuPackageId, expectedRevision: input.expectedRevision,
+        idempotencyKey: input.idempotencyKey, inputFingerprint: fingerprintCanonicalRecord(input), auditEventId: input.auditEventId,
+        serverClock, includeRelatedSoftwareJobs: true,
+        mutate: ({ candidate: current, observedAt, relatedSoftwareJobs }) => {
+          if (current.lifecycleV11.c1AiDraftRequestV1) throw new Error("C1_LOCAL_DRAFT_REQUEST_ALREADY_SAVED");
+          const prepared = prepareC1LocalDraftSource({ candidate: current, preparedAt: observedAt });
+          current.lifecycleV11.skuPackage = structuredClone(prepared.skuPackage);
+          current.lifecycleV11.c1LocalDraftSourceV1 = structuredClone(prepared.sourceEvidence);
+          return prepareDraftRequest(current, relatedSoftwareJobs, observedAt);
+        } });
+    },
     async prepareCurrent({ actor, input }) {
       input = structuredClone(input);
       actor = structuredClone(actor);
@@ -175,6 +197,7 @@ export function createC1DraftSoftwareUseCase({ repository, runtimeMode, serverCl
           }
           if (fingerprintCanonicalRecord(current.lifecycleV11.c1AiDraftRequestV1) !== fingerprintCanonicalRecord(request)) throw new Error("C1_DRAFT_SAVED_REQUEST_CONFLICT");
           assertCurrentC1AiDraftRequestSources({ candidate: current, request, observedAt });
+          buildC1GatewayJob({ candidateId: current.id, dataRevision: current.dataRevision, request });
           current.lifecycleV11.c1AiDraftJobRefV1 = jobReference(jobInput);
           return { candidate: current, result: { status: "queued", requestFingerprint: request.requestFingerprint, providerCalls: 0 } };
         } });
@@ -209,6 +232,59 @@ export function createC1DraftSoftwareUseCase({ repository, runtimeMode, serverCl
       const outcome = await useCase.run({ actor, input: { jobId: job.jobId, leaseId: input.leaseId, leaseDurationMs: input.leaseDurationMs } });
       if (outcome.status !== "receipt_saved") return outcome;
       const result = await useCase.apply({ actor, input: { ...applyInput, payloadFingerprint: outcome.job.resultEnvelope.payloadFingerprint } });
+      return Object.freeze({ status: "applied", result });
+    },
+
+    async reconcileSaved({ actor, input }) {
+      input = structuredClone(input); actor = structuredClone(actor);
+      closed(input, ["candidateId", "expectedRevision", "jobId", "leaseId", "leaseDurationMs"], "C1_DRAFT_RECONCILIATION_INPUT_INVALID");
+      authorizeOperation({ actor, requiredRoles: ["operator"] });
+      if (actor.actorType !== "worker") throw new Error("C1_DRAFT_WORKER_REQUIRED");
+      if (readGatewayResult === null) throw new Error("C1_DRAFT_RECONCILIATION_READER_REQUIRED");
+      const claim = await store.beginC1AiDraftReconciliation({ ...input, workerId: actor.userId });
+      if (claim.terminal) {
+        if (claim.job.status === "completed") return useCase.runSaved({ actor, input });
+        return Object.freeze({ status: "failed", job: claim.job });
+      }
+      if (!claim.acquired) return Object.freeze({ status: "pending", jobId: input.jobId, reconciliationInProgress: true });
+      const { job, request, authorizedExecution, gatewayJobId } = claim;
+      const settlement = { jobId: job.jobId, workerId: actor.userId, attemptId: job.c1ResultReconciliation.readAttempt.attemptId };
+      let outcome;
+      try {
+        outcome = await readGatewayResult({ request, authorizedExecution, gatewayJobId, credentialAlias: job.scopeBinding.credentialAlias,
+          totalTimeoutMs: Math.min(C1_AI_GATEWAY_TOTAL_TIMEOUT_MS, input.leaseDurationMs) });
+      } catch (error) {
+        const known = error instanceof C1AiGatewayError;
+        const terminalFailure = known && ["failed", "succeeded"].includes(error.externalRequestState) &&
+          error.jobId === gatewayJobId && error.accounting?.gatewayJobId === gatewayJobId;
+        if (terminalFailure) {
+          const envelope = createSoftwareJobResultEnvelope({ job, resultRef: gatewayJobId, payloadKind: C1_AI_DRAFT_JOB_TYPE,
+            externalRequestState: error.externalRequestState, recordedAt: serverClock(),
+            payload: { schemaVersion: "c1-ai-draft-software-failure-v1", request, accounting: error.accounting,
+              errorCode: error.code, providerOutcome: error.providerOutcome ?? null,
+              ...(error.serviceTiming ? { serviceTiming: structuredClone(error.serviceTiming) } : {}) } });
+          const failed = await store.settleC1AiDraftReconciliation({ ...settlement, observationStatus: "failed", resultEnvelope: envelope, failureClass: error.code });
+          return Object.freeze({ status: "failed", job: failed });
+        }
+        const stopped = await store.settleC1AiDraftReconciliation({ ...settlement, observationStatus: "read_failed",
+          failureClass: known ? error.code : "C1_DRAFT_RECONCILIATION_UNEXPECTED_ERROR" });
+        if (!known) throw error;
+        return Object.freeze({ status: "unknown_outcome", job: stopped });
+      }
+      if (!outcome || outcome.jobId !== gatewayJobId || !isDeepStrictEqual(outcome.request, request) ||
+          !["receipt_ready", "pending"].includes(outcome.status)) {
+        await store.settleC1AiDraftReconciliation({ ...settlement, observationStatus: "read_failed", failureClass: "C1_DRAFT_GATEWAY_RESULT_INVALID" });
+        throw new Error("C1_DRAFT_GATEWAY_RESULT_INVALID");
+      }
+      if (outcome.status === "pending") {
+        const pending = await store.settleC1AiDraftReconciliation({ ...settlement, observationStatus: "pending" });
+        return Object.freeze({ status: "pending", job: pending });
+      }
+      const envelope = createSoftwareJobResultEnvelope({ job, resultRef: outcome.receipt?.receiptId, payloadKind: C1_AI_DRAFT_JOB_TYPE,
+        payload: { schemaVersion: "c1-ai-draft-software-result-v1", request, receipt: outcome.receipt }, recordedAt: serverClock() });
+      const completed = await store.settleC1AiDraftReconciliation({ ...settlement, observationStatus: "completed", resultEnvelope: envelope });
+      const result = await useCase.apply({ actor, input: { jobId: job.jobId, payloadFingerprint: completed.resultEnvelope.payloadFingerprint,
+        expectedRevision: job.revision, idempotencyKey: `c1-apply:${job.jobId}`, auditEventId: `c1-apply-audit:${job.jobId}` } });
       return Object.freeze({ status: "applied", result });
     },
 
@@ -251,6 +327,7 @@ export function createC1DraftSoftwareUseCase({ repository, runtimeMode, serverCl
       }
       const request = assertCurrentC1AiDraftRequest({ skuPackage: candidate.lifecycleV11.skuPackage, request: candidate.lifecycleV11.c1AiDraftRequestV1 });
       if (request.requestFingerprint !== queued.scopeBinding.requestFingerprint) throw new Error("C1_DRAFT_SAVED_REQUEST_CONFLICT");
+      buildC1GatewayJob({ candidateId: candidate.id, dataRevision: candidate.dataRevision, request });
       await store.claim({ ...input, worker: { workerId: actor.userId } });
       const job = await store.markExternalRequestStarted({ jobId: queued.jobId, workerId: actor.userId, leaseId: input.leaseId,
         externalRequestRef: `c1-request:${queued.jobId}:${request.requestFingerprint}` });
@@ -270,7 +347,8 @@ export function createC1DraftSoftwareUseCase({ repository, runtimeMode, serverCl
           resultRef: error.jobId ?? `c1-outcome:${job.jobId}`, payloadKind: C1_AI_DRAFT_JOB_TYPE,
           externalRequestState: error.externalRequestState, recordedAt: serverClock(),
           payload: { schemaVersion: "c1-ai-draft-software-failure-v1", request, accounting: error.accounting, errorCode: error.code,
-            providerOutcome: error.providerOutcome ?? null } });
+            providerOutcome: error.providerOutcome ?? null,
+              ...(error.serviceTiming ? { serviceTiming: structuredClone(error.serviceTiming) } : {}) } });
         const settled = await store.settle({ jobId: job.jobId, workerId: job.workerId, leaseId: job.leaseId,
           status: error.externalRequestState === "unknown_outcome" ? "unknown_outcome" : "failed", externalRequestState: error.externalRequestState,
           failureClass: error.code, resultEnvelope });

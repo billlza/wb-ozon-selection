@@ -51,8 +51,7 @@
       "minLength": 1
     },
     "authorizationRef": {
-      "type": "string",
-      "minLength": 1
+      "$ref": "software-job-v1.schema.json#/$defs/deOpaqueSourceRef"
     },
     "requestReceiptRef": {
       "type": "string",

@@ -1,4 +1,5 @@
 import { STORE_PLATFORMS, resolveConfiguredStoreRef } from "./store-binding.mjs";
+import { EXTRA_HANDLING_FEE_LABEL, extraHandlingFeesConsistency } from "./extra-handling-fees.mjs";
 const TARGET_STORES = new Set(Object.keys(STORE_PLATFORMS));
 const RISK_STATUSES = new Set(["clear", "needs_confirmation"]);
 const POWERED_VALUES = new Set([true, false, "unknown"]);
@@ -248,6 +249,22 @@ export function normalizeCandidateUserPatchInput(input, currentCandidate, { stor
       : normalizeField(field, value);
     if (field === "targetStore" && next !== currentCandidate?.targetStore && candidateStoreFrozen(currentCandidate)) {
       throw inputError(409, "当前候选已冻结生命周期身份，不能通过普通资料保存换绑店铺", "candidate_store_frozen");
+    }
+    // packagingCostRmb 是这笔钱的权威总额；它旁边那份明细必须加得出它。总额单独被改掉就会让两个数分家，
+    // 所以这条路直接拒绝，并把人指回明细那一处——软件不会替他把明细悄悄删掉或改写。
+    // 明细本身已经坏掉的时候同样拒绝：那种商品更不能只改总额，得回「算利润」重新确认一次这份清单。
+    if (field === "packagingCostRmb" && next !== currentCandidate?.packagingCostRmb) {
+      const detail = extraHandlingFeesConsistency(currentCandidate);
+      if (detail.status === "consistent") {
+        throw inputError(409,
+          `这件商品的${EXTRA_HANDLING_FEE_LABEL}有一份明细（合计 ¥${detail.totalRmb.toFixed(2)}）；要改金额请改那份明细，不能只改总额`,
+          "candidate_extra_handling_fees_detail_conflict");
+      }
+      if (detail.status === "inconsistent") {
+        throw inputError(409,
+          `这件商品的${EXTRA_HANDLING_FEE_LABEL}明细和合计已经对不上（${detail.reason}）；请先在「算利润」里重新确认一次这份明细，不要只改总额`,
+          "candidate_extra_handling_fees_detail_conflict");
+      }
     }
     if (field !== "notes" && candidateProductionFactsFrozen(currentCandidate)) {
       const unchanged = field === "dimensionsCm"

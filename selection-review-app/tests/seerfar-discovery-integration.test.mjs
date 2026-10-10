@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { loadPublishedSchemaValidator } from './helpers/published-schema-validator.mjs';
 import { buildRealAConfirmationCard } from '../lib/real-a-confirmation-card.mjs';
+import { describeSeerfarFilters } from '../lib/seerfar-discovery-contract.mjs';
 import { createSeerfarDiscoveryRuntimeFixture, syntheticMarketProduct } from './fixtures/seerfar-discovery-runtime-fixture.mjs';
 
 const receiptFor = saved => saved.runtime.aDiscoveryReceipts[saved.runtime.softwareJobs[0].jobId];
@@ -65,6 +66,8 @@ test('Seerfar service, one job, three actual transport requests and real importe
   assert.equal(saved.candidates[0].aDiscoveryEvidenceV2.contractVersion, 'seerfar-category-discovery-v1');
   assert.equal(saved.candidates[0].aDiscoveryEvidenceV2.platform, 'ozon');
   assert.deepEqual(saved.candidates[0].aDiscoveryEvidenceV2.supplierReceiptRefs, []);
+  // The provider's main image travels to the candidate card so the owner can image-search 1688; nothing else is filled in.
+  assert.equal(saved.candidates[0].imageUrl, 'https://images.example.test/synthetic-organizer.png');
   assert.equal(saved.candidates[0].productUrl, syntheticMarketProduct().productUrl);
   const bytes = await fs.readFile(f.filePath, 'utf8');
   assert.equal(bytes.includes('synthetic-secret-only'), false);
@@ -285,14 +288,15 @@ for (const boundary of ['lease', 'authorization']) {
 
  test('response review facts survive formal transport, receipt, import and byte-stable cold read', async t => {
   const f = await createSeerfarDiscoveryRuntimeFixture(t);
-  const product = { ...syntheticMarketProduct(), reviewCount: 142, reviewRating: 4.8, sellerType: 1 };
+  const product = { ...syntheticMarketProduct(), reviewCount: 142, reviewRating: 4.8, sellerType: 1, weight: 850, volume: 12.4, dimension: '600x450x150' };
   const { service } = f.create({ respond: (call, response) => call.step === 'category_detail'
     ? response(call, { body: { code: 200, data: { id: '100_200', productList: [product], hasNextPage: false, startDate: '2026-07-01', endDate: '2026-07-27' } } }) : response(call) });
   const result = await f.authorize(service, await f.prepare(service));
   assert.equal(result.status, 'completed'); assert.equal(result.candidateImport.status, 'imported');
   const saved = await f.repository.readSnapshot(), market = receiptFor(saved).steps[1].result;
-  assert.equal(market.schemaVersion, 'seerfar-discovery-market-result-v2');
+  assert.equal(market.schemaVersion, 'seerfar-discovery-market-result-v3');
   assert.deepEqual(market.dateRange, { startDate: '2026-07-01', endDate: '2026-07-27' });
+  assert.deepEqual([market.products[0].weightGrams, market.products[0].volumeLitres, market.products[0].dimensionMm], [850, 12.4, '600x450x150']);
   assert.deepEqual([market.products[0].reviewCount, market.products[0].reviewRating, market.products[0].rawSellerType, market.products[0].sellerIdentity], [142, 4.8, 1, 'unknown']);
   assert.equal(saved.candidates[0].aDiscoveryEvidenceV2.marketReceiptRef, receiptFor(saved).receiptId);
   assertUnverified(saved.candidates[0]);
@@ -348,13 +352,16 @@ for (const change of ['removed', 'same_version_budget_changed', 'credential_chan
 
 test('removed plan stops previously queued work through pump and repeated authorization without replaying completed history', async t => {
   const f = await createSeerfarDiscoveryRuntimeFixture(t), entered = Promise.withResolvers(), release = Promise.withResolvers();
-  const { service } = f.create({ respond: async (call, response) => {
+  // One store runs one direction at a time (ROUND_ALREADY_RUNNING), so the round queued behind the running one is a
+  // second saved direction; what this test is about — a removed plan stopping queued work — is unchanged.
+  const secondPlan = { ...f.plan, planId: 'plan:synthetic-seerfar-second' };
+  const { service } = f.create({ plans: [f.plan, secondPlan], respond: async (call, response) => {
     if (call.step === 'quota_before') { entered.resolve(); await release.promise; }
     return response(call);
   } });
   const first = await f.prepare(service), running = f.authorize(service, first);
   await entered.promise;
-  const second = await service.createBatch({ actor: f.owner, input: { planId: f.plan.planId, planVersion: f.plan.version,
+  const second = await service.createBatch({ actor: f.owner, input: { planId: secondPlan.planId, planVersion: secondPlan.version,
     targetStore: 'miska', bindingId: f.connectorBinding.bindingId, configurationVersion: f.connectorBinding.configurationVersion,
     idempotencyKey: 'create:second-category' } });
   assert.equal((await f.authorize(service, second)).status, 'queued');
@@ -453,4 +460,51 @@ test('evidence revoked while waiting for the final transaction cannot commit com
   assert.equal(receipt.failureClass,'EVIDENCE_REVOKED');assert.equal(receipt.steps.length,3);
   assert.ok(receipt.steps.every(step=>step.externalRequestState==='succeeded'));
   assert.equal(saved.candidates.length,0);assert.equal(f.calls.length,3);
+});
+
+test('an owner-filtered plan sends its conditions and every saved record states which filters produced the result', async t => {
+  const filters = { priceRub: { min: 800, max: null }, weightGrams: { min: null, max: 1000 } };
+  const f = await createSeerfarDiscoveryRuntimeFixture(t, { filters });
+  const { service } = f.create(), created = await f.prepare(service);
+  assert.deepEqual(created.batch.plan.requests[0].filters, filters);
+  const result = await f.authorize(service, created);
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(f.calls.map(call => call.step), ['quota_before', 'category_detail', 'quota_after']);
+  const sent = JSON.parse(f.calls[1].body);
+  assert.deepEqual(sent.price, { min: 800, max: null });
+  assert.deepEqual(sent.weight, { min: null, max: 1000 });
+  for (const slot of ['volume', 'monthlySales', 'monthlyRevenue', 'reviewCount', 'grossMargin']) {
+    assert.deepEqual(sent[slot], { min: null, max: null }, slot);
+  }
+  const saved = await f.repository.readSnapshot(), receipt = receiptFor(saved), market = receipt.steps[1].result;
+  assert.deepEqual(receipt.scope.request.filters, filters);
+  assert.deepEqual(saved.runtime.softwareJobs[0].scopeBinding.request.filters, filters);
+  assert.equal(market.schemaVersion, 'seerfar-discovery-market-result-v3');
+  assert.deepEqual(market.appliedFilters, filters);
+  assert.equal(describeSeerfarFilters(market.appliedFilters), '售价 ≥800 卢布 · 重量 ≤1000 克');
+  const validator = await loadPublishedSchemaValidator();
+  for (const [schema, record] of [['a-discovery-v2.schema.json#/$defs/scope', saved.runtime.softwareJobs[0].scopeBinding],
+    ['a-discovery-v2.schema.json#/$defs/receipt', receipt], ['a-discovery-v2.schema.json#/$defs/result', market]]) {
+    const validate = validator.getSchema(schema);
+    assert.equal(validate(record), true, `${schema}: ${JSON.stringify(validate.errors)}`);
+  }
+  // The desk reads the conditions from the batch view without spending a second query.
+  const view = service.view({ document: saved, actor: f.owner });
+  assert.deepEqual(view.plans[0].requests[0].filters, filters);
+  const shown = view.batches[0];
+  assert.deepEqual(shown.batch.plan.requests[0].filters, filters);
+  assert.deepEqual(shown.jobs[0].receipt.scope.request.filters, filters);
+  assert.deepEqual(shown.jobs[0].receipt.steps[1].result.appliedFilters, filters);
+  await service.stop();
+
+  const plain = await createSeerfarDiscoveryRuntimeFixture(t);
+  const unfiltered = plain.create(), plainCreated = await plain.prepare(unfiltered.service);
+  assert.equal(Object.hasOwn(plainCreated.batch.plan.requests[0], 'filters'), false);
+  assert.equal((await plain.authorize(unfiltered.service, plainCreated)).status, 'completed');
+  const plainSaved = await plain.repository.readSnapshot(), plainMarket = receiptFor(plainSaved).steps[1].result;
+  assert.equal(plainMarket.appliedFilters, null);
+  assert.equal(describeSeerfarFilters(plainMarket.appliedFilters), '无筛选条件');
+  const plainSent = JSON.parse(plain.calls[1].body);
+  for (const slot of ['price', 'weight', 'volume', 'monthlySales']) assert.deepEqual(plainSent[slot], { min: null, max: null }, slot);
+  await unfiltered.service.stop();
 });

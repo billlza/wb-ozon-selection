@@ -255,10 +255,9 @@ export function appendGuooRouteComparison(candidate, comparison, {recordedAt}) {
 
 
 /** Reusing a saved result requires the immediately preceding revision; never search older history for a usable quote. */
-export function assertGuooComparisonReadyForEvidence(candidate, ruleVersion) {
+function verifySavedGuooComparison(candidate, ruleVersion) {
   check(object(candidate)&&isCanonicalFrozenRef(candidate.id)&&Number.isSafeInteger(candidate.dataRevision)&&candidate.dataRevision>=0,'CANDIDATE_INVALID');
   check(text(ruleVersion),'RULE_VERSION_INVALID');
-  check(candidate.lifecycleV11?.skuPackage===undefined||candidate.lifecycleV11.skuPackage===null,'FROZEN_CANDIDATE_REVIEW_REQUIRED');
   check(Object.hasOwn(candidate,'guooRouteComparisonsV1'),'COMPARISON_REQUIRED');
   check(Array.isArray(candidate.guooRouteComparisonsV1),'HISTORY_INVALID');
   check(candidate.guooRouteComparisonsV1.length>0,'COMPARISON_REQUIRED');
@@ -272,4 +271,46 @@ export function assertGuooComparisonReadyForEvidence(candidate, ruleVersion) {
   check(verified.status==='compared'&&verified.minimumRoutes.length===1&&text(verified.selectedRoute),'COMPARISON_NOT_READY');
   check(verified.transportVerified,'TRANSPORT_EVIDENCE_REQUIRED');
   return {...verified,recordedAt,resultRevision};
+}
+
+export function assertGuooComparisonReadyForEvidence(candidate, ruleVersion) {
+  check(object(candidate)&&isCanonicalFrozenRef(candidate.id)&&Number.isSafeInteger(candidate.dataRevision)&&candidate.dataRevision>=0,'CANDIDATE_INVALID');
+  check(text(ruleVersion),'RULE_VERSION_INVALID');
+  // 这条路会把线路比较的结果变成这一轮的物流适用范围，所以已经冻结的SKU一律不走：它的线路和运费
+  // 早就写进包里了，再比一次等于把主人签过的运费悄悄换掉。重读费用证据不是这件事，见下一个函数。
+  check(candidate.lifecycleV11?.skuPackage===undefined||candidate.lifecycleV11.skuPackage===null,'FROZEN_CANDIDATE_REVIEW_REQUIRED');
+  return verifySavedGuooComparison(candidate,ruleVersion);
+}
+
+const routeKey=value=>String(value??'').trim().toLowerCase();
+
+/**
+ * 已冻结的商品重读一次费用证据时，这道闸门代替上面那一道。
+ *
+ * 上面那道 `FROZEN_CANDIDATE_REVIEW_REQUIRED` 拦的是「别把已冻结商品的线路悄悄重算一遍」。重读佣金和
+ * Schema 不做那件事：线路和运费已经冻在 `lifecycleEvidenceContextV11.route` 和 SKU 包里，重读只按那个
+ * 已冻结的线路去取同一份资费，`buildExpectedEvidenceScope('logistics_tariff', …)` 读的就是它。所以这里
+ * 不放宽那道闸门，而是把它反过来用：**必须**已冻结、**必须**停在条件测算，否则不给走这条路。
+ *
+ * 光反过来还不够——得当场证明「这件商品冻在哪条线路上」，不能默认。已保存的那份线路比较、已冻结的
+ * 运费、以及适用范围里那条线路，三者必须是同一条；对不上就停，绝不拿一份说不清来路的线路去取资费。
+ *
+ * 比线路名一律先 lower-case：适用范围里留着主人那一版的大小写（`GUOO Economy Extra Small`），冻结运费
+ * 和证据包的键已经规范化过（`guoo economy extra small`）。直接比字符串会把同一条线路当成两条——r25 就是
+ * 在这上面栽过一次。
+ */
+export function assertGuooComparisonFrozenForEvidenceRefresh(candidate, ruleVersion) {
+  check(object(candidate)&&isCanonicalFrozenRef(candidate.id)&&Number.isSafeInteger(candidate.dataRevision)&&candidate.dataRevision>=0,'CANDIDATE_INVALID');
+  check(text(ruleVersion),'RULE_VERSION_INVALID');
+  const lifecycle=candidate.lifecycleV11;
+  check(object(lifecycle)&&object(lifecycle.skuPackage),'FROZEN_CANDIDATE_REQUIRED');
+  check(lifecycle.status==='b_conditional_awaiting_exact_commission','CONDITIONAL_B_REQUIRED');
+  const verified=verifySavedGuooComparison(candidate,ruleVersion);
+  const frozen=lifecycle.bSystemEvidenceBundle?.logisticsEvidence;
+  check(object(frozen)&&routeKey(frozen.route)===routeKey(verified.selectedRoute)&&
+    routeKey(frozen.ruleVersion)===routeKey(ruleVersion),'FROZEN_ROUTE_CONFLICT');
+  const context=candidate.lifecycleEvidenceContextV11;
+  check(object(context)&&routeKey(context.route)===routeKey(verified.selectedRoute)&&
+    routeKey(context.logisticsRuleVersion)===routeKey(ruleVersion),'FROZEN_ROUTE_CONFLICT');
+  return verified;
 }

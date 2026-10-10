@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
+import { loadPublishedSchemaValidator } from "./helpers/published-schema-validator.mjs";
 import {
   C1_AI_DRAFT_REQUEST_VERSION,
   mergeC1AiDraftReceipt as mergeFormalReceipt,
@@ -169,7 +170,12 @@ test("发布的请求和回执Schema冻结单次路由、零派发与draft_only�
   assert.equal(requestSchema.properties.executionPolicy.properties.attemptLimit.const, 1);
   assert.equal(requestSchema.properties.executionPolicy.properties.automaticRetry.const, false);
   assert.equal(requestSchema.properties.executionPolicy.properties.codexDispatch.const, false);
-  assert.equal(receiptSchema.properties.output.properties.status.const, "draft_only");
+  assert.equal(receiptSchema.properties.output.oneOf.length, 3);
+  for (const outputSchema of receiptSchema.properties.output.oneOf) {
+    assert.equal(outputSchema.properties.status.const, "draft_only");
+    assert.equal(outputSchema.properties.locale.const, "ru-RU");
+    assert.equal(outputSchema.additionalProperties, false);
+  }
   assert.equal(receiptSchema.properties.codexDispatches.const, 0);
   assert.equal(receiptSchema.properties.productionWrites.const, 0);
 });
@@ -472,22 +478,22 @@ test("准入的当前请求校验复用冻结事实与输入比对，不把合�
     const changed = structuredClone(skuPackage); change(changed);
     assert.throws(() => assertCurrentC1AiDraftRequest({ skuPackage: changed, request }), /C1_|C1ProductPlan校验失败/);
   }
-  const forged = structuredClone(request);
-  forged.verifiedFacts[0].value = "forged source fact";
-  const core = structuredClone(forged); delete core.requestId; delete core.requestFingerprint;
-  forged.requestFingerprint = fingerprintCanonicalRecord(core);
-  forged.requestId = `c1-ai-request:${forged.identity.c1PlanId}:${forged.requestFingerprint.slice(0, 16)}`;
-  assert.equal(validateC1AiDraftRequest(forged).valid, true);
-  assert.throws(() => assertCurrentC1AiDraftRequest({ skuPackage, request: forged }), /FACT_DRIFT_DETECTED/);
+  for (const original of [request, buildRequest({ skuPackage, outputContractVersion: null })]) {
+    const forged = structuredClone(original);
+    forged.verifiedFacts[0].value = "forged source fact";
+    const core = structuredClone(forged); delete core.requestId; delete core.requestFingerprint;
+    forged.requestFingerprint = fingerprintCanonicalRecord(core);
+    forged.requestId = `c1-ai-request:${forged.identity.c1PlanId}:${forged.requestFingerprint.slice(0, 16)}`;
+    // V2 catches frozen-schema drift before admission; legacy still checks current facts.
+    const versioned = Object.hasOwn(original, "outputContractVersion");
+    assert.equal(validateC1AiDraftRequest(forged).valid, !versioned);
+    assert.throws(() => assertCurrentC1AiDraftRequest({ skuPackage, request: forged }),
+      versioned ? /C1_AI_REQUEST_INVALID/ : /FACT_DRIFT_DETECTED/);
+  }
 });
 
 test("正式C1请求、回执、入场、终态与合并plan全部通过发布Schema的strict校验", async () => {
-  const { default: Ajv2020 } = await import("ajv/dist/2020.js");
-  const { default: addFormats } = await import("ajv-formats");
-  const ajv = new Ajv2020({ strict: true, allErrors: true }); addFormats(ajv);
-  for (const name of ["c1-ai-draft-request-v1", "c1-ai-draft-receipt-v1", "c1-ai-authorized-execution-v1", "c1-ai-settled-execution-v1", "c1-product-plan-v1.1", "c1-sku-rights-review-v1"]) {
-    ajv.addSchema(JSON.parse(await readFile(new URL(`../schema/${name}.schema.json`, import.meta.url), "utf8")));
-  }
+  const ajv = await loadPublishedSchemaValidator();
   const skuPackage = nonTrainSkuPackage(), request = buildRequest({ skuPackage }), result = receipt(request);
   const admitted = authorizedExecution(request), saved = settledExecution(request, result);
   const merged = mergeC1AiDraftReceipt({ skuPackage, request, receipt: result, mergedAt: "2026-08-22T02:02:00.000Z" });

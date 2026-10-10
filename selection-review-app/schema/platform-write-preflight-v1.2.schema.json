@@ -91,6 +91,14 @@
               "type": "null"
             }
           ]
+        },
+        "verifiedVia": {
+          "description": "身份结论所依据的锚点。scoped_warehouse 表示由仓库反推（主人2026-09-16决定），此时平台不提供店铺编号，observedStoreRef 必须为 null。字段缺失按 platform_store_id 读取。",
+          "enum": [
+            "platform_store_id",
+            "scoped_warehouse",
+            "none"
+          ]
         }
       },
       "additionalProperties": false

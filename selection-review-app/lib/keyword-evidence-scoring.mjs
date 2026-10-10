@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { createKeywordEvidenceSnapshot, validateKeywordEvidenceSnapshot } from "./keyword-evidence-snapshot.mjs";
+import { createKeywordEvidenceSnapshot, validateKeywordEvidenceSnapshot, keywordScoringGroupLimits } from "./keyword-evidence-snapshot.mjs";
 import { validateKeywordEvidencePreparation } from "./keyword-evidence-orchestrator.mjs";
 
-export const KEYWORD_SCORING_VERSION = "keyword-scoring-v1";
+export const KEYWORD_SCORING_VERSION = "keyword-scoring-v2";
 export const KEYWORD_SCORING_COMPONENTS = Object.freeze({
   semanticMatch: 35,
   searchDemand: 10,
@@ -15,11 +15,14 @@ export const KEYWORD_SCORING_COMPONENTS = Object.freeze({
   sourceTrust: 7
 });
 
-const GROUP_LIMITS = Object.freeze({
-  title_keywords: { min: 3, max: 5 },
-  attribute_and_tag_keywords: { min: 6, max: 12 },
-  description_long_tail: { min: 10, max: 20 }
+// Current policy requires one fact-supported title term; other groups are optional.
+// Version 1 remains readable with its original 3/6/10 minima.
+export const KEYWORD_GROUP_LIMITS_POLICY = Object.freeze({
+  version: KEYWORD_SCORING_VERSION,
+  decidedBy: "owner",
+  decidedOn: "2026-09-18"
 });
+const GROUP_LIMITS = keywordScoringGroupLimits(KEYWORD_SCORING_VERSION);
 const DYNAMIC_COMPONENTS = new Set(["searchDemand", "addToCartConversion", "titleDensity", "searchGrowth", "returnCancelHealth"]);
 
 function isObject(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
@@ -45,7 +48,13 @@ function binding(preparation) {
   };
 }
 
-function metricKey(candidate) { return `${candidate.term.toLocaleLowerCase()}\u0000${candidate.matchType}`; }
+/**
+ * 指标证据按这个键对上候选词。**导出是为了让提供方复用同一份定义**——
+ * 键格式在两处各写一遍，早晚会漂，漂了就报 KEYWORD_SCORING_METRIC_KEY_OUT_OF_SCOPE，
+ * 而那句话读不出真正的原因。行为没有任何变化，只是把已有函数暴露出去。
+ */
+export function keywordMetricKey(candidate) { return `${candidate.term.toLocaleLowerCase()}\u0000${candidate.matchType}`; }
+const metricKey = keywordMetricKey;
 function normalizedKeyword(value) { return value.trim().toLocaleLowerCase().replace(/\s+/g, " "); }
 
 function validStructuredRaw(raw) {
@@ -232,7 +241,7 @@ export function scoreAndGroupKeywordEvidence({ preparation, metricEvidence, coll
   };
   scoringContext.scoringPayloadFingerprint = digest({ groups, rejected, gaps, preparationFingerprint: preparation.preparationFingerprint, metricEvidenceFingerprint: scoringContext.metricEvidenceFingerprint });
   const snapshot = createKeywordEvidenceSnapshot({
-    snapshotId: `keyword-evidence:${preparation.identity.candidateId}:${preparation.identity.dataRevision}:${digest({ preparation: preparation.preparationFingerprint, metrics: scoringContext.metricEvidenceFingerprint }).slice(0, 16)}`,
+    snapshotId: `keyword-evidence:${preparation.identity.candidateId}:${preparation.identity.dataRevision}:${digest({ scoringVersion: KEYWORD_SCORING_VERSION, preparation: preparation.preparationFingerprint, metrics: scoringContext.metricEvidenceFingerprint }).slice(0, 16)}`,
     identity: preparation.identity,
     bindings: preparation.bindings,
     currentBinding: currentBinding ?? binding(preparation),
@@ -259,7 +268,9 @@ export function validateKeywordScoredSnapshot(snapshot, { currentBinding, expect
   const base = validateKeywordEvidenceSnapshot(snapshot, { currentBinding, asOf });
   if (!base.valid) errors.push(...base.errors.map((item) => `${item.path}:${item.message}`));
   const context = snapshot?.scoringContext;
-  if (!isObject(context) || context.scoringVersion !== KEYWORD_SCORING_VERSION) errors.push("scoringContext无效");
+  const groupLimits = keywordScoringGroupLimits(context?.scoringVersion);
+  if (!isObject(context) || groupLimits === null) return { valid: false, errors: [...errors, "scoringContext无效"] };
+  if (JSON.stringify(stable(context.groupLimits)) !== JSON.stringify(stable(groupLimits))) errors.push("groupLimits与评分版本不一致");
   if (expectedPreparationFingerprint && context?.preparationFingerprint !== expectedPreparationFingerprint) errors.push("Preparation指纹漂移");
   if (expectedMetricEvidenceFingerprint && context?.metricEvidenceFingerprint !== expectedMetricEvidenceFingerprint) errors.push("metrics指纹漂移");
   const execution = context?.execution;
@@ -267,13 +278,13 @@ export function validateKeywordScoredSnapshot(snapshot, { currentBinding, expect
   const all = Object.values(snapshot?.groups ?? {}).flat();
   const terms = all.map((item) => normalizedKeyword(item.keyword));
   if (new Set(terms).size !== terms.length) errors.push("跨组关键词重复");
-  for (const [group, limit] of Object.entries(GROUP_LIMITS)) {
+  for (const [group, limit] of Object.entries(groupLimits)) {
     const count = snapshot?.groups?.[group]?.length ?? -1;
     if (count < 0 || count > limit.max) errors.push(`${group}数量越界`);
   }
   for (const item of all) {
     if (!Object.keys(KEYWORD_SCORING_COMPONENTS).every((name) => Object.hasOwn(item.components ?? {}, name)) || Object.keys(item.components ?? {}).length !== 9) errors.push(`${item.keyword}:九组件不完整`);
-    if (!Number.isFinite(item.evidenceCoverage) || item.evidenceCoverage < 0 || item.evidenceCoverage > 1 || item.scoringVersion !== KEYWORD_SCORING_VERSION ||
+    if (!Number.isFinite(item.evidenceCoverage) || item.evidenceCoverage < 0 || item.evidenceCoverage > 1 || item.scoringVersion !== context.scoringVersion ||
         !["target_fact", "exact_match", "substitute", "multi_seed"].includes(item.matchType)) errors.push(`${item.keyword}:K3扩展字段无效`);
     for (const [name, component] of Object.entries(item.components ?? {})) {
       try { normalizeComponent(name, component); } catch { errors.push(`${item.keyword}:${name}组件无效`); }
@@ -294,7 +305,7 @@ export function validateKeywordScoredSnapshot(snapshot, { currentBinding, expect
         !Array.isArray(rejected.sourceRefs) || !Array.isArray(rejected.factRefs) || !nonEmpty(rejected.reason) ||
         !(rejected.score === null || Number.isFinite(rejected.score)) || !Number.isFinite(rejected.confidence)) errors.push("rejected记录不完整");
   }
-  const computedGaps = Object.entries(GROUP_LIMITS).filter(([group, limit]) => snapshot.groups?.[group]?.length < limit.min)
+  const computedGaps = Object.entries(groupLimits).filter(([group, limit]) => snapshot.groups?.[group]?.length < limit.min)
     .map(([group, limit]) => ({ group, requiredMin: limit.min, actual: snapshot.groups[group].length, missing: limit.min - snapshot.groups[group].length }));
   if (JSON.stringify(context?.gaps) !== JSON.stringify(computedGaps)) errors.push("gaps与分组状态不一致");
   const selectedCount = Object.values(snapshot.groups ?? {}).reduce((sum, items) => sum + items.length, 0);

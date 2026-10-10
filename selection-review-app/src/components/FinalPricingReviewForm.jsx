@@ -20,8 +20,8 @@ export default function FinalPricingReviewForm({ candidate, onSave, disabled = f
   }
   return <section className="workflow-card" aria-label="最终定价多样本比较">
     <h3>最终定价多样本比较</h3>
-    <p>前期A/B允许单竞品参考；最终定价需多个有效样本比较。本表只使用已保存资料，不打开外站。</p>
-    <p>B参考成交价：{profit?.recommendedSalePriceRub ?? '未取得'} RUB。此价格尚不能代替最终比较。</p>
+    <p>本表用于主人主动复核或调整售价，只使用已保存资料，不打开外站。有效且达到批准门槛的正式方案优先沿用，不要求为价格差异重复研究。</p>
+    <p>已保存成交价：{profit?.recommendedSalePriceRub ?? '未取得'} RUB。提交本表时，仍须完成所选样本的核验。</p>
     <FormRevisionNotice guard={guard} disabled={saving} />
     {error && <p role="alert">{error}</p>}
     <p>已选择 {form.reviews.length} 条待审样本，尚不代表有效可比样本数量。</p>

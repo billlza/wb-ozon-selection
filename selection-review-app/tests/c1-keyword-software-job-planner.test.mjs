@@ -351,3 +351,39 @@ test("秘密字段在计划产生前拒绝，发布Schema锁定三状态和零�
   assert.equal(schema.properties.executionPolicy.properties.codexDispatchAllowed.const, false);
   assert.equal(schema.additionalProperties, false);
 });
+
+// `skuPackage.fulfillmentMode` 生产代码里从来没有人写过——只有读、没有写，schema 也没定义它，
+// 真实候选一个都不带。这道门因此在生产里谁都过不去。下面三条钉住 2026-09-17 的修法：
+// 值从**已冻结的利润模型**里取（成本口径的 salesScheme），两处口径必须一致，不一致就照实说读不准。
+function frozenSalesScheme(value, snapshotScheme, contextScheme = snapshotScheme) {
+  const profit = value.lifecycleV11.skuPackage.c1ProductPlan.inputSnapshots.profitModel;
+  profit.otherCosts = {
+    costPolicySnapshot: { scope: { salesScheme: snapshotScheme } },
+    costPolicyContext: { salesScheme: contextScheme }
+  };
+  return value;
+}
+
+test("包上没写履约模式时，从已冻结的利润模型里取，不再把整条路堵死", () => {
+  const value = frozenSalesScheme(candidate(), "rfbs");
+  delete value.lifecycleV11.skuPackage.fulfillmentMode;
+  const result = planC1KeywordEvidenceSoftwareJob({ candidate: value, expectedRevision: 31, plannedAt: NOW });
+  assert.equal(result.status, "ready", "冻结数据里有销售模式就不该报缺口");
+  assert.equal(buildC1KeywordSoftwareJobPlan({ candidate: value, expectedRevision: 31, plannedAt: NOW })
+    .bindings.fulfillment, "rfbs", "作业身份里要带上取到的那个值，不能留空");
+});
+
+test("冻结数据里两处口径不一致时照实说读不准，绝不替主人挑一个", () => {
+  const value = frozenSalesScheme(candidate(), "rfbs", "fbp");
+  delete value.lifecycleV11.skuPackage.fulfillmentMode;
+  const result = planC1KeywordEvidenceSoftwareJob({ candidate: value, expectedRevision: 31, plannedAt: NOW });
+  assert.equal(result.status, "not_ready");
+  assert.deepEqual(result.gaps.map(item => item.code), ["fulfillment_missing"]);
+});
+
+test("包上真写了履约模式就以它为准，冻结数据只是兜底", () => {
+  const value = frozenSalesScheme(candidate(), "fbp");
+  value.lifecycleV11.skuPackage.fulfillmentMode = "rfbs";
+  assert.equal(buildC1KeywordSoftwareJobPlan({ candidate: value, expectedRevision: 31, plannedAt: NOW })
+    .bindings.fulfillment, "rfbs");
+});

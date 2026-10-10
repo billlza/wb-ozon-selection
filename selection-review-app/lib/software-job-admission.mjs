@@ -3,7 +3,7 @@ import { A_PRODUCT_DETAIL_JOB_TYPE, assertAProductDetailScope, assertAProductDet
 import { A_DISCOVERY_JOB_TYPE, assertADiscoveryScope, assertADiscoveryBatchSource,
   assertADiscoveryAuthorization, assertADiscoveryCredential } from "./a-discovery-contract.mjs";
 import { D_PLATFORM_OBSERVATION_JOB_TYPE, assertDPlatformObservationScope, createDPlatformObservationAdmission } from './d-platform-observation-contract.mjs';
-import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
+import { fingerprintCanonicalRecord, dProductionJobRound } from "./production-contract-primitives.mjs";
 import { assertSafeRuntimeRecord, workerSatisfiesCapabilities } from "./runtime-identity.mjs";
 import { legacyKeywordJobBlocksPaidExecution } from "./keyword-evidence-software-job-state.mjs";
 import { normalizeC1SourceIdentity } from "./c1-product-plan.mjs";
@@ -536,6 +536,20 @@ function scopeOccupies(job) {
     (job.status === "completed" && job.resultEnvelope?.applicationDisposition === "revision_conflict_not_applied");
 }
 
+/**
+ * 同一授权只允许有一条可能写平台的 D 路径。已经停在「失败，且一个请求都没发出去」的旧轮次
+ * 不再是这样一条路径，所以主人明确再派一轮时它不算冲突；除此以外一律按冲突拒绝。
+ */
+function supersededDProductionRound(existing, job) {
+  const fingerprint = job.scopeBinding.authorizationFingerprint;
+  return job.jobType === "d_production_execution" && existing.jobType === job.jobType &&
+    typeof fingerprint === "string" && existing.jobId !== job.jobId &&
+    dProductionJobRound(existing.jobId, fingerprint) !== null && dProductionJobRound(job.jobId, fingerprint) !== null &&
+    dProductionJobRound(existing.jobId, fingerprint) < dProductionJobRound(job.jobId, fingerprint) &&
+    existing.status === "failed" && existing.externalRequestState === "not_sent" &&
+    existing.externalRequestRef === null && existing.resultEnvelope === null;
+}
+
 export function assertNoSoftwareJobScopeConflict(document, job) {
   if (!job?.scopeBinding) return;
   const targetScope = normalizeSoftwareJobScopeKey(job);
@@ -543,7 +557,8 @@ export function assertNoSoftwareJobScopeConflict(document, job) {
     if (sameSoftwareJobIdentity(existing, job)) continue;
     if (!existing?.scopeBinding) continue;
     if (isDESoftwareJob(job) && existing.jobType === job.jobType &&
-        existing.scopeBinding.authorizationRef === job.scopeBinding.authorizationRef) {
+        existing.scopeBinding.authorizationRef === job.scopeBinding.authorizationRef &&
+        !supersededDProductionRound(existing, job)) {
       throw new Error("SOFTWARE_JOB_SCOPE_CONFLICT");
     }
     if (normalizeSoftwareJobScopeKey(existing) === targetScope && scopeOccupies(existing)) {

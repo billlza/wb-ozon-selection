@@ -80,7 +80,15 @@ function aSubmission(dataRevision, candidateId = "A-JOB-1") {
   };
 }
 
-function heartbeat(version = "1.2.7") {
+function patch(pathname, body) {
+  return fetch(`${baseUrl}${pathname}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Origin: baseUrl, "Sec-Fetch-Site": "same-origin" },
+    body: JSON.stringify(body)
+  });
+}
+
+function heartbeat(version = "1.4.1") {
   return post("/api/extension/heartbeat", {
     version,
     backgroundReady: true,
@@ -88,7 +96,7 @@ function heartbeat(version = "1.2.7") {
   }, { Origin: extensionOrigin });
 }
 
-function claimJob(jobId, version = "1.2.7") {
+function claimJob(jobId, version = "1.4.1") {
   return post(`/api/extension/capture-jobs/${jobId}/claim`, { version }, { Origin: extensionOrigin });
 }
 
@@ -137,7 +145,7 @@ test("A确认只建立本次作业，明确领取一次并原子保存SKU，心�
   await writeFile(dataFile, JSON.stringify({
     meta: { version: 2, title: "test", updatedAt: "2026-08-19T00:00:00.000Z", automationStarted: false },
     rules: {},
-    candidates: [candidate("A-JOB-1"), candidate("A-FAIL"), candidate("A-TIMEOUT"), other],
+    candidates: [candidate("A-JOB-1"), candidate("A-FAIL"), candidate("A-TIMEOUT"), candidate("A-DRIFT"), other],
     dispatches: [],
     nodeDispatches: [],
     workflowComments: [],
@@ -178,7 +186,7 @@ test("A确认只建立本次作业，明确领取一次并原子保存SKU，心�
   assert.equal(queued.status, "supplier_capture_job_queued");
   assert.equal(queued.captureJob.status, "queued");
   assert.equal(queued.captureJob.attempt, 0);
-  assert.equal(queued.captureJob.requiredExtensionVersion, "1.2.7");
+  assert.equal(queued.captureJob.requiredExtensionVersion, "1.4.1");
   assert.equal(queued.candidate.sourceCapture.status, "waiting_extension");
   assert.equal(queued.bStarted, false);
   assert.equal(queued.c1Created, false);
@@ -257,7 +265,7 @@ test("A确认只建立本次作业，明确领取一次并原子保存SKU，心�
   assert.equal(result.dispatch, null);
 
   state = await (await fetch(`${baseUrl}/api/state`)).json();
-  assert.equal(state.candidates.length, 4);
+  assert.equal(state.candidates.length, 5);
   assert.equal(state.meta.automationStarted, false);
   const persisted = JSON.parse(await readFile(dataFile, "utf8"));
   assert.equal(persisted.dispatches.length, 0);
@@ -335,6 +343,101 @@ test("A确认只建立本次作业，明确领取一次并原子保存SKU，心�
   assert.equal((await repeat.json()).code, "previous_capture_requires_review");
   assert.equal(await readFile(dataFile, "utf8"), beforeRepeat);
   assert.equal(timedOut.workflowStatus, "codex_processing");
-  assert.equal((await (await heartbeat("1.2.7")).json()).captureJob, null, "unknown_outcome不得自动重新领取");
+  assert.equal((await (await heartbeat("1.4.1")).json()).captureJob, null, "unknown_outcome不得自动重新领取");
+
+  // 等插件的过程中主人改了别的资料，商品修订号就会前进。收口只认这条采集记录本身（captureId），不再因为修订号变了
+  // 就放弃：否则候选永远停在 waiting_extension，previous_capture_requires_review 会拒绝之后的每一次采集申请。
+  const driftQueued = await post("/api/candidates/A-DRIFT/lifecycle/a-confirm", aSubmission(1, "A-DRIFT"));
+  assert.equal(driftQueued.status, 202);
+  const driftJob = await driftQueued.json();
+  assert.equal(driftJob.candidate.sourceCapture.status, "waiting_extension");
+  const noted = await patch("/api/candidates/A-DRIFT", { dataRevision: driftJob.candidate.dataRevision, notes: "等插件的时候又补了一句备注" });
+  assert.equal(noted.status, 200);
+  const driftedRevision = (await noted.json()).candidate.dataRevision;
+  assert.equal(driftedRevision, driftJob.candidate.dataRevision + 1, "这次改动必须真的推进修订号");
+  await new Promise((resolve) => setTimeout(resolve, 2400));
+  state = await (await fetch(`${baseUrl}/api/state`)).json();
+  const drifted = state.candidates.find((item) => item.id === "A-DRIFT");
+  assert.equal(drifted.sourceCapture.status, "failed", "修订号变了也必须收口，不能让候选永远等插件");
+  assert.equal(drifted.sourceCapture.failureCode, "extension_job_unclaimed");
+  assert.equal(drifted.sourceCapture.jobStatus, "failed");
+  assert.equal(drifted.sourceCapture.writeOccurred, false);
+  assert.equal(drifted.workflowStatus, "codex_processing");
+  // 收口之后主人可以重新申请采集；这正是卡住时做不到的那一步。
+  const driftRetry = await post("/api/candidates/A-DRIFT/lifecycle/a-confirm", aSubmission(drifted.dataRevision, "A-DRIFT"));
+  assert.equal(driftRetry.status, 202, "旧作业已收口，新的采集申请必须被接受");
+  assert.equal((await driftRetry.json()).captureJob.status, "queued");
+
+  assert.equal(stderr.join(""), "");
+});
+
+test("拼多多货源链接走同一条作业：A确认建作业、插件领取一次、只按拼多多规则核验回传", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "source-capture-job-pdd-"));
+  const dataFile = path.join(directory, "candidates.json");
+  // Synthetic goods id and share token only.
+  const goodsUrl = "https://mobile.yangkeduo.com/goods.html?goods_id=123456789012";
+  const pdd = (id) => ({ ...candidate(id), sourceUrl: "https://p.pinduoduo.com/SyntheticTok" });
+  await writeFile(dataFile, JSON.stringify({
+    meta: { version: 2, title: "test", updatedAt: "2026-08-19T00:00:00.000Z", automationStarted: false },
+    rules: {}, candidates: [pdd("PDD-1"), pdd("PDD-WRONG")], dispatches: [], nodeDispatches: [], workflowComments: [],
+    controlAlerts: [], evidencePacks: []
+  }));
+  const child = spawn(process.execPath, [path.join(appDir, "server.mjs"), "--api-only"], {
+    cwd: appDir,
+    env: {
+      ...process.env,
+      SELECTION_REVIEW_DATA_FILE: dataFile,
+      SELECTION_REVIEW_STORE_BINDINGS_JSON: JSON.stringify([{ targetStore: "dandanshu", platform: "ozon", storeRef: SYNTHETIC_STORE_REF }]),
+      SELECTION_REVIEW_API_PORT: String(port),
+      SELECTION_REVIEW_ALLOWED_ORIGINS: baseUrl,
+      SELECTION_REVIEW_ALLOWED_EXTENSION_ORIGINS: extensionOrigin,
+      SELECTION_REVIEW_AUTO_DELIVER: "off",
+      SELECTION_REVIEW_CODEX_DISPATCH: "off"
+    },
+    stdio: ["ignore", "ignore", "pipe"]
+  });
+  const stderr = [];
+  child.stderr.on("data", (chunk) => stderr.push(String(chunk)));
+  t.after(() => stopApiProcess(child));
+  await waitForHealth(child, stderr);
+
+  const submission = (dataRevision, candidateId) => ({ ...aSubmission(dataRevision, candidateId),
+    supplierConfirmation: { productUrl: "https://p.pinduoduo.com/SyntheticTok", ownerSupplyConfirmed: false } });
+  const pddEvidence = () => ({ ...evidence(), offerId: "123456789012", sourceUrl: goodsUrl, title: "合成拼多多宠物背心",
+    titleSource: "rawData.goods.goodsName", offerIdSource: "rawData.goods.goodsID" });
+  async function claimFor(candidateId) {
+    const queuedResponse = await post(`/api/candidates/${candidateId}/lifecycle/a-confirm`, submission(1, candidateId));
+    assert.equal(queuedResponse.status, 202, await queuedResponse.clone().text());
+    const queued = await queuedResponse.json();
+    const claimResponse = await claimJob(queued.captureJob.jobId);
+    assert.equal(claimResponse.status, 200);
+    return (await claimResponse.json()).captureJob;
+  }
+
+  const job = await claimFor("PDD-1");
+  assert.equal(job.sourceUrl, "https://p.pinduoduo.com/SyntheticTok");
+  assert.equal(job.allowShortLinkResolution, true);
+  const resultResponse = await post("/api/candidates/PDD-1/source-capture/result", {
+    captureId: job.captureId, token: job.token, dataRevision: job.dataRevision, status: "captured",
+    resolvedSourceUrl: `${goodsUrl}&refer_share_id=synthetic`, evidence: pddEvidence()
+  }, { Origin: extensionOrigin });
+  assert.equal(resultResponse.status, 200);
+  const captured = (await resultResponse.json()).candidate.sourceCapture;
+  assert.equal(captured.status, "captured_waiting_owner_selection");
+  assert.equal(captured.offerId, "123456789012");
+  assert.equal(captured.sourceUrl, goodsUrl);
+  assert.equal(captured.skuChoices.length, 2);
+
+  // A 1688 page reported for a Pinduoduo job is not this goods, whatever its evidence says.
+  const wrongJob = await claimFor("PDD-WRONG");
+  const wrongResponse = await post("/api/candidates/PDD-WRONG/source-capture/result", {
+    captureId: wrongJob.captureId, token: wrongJob.token, dataRevision: wrongJob.dataRevision, status: "captured",
+    resolvedSourceUrl: "https://detail.1688.com/offer/876240928352.html", evidence: evidence()
+  }, { Origin: extensionOrigin });
+  assert.equal(wrongResponse.status, 200);
+  const rejected = (await wrongResponse.json()).candidate.sourceCapture;
+  assert.equal(rejected.status, "failed");
+  assert.equal(rejected.failureCode, "short_link_resolution_failed");
+  assert.match(rejected.reason, /^拼多多短链/);
   assert.equal(stderr.join(""), "");
 });

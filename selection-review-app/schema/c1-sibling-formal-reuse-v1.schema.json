@@ -1,0 +1,93 @@
+{
+  "$id": "c1-sibling-formal-reuse-v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "recordV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "observedAt", "sourceKind", "sourceCandidateId", "sourceCandidateRevision", "targetCandidateRevision", "sourcePlanFingerprint", "sourceContentFingerprint", "targetIdentity", "targetPlanIdentity", "targetPlanId", "resultSkuRevision", "adoptedFactPaths", "adoptedFactFingerprint", "contentFingerprint", "differences"],
+      "properties": {
+        "schemaVersion": { "const": "c1-sibling-neutral-reuse-v2" },
+        "observedAt": { "type": "string", "format": "date-time" },
+        "sourceKind": { "enum": ["provider_receipt", "owner_confirmed_editorial"] },
+        "sourceCandidateId": { "type": "string", "minLength": 1 },
+        "sourceCandidateRevision": { "type": "integer", "minimum": 0 },
+        "targetCandidateRevision": { "type": "integer", "minimum": 0 },
+        "sourcePlanFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "sourceContentFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "targetIdentity": { "$ref": "c1-ai-draft-request-v1#/$defs/g1Identity" },
+        "targetPlanIdentity": { "$ref": "c1-product-plan-v1.1#/properties/identity" },
+        "targetPlanId": { "type": "string", "minLength": 1 },
+        "resultSkuRevision": { "type": "integer", "minimum": 1 },
+        "adoptedFactPaths": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "adoptedFactFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "contentFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "differences": {
+          "type": "object", "additionalProperties": false,
+          "required": ["title", "description", "bulletIndexes", "removedKeywords", "removedKeywordEvidenceRefs", "sourceColorValues", "sourceColor"],
+          "properties": {
+            "title": { "type": "boolean" }, "description": { "type": "boolean" },
+            "bulletIndexes": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+            "removedKeywords": { "type": "array", "items": { "type": "string" } },
+            "removedKeywordEvidenceRefs": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+            "sourceColorValues": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+            "sourceColor": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "observedAt", "sourceKind", "sourceCandidateId", "sourceCandidateRevision", "targetCandidateRevision", "sourcePlan", "sourceIdentity", "request", "receipt", "settledExecution", "targetIdentity", "targetPlanIdentity", "targetPlanId", "resultSkuRevision", "adoptedFactPaths", "sourceFactFingerprint", "targetFactFingerprint"],
+      "properties": {
+        "schemaVersion": { "const": "c1-sibling-formal-reuse-v1" },
+        "observedAt": { "type": "string", "format": "date-time" },
+        "sourceKind": { "enum": ["provider_receipt", "owner_confirmed_editorial"] },
+        "sourceCandidateId": { "type": "string", "minLength": 1 },
+        "sourceCandidateRevision": { "type": "integer", "minimum": 0 },
+        "targetCandidateRevision": { "type": "integer", "minimum": 0 },
+        "sourcePlan": { "$ref": "c1-product-plan-v1.1" },
+        "sourceIdentity": { "$ref": "c1-ai-draft-request-v1#/$defs/g1Identity" },
+        "request": { "oneOf": [{ "type": "null" }, { "$ref": "c1-ai-draft-request-v1" }] },
+        "receipt": { "oneOf": [{ "type": "null" }, { "$ref": "c1-ai-draft-receipt-v1" }] },
+        "settledExecution": { "oneOf": [{ "type": "null" }, { "$ref": "c1-ai-settled-execution-v1" }] },
+        "targetIdentity": { "$ref": "c1-ai-draft-request-v1#/$defs/g1Identity" },
+        "targetPlanIdentity": { "$ref": "c1-product-plan-v1.1#/properties/identity" },
+        "targetPlanId": { "type": "string", "minLength": 1 },
+        "resultSkuRevision": { "type": "integer", "minimum": 1 },
+        "adoptedFactPaths": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "sourceFactFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "targetFactFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "allOf": [
+        { "if": { "properties": { "sourceKind": { "const": "provider_receipt" } } }, "then": { "properties": { "request": { "$ref": "c1-ai-draft-request-v1" }, "receipt": { "$ref": "c1-ai-draft-receipt-v1" }, "settledExecution": { "$ref": "c1-ai-settled-execution-v1" } } } },
+        { "if": { "properties": { "sourceKind": { "const": "owner_confirmed_editorial" } } }, "then": { "properties": { "request": { "type": "null" }, "receipt": { "type": "null" }, "settledExecution": { "type": "null" } } } }
+      ]
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "sourceCandidateId", "targetIdentity", "resultSkuRevision", "recordFingerprint"],
+      "properties": {
+        "schemaVersion": { "const": "c1-sibling-formal-reference-v1" },
+        "sourceCandidateId": { "type": "string", "minLength": 1 },
+        "targetIdentity": { "$ref": "c1-ai-draft-request-v1#/$defs/g1Identity" },
+        "resultSkuRevision": { "type": "integer", "minimum": 1 },
+        "recordFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "draftOnlySeo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "sourceType", "formalProviderResultAccepted", "reason", "siblingFormalReuseRecord"],
+      "properties": {
+        "status": { "const": "draft_only" },
+        "sourceType": { "const": "sibling_shared_formal_provider" },
+        "formalProviderResultAccepted": { "const": false },
+        "reason": { "type": "null" },
+        "siblingFormalReuseRecord": { "oneOf": [{ "$ref": "#/$defs/record" }, { "$ref": "#/$defs/recordV2" }, { "$ref": "#/$defs/reference" }] }
+      }
+    }
+  }
+}

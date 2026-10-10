@@ -1,0 +1,10 @@
+{
+  "profileVersion": "platform-profile-ozon-2026-10-09",
+  "platform": "ozon",
+  "verificationStatus": "unverified",
+  "verificationNote": "数值为起草时的参考，未按 Ozon 官方文档逐项核对；标题、描述的正式上限仍以 C1 冻结 Schema 的 seoRules 为准。",
+  "variantModel": "offer_per_variant_grouped_by_model",
+  "content": { "titleMaxChars": null, "descriptionMaxChars": 6000, "language": "ru" },
+  "media": { "maxImages": 15, "minWidth": 200, "minHeight": 200, "aspectRatio": null, "aspectTolerance": null },
+  "price": { "writeCurrency": "CNY", "buyerCurrency": "RUB" }
+}

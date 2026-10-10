@@ -4,16 +4,23 @@ import {
   buildC1AiDraftRequest,
   assertAuthorizedC1Execution,
   assertC1ProviderOutcome,
+  assertC1ServiceTiming,
   createC1AiAccounting,
   validateC1AiAccounting,
-  validateC1AiDraftReceipt
+  resolveC1AiDraftOutputContract,
+  validateC1AiDraftReceipt,
+  validateC1AiDraftRequest,
+  C1_GATEWAY_INPUT_ENCODING_VERSION
 } from "./c1-ai-draft-contract.mjs";
+import { encodeC1GatewayInput, C1_GATEWAY_INPUT_ENCODING_INSTRUCTION } from "./c1-gateway-input-encoding.mjs";
 import { assertCanonicalFrozenRef } from "./production-contract-primitives.mjs";
 import { normalizeServiceOrigin } from "./runtime-configuration.mjs";
 
 export const C1_AI_GATEWAY_VERSION = "c1-ai-gateway-v1";
 export const C1_GATEWAY_SOURCE_BINDING_VERSION = "c1-inference-source-binding-v1";
 export const C1_AI_GATEWAY_TOTAL_TIMEOUT_MS = 60_000;
+// The deployed inference contract counts UTF-16 characters, not bytes or tokens.
+export const C1_AI_GATEWAY_MAX_TEXT_CHARS = 24_000;
 
 const MODEL_BY_PROVIDER = Object.freeze({
   terra: "gpt-5.6-terra",
@@ -27,46 +34,7 @@ const SOL_TASK_TYPES = new Set([
   "multi_image_sku_mapping"
 ]);
 
-const CITED_TEXT_SCHEMA = Object.freeze({
-  type: "object",
-  additionalProperties: false,
-  required: ["text", "factRefs", "keywordRefs", "assertions"],
-  properties: {
-    text: { type: "string", minLength: 1, maxLength: 6000 },
-    factRefs: { type: "array", minItems: 1, maxItems: 60, items: { type: "string", minLength: 1, maxLength: 500 } },
-    keywordRefs: { type: "array", minItems: 1, maxItems: 60, items: { type: "string", minLength: 1, maxLength: 500 } },
-    assertions: {
-      type: "array",
-      minItems: 1,
-      maxItems: 60,
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["factPath", "value"],
-        properties: {
-          factPath: { type: "string", minLength: 1, maxLength: 500 },
-          value: {}
-        }
-      }
-    }
-  }
-});
-
-export const C1_AI_GATEWAY_OUTPUT_SCHEMA = Object.freeze({
-  type: "object",
-  additionalProperties: false,
-  required: ["status", "locale", "claimCoverage", "title", "description", "bulletPoints", "searchKeywords", "unsupportedClaims"],
-  properties: {
-    status: { type: "string", enum: ["draft_only"] },
-    locale: { type: "string", enum: ["ru-RU"] },
-    claimCoverage: { type: "string", enum: ["complete"] },
-    title: CITED_TEXT_SCHEMA,
-    description: CITED_TEXT_SCHEMA,
-    bulletPoints: { type: "array", minItems: 1, maxItems: 10, items: CITED_TEXT_SCHEMA },
-    searchKeywords: { type: "array", minItems: 1, maxItems: 50, items: CITED_TEXT_SCHEMA },
-    unsupportedClaims: { type: "array", maxItems: 0, items: { type: "string" } }
-  }
-});
+export { C1_AI_LEGACY_OUTPUT_SCHEMA as C1_AI_GATEWAY_OUTPUT_SCHEMA } from "./c1-ai-draft-contract.mjs";
 
 function stable(value) {
   if (Array.isArray(value)) return value.map(stable);
@@ -107,7 +75,7 @@ function gatewayEvidenceRefs(request) {
     {
       id: `c1-facts:${request.identity.c1PlanId}`,
       kind: "verified_product_facts",
-      contentSha256: sha256(request.verifiedFacts),
+      contentSha256: sha256(request.factDefinitionsVersion ? { verifiedFacts: request.verifiedFacts, factDefinitionsVersion: request.factDefinitionsVersion, factDefinitions: request.factDefinitions } : request.verifiedFacts),
       authorizedForAi: true
     },
     {
@@ -121,27 +89,49 @@ function gatewayEvidenceRefs(request) {
       kind: "seo_keyword_evidence",
       contentSha256: sha256(request.keywordEvidence),
       authorizedForAi: true
-    }
+    },
+    ...(request.referenceContext ? [{ id: `${request.keywordEvidence.evidenceId}#referenceContext`, kind: "public_competitor_text",
+      contentSha256: sha256(request.referenceContext), authorizedForAi: true }] : [])
   ];
 }
 
 function gatewayPrompt(request) {
-  return [
-    "只根据下列已核验事实、公开竞品文字和关键词证据生成俄语商品文案草稿。",
-    "每个输出项必须引用factRefs和keywordRefs，并逐项列出assertions。不得新增材质、品牌、尺寸、功能、认证或其他未核验事实。输出仅为draft_only。",
-    JSON.stringify({
+  const compact = request.gatewayInputEncodingVersion === C1_GATEWAY_INPUT_ENCODING_VERSION;
+  // Scoring is complete before writing. Keep its full audit in the immutable
+  // request/evidence checksum; the writer receives every term, decision, source
+  // and permitted placement, without the scoring calculator's intermediate data.
+  const keywordEvidence = compact ? {
+    ...request.keywordEvidence,
+    keywords: request.keywordEvidence.keywords.map(keyword => Object.fromEntries(
+      Object.entries(keyword).filter(([key]) => key !== "components")))
+  } : request.keywordEvidence;
+  const payload = {
       verifiedFacts: request.verifiedFacts,
+      ...(request.factDefinitionsVersion ? { factDefinitionsVersion: request.factDefinitionsVersion, factDefinitions: request.factDefinitions } : {}),
       competitorTextEvidence: request.competitorTextEvidence,
-      keywordEvidence: request.keywordEvidence,
+      keywordEvidence,
+      ...(request.referenceContext ? { referenceContext: request.referenceContext } : {}),
       seoRules: request.seoRules
-    })
+    };
+  return [
+    ...resolveC1AiDraftOutputContract(request).instructions,
+    ...(compact ? ["关键词已由上游完成评分和用途筛选。当前写作输入保留所有关键词、评分结论、来源与允许位置；components计算审计明细保存在原证据记录，不在本输入重复。不得自行重算评分、编造搜索量或扩大商品事实。", C1_GATEWAY_INPUT_ENCODING_INSTRUCTION] : []),
+    JSON.stringify(compact ? encodeC1GatewayInput(payload) : payload)
   ].join("\n\n");
 }
 
 export function buildC1GatewayJob({ candidateId, dataRevision, request }) {
+  if (!validateC1AiDraftRequest(request).valid) throw new Error("C1_AI_GATEWAY_REQUEST_INVALID");
   if (!nonEmpty(candidateId) || !Number.isInteger(dataRevision) || dataRevision < 0 ||
       candidateId !== request.sourceIdentity?.candidateId) {
     throw new Error("C1_AI_GATEWAY_INPUT_INVALID: 候选身份或修订号无效");
+  }
+  const { outputSchema } = resolveC1AiDraftOutputContract(request);
+  const prompt = gatewayPrompt(request);
+  if (prompt.trim().length > C1_AI_GATEWAY_MAX_TEXT_CHARS) {
+    throw new C1AiGatewayError("C1_AI_GATEWAY_INPUT_TOO_LARGE", "admission",
+      `文案输入为${prompt.trim().length}字符，超过服务上限${C1_AI_GATEWAY_MAX_TEXT_CHARS}；未发送请求`,
+      { externalRequestState: "failed" });
   }
   return Object.freeze({
     projectId: "three-store-selection",
@@ -152,8 +142,8 @@ export function buildC1GatewayJob({ candidateId, dataRevision, request }) {
     taskType: gatewayTaskType(request),
     model: MODEL_BY_PROVIDER[request.provider],
     evidenceRefs: gatewayEvidenceRefs(request),
-    input: { text: gatewayPrompt(request), images: [] },
-    outputSchema: structuredClone(C1_AI_GATEWAY_OUTPUT_SCHEMA)
+    input: { text: prompt, images: [] },
+    outputSchema
   });
 }
 
@@ -183,6 +173,7 @@ export class C1AiGatewayError extends Error {
     this.jobId = details.jobId || null;
     this.providerFailure = details.providerFailure || null;
     this.providerOutcome = details.providerOutcome == null ? null : assertC1ProviderOutcome(details.providerOutcome);
+    this.serviceTiming = details.serviceTiming == null ? null : assertC1ServiceTiming(details.serviceTiming, { gatewayJobId: this.jobId });
     this.externalRequestState = ["failed", "succeeded"].includes(details.externalRequestState) ? details.externalRequestState : "unknown_outcome";
     if (details.accounting && !validateC1AiAccounting(details.accounting).valid) throw new Error("C1_AI_ACCOUNTING_INVALID: 失败回执的对账记录无效");
     this.accounting = details.accounting ? structuredClone(details.accounting) : createC1AiAccounting({ gatewayJobId: this.jobId });
@@ -239,7 +230,18 @@ function providerOutcomeFromJob(job, jobId) {
 function assertGatewayReceipt({ job, gatewayJob, jobId, accounting }) {
   assertGatewayJobScope({ job, gatewayJob, jobId });
   if (job.receipt?.validation?.schemaValid !== true || !job.receipt.output || !nonEmpty(job.receipt.providerRequestId)) {
-    throw new C1AiGatewayError("C1_AI_GATEWAY_OUTPUT_INVALID", "output_schema", "C1网关输出没有通过严格Schema验证", { jobId, accounting, externalRequestState: "succeeded" });
+    throw new C1AiGatewayError("C1_AI_GATEWAY_OUTPUT_INVALID", "output_schema", "C1网关输出没有通过严格Schema验证", { jobId, accounting, externalRequestState: "succeeded", serviceTiming: gatewayServiceTiming(job, jobId, accounting, "succeeded") });
+  }
+}
+
+function gatewayServiceTiming(job, jobId, accounting, externalRequestState) {
+  if (job.startedAt == null || job.completedAt == null) return null;
+  try {
+    return assertC1ServiceTiming({ schemaVersion: "c1-service-timing-v1", gatewayJobId: jobId,
+      startedAt: job.startedAt, completedAt: job.completedAt }, { gatewayJobId: jobId });
+  } catch (error) {
+    if (error.message !== "C1_SERVICE_TIMING_INVALID") throw error;
+    throw new C1AiGatewayError("C1_AI_GATEWAY_TIMING_INVALID", "receipt", "网关服务时间无效，已保留原调用结果与耗用", { jobId, accounting, externalRequestState });
   }
 }
 
@@ -423,17 +425,67 @@ export async function runC1SavedDraftRequestThroughGateway({
   if (["queued", "running"].includes(job.status)) {
     throw new C1AiGatewayError("C1_AI_GATEWAY_STATUS_TIMEOUT", "gateway_status", "C1 AI任务状态读取超时；未重复创建任务", { jobId });
   }
+  return savedGatewayTerminalResult({ job, gatewayJob, jobId, savedRequest, admitted });
+}
+
+/** Read the already accepted job once. This entry point cannot create or poll a job. */
+export async function readC1SavedDraftResultFromGateway({
+  request,
+  authorizedExecution,
+  gatewayJobId,
+  gatewayUrl,
+  gatewayDeploymentMode = "local_development",
+  fetchImpl = fetch,
+  totalTimeoutMs = C1_AI_GATEWAY_TOTAL_TIMEOUT_MS,
+  clock = () => performance.now()
+}) {
+  const admitted = assertAuthorizedC1Execution({ request, authorizedExecution });
+  assertCanonicalFrozenRef(gatewayJobId, "gatewayJobId");
+  if (!Number.isInteger(totalTimeoutMs) || totalTimeoutMs < 1 || totalTimeoutMs > C1_AI_GATEWAY_TOTAL_TIMEOUT_MS ||
+      typeof fetchImpl !== "function" || typeof clock !== "function") {
+    throw new C1AiGatewayError("C1_AI_GATEWAY_OPTIONS_INVALID", "admission", "原任务读取必须使用不超过60秒的有界时限", { jobId: gatewayJobId });
+  }
+  const savedRequest = structuredClone(request);
+  const gatewayJob = buildSavedC1GatewayJob({ request: savedRequest, authorizedExecution: admitted });
+  const baseUrl = normalizeC1GatewayUrl(gatewayUrl, gatewayDeploymentMode);
+  const deadline = executionDeadline({ totalTimeoutMs, clock });
+  let job;
+  try {
+    job = await deadline.run(async signal => jsonResponse(await fetchImpl(
+      `${baseUrl}/v1/inference-jobs/${encodeURIComponent(gatewayJobId)}`,
+      { method: "GET", redirect: "error", signal }
+    ), "gateway_status", gatewayJobId), "gateway_status", gatewayJobId);
+  } catch (error) {
+    if (error instanceof C1AiGatewayError) throw error;
+    throw new C1AiGatewayError("C1_AI_GATEWAY_STATUS_UNAVAILABLE", "gateway_status", "原网关任务读取失败，结果仍未知", { jobId: gatewayJobId });
+  }
+  if (!job || typeof job !== "object" || Array.isArray(job) || !["queued", "running", "completed", "failed"].includes(job.status)) {
+    throw new C1AiGatewayError("C1_AI_GATEWAY_STATUS_INVALID", "gateway_status", "原网关任务返回了无法确认的状态，已停止读取", { jobId: gatewayJobId });
+  }
+  assertGatewaySourceBinding(job, gatewayJob, gatewayJobId);
+  assertGatewayJobScope({ job, gatewayJob, jobId: gatewayJobId });
+  if (["queued", "running"].includes(job.status)) {
+    return Object.freeze({ orchestrationVersion: C1_AI_GATEWAY_VERSION, jobId: gatewayJobId,
+      request: savedRequest, status: "pending", gatewayStatus: job.status,
+      codexWakeups: 0, externalPlatformAccesses: 0, platformWrites: 0 });
+  }
+  return savedGatewayTerminalResult({ job, gatewayJob, jobId: gatewayJobId, savedRequest, admitted });
+}
+
+function savedGatewayTerminalResult({ job, gatewayJob, jobId, savedRequest, admitted }) {
   if (job.status !== "completed" || !job.receipt) {
     if (["failed", "completed"].includes(job.status)) assertGatewayJobScope({ job, gatewayJob, jobId });
     const providerOutcome = providerOutcomeFromJob(job, jobId);
+    const accounting = gatewayAccounting(job, jobId);
+    const externalRequestState = job.status === "completed" ? "succeeded"
+      : providerOutcome.externalRequestState === "not_sent" ? "failed" : providerOutcome.externalRequestState;
     throw new C1AiGatewayError(
       /^[A-Z0-9_]{1,80}$/.test(job.failure?.code) ? job.failure.code : "C1_AI_INFERENCE_FAILED",
       /^[a-z_]{1,40}$/.test(job.failure?.layer) ? job.failure.layer : "inference",
       "C1 AI任务失败并已停止",
-      { jobId, externalRequestState: job.status === "completed" ? "succeeded"
-          : providerOutcome.externalRequestState === "not_sent" ? "failed" : providerOutcome.externalRequestState,
-        providerOutcome,
-        accounting: gatewayAccounting(job, jobId) }
+      { jobId, externalRequestState, providerOutcome,
+        serviceTiming: ["failed", "succeeded"].includes(providerOutcome.externalRequestState) ? gatewayServiceTiming(job, jobId, accounting, externalRequestState) : null,
+        accounting }
     );
   }
   assertGatewayJobScope({ job, gatewayJob, jobId });
@@ -441,7 +493,7 @@ export async function runC1SavedDraftRequestThroughGateway({
   assertGatewayReceipt({ job, gatewayJob, jobId, accounting });
   const receipt = domainReceipt({ request: savedRequest, job, jobId, softwareJobId: admitted.jobId, accounting });
   const validation = validateC1AiDraftReceipt({ request: savedRequest, receipt });
-  if (!validation.valid) throw new C1AiGatewayError("C1_AI_GATEWAY_RECEIPT_REJECTED", "receipt", "网关回执未通过C1事实与请求合同校验", { jobId, accounting, externalRequestState: "succeeded" });
+  if (!validation.valid) throw new C1AiGatewayError("C1_AI_GATEWAY_RECEIPT_REJECTED", "receipt", "网关回执未通过C1事实与请求合同校验", { jobId, accounting, externalRequestState: "succeeded", serviceTiming: gatewayServiceTiming(job, jobId, accounting, "succeeded") });
   return Object.freeze({
     orchestrationVersion: C1_AI_GATEWAY_VERSION,
     jobId,

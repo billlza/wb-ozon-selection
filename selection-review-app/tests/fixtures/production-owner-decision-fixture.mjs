@@ -1,3 +1,4 @@
+import { attachProductionProfitEvidence } from "./production-profit-evidence-fixture.mjs";
 import { attachSyntheticFinalPricingReview } from './final-pricing-review-fixture.mjs';
 import assert from "node:assert/strict";
 import { createFormalC1C2Fixture } from "./formal-c1-flow-fixture.mjs";
@@ -11,15 +12,20 @@ import { createSelectionReviewRuntimeConfiguration } from "../../lib/runtime-con
 import { buildProductionOwnerPreparationView, resolveProductionOwnerPreparation } from "../../lib/production-owner-preparation.mjs";
 
 /** Complete synthetic owner decision input; callers use the real commit to create authorization and D work. */
-export function productionOwnerDecisionFixture(createRepository = createMemoryBusinessStateRepository, { finalUploadAssets = localFinalAssets() } = {}) {
-  const formal = createFormalC1C2Fixture({ candidateId: "candidate:single-owner", supplierSkuId: "SHELF-OWNER",
-    variantKey: "规格:白色置物架", productName: "测试置物架", categoryPath: "Дом / Полки" });
-  const source = formal.c2.skuPackage;
-  const manifest = prepareC2FinalUploadManifest({ skuPackage: source, expectedDataRevision: source.dataRevision, finalUploadAssets, preparedAt: formal.at });
-  const confirmed = confirmC2SoftwareFinalUploads({ skuPackage: source, expectedDataRevision: source.dataRevision, finalManifest: manifest, ownerDecision: ownerDecision(manifest), confirmedAt: formal.at });
-  const skuPackage = createFinalProductPlanConfirmationCard({ skuPackage: attachSyntheticFinalPricingReview(confirmed.skuPackage, { at: formal.at, candidateRevision: formal.candidate.dataRevision }), createdAt: formal.at }).skuPackage;
-  const candidate = { ...formal.candidate, lifecycleV11: { ...formal.candidate.lifecycleV11, skuPackage: structuredClone(skuPackage) } };
-  const document = initialBusinessStateDocument({ now: formal.at }); document.candidates = [candidate];
+export function productionOwnerDecisionFixture(createRepository = createMemoryBusinessStateRepository, { finalUploadAssets = localFinalAssets(), commissionMode = "exact", includePricingReview = true, formalOptions = {}, sourceCandidate = null, sourceDocument = null, sourceAt = null } = {}) {
+  const formal = sourceCandidate ? {candidate:structuredClone(sourceCandidate),at:sourceAt} : createFormalC1C2Fixture({ ...formalOptions, candidateId: "candidate:single-owner", supplierSkuId: "SHELF-OWNER",
+    commissionMode, variantKey: "规格:白色置物架", productName: "测试置物架", categoryPath: "Дом / Полки" });
+  let candidate;
+  if (sourceCandidate) candidate = structuredClone(sourceCandidate);
+  else {
+    const source = formal.c2.skuPackage;
+    const manifest = prepareC2FinalUploadManifest({ skuPackage: source, expectedDataRevision: source.dataRevision, finalUploadAssets, preparedAt: formal.at });
+    const confirmed = confirmC2SoftwareFinalUploads({ skuPackage: source, expectedDataRevision: source.dataRevision, finalManifest: manifest, ownerDecision: ownerDecision(manifest), confirmedAt: formal.at });
+    const skuPackage = createFinalProductPlanConfirmationCard({ skuPackage: includePricingReview ? attachSyntheticFinalPricingReview(confirmed.skuPackage, { at: formal.at, candidateRevision: formal.candidate.dataRevision }) : confirmed.skuPackage, createdAt: formal.at }).skuPackage;
+    candidate = { ...formal.candidate, lifecycleV11: { ...formal.candidate.lifecycleV11, skuPackage: structuredClone(skuPackage) } };
+  }
+  const skuPackage = candidate.lifecycleV11.skuPackage;
+  const document = sourceDocument ? structuredClone(sourceDocument) : initialBusinessStateDocument({ now: formal.at }); document.candidates = [candidate];
 
   const card = skuPackage.productionConfirmationCard;
   const preparation = skuPackage.c2FinalAssets.productionAuthorizationPreparation;
@@ -37,12 +43,12 @@ export function productionOwnerDecisionFixture(createRepository = createMemoryBu
   const configuration = createSelectionReviewRuntimeConfiguration({ env: {
     SELECTION_REVIEW_STORE_BINDINGS_JSON: JSON.stringify([{ targetStore: candidate.targetStore, platform: candidate.targetPlatform, storeRef: candidate.storeRef }]),
     SELECTION_REVIEW_PRODUCTION_BINDINGS_JSON: JSON.stringify([binding]) }, appDir: "/tmp/synthetic-owner-configuration", argv: [] });
-  document.evidencePacks = [{ id: profit.priceConversion.evidenceRef, kind: "exchange_rate", status: "active", scope: { pair: "RUB/CNY" }, sourceType: "official",
-    sourceRef: "https://www.cbr.ru/currency_base/daily/", checkedAt: "2026-08-07T00:00:00.000Z", expiresAt: "2026-09-01T00:00:00.000Z", evidenceData: { rubPerCny: profit.priceConversion.rubPerCny } }];
+  const { evidencePacks, currentCommissionCatalogs } = attachProductionProfitEvidence(candidate);
+  document.evidencePacks = evidencePacks; document.currentCommissionCatalogs = currentCommissionCatalogs;
   const repository = createRepository(document);
   const preparedView = buildProductionOwnerPreparationView({ candidate, configuration, evidencePacks: document.evidencePacks, observedAt: formal.at });
   assert.equal(preparedView.ready, true, JSON.stringify(preparedView.gaps));
   const args = { repository, runtimeMode: "local_development", actor, candidateId: candidate.id, input, serverClock: () => formal.at,
     resolveProductionAuthorizationDecision: value => resolveProductionOwnerPreparation({ ...value, configuration }) };
-  return { formal, candidate, repository, commercialDecision, args, preparedView };
+  return { formal, candidate, configuration, evidencePacks, currentCommissionCatalogs, repository, commercialDecision, args, preparedView };
 }

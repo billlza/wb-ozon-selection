@@ -114,6 +114,7 @@ function normalizeReaderResult(result, request, kind) {
     checkedAt: new Date(result.checkedAt).toISOString(),
     expiresAt: result.expiresAt === null ? null : new Date(result.expiresAt).toISOString(),
     ...(Object.hasOwn(result, 'commissionCatalogRef') ? { commissionCatalogRef: structuredClone(result.commissionCatalogRef) } : {}),
+    ...(Object.hasOwn(result, "validity") ? { validity: structuredClone(result.validity) } : {}),
     evidenceData: structuredClone(result.evidenceData),
     providerVersion: LIFECYCLE_B_EVIDENCE_PROVIDER_VERSION
   });
@@ -131,6 +132,9 @@ export function createLifecycleBEvidenceProvider({ kind, read }) {
         kind,
         scope: structuredClone(request.scope),
         relatedSchemaScope: request.relatedSchemaScope ? structuredClone(request.relatedSchemaScope) : null,
+        // 每SKU的官方费表查询输入（已冻结成交价与类型名称）随请求传入，不进入可复用证据范围。
+        commissionReferenceScope: kind === "commission" && isObject(request.commissionReferenceScope)
+          ? structuredClone(request.commissionReferenceScope) : null,
         candidateId: request.candidateId,
         candidateRevision: request.candidateRevision,
         requestedAt: request.requestedAt,

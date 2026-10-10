@@ -1,6 +1,8 @@
+// This fixture preserves the historical three-group scoring contract.
+const KEYWORD_SCORING_VERSION = "keyword-scoring-v1";
 import { createFormalC1DraftFixture } from './formal-c1-flow-fixture.mjs';
 import { createKeywordEvidenceSnapshot } from '../../lib/keyword-evidence-snapshot.mjs';
-import { KEYWORD_SCORING_COMPONENTS, KEYWORD_SCORING_VERSION } from '../../lib/keyword-evidence-scoring.mjs';
+import { KEYWORD_SCORING_COMPONENTS } from '../../lib/keyword-evidence-scoring.mjs';
 import { prepareC1SoftwareInputs } from '../../lib/c1-software-input-preparation.mjs';
 import { createC1SoftwareEvidenceStage } from '../../lib/c1-software-evidence-stage.mjs';
 import { KEYWORD_NOW } from './c1-keyword-planning-fixture.mjs';
@@ -8,6 +10,7 @@ import { createC1AiAccounting } from '../../lib/c1-ai-draft-contract.mjs';
 import { prepareCurrentC1AiDraftRequest } from '../../lib/c1-ai-draft-request-source.mjs';
 import { authorizedExecution, settledExecution } from './c1-ai-draft-fixture.mjs';
 import { fingerprintCanonicalRecord } from '../../lib/production-contract-primitives.mjs';
+import { addSyntheticC1Review } from './c1-seo-review-fixture.mjs';
 
 /** Complete executable fixture; legacy formal fixtures remain available separately for historical occupancy. */
 export function createC1PaidFormalFixture({ credentialAlias = 'gateway-alias:formal', ...options } = {}) {
@@ -73,14 +76,22 @@ export function c1DraftPreparedCandidate({ candidate = null, at = KEYWORD_NOW } 
 }
 
 export function c1DraftPaidReceipt({ request, authorizedExecution }, at = request.requestedAt) {
-  const piece = field => {
-    const keyword = request.keywordEvidence.keywords.find(item => !item.allowedOutputFields || item.allowedOutputFields.includes(field));
+  const piece = (field, selectedKeyword = null) => {
+    const keyword = selectedKeyword ?? request.keywordEvidence.keywords.find(item => !item.allowedOutputFields || item.allowedOutputFields.includes(field));
     if (!keyword) throw new Error(`SYNTHETIC_C1_KEYWORD_MISSING:${field}`);
     return { text: keyword.query, factRefs: [...keyword.factRefs], keywordRefs: [keyword.keywordEvidenceRef],
       assertions: keyword.factRefs.map(factPath => ({ factPath, value: structuredClone(request.verifiedFacts.find(fact => fact.factPath === factPath).value) })) };
   };
   const output = { status: 'draft_only', locale: 'ru-RU', claimCoverage: 'complete', unsupportedClaims: [],
     title: piece('title'), description: piece('description'), bulletPoints: [piece('bulletPoints')], searchKeywords: [piece('searchKeywords')] };
+  if (request.factDefinitionsVersion === 'c1-fact-definitions-v1') {
+    // New-input fixtures need an additional fact; repeated historical copy is
+    // retained only when testing the old request contract explicitly.
+    const additional = request.keywordEvidence.keywords.find(item =>
+      (!item.allowedOutputFields || item.allowedOutputFields.includes('bulletPoints')) && item.query !== output.description.text);
+    output.bulletPoints = additional ? [piece('bulletPoints', additional)] : [];
+  }
+  addSyntheticC1Review(request, output);
   const gatewayJobId = `gateway:${authorizedExecution.jobId}`;
   return { schemaVersion: 'c1-ai-draft-receipt-v1', receiptId: `receipt:${authorizedExecution.jobId}`, providerRequestId: 'provider:synthetic:1',
     softwareJobId: authorizedExecution.jobId, gatewayJobId, accounting: createC1AiAccounting({ gatewayJobId, providerRequestId: 'provider:synthetic:1' }),

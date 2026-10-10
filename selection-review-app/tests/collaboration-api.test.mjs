@@ -131,7 +131,7 @@ async function post(url, body) {
   });
 }
 
-test("node comments, one-shot dispatch, exact claim, and production confirmation stay isolated", async (t) => {
+test("node comments, disabled dispatch claim, and production confirmation stay isolated", async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), "selection-collaboration-"));
   const dataFile = path.join(directory, "candidates.json");
   await writeFile(dataFile, JSON.stringify({
@@ -265,12 +265,14 @@ test("node comments, one-shot dispatch, exact claim, and production confirmation
   persisted.dispatches.find((item) => item.id === dispatch.id).status = "received";
   await writeFile(dataFile, JSON.stringify(persisted));
 
+  const beforeDisabledClaim = await readFile(dataFile);
   const claimed = await post(`/api/dispatches/${dispatch.id}/claim`, {
     runId: "one-shot-run-1",
     currentStep: "读取当前资料"
   });
-  assert.equal(claimed.status, 200);
-  assert.equal((await claimed.json()).candidate.processing.state, "running");
+  assert.equal(claimed.status, 409);
+  assert.match((await claimed.json()).message, /旧派发通道已停用.*历史派发只读/);
+  assert.deepEqual(await readFile(dataFile), beforeDisabledClaim);
 
   const beforeRefusedResults = await readFile(dataFile);
   const progressed = await post(`/api/dispatches/${dispatch.id}/progress`, {
@@ -294,7 +296,7 @@ test("node comments, one-shot dispatch, exact claim, and production confirmation
   state = await (await fetch(`${baseUrl}/api/state`)).json();
   const queueAfterReply = state.candidates.find((item) => item.id === "QUEUE-1");
   assert.equal(queueAfterReply.activeDispatch, null);
-  assert.equal(queueAfterReply.latestDispatch.status, "running");
+  assert.equal(queueAfterReply.latestDispatch.status, "received");
 
   const wrongOwner = await post("/api/node-comments", {
     nodeId: "M08",

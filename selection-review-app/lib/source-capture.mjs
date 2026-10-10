@@ -1,7 +1,10 @@
-import { captureNumber, captureText, cleanCaptureAttributes, canonicalSupplierImageUrl } from "./capture-evidence-sanitization.mjs";
+import { captureNumber, captureText, cleanCaptureAttributes, canonicalPinduoduoImageUrl, canonicalSupplierImageUrl } from "./capture-evidence-sanitization.mjs";
 
 const MAX_SKUS = 200;
 const MAX_ATTRIBUTES = 120;
+// Same ceiling the collector already applies to the page's own kilogram field; a heavier number is a parsing
+// accident, not a parcel this shop ships.
+const MAX_SKU_WEIGHT_KG = 1000;
 
 function text(value, limit = 500) {
   return captureText(value, limit);
@@ -23,6 +26,23 @@ function positive(value) {
 
 function cleanObject(value, limit = MAX_ATTRIBUTES) {
   return cleanCaptureAttributes(value, limit);
+}
+
+/**
+ * The shipping weight the page declares for one SKU, in kilograms.
+ *
+ * It is the only per-SKU fact that decides that SKU's own freight, so it must survive the DTO boundary instead of
+ * being rebuilt later from the owner's single packed weight. The discipline is the one price and stock already use:
+ * a closed shape ({value, unit:"kg"} or a bare number of kilograms), a positive value inside a sane range, and a
+ * named source. Anything else is dropped — a page that ships no usable weight is a page with one fewer fact, never
+ * a rejected capture, because the other 23 specifications on the same page are still true.
+ */
+function skuWeightKg(value) {
+  const raw = value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (text(value.unit, 20).toLowerCase() === "kg" ? value.value : null)
+    : value;
+  const number = positive(raw);
+  return number !== null && number <= MAX_SKU_WEIGHT_KG ? number : null;
 }
 
 export function extract1688OfferId(value) {
@@ -64,6 +84,69 @@ export function normalize1688CaptureSource(value) {
     return { type: "invalid", sourceUrl: "", offerId: "" };
   }
   return { type: "invalid", sourceUrl: "", offerId: "" };
+}
+
+const PINDUODUO_GOODS_HOSTS = new Set(["mobile.yangkeduo.com", "mobile.pinduoduo.com"]);
+const PINDUODUO_GOODS_PATHS = new Set(["/goods.html", "/goods1.html", "/goods2.html"]);
+
+function pinduoduoGoodsId(url) {
+  const ids = url.searchParams.getAll("goods_id");
+  return ids.length === 1 && /^\d{1,40}$/.test(ids[0]) ? ids[0] : "";
+}
+
+/**
+ * Pinduoduo's product page is its mobile page (mobile.yangkeduo.com/goods.html?goods_id=N). A link that already names
+ * one goods_id is reduced to that canonical address, dropping share and tracking parameters. A share link that hides
+ * the goods behind a token (p.pinduoduo.com/<token>, goods.html or goods2.html?ps=<token>) is a short link: the extension has to
+ * open it and read the goods_id from where it lands, exactly like a qr.1688.com link.
+ */
+export function normalizePinduoduoCaptureSource(value) {
+  const raw = text(value, 3000);
+  const invalid = { type: "invalid", sourceUrl: "", offerId: "" };
+  if (!raw) return invalid;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return invalid;
+    if (PINDUODUO_GOODS_HOSTS.has(url.hostname) && PINDUODUO_GOODS_PATHS.has(url.pathname)) {
+      const offerId = pinduoduoGoodsId(url);
+      if (offerId) return { type: "detail", sourceUrl: `https://mobile.yangkeduo.com/goods.html?goods_id=${offerId}`, offerId };
+      // Share links come as goods.html?ps= as well as goods2.html?ps=; the page they name is kept, only the host is fixed.
+      const token = url.searchParams.getAll("ps");
+      return token.length === 1 && /^[A-Za-z0-9_-]{1,160}$/.test(token[0])
+        ? { type: "short", sourceUrl: `https://mobile.yangkeduo.com${url.pathname}?ps=${token[0]}`, offerId: "" }
+        : invalid;
+    }
+    if (url.hostname === "p.pinduoduo.com") {
+      const token = url.pathname.match(/^\/([A-Za-z0-9_-]{1,160})\/?$/)?.[1] || "";
+      return token ? { type: "short", sourceUrl: `https://p.pinduoduo.com/${token}`, offerId: "" } : invalid;
+    }
+  } catch {
+    return invalid;
+  }
+  return invalid;
+}
+
+export function extractPinduoduoGoodsId(value) {
+  const source = normalizePinduoduoCaptureSource(value);
+  return source.type === "detail" ? source.offerId : "";
+}
+
+/** The one place that decides which supplier site a link belongs to. 1688 keeps its own normalizer untouched. */
+export function normalizeSupplierCaptureSource(value) {
+  const alibaba = normalize1688CaptureSource(value);
+  if (alibaba.type !== "invalid") return { platform: "1688", ...alibaba };
+  const pinduoduo = normalizePinduoduoCaptureSource(value);
+  if (pinduoduo.type !== "invalid") return { platform: "pinduoduo", ...pinduoduo };
+  return { platform: null, ...alibaba };
+}
+
+/** A stored canonical source address names its platform; no separate platform field is kept on the record. */
+export function supplierCapturePlatform(sourceUrl) {
+  return normalizeSupplierCaptureSource(sourceUrl).platform;
+}
+
+export function supplierPlatformLabel(platform) {
+  return platform === "pinduoduo" ? "拼多多" : "1688";
 }
 
 const FAILURE_DIAGNOSTIC_ENUMS = Object.freeze({
@@ -197,13 +280,15 @@ export function sourceCaptureFailureDestinationLabel(diagnostics, failureCode = 
   return failureCode === "wrong_offer" ? "不同商品" : null;
 }
 
-export function sourceCaptureFailureMessage(code, detail = "") {
+export function sourceCaptureFailureMessage(code, detail = "", platform = "1688") {
   const messages = {
     extension_not_installed: "未检测到本机1688采集扩展",
     extension_background_unavailable: "1688采集扩展已安装，但后台暂未响应",
     extension_version_mismatch: "1688采集扩展版本与当前作业要求不一致",
     extension_job_unclaimed: "1688采集作业等待插件领取超时",
     service_restarted_before_claim: "评审台服务重启前，1688采集作业尚未被插件领取",
+    // Capture sessions live only in the process that created them, so a restart ends any job that had not answered yet.
+    capture_job_lost: "服务已重启，这次采集不会再有结果，请重新申请采集",
     unknown_outcome: "插件领取作业后中断，当前采集结果未知",
     request_origin_invalid: "1688采集请求不是来自本机评审台",
     request_payload_missing: "1688采集请求缺少必要字段",
@@ -226,15 +311,25 @@ export function sourceCaptureFailureMessage(code, detail = "") {
     invalid_capture: "采集结果格式无效",
     system_error: "采集器发生系统错误，已停止"
   };
-  const base = messages[code] || "1688采集已停止";
+  // The extension keeps its one name; only what is said about the page and its link follows the supplier site.
+  const fallback = messages[code] || "1688采集已停止";
+  const base = platform === "pinduoduo" ? fallback.replace(/1688(?=页面|商品|短链|精确链接|来源链接|采集已停止)/g, "拼多多") : fallback;
   return detail ? `${base}：${text(detail, 800)}` : base;
 }
 
 export function sanitize1688Evidence(input, expectedOfferId) {
+  return sanitizeSupplierEvidence(input, expectedOfferId, normalize1688CaptureSource, canonicalSupplierImageUrl);
+}
+
+export function sanitizePinduoduoEvidence(input, expectedOfferId) {
+  return sanitizeSupplierEvidence(input, expectedOfferId, normalizePinduoduoCaptureSource, canonicalPinduoduoImageUrl);
+}
+
+function sanitizeSupplierEvidence(input, expectedOfferId, normalizeSource, canonicalImageUrl) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("invalid_capture");
   const offerId = input.offerId;
   if (typeof offerId !== "string" || !/^\d{1,40}$/.test(offerId) || offerId !== String(expectedOfferId)) throw new Error("wrong_offer");
-  const source = normalize1688CaptureSource(input.sourceUrl);
+  const source = normalizeSource(input.sourceUrl);
   if (source.type !== "detail" || source.offerId !== offerId) throw new Error("wrong_offer");
   const observedAt = text(input.observedAt, 80);
   if (!observedAt || !Number.isFinite(new Date(observedAt).getTime())) throw new Error("invalid_capture");
@@ -254,6 +349,9 @@ export function sanitize1688Evidence(input, expectedOfferId) {
     const stockSource = text(item?.stockSource, 180);
     if (priceCny !== null && !priceSource) throw new Error("invalid_capture");
     if (stock !== null && !stockSource) throw new Error("invalid_capture");
+    const weightKg = skuWeightKg(item?.weight);
+    const weightSource = text(item?.weightSource, 180);
+    const weightKept = weightKg !== null && weightSource !== "";
     return {
       sourceSkuId,
       propPath: text(item?.propPath, 600) || null,
@@ -263,7 +361,9 @@ export function sanitize1688Evidence(input, expectedOfferId) {
       stock,
       stockSource: stock === null ? null : stockSource,
       inStock: typeof item?.inStock === "boolean" ? item.inStock : stock === null ? null : stock > 0,
-      imageUrl: canonicalSupplierImageUrl(item?.imageUrl)
+      weight: weightKept ? { value: weightKg, unit: "kg" } : null,
+      weightSource: weightKept ? weightSource : null,
+      imageUrl: canonicalImageUrl(item?.imageUrl)
     };
   });
 
@@ -285,6 +385,10 @@ export function sanitize1688Evidence(input, expectedOfferId) {
   const unitDomesticFreightSource = text(pageFields.unitDomesticFreightSource, 180);
   if (unitProductPriceCny !== null && !unitProductPriceSource) throw new Error("invalid_capture");
   if (unitDomesticFreightCny !== null && !unitDomesticFreightSource) throw new Error("invalid_capture");
+  // The listing's own first picture, kept only from the platform's image hosts and only with the field it was read from.
+  const mainImageUrl = canonicalImageUrl(input.mainImageUrl);
+  const mainImageSource = text(input.mainImageSource, 180);
+  if (mainImageUrl !== null && !mainImageSource) throw new Error("invalid_capture");
 
   return {
     offerId,
@@ -296,6 +400,8 @@ export function sanitize1688Evidence(input, expectedOfferId) {
     titleSource: text(input.titleSource, 180) || null,
     offerIdSource: text(input.offerIdSource, 180) || null,
     pageSelectedSkuId: text(input.pageSelectedSkuId, 160) || null,
+    mainImageUrl,
+    mainImageSource: mainImageUrl === null ? null : mainImageSource,
     priceRanges,
     pageFields: {
       unitProductPriceCny,
@@ -396,16 +502,21 @@ export function sourceCaptureForDispatch(sourceCapture) {
     observedAt: text(sourceCapture.observedAt, 80),
     collectionMethod: text(sourceCapture.collectionMethod, 120),
     matchTerms: Array.isArray(sourceCapture.matchTerms) ? sourceCapture.matchTerms.map((item) => text(item, 100)).slice(0, 20) : [],
-    selectedSkus: selectedSkus.map((sku) => ({
-      sourceSkuId: text(sku.sourceSkuId, 160),
-      propPath: text(sku.propPath, 600) || null,
-      attributes: cleanObject(sku.attributes, 30),
-      priceCny: positive(sku.priceCny),
-      priceSource: text(sku.priceSource, 180) || null,
-      stock: nonNegative(sku.stock),
-      stockSource: text(sku.stockSource, 180) || null,
-      inStock: sku.inStock ?? null
-    })),
+    selectedSkus: selectedSkus.map((sku) => {
+      const weightKg = skuWeightKg(sku.weight);
+      return {
+        sourceSkuId: text(sku.sourceSkuId, 160),
+        propPath: text(sku.propPath, 600) || null,
+        attributes: cleanObject(sku.attributes, 30),
+        priceCny: positive(sku.priceCny),
+        priceSource: text(sku.priceSource, 180) || null,
+        stock: nonNegative(sku.stock),
+        stockSource: text(sku.stockSource, 180) || null,
+        inStock: sku.inStock ?? null,
+        weight: weightKg === null ? null : { value: weightKg, unit: "kg" },
+        weightSource: weightKg === null ? null : text(sku.weightSource, 180) || null
+      };
+    }),
     missingDirectPriceSkuIds: selectedSkus.filter((sku) => !(sku.priceCny > 0)).map((sku) => text(sku.sourceSkuId, 160)),
     priceRanges: Array.isArray(sourceCapture.priceRanges) ? sourceCapture.priceRanges.slice(0, 50) : [],
     supplierAttributes: cleanObject(sourceCapture.supplierAttributes)

@@ -136,6 +136,36 @@ export function createC2LocalAssetStore({ directory }) {
         if (asset.width !== dimensions.width || asset.height !== dimensions.height) throw c2DraftError("c2_upload_dimensions_unverified", "已保存尺寸与实际文件不一致，请重新登记素材", 409);
       }
       return { body, contentType: format.contentType };
+    },
+    async linkExisting(source, target) {
+      if (source.assetId === target.assetId || source.fileName !== target.fileName ||
+          source.mediaType !== target.mediaType || source.contentType !== target.contentType) {
+        throw c2DraftError("c2_link_identity_invalid", "共享素材来源与目标身份不一致", 409);
+      }
+      // Recheck the immutable source before creating a second candidate-owned registration.
+      await this.read(source, { verifyContent: true });
+      const realRoot = await fs.realpath(root);
+      const sourcePath = path.join(realRoot, storageKey(source.assetId));
+      const targetPath = path.join(realRoot, storageKey(target.assetId));
+      await fs.link(sourcePath, targetPath);
+      const folder = await fs.open(realRoot, "r");
+      try { await folder.sync(); } finally { await folder.close(); }
+      return {
+        assetId: target.assetId,
+        assetRef: `local-asset:${target.assetId}`,
+        fileName: source.fileName,
+        mediaType: source.mediaType,
+        contentType: source.contentType,
+        width: source.width,
+        height: source.height,
+        assetVersion: source.assetVersion,
+        sha256: source.sha256,
+        byteSize: source.byteSize,
+        sourceEvidenceRef: `c2-upload:${storageKey(target.assetId)}`,
+        stableUrlEvidenceRef: "not_applicable",
+        sourceType: "owner_provided_final_upload",
+        stagedAt: target.stagedAt
+      };
     }
   });
 }

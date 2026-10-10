@@ -1,10 +1,11 @@
 import { C1_UNKNOWN_CLASSIFICATION_VERSION } from './c1-product-plan.mjs';
+import { assertFormalCommissionBeforeProduction } from "./commission-estimate-authorization.mjs";
 import { executeBusinessMutation } from "./business-mutation-transaction.mjs";
 import { assertCurrentC1SkuRightsReview } from "./c1-sku-rights-review.mjs";
 import { authorizeOperation } from "./runtime-identity.mjs";
 import { assertValidFinalProductPlanConfirmationCard, createFinalProductPlanConfirmationCard } from "./final-product-plan-confirmation-card.mjs";
-import { assertFinalPricingReviewCurrent } from "./final-pricing-review.mjs";
-import { assertC2FinalMediaContent } from "./c2-media-content-rules.mjs";
+import { assertProductionProfitPriceCurrent } from "./final-pricing-review.mjs";
+import { assertAuthorizedMediaUnchanged } from "./production-authorization-preparation.mjs";
 import {
   assertValidLifecyclePackage,
   validateLifecycleTransition,
@@ -26,7 +27,7 @@ export {
   fingerprintFinalCardInputSnapshot,
   fingerprintFinalManifest,
   fingerprintFinalUploads,
-  fingerprintMediaRequirements,
+  fingerprintAuthorizedMedia,
   fingerprintProductionAuthorizationPreparation,
   validateProductionAuthorizationPreparation
 } from "./production-authorization-preparation.mjs";
@@ -236,7 +237,7 @@ export function buildProductionOwnerDecisionSnapshot({ candidateId, sourceCandid
     publishScope: ownerDecision.publishScope,
     allowedWriteFields: structuredClone(ownerDecision.allowedWriteFields),
     exclusions: structuredClone(ownerDecision.exclusions),
-    mediaRequirementsFingerprint: preparation.mediaRequirementsFingerprint,
+    authorizedMediaFingerprint: preparation.authorizedMediaFingerprint,
     finalManifestSha256: preparation.finalManifestSha256,
     finalUploadsFingerprint: preparation.finalUploadsFingerprint,
     mainImageAssetId: preparation.mainImageAssetId,
@@ -245,9 +246,21 @@ export function buildProductionOwnerDecisionSnapshot({ candidateId, sourceCandid
   };
 }
 
-export function createProductionAuthorization({ candidateId, sourceCandidateRevision, currentCandidateRevision, skuPackage, commercialDecision, ownerActor, authorizedAt }) {
+/** 同一张卡在第2轮及以后重签时，卡号、cardRevision 与 preparationFingerprint 都与第1轮相同，
+ * 所以决定号必须带轮次，否则新授权会和已归档的那份算出完全一样的 ID。第1轮格式不变。 */
+export function buildProductionOwnerDecisionId({ candidateId, cardId, cardRevision, authorizationRound = 1 }) {
+  if (!Number.isInteger(authorizationRound) || authorizationRound < 1) {
+    throw new Error("PRODUCTION_AUTHORIZATION_ROUND_INVALID");
+  }
+  const base = `owner-decision:${candidateId}:${cardId}:${cardRevision + 1}`;
+  return authorizationRound === 1 ? base : `${base}:r${authorizationRound}`;
+}
+
+export function createProductionAuthorization({ candidate, evidencePacks, currentCommissionCatalogs = [], candidateId, sourceCandidateRevision, currentCandidateRevision, skuPackage, commercialDecision, ownerActor, authorizedAt }) {
   assertValidLifecyclePackage(skuPackage);
-  assertFinalPricingReviewCurrent(skuPackage);
+  assertCurrentC1MatchesProductionPreparation({ preparation: skuPackage.c2FinalAssets?.productionAuthorizationPreparation, candidateId, skuPackage });
+  assertProductionProfitPriceCurrent({ candidate, skuPackage, evidencePacks, currentCommissionCatalogs, observedAt: authorizedAt });
+  if (candidate.id !== candidateId || candidate.dataRevision !== currentCandidateRevision) throw new Error("PRODUCTION_AUTHORIZATION_PROFIT_SOURCE_REQUIRED");
   assertCurrentC1SkuRightsReview({ plan: skuPackage.c1ProductPlan, sourceIdentity: skuPackage.g1Identity, observedAt: authorizedAt });
   validateOwnerActor(ownerActor);
   const card = skuPackage.productionConfirmationCard;
@@ -262,7 +275,7 @@ export function createProductionAuthorization({ candidateId, sourceCandidateRevi
   sourceWithoutCard.productionConfirmationCard = null;
   const expectedCard = createFinalProductPlanConfirmationCard({ skuPackage: sourceWithoutCard, createdAt: card.createdAt }).confirmationCard;
   if (!sameJson(card, expectedCard)) throw new Error("PRODUCTION_AUTHORIZATION_CARD_DRIFT");
-  if (expectedCard.riskAndUnknowns.blockingUnknownCount > 0 || card.profitResult.commissionMode.value !== "exact") {
+  if (expectedCard.riskAndUnknowns.blockingUnknownCount > 0 || !["exact", "official_reference"].includes(card.profitResult.commissionMode.value)) {
     throw new Error("PRODUCTION_AUTHORIZATION_FINAL_CARD_INCOMPLETE");
   }
   if (!exactKeys(commercialDecision, OWNER_COMMERCIAL_FIELDS) || commercialDecision.selectedOption !== OWNER_DECISION_OPTION) {
@@ -278,12 +291,16 @@ export function createProductionAuthorization({ candidateId, sourceCandidateRevi
   }
   if (Date.parse(ownerActor.authenticatedAt) > Date.parse(authorizedAt) || Date.parse(card.createdAt) > Date.parse(authorizedAt)) throw new Error("PRODUCTION_OWNER_CLOCK_INVALID");
   const preparation = skuPackage.c2FinalAssets?.productionAuthorizationPreparation;
-  assertCurrentC1MatchesProductionPreparation({ preparation, candidateId, skuPackage });
-  assertC2FinalMediaContent({ mediaRequirements: preparation.mediaRequirements, assets: preparation.finalUploads, checkedAt: authorizedAt });
+  // 授权落库前最后一次确认：要授权的就是主人确认过的那批地址和那个顺序。
+  assertAuthorizedMediaUnchanged(preparation.finalUploads, preparation.authorizedMediaFingerprint, "createProductionAuthorization");
   const profit = preparation.finalCardInputSnapshot.activeProfitModel;
   if (commercialDecision.buyerTargetPrice?.amount !== profit.recommendedSalePriceRub || commercialDecision.platformWritePrice?.amount !== profit.recommendedSalePriceCny ||
       !sameJson(commercialDecision.priceConversion, profit.priceConversion)) throw new Error("PRODUCTION_AUTHORIZATION_FROZEN_PRICE_DRIFT");
-  const decisionId = `owner-decision:${candidateId}:${card.cardId}:${card.cardRevision + 1}`;
+  // 第2轮及以后的授权（上一轮已整体归档、SKU包恢复到签字前）必须带轮次：卡号、cardRevision 与
+  // preparationFingerprint 在恢复后全部相同，不带轮次会算出与已归档授权一字不差的
+  // decisionId / authorizationId / handoffId，审计分不清哪一轮。第1轮格式不变。
+  const decisionId = buildProductionOwnerDecisionId({ candidateId, cardId: card.cardId,
+    cardRevision: card.cardRevision, authorizationRound: skuPackage.productionAuthorizationRoundV1 ?? 1 });
   const ownerDecision = { ...structuredClone(commercialDecision), decisionId, sourceConfirmationCardId: card.cardId,
     sourcePreparationFingerprint: preparation.preparationFingerprint, sourceFinalCardInputFingerprint: preparation.finalCardInputFingerprint };
   ownerDecision.ownerDecisionFingerprint = sha256(buildProductionOwnerDecisionSnapshot({ candidateId, sourceCandidateRevision, skuPackage, preparation, ownerDecision }));
@@ -343,13 +360,12 @@ export function createProductionAuthorization({ candidateId, sourceCandidateRevi
       credentialAlias: ownerDecision.credentialAlias,
       schemaRevision: preparation.targetContext.schemaRevision,
       schemaEvidenceRef: preparation.targetContext.schemaEvidenceRef,
-      schemaEvidenceVersion: preparation.targetContext.schemaEvidenceVersion,
       activeProfitModelVersion: preparation.finalCardInputSnapshot.activeProfitModelVersion,
       buyerTargetPrice: structuredClone(ownerDecision.buyerTargetPrice),
       platformWritePrice: structuredClone(ownerDecision.platformWritePrice),
       priceConversion: structuredClone(ownerDecision.priceConversion),
       stock: ownerDecision.stock,
-      mediaRequirementsFingerprint: preparation.mediaRequirementsFingerprint,
+      authorizedMediaFingerprint: preparation.authorizedMediaFingerprint,
       finalManifestVersion: preparation.finalManifestVersion,
       finalManifestSha256: preparation.finalManifestSha256,
       finalUploadsFingerprint: preparation.finalUploadsFingerprint,
@@ -462,14 +478,20 @@ export async function commitSingleOwnerProductionAuthorization({ repository, run
   const sku = snapshot.candidates?.find(entry => entry.id === candidateId)?.lifecycleV11?.skuPackage;
   if (!sku) throw new Error("PRODUCTION_AUTHORIZATION_CANDIDATE_NOT_FOUND");
   const key = `single-owner-production-authz:${candidateId}:${input.cardId}:${input.cardRevision}:${input.dataRevision}`;
-  const decisionId = `owner-decision:${candidateId}:${input.cardId}:${input.cardRevision + 1}`;
+  const decisionId = buildProductionOwnerDecisionId({ candidateId, cardId: input.cardId,
+    cardRevision: input.cardRevision, authorizationRound: sku.productionAuthorizationRoundV1 ?? 1 });
   return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: ["owner"],
     action: "create_single_owner_production_authorization_and_d_handoff", candidateId, skuPackageId: sku.skuPackageId,
     expectedRevision: input.dataRevision, idempotencyKey: key, inputFingerprint: sha256({ candidateId, actorId: actor.userId, input }),
     auditEventId: `audit:${key}`, authorizationRef: `production-auth:${sku.skuPackageId}:${input.sourcePreparationFingerprint}:${decisionId}`,
     externalRequestState: "not_sent", externalRequestRef: null, serverClock,
     softwareJobEffect: { schemaVersion: "business-mutation-domain-handoff-effect-v1", kind: "software_job", operation: "enqueue", jobType: "d_production_execution" },
-    mutate: ({ candidate, observedAt, evidencePacks }) => {
+    includeMerchantSkuClaims: true,
+    mutate: ({ candidate, observedAt, evidencePacks, currentCommissionCatalogs, merchantSkuClaims }) => {
+      if(candidate.siblingPreparationDraftRefV1) throw new Error('PRODUCTION_AUTHORIZATION_BATCH_CONFIRMATION_REQUIRED');
+      if (merchantSkuClaims.some(claim => claim.merchantSku === input.merchantSku)) {
+        throw new Error('PRODUCTION_AUTHORIZATION_OFFER_RESERVED');
+      }
       const currentSku = candidate.lifecycleV11?.skuPackage;
       const card = currentSku?.productionConfirmationCard;
       const preparation = currentSku?.c2FinalAssets?.productionAuthorizationPreparation;
@@ -478,14 +500,16 @@ export async function commitSingleOwnerProductionAuthorization({ repository, run
           preparation?.preparationFingerprint !== input.sourcePreparationFingerprint || preparation.finalCardInputFingerprint !== input.sourceFinalCardInputFingerprint) {
         throw new Error("PRODUCTION_AUTHORIZATION_CARD_DRIFT");
       }
+      // Reject estimated inputs first; the resolver and direct creator both enforce the full current frozen-evidence gate.
+      assertFormalCommissionBeforeProduction(currentSku);
       // Resolve only current, verified local configuration and frozen price evidence inside the same transaction.
-      const commercialDecision = resolveProductionAuthorizationDecision({ candidate: structuredClone(candidate), input: structuredClone(input), observedAt, evidencePacks });
+      const commercialDecision = resolveProductionAuthorizationDecision({ candidate: structuredClone(candidate), input: structuredClone(input), observedAt, evidencePacks, currentCommissionCatalogs });
       if (!exactKeys(commercialDecision, OWNER_COMMERCIAL_FIELDS) || commercialDecision.merchantSku !== input.merchantSku.trim()) throw new Error("PRODUCTION_OWNER_COMMERCIAL_INPUT_INVALID");
       validateExecutionBinding(commercialDecision.executionBinding);
       if (commercialDecision.executionBinding.bindingId !== input.bindingId || commercialDecision.executionBinding.configurationVersion !== input.configurationVersion) {
         throw new Error("PRODUCTION_AUTHORIZATION_EXECUTION_BINDING_DRIFT");
       }
-      const result = createProductionAuthorization({ candidateId, sourceCandidateRevision: input.dataRevision, currentCandidateRevision: candidate.dataRevision,
+      const result = createProductionAuthorization({ candidate, evidencePacks, currentCommissionCatalogs, candidateId, sourceCandidateRevision: input.dataRevision, currentCandidateRevision: candidate.dataRevision,
         skuPackage: currentSku, commercialDecision, ownerActor: actor, authorizedAt: observedAt });
       candidate.lifecycleV11.skuPackage = structuredClone(result.skuPackage);
       candidate.lifecycleV11.status = "production_authorized_awaiting_explicit_d_start";

@@ -19,6 +19,13 @@ export function buildC1SavedDraftContinuationInput({ candidate, sourceRevision }
   return { candidateId: candidate.id, expectedRevision: sourceRevision, jobId: view.jobId };
 }
 
+export function buildC1DraftResultReadInput({ candidate, sourceRevision }) {
+  const view = candidate.c1DraftRuntimeView;
+  if (candidate.dataRevision !== sourceRevision || view?.canReadOriginalResult !== true ||
+      view.jobRevision !== sourceRevision || typeof view.jobId !== "string") throw new Error("当前原任务结果不可读取，请核对保存状态。");
+  return { candidateId: candidate.id, expectedRevision: sourceRevision, jobId: view.jobId };
+}
+
 export function buildC1KeywordHandoffRetryInput({ candidate, sourceRevision }) {
   const view = candidate.c1DraftRuntimeView;
   if (candidate.dataRevision !== sourceRevision || view?.canRetryKeywordHandoff !== true ||

@@ -3,8 +3,13 @@ import {
   BUSINESS_CANDIDATE_RESOURCE_LIMIT_EXCEEDED,
   assertNoRawPersistenceKeys,
   isCanonicalC1AuthorizationId,
-  C1_OPAQUE_AUTHORIZATION_ID_SEMANTICS
+  C1_OPAQUE_AUTHORIZATION_ID_SEMANTICS,
+  collectProductionSecretErrors,
+  formatC2ReferenceDiagnostic,
+  PRODUCTION_CONTRACT_RESOURCE_LIMIT_EXCEEDED,
+  appendC2DiagnosticPath
 } from "./production-contract-primitives.mjs";
+import { normalizeProductionEntities, ProductionEntityStorageError } from "./production-entity-storage.mjs";
 
 export const ACTOR_TYPES = Object.freeze(["human", "software", "worker", "maintenance"]);
 export const USER_ROLES = Object.freeze(["owner", "operator", "reviewer", "production_authorizer", "technical_maintainer"]);
@@ -44,9 +49,88 @@ export function assertSafeBusinessMutationCandidate(value, path = "businessMutat
 }
 
 function assertSafeRuntimeRecordInScope(value, path, resourceScope) {
+  let projection;
+  try {
+    const opaquePaths = runtimeSecretInspectionPaths(value);
+    projection = normalizeProductionEntities(value, { inspectEntity: (record, { pathSegments }) => {
+      const relativePaths = opaquePaths.filter(segments => pathSegments.every((key, index) => segments[index] === key))
+        .map(segments => segments.slice(pathSegments.length));
+      const entityPath = pathSegments.reduce((current, key) => appendC2DiagnosticPath(current, key), path);
+      assertSafeStoredRecordInScope(record.value, entityPath, "production_record", { pathSegments, opaquePaths: relativePaths });
+    } });
+  } catch (error) {
+    if (error instanceof ProductionEntityStorageError && /RESOURCE_LIMIT/.test(error.code ?? error.message) &&
+        resourceScope === "business_candidate") {
+      throw Object.assign(new Error(BUSINESS_CANDIDATE_RESOURCE_LIMIT_EXCEEDED), { code: BUSINESS_CANDIDATE_RESOURCE_LIMIT_EXCEEDED, cause: error });
+    }
+    if (error instanceof ProductionEntityStorageError) {
+      throw new Error(`RUNTIME_IDENTITY_INVALID: ${path}不得保存无效或超限生产实体`, { cause: error });
+    }
+    throw error;
+  }
+  assertSafeStoredRecordInScope(projection.value, path, resourceScope);
+  for (const record of projection.records) assertSafeStoredProductionEntityRecord(record, `${path}.productionEntity`);
+  return value;
+}
+
+/**
+ * After entity hydration, re-check only the path-sensitive opaque-ID exception.
+ * Root and individual records have already passed the ordinary secret scans.
+ * This preserves their original declaration context without re-hashing entities.
+ */
+export function assertRuntimeProductionEntityReferenceContext(value, path = "productionValue") {
+  const allowed = new Set(runtimeSecretInspectionPaths(value).map(segments => JSON.stringify(segments)));
+  const stack = [{ value, segments: [], path, depth: 0 }];
+  let nodes = 0;
+  try {
+    while (stack.length > 0) {
+      const current = stack.pop();
+      nodes += 1;
+      if (nodes > 200000 || current.depth > 128 || nodes + stack.length > 200000) {
+        throw new Error(PRODUCTION_CONTRACT_RESOURCE_LIMIT_EXCEEDED);
+      }
+      if (typeof current.value === "string") {
+        if (isCanonicalC1AuthorizationId(current.value) && !allowed.has(JSON.stringify(current.segments))) {
+          assertContextualProductionSecrets(current.value, current.path, current.segments, "production_record");
+        }
+      } else if (current.value !== null && typeof current.value === "object") {
+        for (const key in current.value) {
+          if (!Object.hasOwn(current.value, key)) continue;
+          if (nodes + stack.length >= 200000) throw new Error(PRODUCTION_CONTRACT_RESOURCE_LIMIT_EXCEEDED);
+          stack.push({ value: current.value[key], segments: [...current.segments, key],
+            path: appendC2DiagnosticPath(current.path, key, Array.isArray(current.value)), depth: current.depth + 1 });
+        }
+      }
+    }
+  } catch (error) {
+    throw new Error(`RUNTIME_IDENTITY_INVALID: ${path}不得在未声明位置保存授权引用`, { cause: error });
+  }
+  return value;
+}
+
+/** Repository read boundary: inspect normalized entity data before hydration. */
+export function assertSafeStoredProductionEntityRecord(record, path = "productionEntity") {
+  // Preserve the declared secret/reference semantics of a frozen C1 snapshot.
+  const entity = record.kind === "final_card_input_snapshot"
+    ? { finalCardInputSnapshot: record.value } : record.value;
+  assertSafeStoredRecordInScope(entity, path, "production_record");
+  return record;
+}
+
+function assertContextualProductionSecrets(value, path, pathSegments, resourceScope) {
+  const errors = [];
+  collectProductionSecretErrors(value, path, errors, pathSegments, resourceScope);
+  if (errors.length === 0) return;
+  const secrets = errors.filter(error => error.message !== PRODUCTION_CONTRACT_RESOURCE_LIMIT_EXCEEDED);
+  throw new Error(formatC2ReferenceDiagnostic(secrets.length ? "PRODUCTION_AUTHORIZATION_SECRET_REJECTED" : PRODUCTION_CONTRACT_RESOURCE_LIMIT_EXCEEDED,
+    (secrets.length ? secrets : errors).map(error => error.path), secrets.length ? "secret-rejected" : "resource-limit"));
+}
+
+function assertSafeStoredRecordInScope(value, path, resourceScope, context = null) {
   try {
     assertNoRawPersistenceKeys(value, path, { resourceScope });
-    assertNoProductionSecrets(runtimeSecretInspectionProjection(value), path, { resourceScope });
+    if (context) assertContextualProductionSecrets(projectOpaqueAuthorizationPaths(value, context.opaquePaths), path, context.pathSegments, resourceScope);
+    else assertNoProductionSecrets(runtimeSecretInspectionProjection(value), path, { resourceScope });
   } catch (error) {
     if (error?.code === BUSINESS_CANDIDATE_RESOURCE_LIMIT_EXCEEDED) throw error;
     throw new Error(`RUNTIME_IDENTITY_INVALID: ${path}不得保存秘密字段或凭据值`, { cause: error });
@@ -72,11 +156,11 @@ function assertSafeRuntimeRecordInScope(value, path, resourceScope) {
       return;
     }
     if (Array.isArray(entry)) {
-      entry.forEach((item, index) => inspectLocalReference(item, `${currentPath}[${index}]`));
+      entry.forEach((item, index) => inspectLocalReference(item, appendC2DiagnosticPath(currentPath, index, true)));
       return;
     }
     if (entry && typeof entry === "object") {
-      for (const [key, item] of Object.entries(entry)) inspectLocalReference(item, `${currentPath}.${key}`);
+      for (const [key, item] of Object.entries(entry)) inspectLocalReference(item, appendC2DiagnosticPath(currentPath, key));
     }
   };
   inspectLocalReference(value, path);
@@ -87,7 +171,9 @@ function isPublishedProductionAuthorization(value) {
   return value?.schemaVersion === "production-authorization-v1.1" || value?.schemaVersion === "production-authorization-v1.2";
 }
 
-function runtimeSecretInspectionProjection(value) {
+function runtimeSecretInspectionPaths(value, budget = { remaining: 20000 }, depth = 0) {
+  budget.remaining -= 1;
+  if (budget.remaining < 0 || depth > 128) throw Object.assign(new Error(BUSINESS_CANDIDATE_RESOURCE_LIMIT_EXCEEDED), { code: BUSINESS_CANDIDATE_RESOURCE_LIMIT_EXCEEDED });
   const paths = [];
   if (value?.schemaVersion === "software-job-v1" && value.jobType === "c1_ai_draft") {
     paths.push(["scopeBinding", "authorizationRef"], ["admissionDecision", "authorizationRef"]);
@@ -167,18 +253,40 @@ function runtimeSecretInspectionProjection(value) {
       if (declaredPath[0] === "lockedScope") paths.push([...prefix, ...declaredPath]);
     }
   }
-  const pricingHistory = value?.lifecycleV11?.finalPricingRevisionHistory;
-  const hasPricingHistory = Array.isArray(pricingHistory) && pricingHistory.length > 0;
-  if (paths.length === 0 && !hasPricingHistory) return value;
-  const projected = structuredClone(value);
-  if (hasPricingHistory) {
-    for (let index = 0; index < pricingHistory.length; index += 1) {
-      const historicalSku = pricingHistory[index]?.previousSkuPackage;
+  const histories = ["finalPricingRevisionHistory"]
+    .filter(key => Array.isArray(value?.lifecycleV11?.[key]) && value.lifecycleV11[key].length > 0);
+  const detachedFinalHistory = value?.schemaVersion === "c1-final-plan-revision-history-v1" &&
+    value.previousSkuPackage?.entityType === "SkuLifecyclePackage" && value.previousSkuPackage.g1Identity?.schemaVersion === "g1-identity-v1";
+  const present = paths.filter(segments => {
+    let current = value;
+    for (const key of segments) current = current?.[key];
+    return isCanonicalC1AuthorizationId(current);
+  });
+  if (detachedFinalHistory) {
+    for (const segments of runtimeSecretInspectionPaths(value.previousSkuPackage, budget, depth + 1)) present.push(["previousSkuPackage", ...segments]);
+  }
+  for (const historyKey of histories) {
+    const history = value.lifecycleV11[historyKey];
+    if (history.length > budget.remaining) throw Object.assign(new Error(BUSINESS_CANDIDATE_RESOURCE_LIMIT_EXCEEDED), { code: BUSINESS_CANDIDATE_RESOURCE_LIMIT_EXCEEDED });
+    for (let index = 0; index < history.length; index += 1) {
+      const historicalSku = history[index]?.previousSkuPackage;
       if (historicalSku?.entityType === "SkuLifecyclePackage" && historicalSku.g1Identity?.schemaVersion === "g1-identity-v1") {
-        projected.lifecycleV11.finalPricingRevisionHistory[index].previousSkuPackage = runtimeSecretInspectionProjection(historicalSku);
+        for (const segments of runtimeSecretInspectionPaths(historicalSku, budget, depth + 1)) {
+          present.push(["lifecycleV11", historyKey, String(index), "previousSkuPackage", ...segments]);
+        }
       }
     }
   }
+  return present;
+}
+
+function runtimeSecretInspectionProjection(value) {
+  return projectOpaqueAuthorizationPaths(value, runtimeSecretInspectionPaths(value));
+}
+
+function projectOpaqueAuthorizationPaths(value, paths) {
+  if (paths.length === 0) return value;
+  const projected = structuredClone(value);
   for (const segments of paths) {
     let container = projected;
     for (const segment of segments.slice(0, -1)) container = container?.[segment];

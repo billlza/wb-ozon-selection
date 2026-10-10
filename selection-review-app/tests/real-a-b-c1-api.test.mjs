@@ -13,18 +13,11 @@ import { runRealAConfirmationToBAndC1 } from "../lib/real-a-b-c1-flow.mjs";
 import { DEFAULT_GUOO_TARIFF_PATH } from "../lib/guoo-tariff-reader.mjs";
 import { DEFAULT_RULES } from "../lib/workflow.mjs";
 import { createMusicBoxCandidate } from "./helpers/legacy-candidate-fixture.mjs";
-import { stopApiProcess } from "./helpers/api-process-lifecycle.mjs";
+import { buildOwnerCargoFactsRecord } from "../lib/cargo-facts-declaration.mjs";
+import { stopApiProcess, allocatedTestPorts } from "./helpers/api-process-lifecycle.mjs";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-async function freePort() {
-  const server = http.createServer();
-  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
-  const port = server.address().port;
-  await new Promise(resolve => server.close(resolve));
-  assert.ok(![4317, 4318, 4173].includes(port));
-  return port;
-}
-const port = await freePort();
+const { api: port, gateway: evidencePort } = allocatedTestPorts();
 const evidenceServer = http.createServer(async (request, response) => {
   const chunks = []; for await (const chunk of request) chunks.push(chunk);
   const { kind, ...scope } = JSON.parse(Buffer.concat(chunks).toString());
@@ -41,7 +34,7 @@ const evidenceServer = http.createServer(async (request, response) => {
   response.end(JSON.stringify({ ok: true, evidence }));
 });
 const evidenceCalls = [];
-await new Promise((resolve, reject) => { evidenceServer.once("error", reject); evidenceServer.listen(0, "127.0.0.1", resolve); });
+await new Promise((resolve, reject) => { evidenceServer.once("error", reject); evidenceServer.listen(evidencePort, "127.0.0.1", resolve); });
 const evidenceUrl = `http://127.0.0.1:${evidenceServer.address().port}`;
 test.after(async () => { evidenceServer.closeAllConnections(); await new Promise(resolve => evidenceServer.close(resolve)); });
 const probeDirectory = await mkdtemp(path.join(tmpdir(), "a-b-api-network-guard-"));
@@ -78,7 +71,7 @@ test.after(async () => {
   try { await assert.rejects(readFile(forbiddenFile), { code: "ENOENT" }); }
   finally { await rm(probeDirectory, { recursive: true, force: true }); }
 });
-const isolatedEnv = { NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, SELECTION_REVIEW_RUNTIME_MODE: "local_development", SELECTION_REVIEW_IDENTITY_PROVIDER: "development_default",
+const isolatedEnv = { NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(preload).href}`, SELECTION_REVIEW_RUNTIME_MODE: "local_development", SELECTION_REVIEW_IDENTITY_PROVIDER: "development_default",
   SELECTION_REVIEW_OZON_EVIDENCE_SERVICE_URL: evidenceUrl, SELECTION_REVIEW_GUOO_TARIFF_FILE: guooFile,
   SELECTION_REVIEW_C1_DRAFT_SERVICE_BINDINGS_JSON: "[]", SELECTION_REVIEW_C1_KEYWORD_SERVICE_BINDINGS_JSON: "[]",
   SELECTION_REVIEW_DE_SERVICE_BINDINGS_JSON: "[]", SELECTION_REVIEW_OZON_DE_CREDENTIAL_BINDINGS_JSON: "[]",
@@ -231,17 +224,36 @@ async function waitForHealth(child, stderr) {
   throw new Error(`测试服务未启动：${stderr.join("")}`);
 }
 
+// 只有需要读主人页面的那一个场景会登录；别的场景仍然跑开发默认身份，这里每次起服务前先清空。
+let ownerCookie = "";
+
 async function post(pathname, body) {
   const response = await fetch(`${baseUrl}${pathname}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Origin: baseUrl, "Sec-Fetch-Site": "same-origin" },
+    headers: { "Content-Type": "application/json", Origin: baseUrl, "Sec-Fetch-Site": "same-origin",
+      ...(ownerCookie ? { Cookie: ownerCookie } : {}) },
     body: JSON.stringify(body)
+  });
+  return { response, body: await response.json(), cookie: response.headers.get("set-cookie") };
+}
+
+async function get(pathname) {
+  const response = await fetch(`${baseUrl}${pathname}`, {
+    headers: { Origin: baseUrl, "Sec-Fetch-Site": "same-origin", ...(ownerCookie ? { Cookie: ownerCookie } : {}) }
   });
   return { response, body: await response.json() };
 }
 
-async function startEstimateScenario(t, { oldEstimate = false, exact = false, frozen = false } = {}) {
+/** 主人在「算利润」里签下的那份运输属性：没有它，GUOO 线路核验一律 unknown，确认根本走不到读佣金那一步。 */
+const DECLARED_CARGO_FACTS = { batteryType: "none", batteryEnergyWh: null, generalCargo: true,
+  personalUse: true, irregularShape: false };
+
+async function startEstimateScenario(t, { oldEstimate = false, exact = false, frozen = false, cargoFacts = false, ownerSession = false } = {}) {
   const candidate = markSupplierCaptureReady(createMusicBoxCandidate());
+  if (cargoFacts) {
+    candidate.cargoFactsV1 = buildOwnerCargoFactsRecord({ candidate, facts: { ...DECLARED_CARGO_FACTS },
+      declaredAt: new Date(Date.now() - 60_000).toISOString() });
+  }
   delete candidate.lifecycleV11;
   candidate.workflowStatus = 'codex_processing'; candidate.listingHandoff = null;
   candidate.processing = { state: 'idle', manualHold: false };
@@ -266,15 +278,29 @@ async function startEstimateScenario(t, { oldEstimate = false, exact = false, fr
   const directory = await mkdtemp(path.join(tmpdir(), 'conditional-b-api-'));
   const dataFile = path.join(directory, 'candidates.json');
   await writeFile(dataFile, JSON.stringify(document));
+  // 主人页面的那几条只读视图只认真正登录过的身份，所以要读视图的场景用本机口令身份起服务；
+  // 私有身份目录必须和源码、业务数据分开，所以它自己一个临时目录，服务端自己按 0700 建里面那一层。
+  let identityEnv = {};
+  if (ownerSession) {
+    const privateRoot = await mkdtemp(path.join(tmpdir(), 'conditional-b-owner-'));
+    t.after(() => rm(privateRoot, { recursive: true, force: true }));
+    identityEnv = { SELECTION_REVIEW_IDENTITY_PROVIDER: 'local_owner_password',
+      SELECTION_REVIEW_OWNER_IDENTITY_FILE: path.join(privateRoot, 'identity', 'owner.json') };
+  }
   const stderr = [];
   const child = spawn(process.execPath, [path.join(appDir, 'server.mjs'), '--api-only'], { cwd: appDir,
-    env: { ...process.env, ...isolatedEnv, SELECTION_REVIEW_DATA_FILE: dataFile,
+    env: { ...process.env, ...isolatedEnv, ...identityEnv, SELECTION_REVIEW_DATA_FILE: dataFile,
       SELECTION_REVIEW_STORE_BINDINGS_JSON: JSON.stringify([{ targetStore: 'dandanshu', platform: 'ozon', storeRef: SYNTHETIC_STORE_REF }]),
       SELECTION_REVIEW_API_PORT: String(port), SELECTION_REVIEW_PUBLIC_ORIGIN: baseUrl, SELECTION_REVIEW_ALLOWED_ORIGINS: baseUrl,
       SELECTION_REVIEW_AUTO_DELIVER: 'off', SELECTION_REVIEW_CODEX_DISPATCH: 'off' }, stdio: ['ignore', 'ignore', 'pipe'] });
   child.stderr.on('data', chunk => stderr.push(String(chunk)));
-  t.after(async () => { await stopApiProcess(child); await rm(directory, { recursive: true, force: true }); });
+  t.after(async () => { await stopApiProcess(child); await rm(directory, { recursive: true, force: true }); ownerCookie = ''; });
   await waitForHealth(child, stderr);
+  if (ownerSession) {
+    const session = await post('/api/owner-access/setup', { password: 'synthetic password for this isolated A confirmation test' });
+    assert.equal(session.response.status, 200, JSON.stringify(session.body));
+    ownerCookie = String(session.cookie).split(';')[0];
+  }
   return { candidate, dataFile, stderr, document };
 }
 
@@ -393,6 +419,62 @@ test('缺佣金时真实GUOO先保存缺口，零佣金及其他provider调用',
   const scenario = await startEstimateScenario(t);
   await assertBlockedComparison(scenario);
   assert.equal(scenario.stderr.join(''), '');
+});
+
+/**
+ * 2026-09-14 现场那个 bug 的回归：主人点「确认，进入文案素材」，服务端读不到精确佣金停在 422，**同一次失败里**
+ * 物流比较落了盘，落盘把 dataRevision 顶高一格。页面在 finally 里重读资料——原来这一读，页面内存里那个「撞上了」
+ * 的信号就被当成旧版本清掉了，能救主人的那一块还没渲染就没了。
+ *
+ * 所以这里走的是完整的那一条真路：真的 GUOO 原表、真的落盘、真的重读视图，断言那一块仍然在，并且说的就是当前
+ * 这一版资料。把服务端那条记录改回用顶高之前的版本号（也就是这个 bug 原来的形状），下面 current 那一条立刻变红。
+ */
+test('精确佣金读不到：物流比较落盘把版本顶高一格，重新读视图那一块仍然在（2026-09-14 现场 bug）', async t => {
+  const scenario = await startEstimateScenario(t, { cargoFacts: true, ownerSession: true });
+  const { candidate, dataFile, stderr } = scenario;
+  const firstCall = evidenceCalls.length;
+  // 主人填的目标成交价：GUOO 表按申报价值分档，没有它，表里每一行的报价资格都是「说不准」，确认根本走不到读佣金。
+  const input = { ...payload(candidate), targetSalePriceRub: 2000 };
+  const result = await post(`/api/candidates/${candidate.id}/lifecycle/a-confirm`, input);
+
+  // 一、确认确实停在「精确佣金读不到、只差主人授权」这一类，而且是读过佣金之后才停的。
+  assert.equal(result.response.status, 422, JSON.stringify(result.body));
+  assert.match(result.body.message, /B_EVIDENCE_PROVIDER_READ_FAILED: B_EVIDENCE_COMMISSION_ESTIMATE_NOT_AUTHORIZED/u);
+  assert.deepEqual(evidenceCalls.slice(firstCall), ['commission']);
+  assert.equal(result.body.evidencePreparation.failure.layer, 'provider:commission');
+  assert.equal(result.body.guooRouteComparison.status, 'compared');
+  assert.equal(result.body.guooRouteComparison.transportVerified, true);
+
+  // 二、同一次失败里物流比较落了盘，dataRevision 被顶高一格——这就是这个 bug 的引信。
+  const saved = JSON.parse(await readFile(dataFile, 'utf8')).candidates[0];
+  assert.equal(saved.dataRevision, candidate.dataRevision + 1);
+  assert.equal(saved.guooRouteComparisonsV1.at(-1).resultRevision, saved.dataRevision);
+
+  // 三、这一次停在哪，服务端存成了事实，记的是顶高之后的那个版本号。
+  assert.equal(saved.commissionEstimateSignalV1.schemaVersion, 'commission-estimate-signal-v1');
+  assert.equal(saved.commissionEstimateSignalV1.exactCommissionUnavailable, true);
+  assert.equal(saved.commissionEstimateSignalV1.sourceRevision, candidate.dataRevision);
+  assert.equal(saved.commissionEstimateSignalV1.resultRevision, saved.dataRevision);
+  assert.equal(saved.commissionEstimateSignalV1.failureLayer, 'provider:commission');
+  // 这台机器上没配官方佣金表，服务端也就没说缺口；软件不替它造一句。
+  assert.deepEqual(saved.commissionEstimateSignalV1.officialCommissionTableGaps, []);
+  // 服务端那句原话不进业务记录：它可能带着本机回环地址或本机路径。
+  assert.equal(JSON.stringify(saved.commissionEstimateSignalV1).includes('B_EVIDENCE_PROVIDER_READ_FAILED'), false);
+
+  // 四、页面重读资料（失败之后 finally 里就是这一下）：那一块仍然在，并且说的就是当前这一版资料。
+  const view = await get(`/api/candidates/${candidate.id}/lifecycle/supplier-draft`);
+  assert.equal(view.response.status, 200, JSON.stringify(view.body));
+  assert.equal(view.body.dataRevision, saved.dataRevision);
+  assert.equal(view.body.commissionEstimateStepV1.present, true, '重读之后这一块必须还在');
+  assert.equal(view.body.commissionEstimateStepV1.current, true, '它说的就是当前这一版资料');
+  assert.equal(view.body.commissionEstimateStepV1.recordedRevision, saved.dataRevision);
+  assert.deepEqual(view.body.commissionEstimateStepV1.officialGaps, []);
+
+  // 五、这一整轮没有形成利润结论、没有进 C1、没有向平台写任何东西。
+  assert.equal(saved.workflowStatus, candidate.workflowStatus);
+  assert.equal(saved.lifecycleV11?.skuPackage ?? null, null);
+  assert.equal(saved.acceptedEstimatedCommission, undefined);
+  assert.equal(stderr.join(''), '');
 });
 
 test('独立B证据准备入口在GUOO缺口前零provider且不改业务数据', async t => {

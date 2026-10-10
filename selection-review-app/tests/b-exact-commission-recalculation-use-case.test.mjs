@@ -6,6 +6,9 @@ import { createBExactCommissionRecalculationUseCase } from "../lib/b-exact-commi
 import { createMemoryBusinessStateRepository } from "../lib/business-state-repository.mjs";
 import { createLocalDevelopmentActor, createActorContext } from "../lib/runtime-identity.mjs";
 import { openExceptionCase } from "../lib/software-execution-state.mjs";
+import { inspectLifecycleBInputReadiness } from "../lib/lifecycle-b-input-bundle.mjs";
+import { buildBExactCommissionRuntimeView, B_BETTER_COMMISSION_EVIDENCE_LABELS } from "../lib/b-exact-commission-runtime-view.mjs";
+import { assertFormalCommissionBeforeProduction, PRODUCTION_EXACT_COMMISSION_REQUIRED } from "../lib/commission-estimate-authorization.mjs";
 
 async function fixture(options = {}) {
   const { candidate, original, document, at } = await createSavedConditionalBFixture(options);
@@ -130,4 +133,130 @@ test('missing current rules stop exact recalculation atomically despite complete
     await assert.rejects(f.usecase.recalculate({ actor: f.owner, input: f.input }), { code: expectedCode });
     assert.deepEqual(await f.repository.readSnapshot(), before);
   }
+});
+
+/**
+ * 主人第一件真货那一轮定下来的事：复算不再只认「店里实收」。
+ *
+ * 复算的本意是拿比主人签下的估算更好的证据换掉那一次条件测算。比估算更好的证据有两种——
+ * 店里同类目在售商品的实收费率，和主人保存的那一版Ozon官方费率表命中的费率。两种都能形成正式B。
+ * 下面三条分别钉：官方费率表能走通、估算仍旧走不通、以及走通之后上架那道闸门照样不放行。
+ */
+const OFFICIAL_COMMISSION_SHA = "d".repeat(64);
+
+function makeOfficialCommissionPack(document, { commissionRate } = {}) {
+  const candidate = document.candidates[0];
+  const pack = document.evidencePacks.find(item => item.kind === "commission");
+  pack.id = "commission:current:official";
+  pack.sourceType = "ozon_official_commission_table";
+  pack.sourceRef = `ozon-official-commission:2026-08-01:sha256:${OFFICIAL_COMMISSION_SHA}:le1500`;
+  pack.commissionCatalogRef = {
+    effectiveFrom: "2026-08-01", fileSha256: OFFICIAL_COMMISSION_SHA,
+    sourceUrl: "https://docs.ozon.ru/common/pravila-raboty/komissii/", priceTier: "le1500",
+    matchedRow: { typeRu: "Музыкальные шкатулки", typeZh: "音乐盒", mpCategoryZh: "家居用品" }
+  };
+  pack.evidenceData = {
+    ...pack.evidenceData,
+    ...(commissionRate === undefined ? {} : { commissionRate }),
+    commissionEvidenceMode: "official_reference",
+    officialCommissionBinding: { schemaVersion: "ozon-official-commission-binding-v1",
+      candidateId: candidate.id, candidateRevision: candidate.dataRevision, priceRub: 1462 },
+    estimateAuthorized: false, exactCommissionRequiredAtC: true
+  };
+  return pack;
+}
+
+function makeAuthorizedEstimatePack(document) {
+  const candidate = document.candidates[0];
+  const pack = document.evidencePacks.find(item => item.kind === "commission");
+  pack.id = "commission:current:estimated";
+  pack.evidenceData = {
+    ...pack.evidenceData,
+    commissionEvidenceMode: "estimated",
+    estimateAuthorized: true,
+    exactCommissionRequiredAtC: true,
+    commissionEstimateAuthorization: { schemaVersion: "commission-estimate-authorization-v1",
+      candidateId: candidate.id, candidateRevision: candidate.dataRevision,
+      authorizationRef: "fixture:b-estimate-current", commissionRate: pack.evidenceData.commissionRate }
+  };
+  return pack;
+}
+
+test("官方费率表命中的费率能让复算走到正式B并创建C1，而上架那道闸门照样不放行", async () => {
+  const f = await fixture();
+  await f.repository.transact(document => { makeOfficialCommissionPack(document); return { document, changed: true }; });
+  const result = await f.usecase.recalculate({ actor: f.owner, input: f.input });
+  assert.equal(result.result.status, "passed");
+  assert.equal(result.result.commissionEvidenceMode, "official_reference");
+  const saved = await f.repository.readSnapshot(), candidate = saved.candidates[0], life = candidate.lifecycleV11;
+  assert.equal(life.status, "b_passed_auto_c1");
+  assert.equal(life.bSystemEvidenceBundle.platformFeeEvidence.commissionEvidenceMode, "official_reference");
+  const model = life.skuPackage.profitModels.at(-1);
+  assert.equal(model.calculationType, "formal");
+  assert.equal(model.commissionMode, "official_reference");
+  assert.equal(model.exactCommissionRequiredForFormalB, false);
+  assert.equal(life.skuPackage.businessPhase, "C1");
+  assert.equal(life.c1Handoffs.length, 1);
+  assert.equal(candidate.workflowStatus, "listing_preparation");
+  assert.equal(candidate.executionRuntime.technicalFailure, null);
+  assert.deepEqual(result.result.externalAccesses, []);
+  assert.equal(result.result.platformWrites, 0);
+  // 正式佣金类型通过前置检查，生产仍要求当前完整证据。
+  assert.equal(assertFormalCommissionBeforeProduction(life.skuPackage).commissionMode, "official_reference");
+});
+
+test("同一个费率换成官方费率表来源时，利润数字一个都不许变，只变证据强度", async () => {
+  // 主人首件就是这个形状：他签的估算是12%，官方费率表这条类目命中的也是12%。
+  // 换来源不换数——利润、利润率必须逐位不动，变的只有 calculationType / commissionMode。
+  const baseline = await fixture();
+  const conditional = (await baseline.repository.readSnapshot()).candidates[0].lifecycleV11.skuPackage.profitModels.at(-1);
+  assert.equal(conditional.calculationType, "conditional");
+  assert.equal(conditional.commissionMode, "estimated");
+
+  const f = await fixture();
+  await f.repository.transact(document => {
+    makeOfficialCommissionPack(document, { commissionRate: conditional.commissionRate });
+    return { document, changed: true };
+  });
+  await f.usecase.recalculate({ actor: f.owner, input: f.input });
+  const formal = (await f.repository.readSnapshot()).candidates[0].lifecycleV11.skuPackage.profitModels.at(-1);
+  assert.equal(formal.commissionRate, conditional.commissionRate);
+  assert.equal(formal.unitProfitRmb, conditional.unitProfitRmb);
+  assert.equal(formal.profitMargin, conditional.profitMargin);
+  assert.equal(formal.calculationType, "formal");
+  assert.equal(formal.commissionMode, "official_reference");
+});
+
+test("估算佣金仍然不能用来复算：就算证据齐全、绑定当前修订，也只会被那一道闸门挡回去", async () => {
+  const f = await fixture();
+  await f.repository.transact(document => { makeAuthorizedEstimatePack(document); return { document, changed: true }; });
+  const before = await f.repository.readSnapshot();
+  // 证据本身是齐的：挡回去的一定是「模式不够好」，不是「读不到证据」。
+  const readiness = inspectLifecycleBInputReadiness({ candidate: before.candidates[0],
+    evidencePacks: before.evidencePacks, currentCommissionCatalogs: [], asOf: f.at });
+  assert.equal(readiness.ready, true);
+  await assert.rejects(() => f.usecase.recalculate({ actor: f.owner, input: f.input }),
+    { code: "B_EXACT_RECALCULATION_EXACT_EVIDENCE_REQUIRED" });
+  assert.deepEqual(await f.repository.readSnapshot(), before);
+});
+
+test("这次复算会用哪一种费用证据，点之前就说得出来", async () => {
+  const exact = await fixture();
+  const exactSnapshot = await exact.repository.readSnapshot();
+  const exactView = buildBExactCommissionRuntimeView({ candidate: exactSnapshot.candidates[0],
+    evidencePacks: exactSnapshot.evidencePacks, currentCommissionCatalogs: [], rules: exactSnapshot.rules, observedAt: exact.at });
+  assert.equal(exactView.canRecalculate, true);
+  assert.equal(exactView.commissionEvidenceMode, "exact");
+  assert.equal(exactView.commissionEvidenceLabel, B_BETTER_COMMISSION_EVIDENCE_LABELS.exact);
+
+  const official = await fixture();
+  await official.repository.transact(document => { makeOfficialCommissionPack(document); return { document, changed: true }; });
+  const officialSnapshot = await official.repository.readSnapshot();
+  const officialView = buildBExactCommissionRuntimeView({ candidate: officialSnapshot.candidates[0],
+    evidencePacks: officialSnapshot.evidencePacks, currentCommissionCatalogs: [], rules: officialSnapshot.rules, observedAt: official.at });
+  assert.equal(officialView.canRecalculate, true);
+  assert.equal(officialView.commissionEvidenceMode, "official_reference");
+  assert.equal(officialView.commissionEvidenceLabel, B_BETTER_COMMISSION_EVIDENCE_LABELS.official_reference);
+  // 说清楚这不是平台实收，免得主人以为可以直接上架。
+  assert.match(officialView.message, /不是这个店被扣过的钱/u);
 });
