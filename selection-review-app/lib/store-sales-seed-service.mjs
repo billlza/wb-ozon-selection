@@ -125,7 +125,7 @@ export function createStoreSalesSeedService({ readData, mutateData, mutateDataWh
   }
 
   /** A read that was in flight when the process stopped has no result; reads change nothing, so it simply closes. */
-  async function reconcileAfterRestart() {
+  async function reconcileReadsAfterRestart() {
     return mutateDataWhenChanged(document => {
       const closed = [];
       for (const [id, record] of Object.entries(storeSalesSnapshots(document))) {
@@ -138,5 +138,5 @@ export function createStoreSalesSeedService({ readData, mutateData, mutateDataWh
     });
   }
 
-  return Object.freeze({ view, startRead, reconcileAfterRestart, isRunning: store => running.has(store) });
+  return Object.freeze({ view, startRead, reconcileReadsAfterRestart, isRunning: store => running.has(store) });
 }

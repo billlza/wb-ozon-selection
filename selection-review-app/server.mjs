@@ -10492,8 +10492,8 @@ if (lostOzonPageReads?.length) {
 }
 // The same closure for 找同款 (1688 and Ozon): a record still waiting on the extension would refuse every later search of that product.
 const lostImageMatches = await reconcileImageMatchJobsAfterRestart();
-const lostSeerfarWebRounds = await seerfarWebRounds.reconcileAfterRestart();
-await storeSalesSeeds.reconcileAfterRestart();
+const lostSeerfarWebRounds = await seerfarWebRounds.reconcileRoundsAfterRestart();
+await storeSalesSeeds.reconcileReadsAfterRestart();
 if (lostSeerfarWebRounds?.length) {
   console.log(`Seerfar 榜单作业已随服务重启收口为失败（不会再有结果，需要重新收一轮）：${lostSeerfarWebRounds.join("、")}`);
 }

@@ -222,7 +222,7 @@ export function createSeerfarWebRoundService({ readData, mutateData, mutateDataW
   }
 
   /** Sessions die with the process; any round still waiting on one can never get a result. */
-  async function reconcileAfterRestart() {
+  async function reconcileRoundsAfterRestart() {
     return mutateDataWhenChanged(document => {
       const rounds = seerfarWebRounds(document);
       const closed = [];
@@ -237,5 +237,5 @@ export function createSeerfarWebRoundService({ readData, mutateData, mutateDataW
     });
   }
 
-  return Object.freeze({ view, startRound, claim, acceptResult, reconcileAfterRestart, activeSession, owns: captureId => sessions.has(captureId) });
+  return Object.freeze({ view, startRound, claim, acceptResult, reconcileRoundsAfterRestart, activeSession, owns: captureId => sessions.has(captureId) });
 }

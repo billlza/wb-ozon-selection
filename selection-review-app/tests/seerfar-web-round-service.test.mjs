@@ -116,7 +116,7 @@ test('an unclaimed job closes itself, and a restart closes rounds whose job is g
 
   const leftover = harness({ document: { runtime: { seerfarWebRounds: { 'seerfar-web-round:x': {
     ...read().runtime.seerfarWebRounds[started.round.roundId], roundId: 'seerfar-web-round:x', status: 'capturing', failure: null, completedAt: null } } } } });
-  assert.deepEqual(await leftover.service.reconcileAfterRestart(), ['seerfar-web-round:x']);
+  assert.deepEqual(await leftover.service.reconcileRoundsAfterRestart(), ['seerfar-web-round:x']);
   assert.equal(leftover.read().runtime.seerfarWebRounds['seerfar-web-round:x'].failure.code, 'capture_job_lost');
 });
 
