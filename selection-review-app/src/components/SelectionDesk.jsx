@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DECLINE_REASONS, FEED_SORTS, boardColumns, deskErrorMessage, eliminatedRows, feedRows, inboxItems,
-  lastRoundUndecidedRows, myProductRows, newRoundPlan, pointsLine } from "../selectionDeskView.js";
+  lastRoundUndecidedRows, myProductRows, newRoundPlan, pointsLine, unsourcedRows } from "../selectionDeskView.js";
 import EliminateControl, { EliminatedFold } from "./EliminateControl.jsx";
+import SourceLinkControl from "./SourceLinkControl.jsx";
 import { PlusIcon } from "./Icons";
 
 /** The one word the bulk drop is recorded under; free text is not accepted anywhere in this flow. */
@@ -34,7 +35,7 @@ function ProfitBox({ row }) {
 }
 
 function FeedCard({ row, active, saving, declining, candidateRevision = null,
-  onDeclining, onSelect, onDecline, onLater, onOpenCandidate, onEliminate }) {
+  onDeclining, onSelect, onDecline, onLater, onOpenCandidate, onEliminate, onSubmitSourceLink = null }) {
   return <article className={`desk-card${active ? " desk-card-active" : ""}`}>
     {row.imageUrl
       ? <img className="desk-thumb" src={row.imageUrl} alt="" width="132" height="132" loading="lazy" referrerPolicy="no-referrer" />
@@ -69,6 +70,9 @@ function FeedCard({ row, active, saving, declining, candidateRevision = null,
               </div>
             </details>
             <button type="button" className="button secondary" disabled={saving} onClick={() => onLater(row)}>稍后</button>
+            {/* Item 9: a folded row nobody found a source for gets a way forward, not only a place to be hidden. */}
+            {onSubmitSourceLink === null ? null : <SourceLinkControl target={{ batchId: row.batchId, marketProductId: row.marketProductId }}
+              disabled={saving} onSubmit={onSubmitSourceLink} onOpenCandidate={onOpenCandidate} />}
           </>}
       </div>
     </div>
@@ -83,7 +87,7 @@ export default function SelectionDesk({
   discoveryView, candidates, store, ownerReady = true, loadingLabel = "正在读取本店的查询结果…",
   onSelectProduct, onDeclineProduct, onLaterProduct, onEstimate, onTranslate,
   onOpenCandidate, onStartNewRound, onResumeRound, onOpenBoard, onOpenInbox, onAddProduct,
-  onEliminateCandidate, onRestoreCandidate, skipped = []
+  onEliminateCandidate, onRestoreCandidate, onSubmitSourceLink = null, skipped = []
 }) {
   const [sort, setSort] = useState("profit");
   const [saving, setSaving] = useState(false);
@@ -102,6 +106,7 @@ export default function SelectionDesk({
   const revisions = useMemo(() => new Map((Array.isArray(candidates) ? candidates : [])
     .map(candidate => [candidate?.id, candidate?.dataRevision])), [candidates]);
   const inbox = useMemo(() => inboxItems(candidates, store), [candidates, store]);
+  const unsourced = useMemo(() => unsourcedRows(candidates, store, discoveryView), [candidates, store, discoveryView]);
   // What the newest round still has no answer on; the count shown before the click is the list acted on after it.
   const undecided = useMemo(() => lastRoundUndecidedRows(feed).filter(row => !skippedKeys.has(row.key)), [feed, skippedKeys]);
   const points = pointsLine(discoveryView, store);
@@ -280,7 +285,8 @@ export default function SelectionDesk({
         {history.length ? <details className="desk-folded"><summary>历史轮次未处理的 {history.length} 条（默认隐藏）</summary>
           {history.map(row => <FeedCard key={row.key} row={row} active={false} saving={saving}
             declining={declining === row.key} onDeclining={setDeclining} candidateRevision={revisions.get(row.importedCandidateId) ?? null}
-            onSelect={select} onDecline={decline} onLater={later} onOpenCandidate={onOpenCandidate} onEliminate={eliminate} />)}
+            onSelect={select} onDecline={decline} onLater={later} onOpenCandidate={onOpenCandidate} onEliminate={eliminate}
+            onSubmitSourceLink={typeof onSubmitSourceLink === "function" ? onSubmitSourceLink : null} />)}
         </details> : null}
         {feed.excluded.length ? <details className="desk-folded"><summary>已自动排除 {feed.excluded.length} 条（预估负利润）</summary>
           <ul>{feed.excluded.map(row => <li key={row.key}>{row.titleZh ?? row.title} · 售价 {fact(row.price)} 卢布 · {row.estimate?.summary ?? "预估负利润"}</li>)}</ul>
@@ -296,9 +302,13 @@ export default function SelectionDesk({
           {inbox.length === 0 ? <p className="desk-rail-empty">现在没有等你处理的商品。</p> : <ul className="desk-rail-list">
             {inbox.slice(0, 6).map(item => <li key={item.id}>
               <b>{item.title}</b><span>{item.need}{item.moreNeeds > 0 ? `（还有 ${item.moreNeeds} 项）` : ""}</span>
-              <button type="button" className="button secondary" onClick={() => onOpenCandidate(item.id)}>{item.action.label}</button>
+              {/* 贴货源链接 lives on 需要你处理, where the field to paste into is; every other action opens the product. */}
+              <button type="button" className="button secondary" onClick={() => item.action.key === "source_link"
+                ? onOpenInbox() : onOpenCandidate(item.id)}>{item.action.label}</button>
             </li>)}</ul>}
           {inbox.length > 6 ? <button type="button" className="button secondary" onClick={onOpenInbox}>查看全部 {inbox.length} 条</button> : null}
+          {unsourced.length ? <p className="desk-rail-unsourced">还有 {unsourced.length} 件没有货源，在「需要你处理」里逐件贴货源链接。
+            <button type="button" className="button secondary" onClick={onOpenInbox}>去贴链接</button></p> : null}
         </section>
         <section className="desk-rail-block">
           <h3>进行中</h3>

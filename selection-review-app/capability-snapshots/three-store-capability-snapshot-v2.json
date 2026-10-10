@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T06:36:05.515Z",
+  "frozenAt": "2026-10-10T07:09:18.431Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 962,
-      "sha256": "8e5af00c6d6373c4f6627005335dbca3d71696b0168e3ba28cf4972e68e8e261",
+      "artifactCount": 967,
+      "sha256": "41e6c780dc4bc532d38817f306ca59413f9d4116755ec285e3234a6a402c0338",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -440,7 +440,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "c4ed2b308918487ce78653a30e9024b515934747c43eb92bb921f7e8138e6920"
+        "sha256": "24420b219b720cfcfe21c1ef769793f29cdde0fdc0fe18f5ac0e9adddf509712"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -645,6 +645,10 @@
       {
         "path": "lib/gate1-service.mjs",
         "sha256": "2ff79e2f6801e2299b14b3a7bc3b880b3a9f207de70a8c30e5b74855b0f33f4b"
+      },
+      {
+        "path": "lib/global-notices.mjs",
+        "sha256": "2d7e8e9cdfd885a58552c4078387702400bac4ac9c012dd75482d9c0722b2749"
       },
       {
         "path": "lib/global-pricing-policy.mjs",
@@ -1660,7 +1664,7 @@
       },
       {
         "path": "src/App.jsx",
-        "sha256": "bb696a43df7992a90892f01734ca7ee1075c2a4c33540475b57d1e67bb47496a"
+        "sha256": "8f65e1c43a9f86f59a297f224ae6c8d8e06249b868f8bfdb252453dfda019d9c"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1779,6 +1783,10 @@
         "sha256": "9750fe6a4afa36619fdf58331cde13e0edafaef3aae9c8e2934c4e2f93ccbbea"
       },
       {
+        "path": "src/components/GlobalNotices.jsx",
+        "sha256": "634e0e2dc453bdba91106e6b0e1090096f3a875300d5f1b9a9f92182b6a841f5"
+      },
+      {
         "path": "src/components/HeaderStatus.jsx",
         "sha256": "30fe7fa67d3cedc5424a0914fc07abc504ed73bf8c52524a8d74f375c6753756"
       },
@@ -1812,7 +1820,7 @@
       },
       {
         "path": "src/components/OwnerInbox.jsx",
-        "sha256": "a3117ff24d21bf9329bf466bb18382739aa15d6492c80d6a97405731fb649635"
+        "sha256": "606c2b6a0d0c4cb30653a3e1739b9f33b63f6bb7d23079be6848ca9d8010becb"
       },
       {
         "path": "src/components/OzonAccountPreparationCard.jsx",
@@ -1840,7 +1848,7 @@
       },
       {
         "path": "src/components/ProductDiscoveryCard.jsx",
-        "sha256": "2eb0bd680b2086f3fbeebf1aff435c8e93846a99bec508e9dc1ec1b9c1135ac4"
+        "sha256": "ce81f6164026578460bc41457d4284c5a1a26eaf6d785125a61b0bdbd184f40c"
       },
       {
         "path": "src/components/ProductPage.jsx",
@@ -1864,7 +1872,7 @@
       },
       {
         "path": "src/components/SelectionDesk.jsx",
-        "sha256": "baad82c4103c8bdf3227e6ebedde453c64cd5fd2aaf9c0c1d75d764b762264e9"
+        "sha256": "07b524813fd178412c78614567a9a4fede68c05033fa288f6cc362fcb868e3be"
       },
       {
         "path": "src/components/SiblingBatchPreparation.jsx",
@@ -1877,6 +1885,10 @@
       {
         "path": "src/components/SiblingPreparationWorkspace.jsx",
         "sha256": "61ae4ad5a2c555d2d39a3b612652b67269e8140e042c537b8068f398f607dce2"
+      },
+      {
+        "path": "src/components/SourceLinkControl.jsx",
+        "sha256": "9dddbd6c9608dbc5957f447bee328f1d0edb28e9371527ec1dedbd8177d32bb7"
       },
       {
         "path": "src/components/StatusBadge.jsx",
@@ -1976,7 +1988,7 @@
       },
       {
         "path": "src/selectionDeskView.js",
-        "sha256": "605b4a1a0792e8ac98544e48e99f8a74824e18ce7a4ed683c5965ca5fce80664"
+        "sha256": "490648a9e0d67b1c381d1f92124a3deefe1fedbd9a8545950b722ce44835cabe"
       },
       {
         "path": "src/siblingBatchAuthorizationInput.js",
@@ -2000,7 +2012,7 @@
       },
       {
         "path": "src/styles.css",
-        "sha256": "63acd079be737c9a6f2a2d4ea8749e284ea6a42b77733533bc54d2f5a9ac195e"
+        "sha256": "8fae21de7e68305bbb3993f1ea27dbcd89314cf6a8b94334f7916e38decd0628"
       },
       {
         "path": "src/supplierImageMatchView.js",
@@ -3051,6 +3063,10 @@
         "sha256": "2c20f7242e9087245f59207193849bab42ca9082eff5749a7791034397af9604"
       },
       {
+        "path": "tests/global-notices.test.mjs",
+        "sha256": "76c823978919e305fca016f7d2f1ed250c81af0fdb65edefb52a23fbd507fdd4"
+      },
+      {
         "path": "tests/global-pricing-policy.test.mjs",
         "sha256": "61b075638853fe78df29bcf05f54baf1e54792bce4a2943fcf7c71f3bcddac34"
       },
@@ -3121,6 +3137,10 @@
       {
         "path": "tests/image-fingerprint.test.mjs",
         "sha256": "c5b1cc53dc78ed2d9a0883d05779bede3b4bddba5fc0a45325f3e3b6de5c8d52"
+      },
+      {
+        "path": "tests/inbox-notices-ui.test.mjs",
+        "sha256": "5aa096bff649889693ba4cbe2a72625eda6e0c0b16a2c428b64e71d334b45a09"
       },
       {
         "path": "tests/intake-api.test.mjs",
@@ -6410,6 +6430,11 @@
         "lib/sibling-batch-a-b-c1.mjs",
         "lib/profit-step-review.mjs",
         "src/selectionDeskView.js",
+        "lib/global-notices.mjs",
+        "src/components/GlobalNotices.jsx",
+        "src/components/SourceLinkControl.jsx",
+        "tests/global-notices.test.mjs",
+        "tests/inbox-notices-ui.test.mjs",
         "lib/discovery-title-translation.mjs",
         "lib/discovery-title-translation-store.mjs",
         "lib/seerfar-discovery-software-runner.mjs",

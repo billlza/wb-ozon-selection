@@ -1504,3 +1504,26 @@ label em { color: var(--red); font-style: normal; font-size: 9px; }
 .gate1-matches > section { margin-top: 12px; }
 .gate1-done-line { margin: 0; }
 /* ── 「做这件」确认卡 end ── */
+/* 需要你处理 and page-wide notices (piece D of the 2026-10-10 flow rework) */
+.global-notices { max-width: 1280px; margin: 12px auto 0; padding: 0 16px; display: grid; gap: 8px; }
+.page-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 11px 14px; border-radius: var(--radius); color: var(--amber); background: var(--amber-soft); font-size: 13px; }
+.page-notice-text { flex: 999 1 420px; min-width: 0; display: grid; gap: 2px; }
+.page-notice-text span { font-size: 12px; line-height: 1.6; }
+.run-todos { padding: 11px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; }
+.run-todos h3 { margin: 0 0 6px; font-size: 14px; color: var(--amber); }
+.run-todos ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.run-todo { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.run-todo-body { flex: 999 1 360px; min-width: 0; display: grid; gap: 2px; font-size: 12px; overflow-wrap: anywhere; }
+.run-todo-hint, .run-todo-items { color: var(--muted); }
+.run-todo-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.run-todo-confirm { font-size: 12px; }
+.source-link-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; }
+.source-link-form label { display: grid; gap: 3px; font-size: 11px; color: var(--muted); }
+.source-link-form input { min-width: min(320px, 70vw); }
+.source-link-result { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--green); font-size: 12px; }
+.unsourced-list { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.unsourced-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.unsourced-body { min-width: 0; display: grid; gap: 2px; overflow-wrap: anywhere; }
+.unsourced-reason { color: var(--amber); }
+.unsourced-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.desk-rail-unsourced { margin: 8px 0 0; color: var(--amber); font-size: 12px; display: grid; gap: 6px; }
