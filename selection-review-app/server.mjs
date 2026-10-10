@@ -313,6 +313,9 @@ import { createDPlatformStateReconciliationUseCase, DPlatformStateReconciliation
 import { C1KeywordContinuationRevisionConflictError, createKeywordEvidenceRuntimeServices } from "./lib/keyword-evidence-runtime-services.mjs";
 
 import { createRuntimeHealth } from './lib/runtime-health.mjs';
+import { INTAKE_MAX_LINKS_PER_PASTE, intakeBlocker, intakeDuplicateOf, intakeLogin1688State, intakePause, intakeProgress, intakeQueue,
+  intakeResumePlan, intakeRetryPlan, intakeStageUpdate, newIntakeRecord, nextIntakeWork, parseIntakeLinks } from "./lib/intake-pipeline.mjs";
+import { buildIntakeRoughProfit, intakeRoughProfitPlan } from "./lib/intake-rough-profit.mjs";
 
 const appDir = path.dirname(fileURLToPath(import.meta.url));
 const runtimeConfiguration = createSelectionReviewRuntimeConfiguration({ env: process.env, appDir, argv: process.argv });
@@ -1242,7 +1245,7 @@ function aSupplierRecaptureHistoryDetail(superseded, reason) {
  * saved 1688 link, the same guards and the same lease, plus one extra history line written inside this same mutation
  * so the voided specifications and the queued job can never be recorded apart from each other.
  */
-async function enqueueASupplierCaptureJob({ candidateId, requestRevision, requestedSourceUrl, ownerRecapture = null }) {
+async function enqueueASupplierCaptureJob({ candidateId, requestRevision, requestedSourceUrl, ownerRecapture = null, onQueued = null }) {
   const existing = captureSession(candidateId);
   if (existing?.mode === "a_supplier_capture" &&
     [existing.requestRevision, existing.dataRevision].includes(requestRevision) &&
@@ -1333,6 +1336,8 @@ async function enqueueASupplierCaptureJob({ candidateId, requestRevision, reques
         addHistory(current, "user", "aSupplierCaptureRecaptureRequested",
           aSupplierRecaptureHistoryDetail(superseded, ownerRecapture.reason ?? null), timestamp);
       }
+      // 录入流水线排的这一步：作业编号和这次排队写在同一次保存里，不会出现排了作业却没记下是谁排的。
+      onQueued?.(current, session, timestamp);
       return publicCandidate(current, data.rules);
     });
   } catch (error) {
@@ -1805,7 +1810,7 @@ async function reconcileImageMatchJobsAfterRestart() {
   });
 }
 
-async function enqueueImageMatchJob(kind, { candidateId, requestRevision, acknowledgeUnknownOutcome, actor, input = {} }) {
+async function enqueueImageMatchJob(kind, { candidateId, requestRevision, acknowledgeUnknownOutcome, actor, input = {}, onQueued = null }) {
   const existing = imageMatchSessionFor(kind, candidateId);
   if (existing && [existing.requestRevision, existing.dataRevision].includes(requestRevision) &&
     ["queued", "claimed"].includes(existing.jobStatus)) {
@@ -1877,6 +1882,7 @@ async function enqueueImageMatchJob(kind, { candidateId, requestRevision, acknow
       current.updatedAt = timestamp;
       current.lastModifiedBy = "user";
       addHistory(current, "user", `${kind.historyPrefix}Queued`, kind.queuedHistory(locked), timestamp);
+      onQueued?.(current, session, timestamp);
       return publicCandidate(current, data.rules);
     });
   } catch (error) {
@@ -1898,6 +1904,267 @@ function seerfarWebClaim(captureId, extensionVersion, extensionOrigin) {
 function seerfarWebHttpError(error) {
   if (!Number.isInteger(error?.status)) return error;
   return httpError(error.status, error.publicMessage || "Seerfar 榜单作业没有继续", { code: `seerfar_web_${String(error.code).toLowerCase()}` });
+}
+
+/**
+ * 录入流水线（主人 2026-10-10 拍板的找同款草稿第 1 页）。
+ *
+ * 主人在录入页贴拼多多 / 1688 链接，每条变成一件商品（candidate.intake）；这里的泵一件一件往下推：读货源页、用首图在 1688
+ * 找同款、用首图在 Ozon 以图搜、粗算利润。三个作业就是商品页上主人手动点的那三个：同一把采集控制锁、同样的租约和收口。
+ * 泵只在插件连着、版本对、采集控制空闲时排下一步，一次只排一个；停下的作业从不自动补跑，等主人点「重跑」或「接着找」。
+ * 判断全在 lib/intake-pipeline.mjs，粗算在 lib/intake-rough-profit.mjs；这一段只读写记录、排作业。
+ */
+const INTAKE_PUMP_INTERVAL_MS = Math.max(50, Number(process.env.SELECTION_REVIEW_INTAKE_PUMP_INTERVAL_MS || 3000));
+const INTAKE_PLACEHOLDER_NAME = "录入中的商品";
+const INTAKE_STEP_LABELS = Object.freeze({ capture_source: "读货源页", search_1688: "在 1688 用首图找同款", search_ozon: "在 Ozon 用首图以图搜",
+  estimate: "粗算利润" });
+const INTAKE_SOURCE_LABELS = Object.freeze({ pinduoduo: "拼多多", "1688": "1688" });
+/** 排作业时碰上这些，只是这会儿轮不到（别的作业占着、刚好有人改了这件），下一轮再排；别的拒绝说明这一步开始不了，停下等主人。 */
+const INTAKE_TRANSIENT_CODES = new Set(["revision_conflict", "candidate_busy", "capture_job_state_conflict", "image_match_in_flight",
+  "ozon_match_in_flight"]);
+/** 插件只领页面递过去的作业编号（src/intakeJobBridge.js）；最近这么久里有工作台页面来看过，才算有人能把编号递过去。 */
+const INTAKE_BRIDGE_TTL_MS = 20 * 1000;
+let intakePumpTimer = null;
+let intakePumpRunning = false;
+let intakePumpRequested = false;
+let intakeHasOpenWork = false;
+let intakeBridgeSeenAt = 0;
+let intakeLastStart = null;
+
+function intakeExtensionState(timestamp = Date.now()) {
+  const heartbeat = extensionHeartbeatSnapshot(timestamp);
+  return { online: heartbeat.fresh && heartbeat.backgroundReady, version: heartbeat.version || null,
+    requiredVersion: REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION, versionOk: heartbeat.version === REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION,
+    bridge: timestamp - intakeBridgeSeenAt < INTAKE_BRIDGE_TTL_MS, captureControl: captureControlSnapshot(timestamp).status };
+}
+
+/** 录入泵排好、插件还没领的那一个作业：工作台页面拿这个编号去递开始信号。一次只有一个。 */
+function intakePendingStart(candidates, timestamp = Date.now()) {
+  for (const candidate of candidates) {
+    const jobs = candidate.intake?.jobs;
+    if (!jobs || candidate.workflowStatus === "eliminated") continue;
+    for (const [kind, captureId, sessions] of [["supplier_capture", jobs.sourceCaptureId, sourceCaptureSessions],
+      ["supplier_image_match", jobs.supplierMatchId, imageMatchSessions], ["ozon_image_match", jobs.ozonMatchId, imageMatchSessions]]) {
+      const session = captureId ? sessions.get(captureId) : null;
+      if (session?.candidateId === candidate.id && session.jobStatus === "queued" && session.expiresAt > timestamp) {
+        return { candidateId: candidate.id, captureId, kind };
+      }
+    }
+  }
+  return null;
+}
+
+function scheduleIntakePump(delayMs = 0) {
+  if (intakePumpRunning) { intakePumpRequested = true; return; }
+  if (intakePumpTimer) {
+    if (delayMs > 0) return;
+    clearTimeout(intakePumpTimer);
+  }
+  intakePumpTimer = setTimeout(() => { intakePumpTimer = null; void runIntakePump(); }, delayMs);
+  intakePumpTimer.unref?.();
+}
+
+async function runIntakePump() {
+  if (intakePumpRunning) { intakePumpRequested = true; return; }
+  intakePumpRunning = true;
+  intakePumpRequested = false;
+  let active = false;
+  let extensionReady = false;
+  try {
+    // 粗算、跳过 1688 这类不用插件的步骤可以一口气做完；要插件的那一步每轮最多排一个。
+    for (let round = 0; round < 50; round += 1) {
+      const outcome = await intakePumpStep();
+      active = outcome.active;
+      extensionReady = outcome.extensionReady;
+      if (!outcome.progressed) break;
+    }
+  } catch (error) {
+    console.error("录入流水线这一轮没推进成，下一轮再看", error);
+    active = true;
+  } finally {
+    intakePumpRunning = false;
+  }
+  intakeHasOpenWork = active;
+  if (intakePumpRequested) scheduleIntakePump(0);
+  // 插件没连上时排着的都在等，不必常看；插件的下一次心跳会叫醒这里。
+  else if (active) scheduleIntakePump(extensionReady ? INTAKE_PUMP_INTERVAL_MS : INTAKE_PUMP_INTERVAL_MS * 5);
+}
+
+const intakeInputsFingerprint = (candidate) => JSON.stringify([candidate.sourceCapture?.captureId ?? null, candidate.sourceCapture?.status ?? null,
+  ...[candidate.supplierImageMatch, candidate.ozonImageMatch].map((record) => [record?.captureId ?? null, record?.status ?? null,
+    record?.comparison?.comparedAt ?? null])]);
+
+/** 一轮：先把每件的 stage / blocker 写回商品，再挑下一件要推进的。 */
+async function intakePumpStep() {
+  const extension = intakeExtensionState();
+  const extensionReady = extension.online && extension.versionOk && extension.bridge && extension.captureControl === "idle";
+  const round = await mutateDataWhenChanged((data) => {
+    const login1688Expired = intakeLogin1688State(data.candidates) === "expired";
+    let changed = false;
+    for (const current of data.candidates) {
+      if (!current.intake || current.workflowStatus === "eliminated") continue;
+      const timestamp = now();
+      let touched = false;
+      const update = intakeStageUpdate(current, { login1688Expired });
+      if (update) {
+        if (update.stage === "blocked" && current.intake.stage !== "blocked") {
+          addHistory(current, "system", "intakeBlocked", `录入流水线在这一件停下：${update.blocker.message}。不会自动重跑，业务状态没有改变`, timestamp);
+        }
+        current.intake = { ...current.intake, ...update };
+        touched = true;
+      }
+      // 占位的名字和图，换成货源页上读到的；主人自己改过的不动。
+      const capture = current.sourceCapture;
+      if (capture?.status === "captured_waiting_owner_selection" && capture.captureId === current.intake.jobs?.sourceCaptureId) {
+        if (current.productName === INTAKE_PLACEHOLDER_NAME && typeof capture.title === "string" && capture.title.trim()) {
+          current.productName = capture.title.trim().slice(0, 200);
+          touched = true;
+        }
+        if (!current.imageUrl && capture.mainImageUrl) {
+          current.imageUrl = capture.mainImageUrl;
+          touched = true;
+        }
+      }
+      if (touched) {
+        current.dataRevision = Number(current.dataRevision || 0) + 1;
+        current.updatedAt = timestamp;
+        current.lastModifiedBy = "system";
+        changed = true;
+      }
+    }
+    const work = nextIntakeWork(data.candidates, { extensionReady });
+    const open = intakeQueue(data.candidates).some(({ progress }) => progress.stage !== "blocked");
+    return { changed, result: { open, work: work && { candidateId: work.candidate.id, step: work.step,
+      dataRevision: Number(work.candidate.dataRevision), intake: structuredClone(work.candidate.intake) } } };
+  });
+  const quiet = { progressed: false, active: round.open, extensionReady };
+  if (!round.work) return quiet;
+  const { candidateId, step, dataRevision, intake } = round.work;
+  if (step === "estimate") {
+    await settleIntakeEstimate(candidateId);
+    return { ...quiet, progressed: true, active: true };
+  }
+  if (step === "skip_1688") {
+    await mutateDataWhenChanged((data) => {
+      const current = data.candidates.find((item) => item.id === candidateId);
+      if (!current?.intake || intakeProgress(current, { login1688Expired: true })?.next !== "skip_1688") return { changed: false };
+      const timestamp = now();
+      current.intake = { ...current.intake, skips: { ...current.intake.skips, supplierMatch: "login_1688_required" } };
+      current.dataRevision = Number(current.dataRevision || 0) + 1;
+      current.updatedAt = timestamp;
+      current.lastModifiedBy = "system";
+      addHistory(current, "system", "intakeStepSkipped",
+        "1688 登录过期了，这一件先不在 1688 找同款，照常往下走；主人登录 1688 后点「接着找」再补搜", timestamp);
+      return { changed: true };
+    });
+    return { ...quiet, progressed: true, active: true };
+  }
+  const jobKey = { capture_source: "sourceCaptureId", search_1688: "supplierMatchId", search_ozon: "ozonMatchId" }[step];
+  const stage = { capture_source: "reading_source", search_1688: "searching_1688", search_ozon: "searching_ozon" }[step];
+  const onQueued = (current, session, timestamp) => {
+    current.intake = { ...current.intake, stage, blocker: null, startedAt: current.intake.startedAt ?? timestamp,
+      jobs: { ...current.intake.jobs, [jobKey]: session.captureId } };
+    addHistory(current, "system", "intakeStepQueued", `录入流水线排到这一件：${INTAKE_STEP_LABELS[step]}（只读一次，结果回来前不排别的）`, timestamp);
+  };
+  try {
+    if (step === "capture_source") {
+      await enqueueASupplierCaptureJob({ candidateId, requestRevision: dataRevision, requestedSourceUrl: intake.sourceUrl, onQueued });
+    } else {
+      await enqueueImageMatchJob(step === "search_ozon" ? IMAGE_MATCH_KINDS.ozon : IMAGE_MATCH_KINDS.supplier, {
+        candidateId, requestRevision: dataRevision, actor: { userId: intake.submittedBy },
+        // 只有主人为这一步点过「重跑」，才算他知道上一次结果未知（商品页上的「已知道」是同一个意思）。
+        acknowledgeUnknownOutcome: intake.lastRetry?.step === step,
+        input: step === "search_ozon" ? { searchBy: "image" } : {}, onQueued });
+    }
+    return { ...quiet, active: true };
+  } catch (error) {
+    if (error?.extra?.captureControl || INTAKE_TRANSIENT_CODES.has(error?.extra?.code)) return { ...quiet, active: true };
+    await mutateDataWhenChanged((data) => {
+      const current = data.candidates.find((item) => item.id === candidateId);
+      if (!current?.intake || current.intake.stage === "blocked") return { changed: false };
+      const timestamp = now();
+      const blocker = intakeBlocker("step_not_started", { step, detail: String(error?.message || "") });
+      current.intake = { ...current.intake, stage: "blocked", blocker };
+      current.dataRevision = Number(current.dataRevision || 0) + 1;
+      current.updatedAt = timestamp;
+      current.lastModifiedBy = "system";
+      addHistory(current, "system", "intakeBlocked", `录入流水线在这一件停下：${INTAKE_STEP_LABELS[step]}没能开始（${blocker.message}）。不会自动重跑`, timestamp);
+      return { changed: true };
+    });
+    return { ...quiet, progressed: true, active: true };
+  }
+}
+
+function intakeRoughProfitSummary(roughProfit) {
+  if (roughProfit.status === "ok") return `粗算每件约赚 ¥${roughProfit.profitPerUnitRmb}`;
+  if (roughProfit.status === "negative") return `粗算每件约亏 ¥${Math.abs(roughProfit.profitPerUnitRmb)}`;
+  return `粗算还缺：${roughProfit.missing.join("、")}`;
+}
+
+/** 最后一步：用这件已经存下的货源、1688、Ozon 记录粗算一次，写进 candidate.roughProfit，这件就找完了。 */
+async function settleIntakeEstimate(candidateId) {
+  const snapshot = await readData();
+  const candidate = snapshot.candidates.find((item) => item.id === candidateId);
+  if (!candidate?.intake) return;
+  const at = now();
+  let plan = intakeRoughProfitPlan(candidate);
+  const packagingRmbDefault = supplierDraftEstimateInputs.assumptions.packagingRmbDefault;
+  let storeRule = null;
+  try { storeRule = supplierDraftEstimateInputs.storeRule(snapshot, candidate.targetStore); }
+  catch { plan = { ...plan, missing: [...plan.missing, "店铺费用规则"] }; }
+  let fx = null;
+  let tariffRows = [];
+  let commission = null;
+  if (plan.missing.length === 0) {
+    [fx, { rows: tariffRows }, commission] = await Promise.all([
+      supplierDraftEstimateInputs.resolveExchangeRate(snapshot, at),
+      supplierDraftEstimateInputs.resolveFreightRows(),
+      supplierDraftEstimateInputs.resolveCommission({ categoryPath: { cnTitlePath: plan.commissionTypeZh }, price: plan.salePrice.rub }, at)
+    ]);
+  }
+  const roughProfit = buildIntakeRoughProfit({ plan, storeRule, fx, commission, tariffRows, packagingRmbDefault, estimatedAt: at });
+  await mutateDataWhenChanged((data) => {
+    const current = data.candidates.find((item) => item.id === candidateId);
+    if (!current?.intake || intakeInputsFingerprint(current) !== intakeInputsFingerprint(candidate)) return { changed: false };
+    if (intakeProgress(current, { login1688Expired: intakeLogin1688State(data.candidates) === "expired" })?.next !== "estimate") return { changed: false };
+    const timestamp = now();
+    current.roughProfit = roughProfit;
+    current.intake = { ...current.intake, stage: "ready", blocker: null, finishedAt: timestamp };
+    current.dataRevision = Number(current.dataRevision || 0) + 1;
+    current.updatedAt = timestamp;
+    current.lastModifiedBy = "system";
+    addHistory(current, "system", "intakeReady", `录入流水线找完了：${intakeRoughProfitSummary(roughProfit)}。只是粗算，没有确认任何同款或货源，` +
+      "业务状态没有改变，等主人点「做这件」", timestamp);
+    return { changed: true };
+  });
+}
+
+function intakeOwner(req, code) {
+  const actor = runtimeIdentityProvider.resolveActor({ request: req });
+  if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    throw httpError(403, "请先登录主人身份。", { code });
+  }
+  return actor;
+}
+
+/** 「重跑」和「接着找」共用：把计划写回这一件；读货源页结果未知的，同时记下主人知道了（和 source-capture/review 一样）。 */
+function applyIntakeRestart(current, plan, timestamp, detail) {
+  if (plan.acknowledgeSourceUnknown) {
+    current.sourceCapture = { ...current.sourceCapture, jobStatus: "failed", reviewedAt: timestamp, reviewedBy: "owner",
+      acknowledgement: "no_result_received" };
+    addHistory(current, "user", "aSupplierCaptureReviewed",
+      "主人点「重跑」时确认上一次读货源页没有可用结果：服务端没有收到任何采集证据，业务状态没有改变；现在重新读一次", timestamp);
+  }
+  current.intake = plan.intake;
+  current.dataRevision = Number(current.dataRevision || 0) + 1;
+  current.updatedAt = timestamp;
+  current.lastModifiedBy = "user";
+  addHistory(current, "user", "intakeRestarted", detail, timestamp);
+}
+
+function intakeStillBeforeGate1(candidate) {
+  return ["awaiting_user_direction", "needs_user_data"].includes(candidate.workflowStatus) && !candidate.lifecycleV11?.aConfirmationReceipt &&
+    !candidate.lifecycleV11?.skuPackage && !candidate.gate1;
 }
 
 function claimImageMatchJob(captureId, extensionVersion, extensionOrigin) {
@@ -4060,6 +4327,8 @@ async function handleApi(req, res, pathname) {
     const headers = chromeExtensionCors(req);
     if (!headers["Access-Control-Allow-Origin"]) throw httpError(403, "只接受本机Chrome扩展心跳");
     const heartbeat = recordExtensionHeartbeat(await requestBody(req));
+    // 录入页排着的商品在等插件：插件一回来就接着往下走（排着的还没开始过，不算重跑）。
+    if (intakeHasOpenWork && heartbeat.fresh) scheduleIntakePump(0);
     return json(res, 200, { accepted: true, heartbeat, captureJob: null, jobNotice: null }, headers);
   }
   const captureClaimRoute = pathname.match(/^\/api\/extension\/capture-jobs\/([A-Za-z0-9_-]{1,160})\/claim$/);
@@ -5125,6 +5394,140 @@ async function handleApi(req, res, pathname) {
       );
     }
     return json(res, 200, { candidate, dispatch: null }, chromeExtensionCors(req));
+  }
+
+  /**
+   * 录入页：贴链接、看「找货中」、对一件点「重跑」、对整页提示点「接着找」。都只建立或改 candidate.intake，排作业的是录入泵；
+   * 主人贴链接这一下就是让软件把这几条读一遍、找一遍的授权，只读，不确认同款，不确认货源，不写任何平台。
+   */
+  if (req.method === "POST" && pathname === "/api/intake/links") {
+    const input = await readJsonRequestBody(req, { maxBytes: 64 * 1024, requireJsonContentType: true });
+    if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some((field) => !["links", "targetStore"].includes(field)) ||
+        !Array.isArray(input.links) || input.links.some((link) => typeof link !== "string" || link.length > 4000) ||
+        (Object.hasOwn(input, "targetStore") && !["miska", "dandanshu"].includes(input.targetStore))) {
+      throw httpError(400, "贴链接的请求字段无效", { code: "intake_input_invalid" });
+    }
+    const actor = intakeOwner(req, "intake_owner_required");
+    const parsed = parseIntakeLinks(input.links);
+    if (parsed.tooMany) {
+      throw httpError(400, `一次最多贴 ${INTAKE_MAX_LINKS_PER_PASTE} 条，请分几次贴`, { code: "intake_too_many_links" });
+    }
+    if (!parsed.links.length) {
+      throw httpError(422, "没认出拼多多或 1688 的商品链接", { code: "intake_links_unrecognized", rejected: parsed.rejected });
+    }
+    const items = await mutateData((data) => {
+      const submittedAt = now();
+      const batchId = `INB-${randomUUID()}`;
+      const seen = parsed.links.map((link) => ({ link, duplicate: intakeDuplicateOf(data.candidates, link) }));
+      const fresh = seen.filter((entry) => !entry.duplicate);
+      return seen.map(({ link, duplicate }) => {
+        if (duplicate) {
+          return { candidateId: duplicate.id, created: false, duplicateOfCandidateId: duplicate.id,
+            duplicateEliminated: duplicate.workflowStatus === "eliminated", sourceKind: link.sourceKind };
+        }
+        const created = createInitialCandidate({ input: { targetStore: input.targetStore ?? "miska", productName: INTAKE_PLACEHOLDER_NAME,
+          sourceUrl: link.sourceUrl }, source: "user", id: nextCandidateId(data.candidates, "USR"), timestamp: submittedAt,
+          storeBindings: runtimeConfiguration.storeBindings });
+        created.intake = newIntakeRecord({ link, submittedAt, submittedBy: actor.userId, batchId,
+          batchIndex: fresh.findIndex((entry) => entry.link === link), batchSize: fresh.length });
+        addHistory(created, "user", "intakeSubmitted", `主人在录入页贴了这条${INTAKE_SOURCE_LABELS[link.sourceKind]}链接；软件会按顺序读货源页、` +
+          "在 1688 和 Ozon 用首图找同款、粗算利润。只读不写，不替主人确认同款或货源，停下的步骤不会自动重跑", submittedAt);
+        data.candidates.unshift(created);
+        return { candidateId: created.id, created: true, duplicateOfCandidateId: null, duplicateEliminated: false, sourceKind: link.sourceKind };
+      });
+    });
+    scheduleIntakePump(0);
+    return json(res, items.some((item) => item.created) ? 201 : 200, { items, rejected: parsed.rejected });
+  }
+
+  if (req.method === "GET" && pathname === "/api/intake/queue") {
+    // 工作台页面的开始信号桥每隔几秒来看一眼；它来过，排着的才有人把作业编号递给插件。
+    if (new URL(req.url, "http://127.0.0.1").searchParams.get("bridge") === "1") {
+      intakeBridgeSeenAt = Date.now();
+      if (intakeHasOpenWork) scheduleIntakePump(0);
+    }
+    const data = await readData();
+    const entries = intakeQueue(data.candidates);
+    // 同一次贴的里面已经找完的也列出来（「第 2 / 8 条 · 找完了」），整批都找完以后就只在「需要你处理」里了。
+    const openBatches = new Set(entries.map(({ candidate }) => candidate.intake.batch?.id).filter(Boolean));
+    const finished = data.candidates.filter((candidate) => candidate.intake?.stage === "ready" && candidate.workflowStatus !== "eliminated" &&
+      openBatches.has(candidate.intake.batch?.id)).map((candidate) => ({ candidate, progress: intakeProgress(candidate), queue: null,
+      batch: { position: candidate.intake.batch.index + 1, total: candidate.intake.batch.size } }));
+    const extension = intakeExtensionState();
+    return json(res, 200, {
+      items: [...entries, ...finished].map(({ candidate, progress, queue, batch }) => ({
+        candidateId: candidate.id, title: candidate.productName, imageUrl: candidate.imageUrl || null, sourceKind: candidate.intake.sourceKind,
+        sourceUrl: candidate.intake.sourceUrl, submittedAt: candidate.intake.submittedAt, dataRevision: Number(candidate.dataRevision),
+        stage: progress.stage, blocker: progress.blocker ?? null, queue, batch, roughProfit: candidate.roughProfit ?? null })),
+      pause: intakePause(data.candidates),
+      pendingStart: intakePendingStart(data.candidates),
+      extension: { online: extension.online, versionOk: extension.versionOk, version: extension.version, requiredVersion: extension.requiredVersion,
+        bridge: extension.bridge, login1688: intakeLogin1688State(data.candidates), lastStart: intakeLastStart }
+    });
+  }
+
+  /** 页面把开始信号递给插件后，插件的回执（领了，或者为什么没领）。只记在内存里给「找货中」显示，不改任何商品。 */
+  if (req.method === "POST" && pathname === "/api/intake/start-ack") {
+    const input = await readJsonRequestBody(req, { maxBytes: 1024, requireJsonContentType: true });
+    if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).sort().join(",") !== "accepted,captureId,code,kind" ||
+        typeof input.captureId !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(input.captureId) || typeof input.accepted !== "boolean" ||
+        typeof input.code !== "string" || !/^[a-z0-9_]{0,60}$/.test(input.code) ||
+        !["supplier_capture", "supplier_image_match", "ozon_image_match"].includes(input.kind)) {
+      throw httpError(400, "开始信号回执的字段无效", { code: "intake_start_ack_invalid" });
+    }
+    intakeOwner(req, "intake_owner_required");
+    // 多个标签页都会递同一个编号；已经记下「领了」的，后来的「插件正忙」不盖掉它。
+    if (!(intakeLastStart?.captureId === input.captureId && intakeLastStart.accepted)) {
+      intakeLastStart = { captureId: input.captureId, kind: input.kind, accepted: input.accepted, code: input.code, at: now() };
+    }
+    return json(res, 200, { recorded: true });
+  }
+
+  const intakeRetryRoute = pathname.match(/^\/api\/intake\/([^/]+)\/retry$/);
+  if (req.method === "POST" && intakeRetryRoute) {
+    const input = await readJsonRequestBody(req, { maxBytes: 1024, requireJsonContentType: true });
+    if (!input || typeof input !== "object" || Array.isArray(input) || !Number.isInteger(input.dataRevision) ||
+        Object.keys(input).some((field) => field !== "dataRevision")) {
+      throw httpError(400, "重跑只接受当前数据修订号", { code: "intake_retry_input_invalid" });
+    }
+    const actor = intakeOwner(req, "intake_owner_required");
+    const candidate = await mutateData((data) => {
+      const current = data.candidates.find((item) => item.id === intakeRetryRoute[1]);
+      if (!current?.intake) throw httpError(404, "这件不是从录入页贴进来的", { code: "intake_not_found" });
+      if (Number(current.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后再点重跑", { code: "revision_conflict" });
+      if (current.workflowStatus === "eliminated") throw httpError(409, "这件已经不做了", { code: "candidate_eliminated" });
+      const timestamp = now();
+      const plan = intakeRetryPlan(current, { requestedAt: timestamp, requestedBy: actor.userId });
+      if (!plan.ok) {
+        throw httpError(409, plan.code === "intake_not_retryable" ? "这一步重跑也没用：请换一个货源链接，或者不做这件" : "这件没有停下，不用重跑",
+          { code: plan.code });
+      }
+      applyIntakeRestart(current, plan, timestamp, `主人点了「重跑」：从「${INTAKE_STEP_LABELS[plan.step]}」这一步重新开始，只排一次，不会自动补跑`);
+      return publicCandidate(current, data.rules);
+    });
+    scheduleIntakePump(0);
+    return json(res, 202, { candidate, dispatch: null });
+  }
+
+  if (req.method === "POST" && pathname === "/api/intake/resume") {
+    const input = await readJsonRequestBody(req, { maxBytes: 1024, requireJsonContentType: true });
+    if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length > 0) {
+      throw httpError(400, "「接着找」不带任何字段", { code: "intake_resume_input_invalid" });
+    }
+    const actor = intakeOwner(req, "intake_owner_required");
+    const resumed = await mutateData((data) => {
+      const timestamp = now();
+      const plans = intakeResumePlan(data.candidates, { requestedAt: timestamp, requestedBy: actor.userId, stillOpen: intakeStillBeforeGate1 });
+      if (!plans.length) throw httpError(409, "现在没有停着等你的，不用接着找", { code: "intake_nothing_to_resume" });
+      for (const plan of plans) {
+        const current = data.candidates.find((item) => item.id === plan.candidateId);
+        applyIntakeRestart(current, plan, timestamp, `主人在整页提示上点了「接着找」：从「${INTAKE_STEP_LABELS[plan.intake.lastRetry.step]}」` +
+          "这一步接着往下，只排一次，不会自动补跑");
+      }
+      return plans.map((plan) => plan.candidateId);
+    });
+    scheduleIntakePump(0);
+    return json(res, 202, { resumed, dispatch: null });
   }
 
   /**
@@ -10089,6 +10492,8 @@ server.listen(port, host, () => {
   if (runtimeConfiguration.keywordEvidenceServiceBindings.length > 0) keywordEvidenceRuntimeServices.start();
   if (runtimeConfiguration.aDiscoveryServiceBindings.length > 0) aDiscoveryRuntime.start();
   if (runtimeConfiguration.aProductDetailServiceBindings.length > 0) aProductDetailRuntime.start();
+  // 录入流水线：重启前排着、还没开始的商品接着往下走；停下的照旧停着，等主人点「重跑」。
+  scheduleIntakePump(0);
   runtimeHealth.markListening();
   console.log(`全店经营工作台${apiOnly ? " API" : ""}：http://${host}:${port}`);
 });

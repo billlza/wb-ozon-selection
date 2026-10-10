@@ -33,18 +33,44 @@ export function parseSizeLimitCm(text) {
     sideMaxCm: sides === null ? null : (sides.length === 1 ? [sides[0], sides[0], sides[0]] : sides).sort((a, b) => b - a) };
 }
 
-function packageFacts(product) {
+/** Same text format as the formal stage's GUOO price band (guoo-route-comparison rangeFromText): "1-1500₽" → {min, max}; anything else → null. */
+export function parsePriceLimitRub(text) {
+  if (typeof text !== 'string') return null;
+  const match = text.replace(/\s+/g, '').match(/^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)₽$/);
+  if (!match) return null;
+  const min = Number(match[1]), max = Number(match[2]);
+  return min > 0 && max > 0 && min <= max ? { min, max } : null;
+}
+
+const validDefaultDimensions = value => isObject(value) && ['lengthCm', 'widthCm', 'heightCm'].every(key => finite(value[key]) && value[key] > 0) &&
+  typeof value.label === 'string' && value.label.trim() !== '' && value.label.length <= 40;
+
+/**
+ * Captured dimensions always win. Only when the caller opts in (粗算 only, never formal profit) and the actual weight is
+ * known does a missing size fall back to a cube of the provider's volume, then to the caller's category default.
+ */
+function packageFacts(product, { allowAssumed = false, defaultDimensions = null } = {}) {
   const actualKg = nonNegative(product.weightGrams) ? product.weightGrams / 1000 : null;
-  let sidesCm = null;
+  let sidesCm = null, basis = null;
   if (typeof product.dimensionMm === 'string' && /^\d+(?:\.\d+)?[x×]\d+(?:\.\d+)?[x×]\d+(?:\.\d+)?$/.test(product.dimensionMm.trim())) {
     sidesCm = product.dimensionMm.trim().split(/[x×]/).map(value => Number(value) / 10).sort((a, b) => b - a);
     if (sidesCm.some(value => !(value > 0))) sidesCm = null;
+    else basis = 'captured';
+  }
+  if (sidesCm === null && allowAssumed && actualKg !== null) {
+    if (finite(product.volumeLitres) && product.volumeLitres > 0) {
+      // Cube side rounded up to the millimetre, so the assumed box is never smaller than the provider's volume.
+      const side = Math.ceil(Math.cbrt(product.volumeLitres * 1000) * 10 - 1e-9) / 10;
+      sidesCm = [side, side, side]; basis = 'seerfar_volume';
+    } else if (defaultDimensions !== null) {
+      sidesCm = [defaultDimensions.lengthCm, defaultDimensions.widthCm, defaultDimensions.heightCm].sort((a, b) => b - a); basis = 'category_default';
+    }
   }
   const volumetricKg = sidesCm ? sidesCm[0] * sidesCm[1] * sidesCm[2] / VOLUME_DIVISOR_CM3_PER_KG : null;
-  return { actualKg, sidesCm, volumetricKg };
+  return { actualKg, sidesCm, volumetricKg, dimensionsBasis: basis, dimensionsLabel: basis === 'category_default' ? defaultDimensions.label : null };
 }
 
-function evaluateRoute(row, facts) {
+function evaluateRoute(row, facts, { priceRub, enforcePriceLimit }) {
   const tariff = row?.evidenceData;
   if (!isObject(tariff) || !nonNegative(tariff.perKgRmb) || !nonNegative(tariff.perParcelRmb)) return { route: row?.route ?? null, feasible: false, reason: 'tariff_row_invalid' };
   const weight = parseWeightLimitKg(tariff.weightLimit), size = parseSizeLimitCm(tariff.sizeLimit ?? row.sizeLimit);
@@ -60,10 +86,13 @@ function evaluateRoute(row, facts) {
   const sum = facts.sidesCm[0] + facts.sidesCm[1] + facts.sidesCm[2];
   if (size.sumMaxCm !== null && sum > size.sumMaxCm) return { route: row.route, feasible: false, reason: 'size_sum_outside_limit' };
   if (size.sideMaxCm !== null && facts.sidesCm.some((side, index) => side > size.sideMaxCm[index])) return { route: row.route, feasible: false, reason: 'side_outside_limit' };
+  // Opt-in like the assumed sizes: a parsed band always rides on the route, but rejects only when the caller asks; an unparsed band never rejects.
+  const price = parsePriceLimitRub(tariff.declaredValueLimitRub);
+  if (enforcePriceLimit && price !== null && (priceRub < price.min || priceRub > price.max)) return { route: row.route, feasible: false, reason: 'price_outside_limit' };
   const chargeableKg = Math.max(facts.actualKg ?? 0, volumetricKg ?? 0, minimum);
   return { route: row.route, feasible: true, reason: null, chargeableWeightRule: tariff.chargeableWeightRule, chargeableKg: Math.round(chargeableKg * 1000) / 1000,
     volumetricKg: volumetricKg === null ? null : Math.round(volumetricKg * 1000) / 1000, freightRmb: roundDownCents(chargeableKg * tariff.perKgRmb + tariff.perParcelRmb),
-    perKgRmb: tariff.perKgRmb, perParcelRmb: tariff.perParcelRmb, ruleVersion: row.ruleVersion ?? null, actualWeightMissing: facts.actualKg === null };
+    perKgRmb: tariff.perKgRmb, perParcelRmb: tariff.perParcelRmb, priceLimitRub: price, ruleVersion: row.ruleVersion ?? null, actualWeightMissing: facts.actualKg === null };
 }
 
 /** Cost policy values exactly as the store rule carries them (see workflow.mjs profitRule / currentProfitResult). */
@@ -84,6 +113,9 @@ export function costPolicyFromStoreRule(storeRule) {
 export function estimateDiscoveredProduct({ product, storeRule, fx, commission, tariffRows, assumptions }) {
   if (!isObject(product) || !finite(product.price) || product.price <= 0) fail('PRODUCT_INVALID');
   if (!isObject(assumptions) || !nonNegative(assumptions.packagingRmbDefault)) fail('ASSUMPTIONS_INVALID', 'packagingRmbDefault');
+  for (const flag of ['allowAssumedDimensions', 'enforcePriceLimit']) if (assumptions[flag] !== undefined && typeof assumptions[flag] !== 'boolean') fail('ASSUMPTIONS_INVALID', flag);
+  const defaultDimensions = assumptions.defaultDimensionsCm ?? null;
+  if (defaultDimensions !== null && !validDefaultDimensions(defaultDimensions)) fail('ASSUMPTIONS_INVALID', 'defaultDimensionsCm');
   if (!Array.isArray(tariffRows)) fail('TARIFF_ROWS_INVALID');
   const policy = costPolicyFromStoreRule(storeRule);
   const missing = [];
@@ -92,12 +124,13 @@ export function estimateDiscoveredProduct({ product, storeRule, fx, commission, 
   const commissionSource = { rate: isObject(commission) && finite(commission.rate) && commission.rate >= 0 && commission.rate < 1 ? commission.rate : null,
     tier: commission?.tier ?? null, sourceRef: commission?.sourceRef ?? null, gaps: Array.isArray(commission?.gaps) ? structuredClone(commission.gaps) : [] };
   if (commissionSource.rate === null) missing.push('官方佣金');
-  const facts = packageFacts(product);
-  const routes = tariffRows.map(row => evaluateRoute(row, facts));
+  const facts = packageFacts(product, { allowAssumed: assumptions.allowAssumedDimensions === true, defaultDimensions });
+  const routes = tariffRows.map(row => evaluateRoute(row, facts, { priceRub: product.price, enforcePriceLimit: assumptions.enforcePriceLimit === true }));
   const feasibleRoutes = routes.filter(route => route.feasible).sort((a, b) => a.freightRmb - b.freightRmb);
   const chosen = feasibleRoutes[0] ?? null;
   const freight = { status: facts.actualKg === null && facts.sidesCm === null ? 'unknown_dimensions' : chosen ? 'quoted' : 'no_feasible_route',
-    actualKg: facts.actualKg, sidesCm: facts.sidesCm, volumetricKg: facts.volumetricKg === null ? null : Math.round(facts.volumetricKg * 1000) / 1000,
+    actualKg: facts.actualKg, sidesCm: facts.sidesCm, dimensionsBasis: facts.dimensionsBasis,
+    dimensionsAssumed: facts.dimensionsBasis === 'seerfar_volume' || facts.dimensionsBasis === 'category_default', dimensionsLabel: facts.dimensionsLabel, volumetricKg: facts.volumetricKg === null ? null : Math.round(facts.volumetricKg * 1000) / 1000,
     oversize: facts.actualKg !== null && facts.volumetricKg !== null && facts.volumetricKg > facts.actualKg,
     chosen, feasibleRoutes, rejectedRoutes: routes.filter(route => !route.feasible).map(route => ({ route: route.route, reason: route.reason })),
     noFeasibleRoute: chosen === null && facts.sidesCm !== null };
@@ -291,7 +324,8 @@ export function describeEstimate(estimate) {
   const commission = estimate.commission.rate === null ? '佣金未知' : `佣金 ${Math.round(estimate.commission.rate * 100)}%`;
   if (estimate.status === 'incomplete') return `无法估算：缺${estimate.missing.join('、')} · ${commission}`;
   const chosen = estimate.freight.chosen;
-  const freight = `${chosen.route} ${chosen.chargeableKg}kg 运费 ¥${chosen.freightRmb.toFixed(2)}${estimate.freight.oversize ? '（超抛）' : ''}`;
+  const assumed = estimate.freight.dimensionsAssumed !== true ? '' : `（尺寸按${estimate.freight.dimensionsLabel ?? '体积'}假设，仅粗算）`;
+  const freight = `${chosen.route} ${chosen.chargeableKg}kg 运费 ¥${chosen.freightRmb.toFixed(2)}${estimate.freight.oversize ? '（超抛）' : ''}${assumed}`;
   if (estimate.status === 'negative') return `预估负利润，已排除 · ${freight} · ${commission}`;
   return `预估采购上限 ¥${estimate.ceiling.maximumAllInPurchaseRmb.toFixed(2)} · ${freight} · ${commission}`;
 }
