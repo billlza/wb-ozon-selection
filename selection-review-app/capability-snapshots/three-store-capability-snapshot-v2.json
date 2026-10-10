@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T01:49:00.215Z",
+  "frozenAt": "2026-10-10T01:57:47.092Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 907,
-      "sha256": "ab9aad3050627ce6a6f8e878d169bdad2f44396f75b2fd1501fc2914cce063d2",
+      "sha256": "48af8f98a404fcfec9facbacf38a1caddecc55d8254c547733a3a5d1b5cf20bc",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -56,7 +56,7 @@
       },
       {
         "path": "extension/1688-capture/collector-ozon-search.js",
-        "sha256": "b9c73088b4e846ffc09a734c69111c0952b4cc0fc5e0d2fd51af527ee226cfb6"
+        "sha256": "68d57709458b516f49d560bb10ccc4f173585b32765570f2ff5b03956c983ad1"
       },
       {
         "path": "extension/1688-capture/collector-ozon.js",
@@ -80,7 +80,7 @@
       },
       {
         "path": "extension/1688-capture/uploader-ozon-image-search.js",
-        "sha256": "61f4c32ff169bd8356979f217cef0a8a49dc7eaac74b00ced76cca5bd0b29fad"
+        "sha256": "33f9366c9f8325bc1e6e48ff5fe75f99166b89e83ca8c484f996958321bd55d0"
       },
       {
         "path": "index.html",
@@ -3224,7 +3224,7 @@
       },
       {
         "path": "tests/ozon-search-extension.test.mjs",
-        "sha256": "8a97ff9ab5f235607794cc787d591c052d2c2c05e3b2d166c165dcd85ee9b830"
+        "sha256": "0f69d7124fb01d97ba968f5d6f83a97ae5028a098dd812b5e872a63aad0ad1db"
       },
       {
         "path": "tests/ozon-seller-api-de-adapter.test.mjs",

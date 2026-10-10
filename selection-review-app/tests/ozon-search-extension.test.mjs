@@ -138,6 +138,9 @@ function element(tagName, attributes = {}, children = [], ownText = "") {
       walk(node);
       if (selector === 'a[href*="/product/"]') return all.filter(child => child.tagName === "A" && String(child.getAttribute("href") || "").includes("/product/"));
       if (selector === "img") return all.filter(child => child.tagName === "IMG");
+      const classed = part => all.filter(child => String(child.getAttribute("class") || "").includes(part));
+      if (selector === 'span[class*="tsBody500"]') return classed("tsBody500").filter(child => child.tagName === "SPAN");
+      if (selector.startsWith('[class*="immersive-translate"]')) return classed("immersive-translate");
       return [];
     }
   };
@@ -319,26 +322,51 @@ test("an image search stops with its reason: no picture, no upload control, veri
   assert.equal(resultRequest(otherUpload.calls).body.failureCode, "wrong_query");
 });
 
-test("the uploader opens the search bar's photo control and hands the one picture to the page's own file input", async () => {
+test("the uploader presses Ozon's unnamed camera button and hands the one picture to the file input it opens, never another extension's", async () => {
   const previous = { window: globalThis.window, document: globalThis.document, DataTransfer: globalThis.DataTransfer, now: Date.now };
   let reading = previous.now();
   Date.now = () => (reading += 1_000);
-  const events = [];
-  const fileInput = { accept: "image/*", disabled: false, files: null, dispatchEvent: event => events.push(event.type) };
-  let opened = false;
-  const control = (label, type = "button") => ({ getAttribute: name => (name === "aria-label" ? label : name === "type" ? type : null),
-    textContent: "", click() { if (label === "Поиск по фото") opened = true; } });
-  const bar = { querySelectorAll: () => [control("Найти", "submit"), control("Очистить"), control("Поиск по фото")] };
   globalThis.DataTransfer = class { constructor() { this.list = []; this.items = { add: file => this.list.push(file) }; } get files() { return this.list; } };
-  globalThis.document = { title: "OZON", querySelector: selector => (selector.startsWith("[data-widget^=") ? bar : null),
-    querySelectorAll: selector => (selector === 'input[type="file"]' && opened ? [fileInput] : []) };
+  // Document order decides which button is the camera: Ozon's has no name and sits between the text box and the search button.
+  const page = ({ named = false, opens = true } = {}) => {
+    let order = 0;
+    const node = (tag, attributes = {}, extra = {}) => ({ tagName: tag.toUpperCase(), order: order++, clicks: 0, events: [], files: null, disabled: false,
+      accept: attributes.accept ?? "", getAttribute: name => attributes[name] ?? null, textContent: "",
+      compareDocumentPosition(other) { return other.order > this.order ? 4 : 2; },
+      dispatchEvent(event) { this.events.push(event.type); }, ...extra });
+    const svg = () => ({});
+    const category = node("button", { type: "button" }, { querySelector: svg });
+    const box = node("input", { type: "text", name: "text" });
+    const camera = node("button", { type: "button", ...(named ? { "aria-label": "Поиск по фото" } : {}) }, { querySelector: svg });
+    const submit = node("button", { type: "submit" }, { querySelector: svg });
+    const foreign = node("input", { type: "file", accept: "image/*" }); // another extension's drawer, on the page before the click
+    const ozonInput = node("input", { type: "file", accept: "image/png, image/jpeg, image/webp" });
+    camera.click = () => { camera.clicks += 1; };
+    const inBar = [category, box, camera, submit];
+    const bar = { querySelectorAll: () => [category, camera, submit],
+      querySelector: selector => (selector === 'button[type="submit"]' ? submit : selector.startsWith('input[type="text"]') ? box : null),
+      contains: target => inBar.includes(target) || (opens && camera.clicks > 0 && target === ozonInput) };
+    globalThis.document = { title: "OZON",
+      querySelector: selector => (selector === '[data-widget="searchBarDesktop"]' ? bar : null),
+      querySelectorAll: selector => (selector === 'input[type="file"]' ? [foreign, ...(opens && camera.clicks > 0 ? [ozonInput] : [])] : []) };
+    return { category, camera, submit, foreign, ozonInput };
+  };
   try {
+    let shown = page();
     assert.deepEqual(await uploadOzonSearchImage("AAEC", "image/jpeg"), { status: "uploaded" });
-    assert.equal(fileInput.files.length, 1);
-    assert.deepEqual([fileInput.files[0].type, fileInput.files[0].size, fileInput.files[0].name], ["image/jpeg", 3, "photo.jpg"]);
-    assert.deepEqual(events, ["input", "change"]);
-    // A page without the control, or behind verification, is reported as such; nothing is guessed.
-    opened = false;
+    assert.deepEqual([shown.camera.clicks, shown.category.clicks, shown.submit.clicks], [1, 0, 0]);
+    assert.equal(shown.ozonInput.files.length, 1);
+    assert.deepEqual([shown.ozonInput.files[0].type, shown.ozonInput.files[0].size, shown.ozonInput.files[0].name], ["image/jpeg", 3, "photo.jpg"]);
+    assert.deepEqual(shown.ozonInput.events, ["input", "change"]);
+    assert.deepEqual([shown.foreign.files, shown.foreign.events], [null, []], "another extension's file input is never touched");
+    shown = page({ named: true });
+    assert.deepEqual(await uploadOzonSearchImage("AAEC", "image/jpeg"), { status: "uploaded" });
+    assert.equal(shown.camera.clicks, 1);
+    // The camera opened nothing the extension can hand a file to: reported as such, and the other extension's input stays untouched.
+    shown = page({ opens: false });
+    assert.deepEqual(await uploadOzonSearchImage("AAEC", "image/jpeg"), { status: "failed", failureCode: "image_upload_unavailable" });
+    assert.deepEqual([shown.camera.clicks, shown.foreign.files], [1, null]);
+    // A page without the search bar, or behind verification, is reported as such; nothing is guessed.
     globalThis.document = { title: "OZON", querySelector: () => null, querySelectorAll: () => [] };
     assert.deepEqual(await uploadOzonSearchImage("AAEC", "image/jpeg"), { status: "failed", failureCode: "image_upload_unavailable" });
     globalThis.document = { title: "Antibot Challenge Page", querySelector: () => null, querySelectorAll: () => [] };
@@ -350,10 +378,17 @@ test("the uploader opens the search bar's photo control and hands the one pictur
 });
 
 test("the collector reads an image-search page: the first page from its state, the pages below from the tiles", async () => {
-  const tile = id => element("div", {}, [
-    element("a", { href: `/product/sinteticheskiy-tovar-${id}/` }, [element("img", { src: `https://ir.ozone.ru/s3/multimedia-1-x/${id}.jpg` })]),
-    element("div", {}, [element("span", {}, [], "690\u2009₽")]),
-    element("a", { href: `/product/sinteticheskiy-tovar-${id}/` }, [], `Синтетический товар ${id}`)
+  // Shaped like Ozon's rendered tile: the picture link, the price outside both links, the title span in the second link. The
+  // owner's Chrome may add a translation inside the title and another extension's button with its own picture; neither is kept.
+  const tile = id => element("div", { "data-index": "0", class: "tile-root" }, [
+    element("a", { href: `/product/sinteticheskiy-tovar-${id}/?at=synthetic`, class: "tile-clickable-element", target: "_blank" }, [
+      element("img", { src: "https://cbu01.alicdn.com/synthetic.png" }),
+      element("img", { src: `https://ir.ozone.ru/s3/multimedia-1-x/wc250/${id}.webp`, srcset: `https://ir.ozone.ru/s3/multimedia-1-x/wc1000/${id}.jpg 2x` })]),
+    element("div", {}, [element("span", { class: "tsHeadline500Medium" }, [], "690\u2009₽")]),
+    element("a", { href: `/product/sinteticheskiy-tovar-${id}/?at=synthetic`, class: "tile-clickable-element", target: "_blank" }, [
+      element("span", { class: "tsBody500Medium" }, [element("font", { class: "notranslate immersive-translate-target-wrapper" }, [], "合成商品")],
+        `Синтетический товар ${id}`)]),
+    element("button", { type: "button" }, [], "1688 找同款")
   ]);
   const grid = element("div", { "data-widget": "tileGridDesktop" }, [tile("90000301"), tile("90000399")]);
   const result = await onPage({ states: [SYNTHETIC_OZON_IMAGE_SEARCH_STATE], grid, href: `${RESULTS}&from=camera`, expected: { imageId: IMAGE_ID } });
@@ -367,6 +402,7 @@ test("the collector reads an image-search page: the first page from its state, t
     ["90000399", "Синтетический товар 90000399", 690, null, 3]
   ]);
   assert.equal(result.evidence.items[0].imageUrl, "https://ir.ozone.ru/s3/multimedia-1-x/90000301.jpg");
+  assert.equal(result.evidence.items[3].imageUrl, "https://ir.ozone.ru/s3/multimedia-1-x/wc250/90000399.webp");
   assert.equal(JSON.stringify(result).includes("synthetic-tracking-key"), false);
   assert.equal(sanitizeOzonImageMatchEvidence(result.evidence, null, { searchBy: "image" }).items.length, 4);
   assert.throws(() => sanitizeOzonImageMatchEvidence(result.evidence, QUERY), /wrong_query/, "an image search is not a word search");

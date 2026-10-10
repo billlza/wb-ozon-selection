@@ -165,6 +165,13 @@ export async function collectOzonSearchPage(expected, maxResults = 36) {
 
   // The rendered tiles: inside the search-results widget, each product's links share one tile, the highest ancestor that
   // holds no other product's link.
+  // A translating extension in the owner's Chrome may add its translation next to Ozon's own words; only Ozon's are kept.
+  const TRANSLATION = '[class*="immersive-translate"], [data-immersive-translate-translation-element-mark]';
+  const ownText = (node, limit) => {
+    let text = String(node?.textContent || "");
+    for (const overlay of Array.from(node?.querySelectorAll?.(TRANSLATION) || [])) text = text.replace(String(overlay.textContent || ""), " ");
+    return plain(text, limit);
+  };
   const readTiles = () => {
     const products = new Map();
     const roots = Array.from(document.querySelectorAll?.('[data-widget="searchResultsV2"], [data-widget="searchResultsV3"], [data-widget="tileGridDesktop"]') || []);
@@ -180,7 +187,10 @@ export async function collectOzonSearchPage(expected, maxResults = 36) {
           tile = tile.parentElement;
         }
         const ownAnchors = Array.from(tile.querySelectorAll?.('a[href*="/product/"]') || []).filter((other) => idOf(other) === productId);
-        const title = ownAnchors.map((other) => plain(other.textContent, 300)).sort((left, right) => right.length - left.length)[0] || "";
+        // Ozon sets the tile title in a tsBody500… span inside the second product link; the longest link text is the fallback.
+        const titled = ownAnchors.flatMap((other) => Array.from(other.querySelectorAll?.('span[class*="tsBody500"]') || []))
+          .map((span) => ownText(span, 300)).filter(Boolean);
+        const title = titled[0] || ownAnchors.map((other) => ownText(other, 300)).sort((left, right) => right.length - left.length)[0] || "";
         const picture = Array.from(tile.querySelectorAll?.("img") || []).map((image) => ozonImage(image.getAttribute?.("src")) ||
           ozonImage(String(image.getAttribute?.("srcset") || "").split(/\s+/)[0])).find(Boolean) || null;
         const lines = String(tile.innerText || tile.textContent || "").split(/\n+/).map((line) => plain(line, 80)).filter(Boolean);
