@@ -24,7 +24,7 @@ test("WB is a platform with its own store; every store answers its platform from
   assert.equal(platformOfStore(undefined), null);
   assert.equal(isKnownStore("constructor"), false);
   assert.equal(storeLabel("dandanshu"), "蛋蛋鼠");
-  assert.equal(STORES.find(store => store.storeId === "wb").labelConfirmed, false, "WB 店名还没定，只是占位");
+  assert.deepEqual(STORES.map(store => store.labelConfirmed), [false, false, false], "店名放在哪还没定（AGENTS 13.1），显示名只是占位");
 });
 
 test("existing callers see exactly the values they saw before the registry", () => {
@@ -48,8 +48,8 @@ test("the store list says whether each store's identity is configured without ha
     { platform: "ozon", label: "Ozon", storeIds: ["dandanshu", "miska"] },
     { platform: "wb", label: "WB", storeIds: ["wb"] }
   ]);
-  assert.deepEqual(view.stores.map(store => [store.storeId, store.platform, store.identityConfigured]),
-    [["dandanshu", "ozon", false], ["miska", "ozon", true], ["wb", "wb", false]]);
+  assert.deepEqual(view.stores.map(store => [store.storeId, store.platform, store.labelConfirmed, store.identityConfigured]),
+    [["dandanshu", "ozon", false, false], ["miska", "ozon", false, true], ["wb", "wb", false, false]]);
   assert.equal(JSON.stringify(view).includes("3852479"), false);
   assert.deepEqual(listStores().stores.map(store => store.identityConfigured), [false, false, false]);
   assert.throws(() => listStores({ storeBindings: {} }), /STORE_REGISTRY_BINDINGS_INVALID/);

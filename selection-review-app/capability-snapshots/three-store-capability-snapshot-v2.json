@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T06:01:09.947Z",
+  "frozenAt": "2026-10-10T06:01:10.695Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 944,
-      "sha256": "513af5149f9d5e26410b14dba5e8ccafddedf3c1ed316e37f4b7ac372fbd0447",
+      "sha256": "280328429e326ff8da47962552b3ff3ee326deb965c98bda137a5bedeeb36c08",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -1216,7 +1216,7 @@
       },
       {
         "path": "lib/store-registry.mjs",
-        "sha256": "e3092f578e3542d0024018195f8590a23737093d02ed36530ce5cd83c442b47e"
+        "sha256": "496aac0cacc2952e2aec535c5c61a2b9d6d3069d0b8e3a7cb4b02c9963120f6d"
       },
       {
         "path": "lib/store-sales-seed-service.mjs",
@@ -3728,7 +3728,7 @@
       },
       {
         "path": "tests/store-registry.test.mjs",
-        "sha256": "5f69edd503ff8276be890d806244edc4c6cfce5e8efd2a8acd55efe15349d0be"
+        "sha256": "0f3b97b1918fc83da071067e06637839469863d9863c6d72c8b8cda9fdf759bd"
       },
       {
         "path": "tests/store-sales-seeds.test.mjs",
