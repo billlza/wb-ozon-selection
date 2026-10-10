@@ -267,6 +267,9 @@ import {
   dispatchDeliveryEnabledFromEnvironment
 } from "./lib/codex-independence.mjs";
 import { buildThreeStoreMapView } from "./lib/three-store-map.mjs";
+import { assembleProductCoreForFamily, buildFamilyListingDrafts, ProductCoreFamilyError } from "./lib/product-core-family.mjs";
+import { ProductCoreError } from "./lib/product-core.mjs";
+import { loadPlatformProfile } from "./lib/platform-projection.mjs";
 import { buildDESoftwareIntegrationView } from "./lib/d-e-software-integration.mjs";
 import { assertCurrentProductionExecutionBinding } from "./lib/platform-write-preflight.mjs";
 import { assertCurrentC2UploadDraft, reserveC2Upload, settleC2Upload, saveC2UploadSelection, selectedC2DraftAssets, resolveRegisteredC2FinalAsset, LOCAL_UPLOAD_MAX_BYTES } from "./lib/c2-upload-draft.mjs";
@@ -4464,6 +4467,20 @@ async function handleApi(req, res, pathname) {
       return pack;
     });
     return json(res, 201, { evidencePack: result });
+  }
+
+  // 商品中立核心：一款商品（原商品＋各颜色候选）的事实、变体组和素材集，以及按它算出的 Ozon / WB 上架缺口。只读，不写任何状态。
+  const productCoreRoute = pathname.match(/^\/api\/product-core\/([^/]+)$/);
+  if (req.method === "GET" && productCoreRoute) {
+    const snapshot = await readData();
+    try {
+      const assembled = assembleProductCoreForFamily({ document: snapshot, candidateId: decodeURIComponent(productCoreRoute[1]), builtAt: now() });
+      const profiles = { ozon: await loadPlatformProfile("ozon"), wb: await loadPlatformProfile("wb") };
+      return json(res, 200, { ...assembled, listings: buildFamilyListingDrafts({ assembled, document: snapshot, profiles }), externalRequests: 0, platformWrites: 0 });
+    } catch (error) {
+      if (!(error instanceof ProductCoreFamilyError || error instanceof ProductCoreError)) throw error;
+      return json(res, /_MISSING$/.test(error.code) ? 404 : 409, { code: error.code, message: error.message, externalRequests: 0, platformWrites: 0 });
+    }
   }
 
   if (req.method === "GET" && pathname === "/api/three-store-map") {

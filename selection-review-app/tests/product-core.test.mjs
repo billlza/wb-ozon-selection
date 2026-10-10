@@ -43,8 +43,8 @@ test("one supplier capture becomes one variant group with colour and size axes",
   assert.equal(core.coreVersion, PRODUCT_CORE_VERSION);
   assert.deepEqual(core.variantGroup.axes, ["color", "size"]);
   assert.equal(core.variantGroup.variants.length, 8);
-  assert.deepEqual(core.variantGroup.variants[0].color, { source: "卡其", ru: null });
-  assert.deepEqual(core.variantGroup.variants[1].size, { source: "M", ru: null });
+  assert.deepEqual(core.variantGroup.variants[0].color, { source: "卡其", ru: null, ruSourceRef: null });
+  assert.deepEqual(core.variantGroup.variants[1].size, { source: "M", ru: null, ruSourceRef: null });
   assert.equal(core.variantGroup.variants.filter(item => item.enabled).length, 3);
   assert.equal(core.variantGroup.variants[0].variantId, "product:1688:887766:1000");
   assert.ok(Object.isFrozen(core.variantGroup.variants[0]));
@@ -181,6 +181,6 @@ test("an existing candidate record can be read into the core without changing it
 
 test("validation rejects a core that smuggles in an unregistered fact", () => {
   const core = structuredClone(vestCore());
-  core.facts.ozonTypeId = { value: 1, status: "confirmed", sourceRef: "x", ru: null };
+  core.facts.ozonTypeId = { value: 1, status: "confirmed", sourceRef: "x", ru: null, ruSourceRef: null };
   assert.equal(validateProductCore(core).valid, false);
 });

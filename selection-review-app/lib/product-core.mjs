@@ -59,14 +59,14 @@ function axisOf(name) {
 }
 
 function axisValue(value) {
-  return value === null || value === undefined || value === "" ? null : { source: String(value).trim(), ru: null };
+  return value === null || value === undefined || value === "" ? null : { source: String(value).trim(), ru: null, ruSourceRef: null };
 }
 
 function fact(value, status, sourceRef) {
   if (value === null || value === undefined || value === "" || value === UNKNOWN) {
-    return { value: UNKNOWN, status: "unknown", sourceRef: null, ru: null };
+    return { value: UNKNOWN, status: "unknown", sourceRef: null, ru: null, ruSourceRef: null };
   }
-  return { value: structuredClone(value), status, sourceRef, ru: null };
+  return { value: structuredClone(value), status, sourceRef, ru: null, ruSourceRef: null };
 }
 
 /** 变体身份只来自货源 SKU，不来自任何平台编号。 */
@@ -155,7 +155,7 @@ export function buildProductCore({
       title: text(capture.title) ? capture.title : null },
     facts,
     supplierAttributes: Object.fromEntries(Object.entries(supplierAttributes).filter(([, value]) => text(value) || Number.isFinite(value))
-      .map(([key, value]) => [key, { value: String(value), ru: null }])),
+      .map(([key, value]) => [key, { value: String(value), ru: null, ruSourceRef: null }])),
     variantGroup: { axes: ["color", "size"].filter(axis => variants.some(item => item[axis] !== null)), variants },
     media: { assets: [], shared: [], byColor: {} },
     builtAt
@@ -183,16 +183,17 @@ export function productCoreFromCandidate(candidate, { builtAt }) {
 /**
  * 给事实、货源属性或变体轴补俄文。俄文挂在中立字段上，任何平台都能用，
  * 不再像现在这样只存在于某个 Ozon 属性 ID 的取值里。
- * entries 每项：{ target: "fact" | "supplierAttribute" | "color" | "size", key, ru }。
+ * entries 每项：{ target: "fact" | "supplierAttribute" | "color" | "size", key, ru, sourceRef? }；sourceRef 记下这句俄文从哪来。
  */
 export function withRussian(core, entries) {
   const next = structuredClone(core);
-  for (const { target, key, ru } of entries) {
+  for (const { target, key, ru, sourceRef = null } of entries) {
     if (!text(ru)) fail("PRODUCT_CORE_TRANSLATION_INVALID", `${target}:${key} 的俄文为空`);
     const variants = next.variantGroup.variants.filter(item => item[target]?.source === key);
-    if (target === "fact" && next.facts[key] && next.facts[key].status !== "unknown") next.facts[key].ru = ru.trim();
-    else if (target === "supplierAttribute" && next.supplierAttributes[key]) next.supplierAttributes[key].ru = ru.trim();
-    else if ((target === "color" || target === "size") && variants.length > 0) for (const item of variants) item[target].ru = ru.trim();
+    const apply = item => { item.ru = ru.trim(); item.ruSourceRef = text(sourceRef) ? sourceRef : null; };
+    if (target === "fact" && next.facts[key] && next.facts[key].status !== "unknown") apply(next.facts[key]);
+    else if (target === "supplierAttribute" && next.supplierAttributes[key]) apply(next.supplierAttributes[key]);
+    else if ((target === "color" || target === "size") && variants.length > 0) for (const item of variants) apply(item[target]);
     else fail("PRODUCT_CORE_TRANSLATION_TARGET_MISSING", `${target}:${key} 不存在或还是 unknown`);
   }
   assertValidProductCore(next);
