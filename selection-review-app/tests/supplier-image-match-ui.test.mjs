@@ -162,8 +162,10 @@ async function render(props) {
   return renderer.render(props);
 }
 const forbidden = () => { throw new Error("RENDER_MUST_NOT_START_WORK"); };
-const imageMatchSection = html => html.match(/<section class="product-section product-image-match"[\s\S]*?<\/section>/)?.[0] ?? "";
-const pageProps = extra => ({ view: null, extensionStatus: { code: "connected", label: "插件已连接" }, onSaveDraft: forbidden,
+// 两个找同款区块从 2026-10-10 起在「做这件」卡里面，卡开着才看得见。
+const imageMatchSection = html => html.match(/<section class="product-image-match"[\s\S]*?<\/section>/)?.[0] ?? "";
+const gate1Open = { gate1V1: { open: true, preselection: {}, ozonOptions: [], supplierOptions: [] } };
+const pageProps = extra => ({ view: gate1Open, extensionStatus: { code: "connected", label: "插件已连接" }, onAcceptGate1: forbidden, onSkipGate1: forbidden,
   onRequestCapture: forbidden, onBack: forbidden, onStartImageMatch: forbidden, onCompareImageMatch: forbidden, onJudgeImageMatch: forbidden, ...extra });
 
 test("the product page shows the first picture, the search button, the labelled results and the three judgement buttons", async () => {
@@ -225,7 +227,7 @@ const ozonCompared = (extra = {}) => ({ captureId: "OMJ-synthetic", status: "com
     ozonRow(3, { similarity: "unknown", compareError: "fetch_failed", priceRub: null })
   ], judgements: { "9100000001": { judgement: "exact" } }, ...extra });
 const ozonProps = extra => pageProps({ onStartOzonMatch: forbidden, onCompareOzonMatch: forbidden, onJudgeOzonMatch: forbidden, ...extra });
-const ozonMatchSection = html => html.match(/<section class="product-section product-image-match product-ozon-match"[\s\S]*?<\/section>/)?.[0] ?? "";
+const ozonMatchSection = html => html.match(/<section class="product-image-match product-ozon-match"[\s\S]*?<\/section>/)?.[0] ?? "";
 
 test("the Ozon block prefills the last search's words, else the product's own Russian Ozon title, and checks words like the service", () => {
   assert.equal(ozonImageMatchView(candidate({ sourceCapture: null })), null);

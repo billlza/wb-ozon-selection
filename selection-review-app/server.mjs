@@ -572,6 +572,8 @@ const supplierDraftEstimateInputs = createADiscoveryEstimateInputs({
  * Seerfar 自动选品方案 B（主人 2026-10-10 定）：会员前台「热销榜单选品」一页结果 → 固定规则筛 → 前几个收成待核验候选。
  * 档案和季节日历是 data/seerfar-selection/ 里的版本化配置；读不出来时不启动任何一轮，页面照实显示原因。
  */
+// Declared before the Seerfar round service below reads it at startup (it used to sit later and crash the server on boot).
+const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.4.1";
 const seerfarSelectionConfig = await loadSeerfarSelectionConfig().then(config => ({ config, error: null }),
   error => ({ config: null, error: String(error?.code || 'CONFIG_UNREADABLE') }));
 const seerfarWebRounds = createSeerfarWebRoundService({
@@ -596,6 +598,44 @@ function seerfarSelectionView(document, operationResult = null) {
   const storeSales = storeSalesSeeds.view(document);
   return { ...rounds, storeSales, todos: seerfarTodos({ rounds: rounds.rounds, storeSales, businessDate: rounds.businessDate }), operationResult };
 }
+// ── 「做这件」确认卡（关口 1）：软件先选同款和货源、粗算、品牌提示；做 / 不做 / 利润没过线之后怎么办。逻辑在 lib/gate1-*.mjs。
+import { createGate1Service } from './lib/gate1-service.mjs';
+import { Gate1Error, applyGate1Shortfall } from './lib/gate1-decision.mjs';
+import { recordSkipReason } from './lib/store-profile.mjs';
+const gate1Service = createGate1Service({
+  readData: () => readData(), mutateData: mutator => mutateData(mutator), now: () => now(), estimateInputs: supplierDraftEstimateInputs,
+  readDiscoveryMarketRecord, recordSkipReason, storeProfileConfig: seerfarSelectionConfig.config,
+  addHistory: (...args) => addHistory(...args), publicCandidate: (candidate, rules) => publicCandidate(candidate, rules),
+  assertSafeCandidate: candidate => assertSafeBusinessMutationCandidate(candidate, "businessMutation.candidate"),
+  supplierDraftEstimate: (document, candidate, draft) => supplierDraftEstimate(document, candidate, draft)
+});
+async function gate1Route(req, res, pathname) {
+  const route = pathname.match(/^\/api\/candidates\/([^/]+)\/gate1\/(accept|skip|shortfall)$/);
+  if (req.method !== "POST" || !route) return false;
+  const actor = runtimeIdentityProvider.resolveActor({ request: req });
+  if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    throw httpError(403, "请先登录主人身份后再决定做不做这件。", { code: "gate1_owner_required" });
+  }
+  const input = await readJsonRequestBody(req, { maxBytes: 4096, requireJsonContentType: true });
+  try {
+    const candidateId = decodeURIComponent(route[1]);
+    const result = await gate1Service[route[2]]({ candidateId, input, actor });
+    // 做这件之后页面紧接着申请采集这家货源，要的就是刚存下的找货方案和市场快照，所以连同找货视图一起回。
+    let draftView = null;
+    if (route[2] === "accept") {
+      const document = await readData();
+      const saved = document.candidates.find(item => item.id === candidateId);
+      draftView = saved ? await supplierDraftView(document, saved) : null;
+    }
+    json(res, 200, { ...(draftView ?? {}), ...result, dispatch: null });
+    return true;
+  } catch (error) {
+    if (error instanceof Gate1Error) throw httpError(error.status, error.message, { code: error.code, ...error.details });
+    if (error instanceof StoreProfileError) throw httpError(error.status, error.publicMessage, { code: `store_profile_${error.code.toLowerCase()}` });
+    throw error;
+  }
+}
+// ── 「做这件」确认卡 end
 const aProductDetailApplication = createAProductDetailApplicationUseCase({repository:businessStateRepository,serverClock:now});
 const aProductDetailRuntime = createAProductDetailRuntimeServices({repository:businessStateRepository,softwareJobStore,
   runtimeMode:runtimeConfiguration.deploymentMode,serverClock:now,workerRegistry,
@@ -737,7 +777,6 @@ function activeDispatchForCandidate(data, candidateId) {
 const SOURCE_CAPTURE_TTL_MS = 3 * 60 * 1000;
 const SOURCE_CAPTURE_JOB_QUEUE_TTL_MS = Math.max(50, Number(process.env.SELECTION_REVIEW_SOURCE_JOB_QUEUE_TTL_MS || 2 * 60 * 1000));
 const SOURCE_CAPTURE_JOB_EXECUTION_TTL_MS = Math.max(50, Number(process.env.SELECTION_REVIEW_SOURCE_JOB_EXECUTION_TTL_MS || 60 * 1000));
-const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.4.1";
 /** Marks a sales-capture session that is a leased, claimable page-read job rather than a bare legacy session. */
 const OZON_PAGE_READ_CAPTURE_KIND = "ozon_page_read";
 /** Marks a 1688 image search started from a first picture (Pinduoduo, 1688 or Ozon). */
@@ -3334,6 +3373,8 @@ async function supplierDraftView(document, candidate) {
     skuUniformSupplyStepV1: table === null ? null : buildSkuUniformSupplyStep({ candidate, draft, table }),
     // 算利润 reads the very card the page is handed, so what the owner confirms and what the server validates are the
     // same record. Nothing is computed a second time here: the specification table above already priced every row.
+    // 「做这件」确认卡（关口 1）那一份：选项、软件先选的、粗算、品牌提示；卡没打开时只有已存下的决定和利润差额。
+    gate1V1: await gate1Service.view(document, candidate),
     profitStepV1: table === null ? null : buildProfitStepReview({
       candidate, draft, table, estimate, card: publicView.realAConfirmationCard ?? null,
       commissionTiers: resolved.commissionTiers, builtAt: resolved.at
@@ -5633,6 +5674,9 @@ async function handleApi(req, res, pathname) {
     throw httpError(409, "旧“开始上架准备”入口已停用：awaiting_user_start只作为历史状态读取；新版商品必须由B通过后自动进入C1，调用本接口不会改变商品状态");
   }
 
+  // 「做这件」确认卡的三条写入路：POST /api/candidates/:id/gate1/(accept|skip|shortfall)。
+  if (await gate1Route(req, res, pathname)) return;
+
   /**
    * The owner drops one product from wherever it is, and takes it back when that was a mistake.
    * Owner rule 2026-09-11: every list must offer this, so the desk, the board, the inbox and the product page all send
@@ -6384,6 +6428,10 @@ async function handleApi(req, res, pathname) {
           failureLayer: "b_commission_evidence", sourceRevision: current.dataRevision + 1,
           evidenceRefs: [result.systemEvidenceBundle.platformFeeEvidence.evidenceId], at: timestamp
         });
+      } else if (applyGate1Shortfall(current, { profitModel: result.profitModel, at: timestamp })) {
+        // 做过「做这件」的商品不直接淘汰：回到「需要你处理」，写明差多少，由主人选换货源、改售价或不做（lib/gate1-decision.mjs）。
+        current.listingPreparation = null;
+        current.listingHandoff = null;
       } else {
         current.workflowStatus = "eliminated";
         current.eliminatedAt = timestamp;

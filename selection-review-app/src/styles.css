@@ -1424,3 +1424,24 @@ label em { color: var(--red); font-style: normal; font-size: 9px; }
 .seerfar-web .seerfar-muted { color: #6b7280; font-size: 0.92em; }
 .seerfar-web .seerfar-inline { margin-left: 0.5em; padding: 0.1em 0.6em; }
 .seerfar-web .seerfar-store-sales { margin-bottom: 0.8em; }
+
+/* ── 「做这件」确认卡（关口 1） ── */
+.gate1-card { border-color: var(--green); }
+.gate1-store { margin: 0; font-size: 13px; color: var(--muted); }
+.gate1-compare { display: flex; flex-wrap: wrap; gap: 12px; }
+.gate1-compare figure { margin: 0; display: grid; gap: 4px; justify-items: center; font-size: 12px; color: var(--muted); }
+.gate1-pick { display: grid; gap: 4px; }
+.gate1-pick-label { font-weight: 700; font-size: 14px; display: flex; gap: 8px; align-items: center; }
+.gate1-pick select { max-width: 100%; min-height: 36px; }
+.gate1-tag { font-size: 12px; font-weight: 400; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); }
+.gate1-tag-software { background: var(--green-soft); }
+.gate1-tag-owner { background: var(--amber-soft); color: var(--amber); }
+.gate1-profit { margin: 0; font-weight: 700; }
+.gate1-profit-pass { color: var(--green); }
+.gate1-profit-fail { color: var(--red); }
+.gate1-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.gate1-skip { display: grid; gap: 8px; width: 100%; }
+.gate1-skip-reasons { display: flex; flex-wrap: wrap; gap: 6px; }
+.gate1-matches > section { margin-top: 12px; }
+.gate1-done-line { margin: 0; }
+/* ── 「做这件」确认卡 end ── */
