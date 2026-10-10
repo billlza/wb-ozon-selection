@@ -1,3 +1,5 @@
+import { platformOfStore } from "../lib/store-registry.mjs";
+
 export function optionalNumber(value, label = "数值") {
   if (value === "" || value === null || value === undefined) return null;
   if (typeof value !== "number" && (typeof value !== "string" || !/^\d+(?:\.\d+)?$/.test(value.trim()))) {
@@ -38,7 +40,7 @@ export function shouldContinuePolling({ active, failed }) { return active && !fa
 
 export function candidatePlatform(candidate) {
   const platform = candidate.lifecycleV11?.skuPackage?.g1Identity?.platform;
-  const configured = { wb: "wb", dandanshu: "ozon", miska: "ozon" }[candidate.targetStore];
+  const configured = platformOfStore(candidate.targetStore);
   if (!configured || (platform && platform !== configured)) throw new Error("平台与目标店铺不一致或身份未取得，不能提交。");
   return configured;
 }

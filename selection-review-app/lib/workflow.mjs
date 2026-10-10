@@ -8,6 +8,7 @@ import { validateProfitModel } from "./profit-model.mjs";
 import { buildExecutionRuntimeView, validateExecutionRuntime } from "./software-execution-state.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { isCompleteStoreRef, sameStoreRef, STORE_PLATFORMS } from "./store-binding.mjs";
+import { isKnownPlatform, isKnownStore, platformOfStore, profitRuleKeyOfStore, STORES } from "./store-registry.mjs";
 import { validateC2AssetLifecycle } from "./c2-asset-lifecycle.mjs";
 import { validateFinalProductPlanConfirmationCard } from "./final-product-plan-confirmation-card.mjs";
 import { validateProductionAuthorizationRecord, validateSkuLifecyclePackage } from "./product-lifecycle-schema.mjs";
@@ -274,9 +275,8 @@ function median(values) {
 }
 
 function storeProfitRule(candidate, rules = DEFAULT_RULES) {
-  if (candidate.targetStore === "miska") return rules.ozonMiska;
-  if (candidate.targetStore === "wb") return rules.wbCrossListing;
-  return rules.ozonDandanshu;
+  // 不认识的店铺沿用以前的做法按蛋蛋鼠的规则算。
+  return rules[profitRuleKeyOfStore(candidate.targetStore) ?? "ozonDandanshu"];
 }
 
 function roundDownCurrency(value) {
@@ -480,11 +480,11 @@ export function businessDate(value = new Date()) {
 
 export function validateListingRecord(input = {}, options = {}) {
   const platform = String(input.platform || "").trim().toLowerCase();
-  if (!["ozon", "wb"].includes(platform)) {
+  if (!isKnownPlatform(platform)) {
     throw new Error("请选择已上架平台（Ozon或WB）");
   }
   const store = String(input.store || "").trim().toLowerCase();
-  if (store && !["dandanshu", "miska", "wb"].includes(store)) {
+  if (store && !isKnownStore(store)) {
     throw new Error("请选择有效店铺");
   }
   const productId = String(input.productId || "").trim();
@@ -513,11 +513,11 @@ export function validateListingRecord(input = {}, options = {}) {
 
 export function validateListingReadback(input = {}, at = new Date()) {
   const platform = String(input.platform || "").trim().toLowerCase();
-  if (!["ozon", "wb"].includes(platform)) {
+  if (!isKnownPlatform(platform)) {
     throw new Error("自动回写必须指定Ozon或WB平台");
   }
   const store = String(input.store || "").trim().toLowerCase();
-  if (!["dandanshu", "miska", "wb"].includes(store)) {
+  if (!isKnownStore(store)) {
     throw new Error("自动回写必须指定实际店铺");
   }
   const productId = String(input.productId || "").trim();
@@ -1132,7 +1132,7 @@ export function approvalGate(candidate, rules = DEFAULT_RULES) {
   const dimensions = candidate.dimensionsCm || {};
   const rule = storeProfitRule(candidate, rules);
   const marketPassed = Number(review.marketEvidence?.comparableCount || 0) > 0;
-  const electricalScope = candidate.targetStore === "wb" ? "WB/CEL" : "Ozon/GUOO";
+  const electricalScope = platformOfStore(candidate.targetStore) === "wb" ? "WB/CEL" : "Ozon/GUOO";
   const electrical = electricalGate(candidate.powered, review.electricalAssessment, electricalScope);
   const autoElimination = codexAutoEliminationGate(candidate, rules);
   const promotionGate = profit?.pricingPolicyVersion
@@ -1520,7 +1520,7 @@ export function dailySummary(candidates, rules = DEFAULT_RULES, date = businessD
     if (queueCounts[candidate.workflowStatus] !== undefined) queueCounts[candidate.workflowStatus] += 1;
   }
   const stores = {};
-  for (const store of ["dandanshu", "miska", "wb"]) {
+  for (const { storeId: store } of STORES) {
     const target = Number(targets[store] || 10);
     const ready = candidates.filter(
       (candidate) =>

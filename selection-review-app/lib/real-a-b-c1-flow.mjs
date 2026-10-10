@@ -1,4 +1,5 @@
 import { readAProductDetailSupplierEvidence } from './a-product-detail-evidence.mjs';
+import { platformOfStore } from "./store-registry.mjs";
 import { readConfirmedSupplierPowerProfile, readConfirmedSupplierVariantAttributes } from './confirmed-supplier-inputs.mjs';
 import { isDeepStrictEqual } from "node:util";
 import { createC1ProductPlan } from "./c1-product-plan.mjs";
@@ -153,7 +154,7 @@ function opportunityPackage(candidate, normalized, confirmedAt) {
     entityType: "OpportunityPackage",
     parentOpportunityId: `opportunity:${candidate.id}`,
     directionName: candidate.productName,
-    targetPlatform: candidate.targetStore === "wb" ? "wb" : "ozon",
+    targetPlatform: platformOfStore(candidate.targetStore) ?? "ozon",
     targetStore: candidate.targetStore,
     dataRevision: candidate.dataRevision,
     businessPhase: "A",

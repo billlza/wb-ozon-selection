@@ -63,6 +63,7 @@ export const SOURCE_CONTRACT_TESTS = Object.freeze([
   "phase5b-c2-ui-deployment-boundary.test.mjs",
   "runtime-configuration.test.mjs",
   "seerfar-software-server-integration.test.mjs",
+  "store-registry-api.test.mjs",
   "three-store-map-api.test.mjs",
   "three-store-map-ui-contract.test.mjs",
   "three-store-map.test.mjs"
