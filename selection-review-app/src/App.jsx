@@ -27,6 +27,7 @@ import PipelineBoard from "./components/PipelineBoard.jsx";
 import OwnerInbox from "./components/OwnerInbox.jsx";
 import IntakePage, { useIntakeQueue } from "./components/IntakePage.jsx";
 import { platformOfStore, storeOptions, storesOfPlatform } from "./intakeView.js";
+import GlobalNotices from "./components/GlobalNotices.jsx";
 const ProductPage = lazy(() => import("./components/ProductPage.jsx"));
 import { deskCounts, discoveredTitleZh, shortProductTitle, storeLabel } from "./selectionDeskView.js";
 import {
@@ -600,6 +601,11 @@ export default function App() {
       setNotice({type:'error',message:errorMessage(error)});
       throw error;
     }finally{await load(true);}
+  }
+  /** 贴货源链接 (piece D): one request to the intake pipeline, then the shared state is read again. */
+  async function submitSourceLink(payload){
+    try{return await api.submitIntakeLinks(payload.links,["miska","dandanshu"].includes(deskStore)?deskStore:null);}
+    finally{await load(true);}
   }
 
 
@@ -1447,6 +1453,13 @@ export default function App() {
         onAccessResolved={refreshOwnerPermissions} onAccessUnknown={clearOwnerPermissions} />
       {notice ? <div role={notice.type === "error" ? "alert" : "status"} className={`global-notice ${notice.type}`}>{notice.message}</div> : null}
 
+      {/* Piece D: page-wide notices and the runs that did not happen, read from saved records; nothing reruns by itself. */}
+      {DESK_VIEWS.includes(view) && accountOwner ? <GlobalNotices extensionStatus={effectiveExtensionStatus}
+        candidates={state.candidates} discoveryView={discoveryView} store={deskStore} loadIntakeQueue={loadIntakeQueue}
+        intakeShownOnPage={view === "desk"}
+        onRetryIntake={async ({ candidateId, dataRevision }) => { try { return await api.retryIntake(candidateId, dataRevision); } finally { await load(true); } }}
+        onResumeIntake={async () => { try { return await api.resumeIntake(); } finally { await load(true); } }}
+        onStartRound={payload => mutateProductDiscovery(api.startProductDiscovery, payload)} /> : null}
       {DESK_VIEWS.includes(view) ? (
         view === "desk" ? (
           <IntakePage ownerReady={accountOwner} storeLine={deskStoreLine} intake={intake} candidates={state.candidates}
@@ -1482,6 +1495,7 @@ export default function App() {
             onOpenInbox={() => setView("inbox")}
             onEliminateCandidate={eliminateCandidate}
             onRestoreCandidate={restoreCandidate}
+            onSubmitSourceLink={submitSourceLink}
           />
           {accountOwner ? seerfarError ? <p role="alert">读取 Seerfar 榜单失败：{seerfarError}</p>
             : seerfarView ? <SeerfarWebRoundCard view={seerfarView} onStart={startSeerfarRound} onReadStoreSales={readStoreSales} onOpenCandidate={openDiscoveredCandidate} /> : null : null}
@@ -1490,7 +1504,7 @@ export default function App() {
             onEliminateCandidate={eliminateCandidate} onRestoreCandidate={restoreCandidate} />
         ) : view === "inbox" ? (
           <OwnerInbox candidates={state.candidates} store={deskStore} onOpenCandidate={openDiscoveredCandidate}
-            onEliminateCandidate={eliminateCandidate} onRestoreCandidate={restoreCandidate} />
+            onEliminateCandidate={eliminateCandidate} onRestoreCandidate={restoreCandidate} onSubmitSourceLink={submitSourceLink} />
         ) : (
           <div className="page-panel">
             <h2>维护</h2>

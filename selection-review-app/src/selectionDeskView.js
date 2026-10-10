@@ -1,6 +1,7 @@
 import { STORE_LABELS, STATUS_LABELS } from "./constants.js";
 import { orderCandidates } from "./candidateViews.js";
 import { errorMessage, safeImageUrl, safeWebUrl } from "./formState.js";
+import { INTAKE_BLOCKER_LABELS, UNSOURCED_BLOCKER_CODES } from "../lib/global-notices.mjs";
 
 /** The owner only makes judgment calls here, so every label below is a plain business word. */
 export const DESK_STORES = Object.freeze(["dandanshu", "miska", "wb"]);
@@ -301,6 +302,46 @@ function myProductStep(candidate) {
 }
 
 /**
+ * The intake blocker that leaves this product without a usable source (piece A writes candidate.intake), or null.
+ * Item 9 of the 2026-10-10 list: such a product waits on the owner for one thing — a source link — so it says so.
+ */
+function unsourcedBlocker(candidate) {
+  const intake = isObject(candidate?.intake) ? candidate.intake : null;
+  if (intake?.stage !== "blocked" || !UNSOURCED_BLOCKER_CODES.includes(intake.blocker?.code)) return null;
+  return intake.blocker;
+}
+
+/** Whether this product already carries a source of its own: a captured page, a 找货 declaration or a pasted link. */
+function hasOwnSource(candidate) {
+  if (isObject(candidate.sourceCapture) || isObject(candidate.supplierDraftV1)) return true;
+  if (text(candidate.roughProfit?.purchaseBasis) !== null) return true;
+  return ["pinduoduo", "1688"].includes(candidate.intake?.sourceKind);
+}
+
+/** The intake pipeline is still working on it, so "no source" would be premature. */
+const intakeWorking = candidate => isObject(candidate.intake) && !["ready", "blocked"].includes(candidate.intake.stage);
+
+/**
+ * Why this product has no source, in the owner's words, or null when it has one. A saved intake blocker is repeated
+ * as saved; otherwise a product with nothing of its own says so, and a 1688 image search that came back without one
+ * identical picture says that — a near match is a price reference, never a source.
+ */
+export function unsourcedReason(candidate) {
+  if (!isObject(candidate) || candidate.workflowStatus === "listed") return null;
+  const blocker = unsourcedBlocker(candidate);
+  if (blocker !== null) return text(blocker.message) ?? INTAKE_BLOCKER_LABELS[blocker.code];
+  if (hasOwnSource(candidate) || intakeWorking(candidate)) return null;
+  const match = isObject(candidate.supplierImageMatch) ? candidate.supplierImageMatch : null;
+  if (["waiting_extension", "searching", "comparing"].includes(match?.status)) return null;
+  if (match?.status === "compared") {
+    const exact = list(match.results).some(item => item?.similarity === "identical") ||
+      Object.values(isObject(match.judgements) ? match.judgements : {}).some(value => value?.judgement === "exact");
+    if (!exact) return "1688 以图搜没找到首图一致的货源";
+  }
+  return "还没有货源";
+}
+
+/**
  * Owner feedback 2026-09-11: "还有 5 条需要我处理，我不能直观看到它要处理什么，得挨个打开."
  * Every sentence below is read from this product's own saved records — the capture job, the 找货 declaration, the
  * estimate beside it and the platform's own asks. Nothing is inferred from a status name, and a product whose records
@@ -311,11 +352,15 @@ export function ownerAttentionReasons(candidate) {
   const capture = captureAttention(candidate);
   const draft = draftAttention(candidate);
   const needs = list(candidate.needsFromUser).map(need => text(need)).filter(need => need !== null);
+  // A product the intake pipeline left without a source has one next step: paste a source link.
+  const blocker = unsourcedBlocker(candidate);
+  const source = blocker === null ? null : { reason: `${text(blocker.message) ?? INTAKE_BLOCKER_LABELS[blocker.code]}，贴一个能一件起订的货源链接，或者淘汰`,
+    action: { key: "source_link", label: "贴货源链接" } };
   // The platform's own ask can repeat a sentence the records already produced; the owner reads it once.
-  const reasons = [...new Set([capture?.reason ?? null, draft.reason, ...needs].filter(reason => reason !== null))];
+  const reasons = [...new Set([source?.reason ?? null, capture?.reason ?? null, draft.reason, ...needs].filter(reason => reason !== null))];
   return {
     reasons: reasons.length ? reasons : ["未取得需要你做什么的具体记录，打开看它的六步"],
-    action: capture?.action ?? draft.action
+    action: source?.action ?? capture?.action ?? draft.action
   };
 }
 
@@ -412,6 +457,7 @@ export function boardColumns(candidates, store) {
  */
 function waitsOnOwner(candidate) {
   if (list(candidate.needsFromUser).some(need => text(need) !== null)) return true;
+  if (unsourcedBlocker(candidate) !== null) return true;
   const capture = candidate.sourceCapture;
   if (!isObject(capture)) return false;
   return skuChoicePending(capture) || text(capture.failureCode) !== null;
@@ -437,6 +483,49 @@ export function inboxItems(candidates, store) {
         action: attention.action
       };
     });
+}
+
+/**
+ * Every product of this store still without a source that is not already a row of 需要你处理 — the ones that used to
+ * be only folded away (item 9: 历史 10 个里 7 个). Each row offers 贴货源链接; nothing here is started by reading it.
+ */
+export function unsourcedRows(candidates, store, discoveryView = null) {
+  return activeCandidates(candidates, store)
+    .filter(candidate => !waitsOnOwner(candidate))
+    .map(candidate => ({ candidate, reason: unsourcedReason(candidate) }))
+    .filter(({ reason }) => reason !== null)
+    .map(({ candidate, reason }) => ({
+      id: candidate.id,
+      dataRevision: candidate.dataRevision ?? null,
+      title: discoveredTitleZh(discoveryView, candidate) ?? text(candidate.productName) ?? candidate.id,
+      storeLabel: storeLabel(candidate.targetStore),
+      reason
+    }));
+}
+
+/**
+ * What the owner reads after 贴货源链接 came back from piece A's POST /api/intake/links. A link pasted before is never
+ * a second card: the answer names the card it already belongs to. A new link becomes its own product — the pipeline
+ * does not fold it into the card it was pasted on — so the answer says that too, and the old card waits for 淘汰.
+ */
+export function sourceLinkResult(response, target = null) {
+  const item = list(response?.items)[0] ?? null;
+  if (!isObject(item)) {
+    return list(response?.rejected).length
+      ? { message: "这条没认出是拼多多或 1688 的商品链接，没有收下。", candidateId: null }
+      : { message: "服务没有返回结果，链接是否收下未确认；刷新后再看。", candidateId: null };
+  }
+  if (item.created === false && text(item.duplicateOfCandidateId) !== null) {
+    if (item.duplicateEliminated === true) {
+      return { message: "这个货源之前贴过，那件已经淘汰了；要重新做，去「已淘汰」里恢复它。", candidateId: item.duplicateOfCandidateId };
+    }
+    return { message: item.duplicateOfCandidateId === target?.candidateId ? "这就是这件商品自己的货源链接，没有多建一张卡。"
+      : "这个货源之前贴过，已经在原来那件商品上，没有多建一张卡。", candidateId: item.duplicateOfCandidateId };
+  }
+  return { message: text(target?.candidateId) === null
+    ? "已收下，软件会去读这个货源、找同款、粗算，读完回到需要你处理。"
+    : "已按这个货源新建一件，软件会去读它、找同款、粗算；原来这件不会自动合并，确认新的那件后可以把这件淘汰。",
+  candidateId: text(item.candidateId) };
 }
 
 /**
@@ -479,6 +568,16 @@ export function deskCounts({ discoveryView, candidates, store }) {
     board: boardColumns(candidates, store).reduce((total, column) => total + column.cards.length, 0),
     inbox: inboxItems(candidates, store).length
   };
+}
+
+/**
+ * The one request body that starts a round, shared by 找一轮新品 and the 重跑 of a stopped round, so a rerun is the
+ * same explicit, priced start and never a replay of the old request.
+ */
+export function roundStartPayload({ plan, binding, store }, now = Date.now(), key = globalThis.crypto.randomUUID()) {
+  return { planId: plan.planId, planVersion: plan.version, targetStore: store,
+    bindingId: binding.bindingId, configurationVersion: binding.configurationVersion,
+    expiresAt: new Date(now + 2 * 60 * 60 * 1000).toISOString(), idempotencyKey: `desk-round:${key}` };
 }
 
 const RUNNING_JOB_STATUSES = ["queued", "claimed", "waiting_platform"];

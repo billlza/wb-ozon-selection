@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { STORE_LABELS } from '../constants.js';
 import { errorMessage, safeImageUrl, safeWebUrl } from '../formState.js';
+import { discoveryFailureLabel } from '../../lib/global-notices.mjs';
 
 const statusLabels = {queued:'等待软件执行',claimed:'正在读取',waiting_platform:'等待查询结果',completed:'已保存查询结果',
   failed:'本次查询失败，已停止',unknown_outcome:'请求结果未知，需核对'};
@@ -90,7 +91,7 @@ function BatchCard({ entry, onAuthorize, onContinue, onSelect, onTranslate, onEs
     </>:null}
     {jobs.map(({job,receipt,canContinue})=><div key={job.jobId}>
       <p>{methodLabels[job.scopeBinding.request.method]}：{statusLabels[job.status]}</p>
-      {receipt?.failureClass?<p role="alert">停止原因：{receipt.failureClass}。本次请求不会自动重发。</p>:null}
+      {receipt?.failureClass?<p role="alert">停止原因：{discoveryFailureLabel(receipt.failureClass).reason}（{receipt.failureClass}）。本次请求不会自动重发；{discoveryFailureLabel(receipt.failureClass).hint}</p>:null}
       {marketResult(receipt)?.status==='true_empty'?<p>本次查询明确返回零结果。</p>:null}
       {marketResult(receipt)?.products?.length?<details open={job.status==='completed'}><summary>查看本次发现材料</summary>
         {seerfar ? <p>{['seerfar-discovery-market-result-v2','seerfar-discovery-market-result-v3'].includes(marketResult(receipt).schemaVersion)

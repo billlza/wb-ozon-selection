@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { eliminatedRows, inboxItems, storeLabel } from "../selectionDeskView.js";
+import { eliminatedRows, inboxItems, storeLabel, unsourcedRows } from "../selectionDeskView.js";
 import { errorMessage } from "../formState.js";
 import EliminateControl, { EliminatedFold } from "./EliminateControl.jsx";
+import SourceLinkControl from "./SourceLinkControl.jsx";
 
 /**
  * Every product that is waiting on the owner, one row each — and, since 2026-09-11, each row says what it is waiting
@@ -9,8 +10,9 @@ import EliminateControl, { EliminatedFold } from "./EliminateControl.jsx";
  * Every sentence comes from that product's own saved records; opening a row only shows it, it starts no work.
  */
 export default function OwnerInbox({ candidates, store, onOpenCandidate,
-  onEliminateCandidate, onRestoreCandidate }) {
+  onEliminateCandidate, onRestoreCandidate, onSubmitSourceLink = null }) {
   const items = inboxItems(candidates, store);
+  const unsourced = unsourcedRows(candidates, store);
   const dropped = eliminatedRows(candidates, store);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -40,7 +42,10 @@ export default function OwnerInbox({ candidates, store, onOpenCandidate,
           <span className="inbox-row-status">{item.storeLabel} · {item.statusLine}</span>
         </div>
         <div className="inbox-row-actions">
-          <button type="button" className="button primary" onClick={() => open(item)}>{item.action.label}</button>
+          {item.action.key === "source_link"
+            ? <SourceLinkControl target={{ candidateId: item.id, dataRevision: item.dataRevision }}
+              onSubmit={onSubmitSourceLink} onOpenCandidate={onOpenCandidate} />
+            : <button type="button" className="button primary" onClick={() => open(item)}>{item.action.label}</button>}
           <button type="button" className="button secondary" onClick={() => onOpenCandidate(item.id)}>打开</button>
           <EliminateControl id={item.id} dataRevision={item.dataRevision}
             onEliminate={({ id, dataRevision, reason }) => run(onEliminateCandidate, { id, dataRevision, reason },
@@ -48,6 +53,20 @@ export default function OwnerInbox({ candidates, store, onOpenCandidate,
         </div>
       </li>)}
     </ul>}
+    {/* Item 9: products nobody found a source for used to be only folded away; each row now offers a way forward. */}
+    {unsourced.length ? <details className="desk-folded unsourced-fold">
+      <summary>还没有货源的 {unsourced.length} 件（逐件贴货源链接）</summary>
+      <ul className="unsourced-list">
+        {unsourced.map(row => <li key={row.id} className="unsourced-row">
+          <span className="unsourced-body"><b>{row.title}</b><span className="unsourced-reason">{row.reason}</span></span>
+          <span className="unsourced-actions">
+            <SourceLinkControl target={{ candidateId: row.id, dataRevision: row.dataRevision }}
+              onSubmit={onSubmitSourceLink} onOpenCandidate={onOpenCandidate} />
+            <button type="button" className="button secondary" onClick={() => onOpenCandidate(row.id)}>打开</button>
+          </span>
+        </li>)}
+      </ul>
+    </details> : null}
     <EliminatedFold rows={dropped} onRestore={payload => run(onRestoreCandidate, payload,
       "已恢复，它回到了淘汰前的那一步；没有自动继续任何事。")} />
   </div>;
