@@ -42,6 +42,12 @@ async function uploadFile(path, file) {
 }
 
 export const api = {
+  // 录入页（piece B）：平台和店铺名单、店铺档案。贴链接、找货队列和重跑用下面录入流水线那几个。
+  getStores: signal => request('/api/stores', { signal }),
+  getStoreProfiles: signal => request('/api/store-profiles', { signal }),
+  saveStoreProfile: ({ store, baseVersion, values }) => request(`/api/store-profiles/${encodeURIComponent(store)}`, {
+    method: 'POST', body: JSON.stringify({ baseVersion, values })
+  }),
   getC2UploadDraft: id => request(`/api/candidates/${encodeURIComponent(id)}/lifecycle/c2/upload-draft`),
   getSiblingPreparation: id => request(`/api/sibling-batches/${encodeURIComponent(id)}/preparation`),
   saveSiblingPreparation: (id,payload) => request(`/api/sibling-batches/${encodeURIComponent(id)}/preparation-draft`, {method:'POST',body:JSON.stringify(payload)}),
@@ -404,7 +410,8 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   // 录入页：贴链接、看「找货中」、对一件点「重跑」、整页提示上点「接着找」，以及开始信号桥的回执。
-  submitIntakeLinks: (links) => request("/api/intake/links", { method: "POST", body: JSON.stringify({ links }) }),
+  submitIntakeLinks: (links, targetStore) => request("/api/intake/links", { method: "POST",
+    body: JSON.stringify(targetStore ? { links, targetStore } : { links }) }),
   getIntakeQueue: ({ bridge = false } = {}) => request(`/api/intake/queue${bridge ? "?bridge=1" : ""}`),
   retryIntake: (candidateId, dataRevision) =>
     request(`/api/intake/${encodeURIComponent(candidateId)}/retry`, { method: "POST", body: JSON.stringify({ dataRevision }) }),

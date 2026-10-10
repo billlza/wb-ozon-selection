@@ -1,4 +1,5 @@
 import { runtimeArchitectureView } from "./runtimeArchitectureView.js";
+import { intakeExtensionIssues } from "./intakeView.js";
 
 /**
  * 顶栏那一个状态指示器。
@@ -64,9 +65,15 @@ function runtimeIssue(view) {
  * 返回的 issues 是全部不正常的条目（顶栏逐条显示），label 是其中最要紧的那一句，detail 永远带着三条各自的原话，
  * 所以就算收成一个圆点，鼠标停上去仍然能看到「本地开发模式」这类被收起来的正常状态。
  */
-export function headerStatusIndicator({ extensionStatus = null, captureControl = null, runtimeArchitecture = null } = {}) {
+export function headerStatusIndicator({ extensionStatus = null, captureControl = null, runtimeArchitecture = null,
+  intakeQueue = null } = {}) {
   const runtime = runtimeArchitectureView(runtimeArchitecture);
-  const issues = [extensionIssue(extensionStatus), captureIssue(captureControl), runtimeIssue(runtime)]
+  // 录入队列回报的插件在线和 1688 登录：插件已经没连上时，那一条已经说了，不再重复。
+  const extensionDown = extensionIssue(extensionStatus)?.code === "disconnected";
+  const intake = intakeExtensionIssues(intakeQueue)
+    .filter(issue => !(extensionDown && issue.code === "plugin_offline"))
+    .map(issue => ({ source: "intake", ...issue }));
+  const issues = [extensionIssue(extensionStatus), captureIssue(captureControl), runtimeIssue(runtime), ...intake]
     .filter(issue => issue !== null)
     .sort((left, right) => TONE_RANK[right.tone] - TONE_RANK[left.tone]);
   const tone = issues.reduce((worst, issue) => (TONE_RANK[issue.tone] > TONE_RANK[worst] ? issue.tone : worst), "ok");

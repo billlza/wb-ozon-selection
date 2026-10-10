@@ -561,8 +561,12 @@ export const CAPABILITY_NODES = Object.freeze([
       capabilityRef("src/components/PipelineBoard.jsx", "PipelineBoard", "进行中五列看板"),
       capabilityRef("src/components/OwnerInbox.jsx", "OwnerInbox", "需要主人处理清单"),
       capabilityRef("src/components/EliminateControl.jsx", "EliminateControl", "各列表通用的淘汰确认与已淘汰恢复"),
-      capabilityRef("src/components/ProductPage.jsx", "ProductPage", "商品页六步与找货填写")],
-    testRefs: [capabilityRef("tests/collaboration-api.test.mjs", "test(", "候选 API 测试")]
+      capabilityRef("src/components/ProductPage.jsx", "ProductPage", "商品页六步与找货填写"),
+      capabilityRef("src/components/IntakePage.jsx", "IntakePage", "录入页：贴拼多多或 1688 链接、找货队列与重跑"),
+      capabilityRef("src/components/StoreProfileCards.jsx", "StoreProfileCards", "录入页上每家店的店铺档案与修改")],
+    testRefs: [capabilityRef("tests/collaboration-api.test.mjs", "test(", "候选 API 测试"),
+      capabilityRef("tests/intake-page-ui.test.mjs", "test(", "录入页认链接、队列、店铺下拉和店铺档案表单")],
+    artifactRefs: ["src/intakeView.js", "src/storeProfileCardView.js"]
   }),
   capability({
     id: "2.2", capabilityId: "selection.a.ozon-sales-capture", areaId: "2",

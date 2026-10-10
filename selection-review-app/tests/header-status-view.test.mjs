@@ -182,15 +182,22 @@ test('顶栏真正画出来的东西：正常时一句，不正常时逐条展�
   assert.doesNotMatch(broken, /一切正常/u);
 });
 
-test('顶栏只剩：我在哪儿、哪家店、有没有异常', async () => {
+test('顶栏只剩：我在哪儿、哪个平台哪家店、需要你处理、有没有异常', async () => {
   const app = await readFile(fileURLToPath(new URL('../src/App.jsx', import.meta.url)), 'utf8');
   const header = app.slice(app.indexOf('<header className="app-header">'), app.indexOf('</header>'));
-  // 留下的：品牌与位置、四个入口加数字、店铺选择、一个状态指示器。
-  assert.match(header, /className="desk-nav"/u);
-  assert.match(header, /className="desk-store-switch"/u);
+  // 留下的：品牌与位置、平台 + 店铺两个下拉、「需要你处理」加数字、一个状态指示器。
+  assert.match(header, /className="desk-store-switch" role="group" aria-label="平台和店铺"/u);
+  assert.match(header, /aria-label="选择平台"/u);
+  assert.match(header, /aria-label="选择店铺"/u);
+  assert.match(header, /onClick=\{\(\) => setView\("inbox"\)\}>\s*需要你处理<span className="desk-badge">\{counts\.inbox\}<\/span>/u);
   assert.match(header, /className="app-brand-back" onClick=\{\(\) => setView\("desk"\)\}>← 选品台/u);
   assert.match(header, /<HeaderStatus extensionStatus=\{effectiveExtensionStatus\} captureControl=\{state\.captureControl\}/u);
-  assert.match(header, /runtimeArchitecture=\{state\.runtimeArchitecture\}/u);
+  assert.match(header, /runtimeArchitecture=\{state\.runtimeArchitecture\} intakeQueue=\{intake\.queue\}/u);
+  // 旧的四个标签（选品台 / 进行中 / 需要你处理 / 维护）和重复的「选品台」都不在顶栏了；进行中和维护在录入页底部。
+  assert.doesNotMatch(header, /desk-nav/u);
+  assert.doesNotMatch(header, /deskNav/u);
+  assert.equal((header.match(/选品台/gu) ?? []).length, 2, '只有品牌名和商品页的返回');
+  assert.doesNotMatch(app, /const deskNav/u);
   // 收走的：三条状态各自的横条、找一轮新品、刷新数据、添加我找到的商品。
   for (const gone of [/找一轮新品/u, /刷新数据/u, /添加我找到的商品/u, /extension-status/u, /capture-control-status/u,
     /runtime-architecture-status/u, /RuntimeArchitectureStatus/u]) {
@@ -202,7 +209,7 @@ test('顶栏只剩：我在哪儿、哪家店、有没有异常', async () => {
   assert.equal((app.match(/view: "discovery"/gu) ?? []).length, 1);
 });
 
-test('刷新数据和退出登录收进「维护」，添加我找到的商品搬到选品台', async () => {
+test('刷新数据和退出登录收进「维护」，添加我找到的商品弹窗由录入页取代', async () => {
   const app = await readFile(fileURLToPath(new URL('../src/App.jsx', import.meta.url)), 'utf8');
   const desk = await readFile(fileURLToPath(new URL('../src/components/SelectionDesk.jsx', import.meta.url)), 'utf8');
   const maintenance = app.slice(app.indexOf('<h2>维护</h2>'), app.indexOf('<h2>维护</h2>') + 1400);
@@ -217,10 +224,12 @@ test('刷新数据和退出登录收进「维护」，添加我找到的商品�
   const panel = await readFile(fileURLToPath(new URL('../src/components/LocalOwnerAccessPanel.jsx', import.meta.url)), 'utf8');
   assert.match(panel, /access\.status === "authenticated"\) return showAuthenticated \?/u);
   assert.equal((panel.match(/showAuthenticated \?/gu) ?? []).length, 1);
-  // 添加我找到的商品：顶栏不再有，选品台自己有一个，打开的还是原来那个弹窗。
-  assert.match(app, /onAddProduct=\{\(\) => setAddOpen\(true\)\}/u);
-  assert.match(app, /<AddCandidateModal open=\{addOpen\}/u);
-  assert.match(desk, /onClick=\{onAddProduct\}>\s*<PlusIcon \/> 添加我找到的商品/u);
+  // 添加我找到的商品：弹窗不再有入口。首页就是录入页；Seerfar 的结果页不再传 onAddProduct，那个按钮也就不显示。
+  assert.doesNotMatch(app, /AddCandidateModal/u);
+  assert.doesNotMatch(app, /onAddProduct/u);
+  assert.doesNotMatch(app, /setAddOpen/u);
+  assert.match(app, /view === "desk" \? \(\s*<IntakePage /u);
+  assert.match(desk, /typeof onAddProduct === "function"/u);
   // 空列表那句话原来指着顶栏的按钮，顶栏那个已经没了。
   assert.doesNotMatch(desk, /点右上角「找一轮新品」/u);
   assert.match(desk, /点右边「下一轮方向」里的「找一轮新品」/u);

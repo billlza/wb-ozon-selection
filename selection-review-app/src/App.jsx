@@ -7,7 +7,6 @@ import { c2ReferenceFailureMessage } from "./c2UploadInput.js";
 import { IMAGE_MATCH_CHANNEL, OZON_IMAGE_MATCH_CHANNEL, OZON_PAGE_READ_CHANNEL, startQueuedSupplierCapture } from "./captureStart.js";
 import { createIntakeJobBridge } from "./intakeJobBridge.js";
 import { firstInQueue, matchesQueue } from "./candidateViews";
-import AddCandidateModal from "./components/AddCandidateModal";
 import CandidateDetail, { CandidateReview } from "./components/CandidateDetail";
 import CandidateRail from "./components/CandidateRail";
 import DailyProgress from "./components/DailyProgress";
@@ -25,8 +24,10 @@ import ThreeStoreMap from "./components/ThreeStoreMap";
 import SelectionDesk from "./components/SelectionDesk.jsx";
 import PipelineBoard from "./components/PipelineBoard.jsx";
 import OwnerInbox from "./components/OwnerInbox.jsx";
+import IntakePage, { useIntakeQueue } from "./components/IntakePage.jsx";
+import { platformOfStore, storeOptions, storesOfPlatform } from "./intakeView.js";
 const ProductPage = lazy(() => import("./components/ProductPage.jsx"));
-import { DESK_STORES, deskCounts, discoveredTitleZh, shortProductTitle, storeLabel } from "./selectionDeskView.js";
+import { deskCounts, discoveredTitleZh, shortProductTitle, storeLabel } from "./selectionDeskView.js";
 import {
   EXTENSION_STATUS_PING,
   EXTENSION_STATUS_RESPONSE,
@@ -36,12 +37,14 @@ import {
 } from "./extensionStatus";
 
 const INITIAL_QUEUE = "codex_processing";
+/** 录入页读「找货中」用的那一个读取函数；放在组件外面，引用不变，轮询不会因为重新渲染而重来。 */
+const loadIntakeQueue = () => api.getIntakeQueue();
 /** The owner's own pages plus the maintenance list; every older page stays reachable under 维护. */
-const DESK_VIEWS = ["desk", "board", "inbox", "maint"];
+const DESK_VIEWS = ["desk", "seerfar", "board", "inbox", "maint"];
 /** Views that read the saved query results, so the read keeps running while the owner is on any of them. */
-const DISCOVERY_VIEWS = ["discovery", "desk", "product"];
+const DISCOVERY_VIEWS = ["discovery", "seerfar", "product"];
 /** Views whose product links open one product page. */
-const CANDIDATE_LINK_VIEWS = ["discovery", "desk", "board", "inbox", "product"];
+const CANDIDATE_LINK_VIEWS = ["discovery", "desk", "seerfar", "board", "inbox", "product"];
 const MAINTENANCE_PAGES = [
   { view: "review", label: "今日选品评审" },
   { view: "discovery", label: "软件找商品" },
@@ -49,7 +52,7 @@ const MAINTENANCE_PAGES = [
   { view: "map", label: "全店能力地图" },
   { view: "phase2a", label: "第2A模拟验收" }
 ];
-const VIEW_TITLES = { desk: "选品台", board: "进行中", inbox: "需要你处理", maint: "维护", product: "商品",
+const VIEW_TITLES = { desk: "录入新商品", seerfar: "Seerfar 自动选品", board: "进行中", inbox: "需要你处理", maint: "维护", product: "商品",
   map: "全店能力地图", phase2a: "第2A模拟验收", accounts: "账户准备", discovery: "软件找商品", review: "今日选品评审" };
 export default function App() {
   const [preparationSaveState] = useState(createPreparationSaveState);
@@ -66,7 +69,6 @@ export default function App() {
   const [selectedId, setSelectedId] = useState("");
   const [queue, setQueue] = useState(INITIAL_QUEUE);
   const [sourceFilter, setSourceFilter] = useState("all");
-  const [addOpen, setAddOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState(null);
   const [batchExecution, setBatchExecution] = useState(null);
@@ -78,6 +80,14 @@ export default function App() {
   // The owner lands on 选品台; the older pages keep their behaviour and stay reachable under 维护.
   const [view, setView] = useState("desk");
   const [deskStore, setDeskStore] = useState("miska");
+  // 录入页（piece B）：平台 + 店铺名单（GET /api/stores 没上线时用写死的两家 Ozon 店）和找货队列。
+  const [stores, setStores] = useState(() => storeOptions(null));
+  useEffect(() => {
+    const controller = new AbortController();
+    api.getStores(controller.signal).then(result => { if (!controller.signal.aborted) setStores(storeOptions(result)); })
+      .catch(() => { /* 接口还没上线或读失败：继续用写死的名单 */ });
+    return () => controller.abort();
+  }, []);
   const [skippedProducts, setSkippedProducts] = useState([]);
   const [threeStoreMap, setThreeStoreMap] = useState(null);
   const [accountPreparationView,setAccountPreparationView]=useState(null);
@@ -94,6 +104,7 @@ export default function App() {
     bridge.start();
     return () => bridge.stop();
   }, [accountOwnerId]);
+  const intake = useIntakeQueue({ enabled: view === "desk" && accountOwner, loadQueue: loadIntakeQueue });
   useEffect(() => {
     if (view !== 'product' || !accountOwnerId || !selectedId) return undefined;
     let cancelled = false;
@@ -556,29 +567,7 @@ export default function App() {
     }finally{await load(true);}
   }
 
-  async function addCandidate(payload) {
-    const navigationToken = selectionGuard.current.capture();
-    try {
-      const result = await api.addCandidate(payload);
-      setAddOpen(false);
-      navigateResult(result.candidate, navigationToken);
-      setNotice({
-        type: "success",
-        message: `${result.candidate.id} 已保存到软件状态机，当前等待A阶段方向判断；未唤醒Codex任务`
-      });
-      await load(true);
-    } catch (error) {
-      if (error.body?.duplicateId) {
-        const nextState = await load(true);
-        const duplicate = nextState?.candidates.find((candidate) => candidate.id === error.body.duplicateId);
-        if (duplicate) navigateResult(duplicate, navigationToken);
-        setAddOpen(false);
-        setNotice({ type: "warning", message: `${error.message}，已跳转已有候选` });
-        return;
-      }
-      throw error;
-    }
-  }
+
 
   async function createSiblingSkuBatch(payload) {
     const parentCandidateId = selectedId;
@@ -1379,12 +1368,9 @@ export default function App() {
   const siblingCandidates = productCandidate === null ? [] : state.candidates
     .filter(item => item.siblingSourceV1?.parentCandidateId === productCandidate.id);
   const siblingSkuIds = siblingCandidates.map(item => item.siblingSourceV1.supplierSkuId);
-  const deskNav = [
-    { view: "desk", label: "选品台", count: counts.desk },
-    { view: "board", label: "进行中", count: counts.board },
-    { view: "inbox", label: "需要你处理", count: counts.inbox },
-    { view: "maint", label: "维护", count: null }
-  ];
+  const deskPlatform = platformOfStore(stores, deskStore);
+  const deskStoreLine = `${stores.platforms.find(item => item.value === deskPlatform)?.label ?? ""} · ${
+    stores.stores.find(item => item.storeKey === deskStore)?.label ?? storeLabel(deskStore)}`;
 
   return (
     <div className="app-shell">
@@ -1394,23 +1380,31 @@ export default function App() {
           {view === "product"
             ? <p className="app-brand-product">商品 · {shortProductTitle(productCandidate, productTitleZh)}
               <button type="button" className="app-brand-back" onClick={() => setView("desk")}>← 选品台</button></p>
-            : <p>{VIEW_TITLES[view] ?? "今日选品评审"}</p>}
+            : view === "desk" ? <p>{VIEW_TITLES.desk}</p>
+            : <p className="app-brand-product">{VIEW_TITLES[view] ?? "今日选品评审"}
+              <button type="button" className="app-brand-back" onClick={() => setView("desk")}>← 录入新商品</button></p>}
         </div>
-        <nav className="desk-nav" aria-label="主要页面">
-          {deskNav.map(item => <button key={item.view} type="button" className={`button ${view === item.view ? "primary" : "secondary"}`}
-            onClick={() => setView(item.view)}>
-            {item.label}{item.count === null || item.count === 0 ? null : <span className="desk-badge">{item.count}</span>}
-          </button>)}
-          <label className="desk-store-switch">店铺
-            <select value={deskStore} onChange={event => setDeskStore(event.target.value)} aria-label="选择店铺">
-              {DESK_STORES.map(store => <option key={store} value={store}>{storeLabel(store)}</option>)}
+        {/* 顶栏只剩：平台和店铺、需要你处理、一个状态指示器。进行中和维护在录入页底部。 */}
+        <div className="desk-store-switch" role="group" aria-label="平台和店铺">
+          <label>平台
+            <select value={deskPlatform ?? ""} aria-label="选择平台"
+              onChange={event => setDeskStore(storesOfPlatform(stores, event.target.value)[0]?.storeKey ?? deskStore)}>
+              {stores.platforms.map(platform => <option key={platform.value} value={platform.value}>{platform.label}</option>)}
             </select>
           </label>
-        </nav>
-        {/* 三条工程状态收成一条：都正常时一个圆点，任何一条不正常才占主人的注意力。 */}
+          <label>店铺
+            <select value={deskStore} onChange={event => setDeskStore(event.target.value)} aria-label="选择店铺">
+              {storesOfPlatform(stores, deskPlatform).map(store => <option key={store.storeKey} value={store.storeKey}>{store.label}</option>)}
+            </select>
+          </label>
+        </div>
         <div className="header-actions">
+          <button type="button" className={`button ${view === "inbox" ? "secondary" : "primary"} header-inbox`} onClick={() => setView("inbox")}>
+            需要你处理<span className="desk-badge">{counts.inbox}</span>
+          </button>
+          {/* 三条工程状态收成一条：都正常时一个圆点，任何一条不正常才占主人的注意力。 */}
           <HeaderStatus extensionStatus={effectiveExtensionStatus} captureControl={state.captureControl}
-            runtimeArchitecture={state.runtimeArchitecture} />
+            runtimeArchitecture={state.runtimeArchitecture} intakeQueue={intake.queue} />
         </div>
       </header>
       {/* 已登录是常态，不必每一页都声明；没登录、读不出来或只是预览身份时这一条必须仍然显眼。退出登录收在「维护」里。 */}
@@ -1420,6 +1414,12 @@ export default function App() {
 
       {DESK_VIEWS.includes(view) ? (
         view === "desk" ? (
+          <IntakePage ownerReady={accountOwner} storeLine={deskStoreLine} intake={intake} candidates={state.candidates}
+            targetStore={deskPlatform === "ozon" ? deskStore : null} onSubmitLinks={api.submitIntakeLinks}
+            onRetry={api.retryIntake} onResume={api.resumeIntake} onOpenCandidate={openDiscoveredCandidate}
+            onOpenSeerfar={() => setView("seerfar")} loadStoreProfiles={api.getStoreProfiles} saveStoreProfile={api.saveStoreProfile}
+            onOpenBoard={() => setView("board")} onOpenMaintenance={() => setView("maint")} />
+        ) : view === "seerfar" ? (
           <SelectionDesk
             discoveryView={discoveryView}
             candidates={state.candidates}
@@ -1445,8 +1445,6 @@ export default function App() {
                 expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), idempotencyKey: `desk-permit:${crypto.randomUUID()}` })}
             onOpenBoard={() => setView("board")}
             onOpenInbox={() => setView("inbox")}
-            // 添加我找到的商品属于找货这件事，所以它在选品台自己的位置上，而不是压在每一页的顶栏里。
-            onAddProduct={() => setAddOpen(true)}
             onEliminateCandidate={eliminateCandidate}
             onRestoreCandidate={restoreCandidate}
           />
@@ -1667,7 +1665,6 @@ export default function App() {
       </footer>
       </>
       )}
-      <AddCandidateModal open={addOpen} onClose={() => setAddOpen(false)} onSave={addCandidate} />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T05:26:07.412Z",
+  "frozenAt": "2026-10-10T05:29:39.077Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 923,
-      "sha256": "9417056ee099ff6afd01ccc78e7440bf9f6c72fe1abb1be2bfaddef6ee76b53e",
+      "artifactCount": 928,
+      "sha256": "d6efc068c9a5484aa7d52296a9c891c25981d7ff45aaa65b5c925b6c6f7871b5",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -436,7 +436,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "12e4bd9c5918452c228c828d498701abec1b6f638d39be94232e04d6b2ca3c4b"
+        "sha256": "0bdc282e638628b457cf6afb2139b917c127c91efbfffab2840f724874aef0c4"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -1592,7 +1592,7 @@
       },
       {
         "path": "src/App.jsx",
-        "sha256": "45bfdca9f95f506511a645fbaaf232dc0caa2c3ad80352f78144f5a9eeb62145"
+        "sha256": "84cc28a643b6b1d467eb2212adff5f7e41cf21370b75d44c5fefd16ffb4f6d54"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1604,7 +1604,7 @@
       },
       {
         "path": "src/api.js",
-        "sha256": "f0af3566894848fcfc542a8e6eda73fe2c0a71682e710f93088282100b8dc911"
+        "sha256": "4ab650b1416a3789bca0b0c37758561a15879f6a8ccda5b87283cb2e1d71ae9f"
       },
       {
         "path": "src/bExactCommissionInput.js",
@@ -1708,11 +1708,15 @@
       },
       {
         "path": "src/components/HeaderStatus.jsx",
-        "sha256": "71e1fdc1c0f72b585ad3df648dc2c5fd649686eca29cc6894c914acaac508998"
+        "sha256": "30fe7fa67d3cedc5424a0914fc07abc504ed73bf8c52524a8d74f375c6753756"
       },
       {
         "path": "src/components/Icons.jsx",
         "sha256": "ffe7fb684e51fac940099d40dfd6d272d49c488840f7e470b401a30cfaa68cd0"
+      },
+      {
+        "path": "src/components/IntakePage.jsx",
+        "sha256": "ea18101627ea67838084ca97603f379c1f145738897b46a0fb7ae0bbcd7067bb"
       },
       {
         "path": "src/components/KeywordSoftwareRuntimeCard.jsx",
@@ -1803,6 +1807,10 @@
         "sha256": "3003816a16b95ea93977531b1a8a83216a42b950d0122ada8dc14c518e6f104e"
       },
       {
+        "path": "src/components/StoreProfileCards.jsx",
+        "sha256": "3ce89fc27bfefdd7957cb4ccd8e66404c2ec606c8404af710b4443b691f3e903"
+      },
+      {
         "path": "src/components/ThreeStoreMap.jsx",
         "sha256": "13a6a6251ea1bfbcbe4fbae20cb9b3c7b9d435843abab78a21ebdda3d57e2c2f"
       },
@@ -1848,11 +1856,15 @@
       },
       {
         "path": "src/headerStatusView.js",
-        "sha256": "654f5c1c5654b2a9f5968776117ab41ceee0d4051cb07f0fafde0a6626c3abfa"
+        "sha256": "4203a2baeb1634f5ab4f9c0af06b64cbe6ecb27482d47c6b93e90325d014a025"
       },
       {
         "path": "src/intakeJobBridge.js",
         "sha256": "df4cc25d6ca6e5b7880e345ac52f3fe530b8cbe12cd294fdcab7bbf961623396"
+      },
+      {
+        "path": "src/intakeView.js",
+        "sha256": "e135027d3f3a77afc36934d050b0bc6c4d3082c3cdff373dbe1a4a97053d2cb7"
       },
       {
         "path": "src/keywordSoftwareRuntimeView.js",
@@ -1903,8 +1915,12 @@
         "sha256": "1b81979070920002d356e111b794f7281a4bf6a9e5b5a7a73393c20ff24aa9ab"
       },
       {
+        "path": "src/storeProfileCardView.js",
+        "sha256": "8ed35947f2cff415abcdaeef50b9cb6366424545dfc99155c441232cfd905f4e"
+      },
+      {
         "path": "src/styles.css",
-        "sha256": "4d81fd7e7ccdeddcc4f4748c22abe480e8941861eb76505034a71200b118065a"
+        "sha256": "a5b4b84f7359d1db0cae9bb0de9689bde1275d5fc6a3f9ca3af9014d72277d6a"
       },
       {
         "path": "src/supplierImageMatchView.js",
@@ -2944,7 +2960,7 @@
       },
       {
         "path": "tests/header-status-view.test.mjs",
-        "sha256": "2db88fd376157858dc45d23987060f6d17df23413794d6be2cbc942ca81353fe"
+        "sha256": "14e73426de47611be9df218a8c2f0bcc263b089fa462afc32a36a1072a968d8a"
       },
       {
         "path": "tests/helpers/a-supplier-image-search-fixture.mjs",
@@ -3009,6 +3025,10 @@
       {
         "path": "tests/intake-job-bridge.test.mjs",
         "sha256": "6284ba64cfebf029ac7bb0a1b7d7f56a2012bae9eabc7425e90b9fef317b7d90"
+      },
+      {
+        "path": "tests/intake-page-ui.test.mjs",
+        "sha256": "2e61c9ba1e3e34a271ee1f672f0a05a2e7023b8c40ae13b3a01570eb2831d1cd"
       },
       {
         "path": "tests/intake-pipeline.test.mjs",
@@ -3971,6 +3991,10 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "src/components/IntakePage.jsx",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "src/components/OwnerInbox.jsx",
           "status": "present_in_integration_source"
         },
@@ -3991,7 +4015,23 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "src/components/StoreProfileCards.jsx",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "src/intakeView.js",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "src/storeProfileCardView.js",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "tests/collaboration-api.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/intake-page-ui.test.mjs",
           "status": "present_in_integration_source"
         }
       ],
