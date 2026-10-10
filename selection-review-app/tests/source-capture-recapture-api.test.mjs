@@ -31,7 +31,7 @@ const capturedSku = (id, colour, size, priceCny, stock, weightKg) => ({
  */
 const waitingSourceCapture = (extra = {}) => ({
   captureId: 'SCJ-synthetic-recapture-first', status: 'captured_waiting_owner_selection', mode: 'a_supplier_capture',
-  jobId: 'SCJ-synthetic-recapture-first', jobStatus: 'completed', attempt: 1, requiredExtensionVersion: '1.2.9',
+  jobId: 'SCJ-synthetic-recapture-first', jobStatus: 'completed', attempt: 1, requiredExtensionVersion: '1.4.0',
   offerId: '943009939489', sourceUrl: OFFER_URL, originalSourceUrl: 'https://qr.1688.com/s/7OnLCakq',
   title: '合成狗雨衣', offerStatus: null, observedAt: '2026-09-13T03:23:00.000Z',
   collectionMethod: 'chrome_extension_structured_page_v1', titleSource: 'page.h1', offerIdSource: 'page.url',
@@ -179,7 +179,7 @@ test('重新采集只在已采到、等你选规格时放行，作废这次采�
   assert.equal(again.body.bStarted, false);
   assert.equal(again.body.c1Created, false);
   assert.equal(again.body.captureJob.status, 'queued');
-  assert.equal(again.body.captureJob.requiredExtensionVersion, '1.2.9');
+  assert.equal(again.body.captureJob.requiredExtensionVersion, '1.4.0');
   assert.notEqual(again.body.captureJob.jobId, 'SCJ-synthetic-recapture-first');
   assert.match(again.body.captureJob.jobId, /^SCJ-/u);
 

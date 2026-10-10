@@ -122,13 +122,15 @@ import {
   ozonPageReadStopMessage
 } from "./lib/ozon-page-capture-job.mjs";
 import {
-  SUPPLIER_IMAGE_MATCH_JUDGEMENT_LABELS, computeSupplierImageMatchComparison, queuedSupplierImageMatchRecord,
-  sanitizeSupplierImageMatchEvidence, supplierImageMatchComparisonApplied, supplierImageMatchComparisonRequested,
-  supplierImageMatchFailed, supplierImageMatchFailureCode, supplierImageMatchInFlight, supplierImageMatchJobPayload,
-  supplierImageMatchJobPublic, supplierImageMatchJudged, supplierImageMatchResultsRecorded, supplierImageMatchSource,
-  supplierImageMatchStartBlocker
+  SUPPLIER_IMAGE_MATCH_JUDGEMENT_LABELS, queuedSupplierImageMatchRecord, SUPPLIER_IMAGE_MATCH_SOURCE_LABELS,
+  sanitizeSupplierImageMatchEvidence, supplierImageMatchJobPayload, supplierImageMatchJobPublic, supplierImageMatchRules,
+  supplierImageMatchSource
 } from "./lib/supplier-image-match.mjs";
-import { fetchImageFingerprint } from "./lib/image-fingerprint.mjs";
+import {
+  ozonImageMatchJobPayload, ozonImageMatchJobPublic, ozonImageMatchRules, ozonImageMatchTarget, queuedOzonImageMatchRecord,
+  sanitizeOzonImageMatchEvidence
+} from "./lib/ozon-same-product-match.mjs";
+import { fetchImageFingerprint, fetchPublicProductImage, searchUploadImageFromBuffer } from "./lib/image-fingerprint.mjs";
 import { buildOzonCategoryReadStep } from "./lib/ozon-category-read-step.mjs";
 import { buildCommissionEstimateSignal, buildCommissionEstimateStep, buildEstimatedCommissionNoticeStep,
   ExactCommissionRequiredForProductionError } from "./lib/commission-estimate-authorization.mjs";
@@ -701,11 +703,13 @@ function activeDispatchForCandidate(data, candidateId) {
 const SOURCE_CAPTURE_TTL_MS = 3 * 60 * 1000;
 const SOURCE_CAPTURE_JOB_QUEUE_TTL_MS = Math.max(50, Number(process.env.SELECTION_REVIEW_SOURCE_JOB_QUEUE_TTL_MS || 2 * 60 * 1000));
 const SOURCE_CAPTURE_JOB_EXECUTION_TTL_MS = Math.max(50, Number(process.env.SELECTION_REVIEW_SOURCE_JOB_EXECUTION_TTL_MS || 60 * 1000));
-const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.2.9";
+const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.4.0";
 /** Marks a sales-capture session that is a leased, claimable page-read job rather than a bare legacy session. */
 const OZON_PAGE_READ_CAPTURE_KIND = "ozon_page_read";
-/** Marks a 1688 image search started from a captured Pinduoduo first picture. */
+/** Marks a 1688 image search started from a first picture (Pinduoduo, 1688 or Ozon). */
 const SUPPLIER_IMAGE_MATCH_CAPTURE_KIND = "supplier_image_match";
+/** Marks an Ozon text search whose results are compared against the same first picture. */
+const OZON_IMAGE_MATCH_CAPTURE_KIND = "ozon_image_match";
 const EXTENSION_HEARTBEAT_TTL_MS = 75 * 1000;
 let latestExtensionHeartbeat = null;
 let sourceCaptureJobClaimQueue = Promise.resolve();
@@ -745,7 +749,7 @@ function purgeExpiredCaptureSessions(timestamp = Date.now()) {
       // an Ozon page-read session (captureKind, never set on a 1688 session) gets the same protection.
       if (session.mode === "a_supplier_capture" && session.jobStatus) continue;
       if (session.captureKind === OZON_PAGE_READ_CAPTURE_KIND && session.jobStatus) continue;
-      if (session.captureKind === SUPPLIER_IMAGE_MATCH_CAPTURE_KIND && session.jobStatus) continue;
+      if ([SUPPLIER_IMAGE_MATCH_CAPTURE_KIND, OZON_IMAGE_MATCH_CAPTURE_KIND].includes(session.captureKind) && session.jobStatus) continue;
       if (session.expiresAt <= timestamp || session.consumedAt) sessions.delete(id);
     }
   }
@@ -756,7 +760,8 @@ function captureControlSnapshot(timestamp = Date.now()) {
   const active = [
     ...[...sourceCaptureSessions.values()].map((session) => ({ ...session, platform: "1688", captureKind: "supplier" })),
     ...[...salesCaptureSessions.values()].map((session) => ({ ...session, platform: "ozon", captureKind: "sales" })),
-    ...[...imageMatchSessions.values()].map((session) => ({ ...session, platform: "1688", captureKind: "image_match" }))
+    ...[...imageMatchSessions.values()].map((session) => ({ ...session, platform: session.matchKind === "ozon" ? "ozon" : "1688",
+      captureKind: session.matchKind === "ozon" ? "ozon_image_match" : "image_match" }))
   ].sort((left, right) => left.createdAt - right.createdAt)[0];
   if (!active) {
     return {
@@ -1645,43 +1650,89 @@ function claimOzonPageReadJob(captureId, extensionVersion, extensionOrigin) {
  */
 function claimCaptureJob(captureId, extensionVersion, extensionOrigin) {
   if (salesCaptureSessions.has(captureId)) return claimOzonPageReadJob(captureId, extensionVersion, extensionOrigin);
-  if (imageMatchSessions.has(captureId)) return claimSupplierImageMatchJob(captureId, extensionVersion, extensionOrigin);
+  if (imageMatchSessions.has(captureId)) return claimImageMatchJob(captureId, extensionVersion, extensionOrigin);
   return claimASupplierCaptureJob(captureId, extensionVersion, extensionOrigin);
 }
 
 /**
- * 用拼多多首图在 1688 找同款 —— 主人点一次，插件用主人自己 Chrome 里登录的 1688 搜一次图，读回最像的 20 条。
+ * 找同款 —— 主人点一次，插件在这台电脑的 Chrome 里搜一次，读回结果；服务端再拿首图和每条结果的主图比一次。两种目标：
+ *   · 在 1688 找同款：用首图在主人登录的 1688 上搜图，读回最像的 20 条，结果落在 candidate.supplierImageMatch；
+ *   · 在 Ozon 找同款：默认在 Ozon 首页的搜索栏上传首图以图搜一次；以图搜只找到近似款时，主人可以改用俄文关键词在 Ozon 站内
+ *     搜一次。都读回第一屏，结果落在 candidate.ozonImageMatch。
+ * 首图来自采到的拼多多或 1688 货源首图，没有货源采集时用这件商品的 Ozon 主图（见 supplierImageMatchSource）。
  *
  * 链路和上面两种作业是同一套：同一把全局采集控制锁、排队与执行租约、一次性令牌、插件明确领取、过期收口、重启对账。
- * 不同的只有目标和落点：读的是 1688 搜图结果页，结果落在 candidate.supplierImageMatch，不碰 sourceCapture、
- * 不选 SKU、不确认供货、不推进任何阶段。结果回来以后服务端再取公开图片算首图指纹，标出「首图一致 / 很像 / 不像」；
- * 是不是同款永远由主人逐条判断（AGENTS.md §4.3）。没登录时 1688 只显示「没有结果」，所以读不到结果一律是无法核实，
- * 不是没有同款（§8.3）。
+ * 两种目标只有落点和说法不同，都不碰 sourceCapture、不选 SKU、不确认供货、不推进任何阶段。结果回来以后服务端再取公开图片
+ * 算首图指纹，标出「首图一致 / 很像 / 不像」；是不是同款永远由主人逐条判断（AGENTS.md §4.3）。没登录时 1688 只显示
+ * 「没有结果」，所以读不到结果一律是无法核实，不是没有同款（§8.3）；Ozon 搜不到也只说明这几个词没搜到。
  */
-function supplierImageMatchSessionFor(candidateId, captureId = "") {
-  if (captureId) return imageMatchSessions.get(captureId) || null;
-  return [...imageMatchSessions.values()].find((session) => session.candidateId === candidateId) || null;
+const IMAGE_MATCH_KINDS = Object.freeze({
+  supplier: Object.freeze({
+    key: "supplier", field: "supplierImageMatch", rules: supplierImageMatchRules, captureKind: SUPPLIER_IMAGE_MATCH_CAPTURE_KIND,
+    idPrefix: "IMJ", historyPrefix: "supplierImageMatch", logLabel: "1688找同款", site: "1688", idField: "offerId",
+    jobPayload: supplierImageMatchJobPayload, jobPublic: supplierImageMatchJobPublic,
+    target: (candidate) => supplierImageMatchSource(candidate),
+    queuedRecord: (previous, target, fields) => queuedSupplierImageMatchRecord(previous, { ...fields, source: target.source }),
+    queuedHistory: (target) => `主人要求用${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[target.source.platform]}在 1688 找一次同款；` +
+      "系统已建立一个受控只读作业（登录态只读搜索一次，最多读回 20 条），等待插件后台领取。不下单、不联系任何人、不确认供货，也不推进业务阶段",
+    sameTarget: (record, session) => record.source?.imageUrl === session.imageUrl,
+    sanitize: (input, session, record) => sanitizeSupplierImageMatchEvidence(input, session.imageUrl,
+      { sourceOfferId: record.source?.platform === "1688" ? String(record.source.offerId || "") : "" }),
+    resultsHistory: (record, evidence) => `插件在 1688 用${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[record.source?.platform] || "首图"}搜到 ` +
+      `${evidence.cardCount} 条，已保存相似度最高的 ${evidence.items.length} 条，正在比对首图；没有选择 SKU、没有确认供货，业务状态没有改变`,
+    itemLabel: (id) => `1688 商品 offer/${id}`
+  }),
+  ozon: Object.freeze({
+    key: "ozon", field: "ozonImageMatch", rules: ozonImageMatchRules, captureKind: OZON_IMAGE_MATCH_CAPTURE_KIND,
+    idPrefix: "OMJ", historyPrefix: "ozonImageMatch", logLabel: "Ozon找同款", site: "Ozon", idField: "productId",
+    jobPayload: ozonImageMatchJobPayload, jobPublic: ozonImageMatchJobPublic,
+    target: (candidate, input) => ozonImageMatchTarget(candidate, input.query, { searchBy: input.searchBy === "image" ? "image" : "text" }),
+    queuedRecord: (previous, target, fields) => queuedOzonImageMatchRecord(previous, { ...fields, source: target.source,
+      searchBy: target.searchBy, query: target.query, queryOrigin: target.queryOrigin }),
+    queuedHistory: (target) => (target.searchBy === "image"
+      ? `主人要求拿${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[target.source.platform]}在 Ozon 以图搜一次，再和结果的主图比，找同款；` +
+        "系统已建立一个受控作业（在这台电脑的 Chrome 里打开 Ozon 首页，点一次搜索栏的拍照按钮上传这张图，最多读回 36 条），等待插件后台领取。"
+      : `主人要求用「${target.query}」在 Ozon 搜一次，再拿${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[target.source.platform]}` +
+        "和结果的主图比，找同款；系统已建立一个受控只读作业（在这台电脑的 Chrome 里打开一次 Ozon 搜索页，最多读回 36 条），等待插件后台领取。") +
+      "不加购、不收藏、不联系任何人，也不推进业务阶段",
+    sameTarget: (record, session) => record.source?.imageUrl === session.imageUrl && (record.searchBy ?? "text") === session.searchBy &&
+      record.query === session.query,
+    sanitize: (input, session) => sanitizeOzonImageMatchEvidence(input, session.query,
+      { ownProductId: session.ownProductId, searchBy: session.searchBy }),
+    resultsHistory: (record, evidence) => (evidence.searchBy === "image"
+      ? `插件在 Ozon 以图搜到 ${evidence.cardCount} 条（Ozon 给这次上传编的号 ${evidence.imageId}），已保存前 ${evidence.items.length} 条，`
+      : `插件在 Ozon 用「${record.query}」搜到 ${evidence.cardCount} 条，已保存前 ${evidence.items.length} 条，`) +
+      `正在和${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[record.source?.platform] || "首图"}比对；业务状态没有改变`,
+    itemLabel: (id) => `Ozon 商品 ${id}`
+  })
+});
+const imageMatchKindOf = (session) => IMAGE_MATCH_KINDS[session?.matchKind] ?? null;
+
+function imageMatchSessionFor(kind, candidateId, captureId = "") {
+  const session = captureId ? imageMatchSessions.get(captureId)
+    : [...imageMatchSessions.values()].find((entry) => entry.candidateId === candidateId && entry.matchKind === kind.key);
+  return session?.matchKind === kind.key ? session : null;
 }
 
-function markSupplierImageMatchFailure(current, code, { observedAt, timestamp = now(), detail = "" } = {}) {
-  current.supplierImageMatch = supplierImageMatchFailed(current.supplierImageMatch, code, { observedAt, timestamp, detail });
+function markImageMatchFailure(kind, current, code, { observedAt, timestamp = now(), detail = "" } = {}) {
+  current[kind.field] = kind.rules.failed(current[kind.field], code, { observedAt, timestamp, detail });
   current.dataRevision = Number(current.dataRevision || 0) + 1;
   current.updatedAt = timestamp;
   current.lastModifiedBy = "system";
-  addHistory(current, "system", "supplierImageMatchStopped",
-    `${current.supplierImageMatch.reason}；这件商品的业务状态没有改变`, timestamp);
+  addHistory(current, "system", `${kind.historyPrefix}Stopped`, `${current[kind.field].reason}；这件商品的业务状态没有改变`, timestamp);
 }
 
-async function expireSupplierImageMatchJob(captureId, expectedStatus) {
+async function expireImageMatchJob(captureId, expectedStatus) {
   const session = imageMatchSessions.get(captureId);
-  if (!session || session.jobStatus !== expectedStatus || session.consumedAt) return;
+  const kind = imageMatchKindOf(session);
+  if (!session || !kind || session.jobStatus !== expectedStatus || session.consumedAt) return;
   const failureCode = expectedStatus === "claimed" ? "unknown_outcome" : "extension_job_unclaimed";
   await mutateDataWhenChanged((data) => {
     const current = data.candidates.find((item) => item.id === session.candidateId);
     // Only the captureId identifies the record this job owns, for the same reason as the two closures above.
-    if (!current || current.supplierImageMatch?.captureId !== captureId) return { changed: false };
-    if (!supplierImageMatchInFlight(current.supplierImageMatch)) return { changed: false };
-    markSupplierImageMatchFailure(current, failureCode);
+    if (!current || current[kind.field]?.captureId !== captureId) return { changed: false };
+    if (!kind.rules.inFlight(current[kind.field])) return { changed: false };
+    markImageMatchFailure(kind, current, failureCode);
     return { changed: true };
   });
   session.jobStatus = failureCode;
@@ -1690,11 +1741,11 @@ async function expireSupplierImageMatchJob(captureId, expectedStatus) {
   imageMatchSessions.delete(captureId);
 }
 
-function scheduleSupplierImageMatchJobExpiry(session, expectedStatus, timeoutMs) {
+function scheduleImageMatchJobExpiry(session, expectedStatus, timeoutMs) {
   clearSourceCaptureJobTimer(session.captureId);
   const timer = setTimeout(() => {
-    void expireSupplierImageMatchJob(session.captureId, expectedStatus).catch((error) => {
-      console.error("1688找同款作业超时收口失败", error);
+    void expireImageMatchJob(session.captureId, expectedStatus).catch((error) => {
+      console.error(`${imageMatchKindOf(session)?.logLabel ?? "找同款"}作业超时收口失败`, error);
     });
   }, timeoutMs);
   timer.unref?.();
@@ -1702,50 +1753,57 @@ function scheduleSupplierImageMatchJobExpiry(session, expectedStatus, timeoutMs)
 }
 
 /** 同上：会话只活在建立它的进程里，重启时每一条还在等插件的记录都不可能再有结果。 */
-async function reconcileSupplierImageMatchJobsAfterRestart() {
+async function reconcileImageMatchJobsAfterRestart() {
   return mutateDataWhenChanged((data) => {
     const closed = [];
     for (const current of data.candidates) {
-      const record = current.supplierImageMatch;
-      if (!record || typeof record.captureId !== "string" || imageMatchSessions.has(record.captureId)) continue;
-      if (!supplierImageMatchInFlight(record)) continue;
-      markSupplierImageMatchFailure(current, "capture_job_lost");
-      closed.push(current.id);
+      for (const kind of Object.values(IMAGE_MATCH_KINDS)) {
+        const record = current[kind.field];
+        if (!record || typeof record.captureId !== "string" || imageMatchSessions.has(record.captureId)) continue;
+        if (!kind.rules.inFlight(record)) continue;
+        markImageMatchFailure(kind, current, "capture_job_lost");
+        closed.push(`${current.id}（${kind.site}）`);
+      }
     }
     return { changed: closed.length > 0, result: closed };
   });
 }
 
-async function enqueueSupplierImageMatchJob({ candidateId, requestRevision, acknowledgeUnknownOutcome, actor }) {
-  const existing = supplierImageMatchSessionFor(candidateId);
+async function enqueueImageMatchJob(kind, { candidateId, requestRevision, acknowledgeUnknownOutcome, actor, input = {} }) {
+  const existing = imageMatchSessionFor(kind, candidateId);
   if (existing && [existing.requestRevision, existing.dataRevision].includes(requestRevision) &&
     ["queued", "claimed"].includes(existing.jobStatus)) {
     const data = await readData();
     const current = data.candidates.find((item) => item.id === candidateId);
     if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
-    if (current.supplierImageMatch?.captureId !== existing.captureId) {
+    if (current[kind.field]?.captureId !== existing.captureId) {
       throw httpError(409, "当前资料与已有找同款作业不一致，不能沿用旧作业", { code: "capture_job_state_conflict" });
     }
-    return { candidate: publicCandidate(current, data.rules), captureJob: supplierImageMatchJobPublic(existing), duplicate: true };
+    return { candidate: publicCandidate(current, data.rules), captureJob: kind.jobPublic(existing), duplicate: true };
   }
   ensureCaptureControlAvailable(candidateId);
   const snapshot = await readData();
   const snapshotCandidate = snapshot.candidates.find((item) => item.id === candidateId);
   if (!snapshotCandidate) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
-  const target = supplierImageMatchSource(snapshotCandidate);
+  const target = kind.target(snapshotCandidate, input);
   if (!target.ok) throw httpError(422, target.reason, { code: target.code });
 
   const session = {
-    captureId: `IMJ-${randomUUID()}`,
+    captureId: `${kind.idPrefix}-${randomUUID()}`,
     token: randomBytes(32).toString("base64url"),
     candidateId,
     requestRevision,
     dataRevision: null,
+    matchKind: kind.key,
     imageUrl: target.imageUrl,
     searchUrl: target.searchUrl,
+    query: target.query ?? null,
+    searchBy: target.searchBy ?? null,
+    searchImageServedAt: null,
+    ownProductId: target.ownProductId ?? "",
     createdAt: Date.now(),
     expiresAt: Date.now() + SOURCE_CAPTURE_JOB_QUEUE_TTL_MS,
-    captureKind: SUPPLIER_IMAGE_MATCH_CAPTURE_KIND,
+    captureKind: kind.captureKind,
     jobStatus: "queued",
     attempt: 0,
     requiredExtensionVersion: REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION,
@@ -1762,43 +1820,42 @@ async function enqueueSupplierImageMatchJob({ candidateId, requestRevision, ackn
       if (Number(current.dataRevision) !== Number(requestRevision)) {
         throw httpError(409, "商品资料已变化，请刷新后再找同款", { code: "revision_conflict" });
       }
-      const blocker = supplierImageMatchStartBlocker(current, { acknowledgeUnknownOutcome });
+      const blocker = kind.rules.startBlocker(current, { acknowledgeUnknownOutcome });
       if (blocker) throw httpError(409, blocker.reason, { code: blocker.code });
       // The picture is read again inside the transaction: a capture saved after the snapshot above may name another one.
-      const source = supplierImageMatchSource(current);
-      if (!source.ok) throw httpError(422, source.reason, { code: source.code });
-      if (source.imageUrl !== session.imageUrl) {
+      const locked = kind.target(current, input);
+      if (!locked.ok) throw httpError(422, locked.reason, { code: locked.code });
+      if (locked.imageUrl !== session.imageUrl) {
         throw httpError(409, "货源首图刚刚变了，请刷新后再找同款", { code: "revision_conflict" });
       }
       if (activeDispatchForCandidate(data, current.id)) {
         throw httpError(409, "当前商品已有任务等待或运行，不能找同款", { code: "candidate_busy" });
       }
       const timestamp = now();
-      current.supplierImageMatch = queuedSupplierImageMatchRecord(current.supplierImageMatch, {
-        captureId: session.captureId, source: source.source, requiredExtensionVersion: session.requiredExtensionVersion,
+      current[kind.field] = kind.queuedRecord(current[kind.field], locked, {
+        captureId: session.captureId, requiredExtensionVersion: session.requiredExtensionVersion,
         authorizedBy: actor.userId, authorizedAt: timestamp, candidateRevision: Number(requestRevision)
       });
       current.dataRevision = Number(current.dataRevision || 0) + 1;
       session.dataRevision = current.dataRevision;
       current.updatedAt = timestamp;
       current.lastModifiedBy = "user";
-      addHistory(current, "user", "supplierImageMatchQueued",
-        "主人要求用拼多多首图在 1688 找一次同款；系统已建立一个受控只读作业（登录态只读搜索一次，最多读回 20 条），等待插件后台领取。" +
-        "不下单、不联系任何人、不确认供货，也不推进业务阶段", timestamp);
+      addHistory(current, "user", `${kind.historyPrefix}Queued`, kind.queuedHistory(locked), timestamp);
       return publicCandidate(current, data.rules);
     });
   } catch (error) {
     imageMatchSessions.delete(session.captureId);
     throw error;
   }
-  scheduleSupplierImageMatchJobExpiry(session, "queued", SOURCE_CAPTURE_JOB_QUEUE_TTL_MS);
-  return { candidate, captureJob: supplierImageMatchJobPublic(session), duplicate: false };
+  scheduleImageMatchJobExpiry(session, "queued", SOURCE_CAPTURE_JOB_QUEUE_TTL_MS);
+  return { candidate, captureJob: kind.jobPublic(session), duplicate: false };
 }
 
-function claimSupplierImageMatchJob(captureId, extensionVersion, extensionOrigin) {
+function claimImageMatchJob(captureId, extensionVersion, extensionOrigin) {
   const operation = sourceCaptureJobClaimQueue.then(async () => {
     const session = imageMatchSessions.get(captureId);
-    if (!session || session.captureKind !== SUPPLIER_IMAGE_MATCH_CAPTURE_KIND) {
+    const kind = imageMatchKindOf(session);
+    if (!session || !kind || session.captureKind !== kind.captureKind) {
       throw httpError(409, "当前服务没有这次明确创建的采集作业", { code: "capture_job_not_current" });
     }
     if (session.jobStatus !== "queued" || session.attempt !== 0 || session.expiresAt <= Date.now()) {
@@ -1818,15 +1875,15 @@ function claimSupplierImageMatchJob(captureId, extensionVersion, extensionOrigin
         if (session.expiresAt <= Date.now()) throw httpError(409, "采集作业等待期限已结束", { code: "capture_job_expired" });
         const current = data.candidates.find((item) => item.id === session.candidateId);
         if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
-        const record = current.supplierImageMatch;
+        const record = current[kind.field];
         if (record?.captureId !== session.captureId || record.status !== "waiting_extension" ||
-          record.jobStatus !== "queued" || record.attempt !== 0 || record.source?.imageUrl !== session.imageUrl) {
+          record.jobStatus !== "queued" || record.attempt !== 0 || !kind.sameTarget(record, session)) {
           throw httpError(409, "当前候选不再等待该采集作业", { code: "capture_job_state_conflict" });
         }
         if (Number(current.dataRevision) !== Number(session.dataRevision)) {
           throw httpError(409, "采集作业修订号已失效", { code: "revision_conflict" });
         }
-        current.supplierImageMatch = {
+        current[kind.field] = {
           ...record,
           status: "searching",
           jobStatus: "claimed",
@@ -1849,15 +1906,15 @@ function claimSupplierImageMatchJob(captureId, extensionVersion, extensionOrigin
       throw error;
     }
     session.expiresAt = Date.now() + SOURCE_CAPTURE_JOB_EXECUTION_TTL_MS;
-    scheduleSupplierImageMatchJobExpiry(session, "claimed", SOURCE_CAPTURE_JOB_EXECUTION_TTL_MS);
-    return { captureJob: supplierImageMatchJobPayload(session), jobNotice: null };
+    scheduleImageMatchJobExpiry(session, "claimed", SOURCE_CAPTURE_JOB_EXECUTION_TTL_MS);
+    return { captureJob: kind.jobPayload(session), jobNotice: null };
   });
   sourceCaptureJobClaimQueue = operation.then(() => undefined, () => undefined);
   return operation;
 }
 
 /**
- * 首图指纹要的图片由服务端自己去两家图床取：只取公开图片、不带任何登录信息、不跟跳转（见 image-fingerprint.mjs）。
+ * 首图指纹要的图片由服务端自己去图床取：只取公开图片、不带任何登录信息、不跟跳转（见 image-fingerprint.mjs）。
  * SELECTION_REVIEW_IMAGE_FINGERPRINT_FETCH=off 时一张也不取，每条都标「无法比对」——给不能出网的部署和离线测试用。
  */
 const IMAGE_FINGERPRINT_FETCH_ENABLED = process.env.SELECTION_REVIEW_IMAGE_FINGERPRINT_FETCH !== "off";
@@ -1869,33 +1926,33 @@ function supplierImageFingerprintOf(url) {
 }
 
 /** 比一次首图。同一次搜索同一时刻只比一份；比完只落到仍是这次搜索、仍在等比对的那份记录上。 */
-async function runSupplierImageMatchComparison(candidateId, captureId) {
+async function runImageMatchComparison(kind, candidateId, captureId) {
   if (imageMatchComparisonsInFlight.has(captureId)) return;
   imageMatchComparisonsInFlight.add(captureId);
   try {
     const data = await readData();
-    const record = data.candidates.find((item) => item.id === candidateId)?.supplierImageMatch;
+    const record = data.candidates.find((item) => item.id === candidateId)?.[kind.field];
     if (record?.captureId !== captureId || record.status !== "comparing") return;
-    const comparison = await computeSupplierImageMatchComparison(record, { fingerprintOf: supplierImageFingerprintOf, comparedAt: now() });
+    const comparison = await kind.rules.computeComparison(record, { fingerprintOf: supplierImageFingerprintOf, comparedAt: now() });
     await mutateDataWhenChanged((latest) => {
       const current = latest.candidates.find((item) => item.id === candidateId);
-      const applied = current ? supplierImageMatchComparisonApplied(current.supplierImageMatch, comparison) : null;
+      const applied = current ? kind.rules.comparisonApplied(current[kind.field], comparison) : null;
       if (!applied) return { changed: false };
-      current.supplierImageMatch = applied;
+      current[kind.field] = applied;
       const counts = Object.fromEntries(["identical", "similar", "different", "unknown"]
         .map((level) => [level, applied.results.filter((item) => item.similarity === level).length]));
       const timestamp = now();
       current.dataRevision = Number(current.dataRevision || 0) + 1;
       current.updatedAt = timestamp;
       current.lastModifiedBy = "system";
-      addHistory(current, "system", "supplierImageMatchCompared",
-        `已比对 1688 找同款的 ${applied.results.length} 条结果的首图：首图一致 ${counts.identical} 条、很像 ${counts.similar} 条、` +
+      addHistory(current, "system", `${kind.historyPrefix}Compared`,
+        `已比对 ${kind.site} 找同款的 ${applied.results.length} 条结果的首图：首图一致 ${counts.identical} 条、很像 ${counts.similar} 条、` +
         `不像 ${counts.different} 条、无法比对 ${counts.unknown} 条；是不是同款等主人逐条判断，业务状态没有改变`, timestamp);
       return { changed: true };
     });
   } catch (error) {
     // The record stays at "comparing"; the owner's 重新比对 is the only way forward, never an automatic retry.
-    console.error("1688找同款首图比对失败", error);
+    console.error(`${kind.logLabel}首图比对失败`, error);
   } finally {
     imageMatchComparisonsInFlight.delete(captureId);
   }
@@ -3936,13 +3993,13 @@ async function handleApi(req, res, pathname) {
     return json(res, 200, access, { "Set-Cookie": result.setCookie });
   }
   const extensionCallback = pathname === "/api/extension/heartbeat" ||
-    /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/claim$/.test(pathname) ||
-    /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match)\/result$/.test(pathname);
+    /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/(?:claim|search-image)$/.test(pathname) ||
+    /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(pathname);
   if (runtimeIdentityProvider.providerType === "local_owner_password" && ["POST", "PUT", "PATCH", "DELETE"].includes(req.method) &&
       !extensionCallback && !isTrustedInternalApiRequest(req.headers, internalApiRequestToken)) {
     runtimeIdentityProvider.resolveActor({ request: req, touch: true });
   }
-  if (req.method === "OPTIONS" && (pathname === "/api/extension/heartbeat" || /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/claim$/.test(pathname) || /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match)\/result$/.test(pathname))) {
+  if (req.method === "OPTIONS" && (pathname === "/api/extension/heartbeat" || /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/(?:claim|search-image)$/.test(pathname) || /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(pathname))) {
     const headers = chromeExtensionCors(req);
     if (!headers["Access-Control-Allow-Origin"]) throw httpError(403, "只接受本机Chrome扩展回传");
     res.writeHead(204, headers);
@@ -3965,6 +4022,40 @@ async function handleApi(req, res, pathname) {
     }
     const claim = await claimCaptureJob(captureClaimRoute[1], input.version, String(req.headers.origin));
     return json(res, 200, { accepted: true, ...claim }, headers);
+  }
+  /**
+   * Ozon 以图搜要上传的那张图。插件领取作业以后，凭这次作业的令牌来取一次：服务端自己去图床取这张首图（与首图比对同一条
+   * 只取公开图片的规则），转成普通 JPEG 交出去。只交给领取了这次作业的那个插件，只交一次，只交给以图搜那一种作业。
+   */
+  const searchImageRoute = pathname.match(/^\/api\/extension\/capture-jobs\/([A-Za-z0-9_-]{1,160})\/search-image$/);
+  if (req.method === "POST" && searchImageRoute) {
+    const headers = chromeExtensionCors(req);
+    if (!headers["Access-Control-Allow-Origin"]) throw httpError(403, "只接受已配置的Chrome扩展取图");
+    const input = await requestBody(req);
+    if (Object.keys(input).sort().join(",") !== "dataRevision,token" || typeof input.token !== "string" || !Number.isInteger(input.dataRevision)) {
+      throw httpError(400, "取图请求必须只包含令牌和修订号", { code: "search_image_request_invalid" });
+    }
+    const session = imageMatchSessions.get(searchImageRoute[1]);
+    if (!session || session.matchKind !== "ozon" || session.searchBy !== "image") {
+      throw httpError(409, "这次作业不是 Ozon 以图搜，没有要上传的图", { code: "search_image_not_applicable" });
+    }
+    assertClaimedCaptureResultOrigin(session, req, IMAGE_MATCH_KINDS.ozon.logLabel);
+    if (!validCaptureToken(session.token, input.token)) throw httpError(403, "找同款令牌无效", { code: "capture_token_invalid" });
+    if (session.jobStatus !== "claimed" || session.attempt !== 1 || input.dataRevision !== session.dataRevision) {
+      throw httpError(409, "找同款作业尚未由插件原子领取，不能取图", { code: "capture_job_not_claimed" });
+    }
+    if (session.searchImageServedAt) throw httpError(409, "这次以图搜的图已经交给插件，不再重复交出", { code: "search_image_already_served" });
+    session.searchImageServedAt = Date.now();
+    // Not a server fault: the picture host did not give the image (or this deployment fetches none). The job then stops as such.
+    if (!IMAGE_FINGERPRINT_FETCH_ENABLED) throw httpError(422, "这台评审台不取外部图片，没有图可以上传", { code: "search_image_unavailable" });
+    let picture;
+    try {
+      picture = await searchUploadImageFromBuffer(await fetchPublicProductImage(session.imageUrl, { timeoutMs: 10000 }));
+    } catch {
+      throw httpError(422, "没能取到这张首图", { code: "search_image_unavailable" });
+    }
+    return json(res, 200, { contentType: picture.contentType, byteLength: picture.buffer.length,
+      base64: picture.buffer.toString("base64") }, headers);
   }
   if (req.method === 'GET' && pathname === '/api/live') {
     return json(res, runtimeHealth.live ? 200 : 503, {
@@ -4914,35 +5005,43 @@ async function handleApi(req, res, pathname) {
   }
 
   /**
-   * 用拼多多首图在 1688 找同款：开始、插件回传、重新比对首图、主人逐条判断。前三步之外的任何事（选 SKU、确认供货、
-   * 改货源链接）都不在这里发生。开始只接受当前修订号，以及上次结果未知时主人「已知道」的那一声确认。
+   * 找同款（在 1688 用首图搜，或在 Ozon 用俄文词搜）：开始、插件回传、重新比对首图、主人逐条判断。这四步之外的任何事
+   * （选 SKU、确认供货、改货源链接）都不在这里发生。开始只接受当前修订号，以及上次结果未知时主人「已知道」的那一声确认；
+   * 在 Ozon 找还要带上这次搜的词。
    */
-  const imageMatchRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/image-match\/(start|result|compare|judgement)$/);
-  if (req.method === "POST" && imageMatchRoute && imageMatchRoute[2] !== "result") {
-    const [, candidateId, action] = imageMatchRoute;
-    const fields = { start: ["dataRevision", "acknowledgeUnknownOutcome"], compare: ["dataRevision", "captureId"],
-      judgement: ["dataRevision", "captureId", "offerId", "judgement"] }[action];
+  const imageMatchRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/(image-match|ozon-match)\/(start|result|compare|judgement)$/);
+  if (req.method === "POST" && imageMatchRoute && imageMatchRoute[3] !== "result") {
+    const [, candidateId, routeName, action] = imageMatchRoute;
+    const kind = routeName === "ozon-match" ? IMAGE_MATCH_KINDS.ozon : IMAGE_MATCH_KINDS.supplier;
+    const prefix = kind.key === "ozon" ? "ozon_match" : "image_match";
+    const fields = { start: ["dataRevision", "acknowledgeUnknownOutcome", ...(kind.key === "ozon" ? ["query", "searchBy"] : [])],
+      compare: ["dataRevision", "captureId"], judgement: ["dataRevision", "captureId", kind.idField, "judgement"] }[action];
     const input = await readJsonRequestBody(req, { maxBytes: 4096, requireJsonContentType: true });
     if (!input || typeof input !== "object" || Array.isArray(input) || !Number.isInteger(input.dataRevision) ||
         Object.keys(input).some((field) => !fields.includes(field)) ||
         (Object.hasOwn(input, "acknowledgeUnknownOutcome") && typeof input.acknowledgeUnknownOutcome !== "boolean") ||
-        (action !== "start" && (typeof input.captureId !== "string" || !/^IMJ-[A-Za-z0-9-]{1,80}$/.test(input.captureId))) ||
-        (action === "judgement" && (typeof input.offerId !== "string" || typeof input.judgement !== "string"))) {
-      throw httpError(400, "找同款请求的字段无效", { code: "image_match_input_invalid" });
+        // 在 Ozon 找同款：以图搜不带词；词搜（不写 searchBy 时也是词搜）必须带词。
+        (action === "start" && kind.key === "ozon" && (Object.hasOwn(input, "searchBy") && !["image", "text"].includes(input.searchBy) ||
+          (input.searchBy === "image" ? Object.hasOwn(input, "query") : typeof input.query !== "string" || input.query.length > 400))) ||
+        (action !== "start" && (typeof input.captureId !== "string" || !new RegExp(`^${kind.idPrefix}-[A-Za-z0-9-]{1,80}$`).test(input.captureId))) ||
+        (action === "judgement" && (typeof input[kind.idField] !== "string" || typeof input.judgement !== "string"))) {
+      throw httpError(400, "找同款请求的字段无效", { code: `${prefix}_input_invalid` });
     }
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
     if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
-      throw httpError(403, "请先登录主人身份后再找同款。", { code: "image_match_owner_required" });
+      throw httpError(403, "请先登录主人身份后再找同款。",
+        kind.key === "ozon" ? { code: "ozon_match_owner_required" } : { code: "image_match_owner_required" });
     }
     if (action === "start") {
-      const queued = await enqueueSupplierImageMatchJob({ candidateId, requestRevision: input.dataRevision,
-        acknowledgeUnknownOutcome: input.acknowledgeUnknownOutcome === true, actor });
+      const queued = await enqueueImageMatchJob(kind, { candidateId, requestRevision: input.dataRevision,
+        acknowledgeUnknownOutcome: input.acknowledgeUnknownOutcome === true, actor, input });
       // The same receipt shape as the other two capture requests, so the page reuses its one start-signal path.
-      return json(res, queued.duplicate ? 200 : 202, { status: "supplier_image_match_job_queued", candidate: queued.candidate,
+      return json(res, queued.duplicate ? 200 : 202, {
+        status: kind.key === "ozon" ? "ozon_image_match_job_queued" : "supplier_image_match_job_queued", candidate: queued.candidate,
         captureJob: queued.captureJob, duplicate: queued.duplicate, dispatch: null });
     }
     if (action === "compare" && imageMatchComparisonsInFlight.has(input.captureId)) {
-      throw httpError(409, "这次找同款的首图正在比对，等它比完再说", { code: "image_match_comparison_in_flight" });
+      throw httpError(409, "这次找同款的首图正在比对，等它比完再说", { code: `${prefix}_comparison_in_flight` });
     }
     const candidate = await mutateData((data) => {
       const current = data.candidates.find((item) => item.id === candidateId);
@@ -4950,43 +5049,48 @@ async function handleApi(req, res, pathname) {
       if (Number(current.dataRevision) !== input.dataRevision) {
         throw httpError(409, "商品资料已变化，请刷新后再操作", { code: "revision_conflict" });
       }
-      if (current.supplierImageMatch?.captureId !== input.captureId) {
-        throw httpError(409, "这不是这件商品最近一次找同款的结果，请刷新后再操作", { code: "image_match_not_current" });
+      if (current[kind.field]?.captureId !== input.captureId) {
+        throw httpError(409, "这不是这件商品最近一次找同款的结果，请刷新后再操作", { code: `${prefix}_not_current` });
       }
       const timestamp = now();
       if (action === "compare") {
-        try { current.supplierImageMatch = supplierImageMatchComparisonRequested(current.supplierImageMatch); }
-        catch { throw httpError(409, "这次找同款还没有读回结果，没有首图可以比对", { code: "image_match_not_comparable" }); }
-        addHistory(current, "user", "supplierImageMatchCompareRequested", "主人要求把这次 1688 找同款的结果重新比对一次首图；结果和判断都不动", timestamp);
+        try { current[kind.field] = kind.rules.comparisonRequested(current[kind.field]); }
+        catch { throw httpError(409, "这次找同款还没有读回结果，没有首图可以比对", { code: `${prefix}_not_comparable` }); }
+        addHistory(current, "user", `${kind.historyPrefix}CompareRequested`,
+          `主人要求把这次 ${kind.site} 找同款的结果重新比对一次首图；结果和判断都不动`, timestamp);
       } else {
+        const itemId = input[kind.idField];
         try {
-          current.supplierImageMatch = supplierImageMatchJudged(current.supplierImageMatch, {
-            offerId: input.offerId, judgement: input.judgement, judgedAt: timestamp, judgedBy: actor.userId });
+          current[kind.field] = kind.rules.judged(current[kind.field], {
+            itemId, judgement: input.judgement, judgedAt: timestamp, judgedBy: actor.userId });
         } catch (error) {
           const code = String(error?.message || "");
-          if (code === "image_match_judgement_invalid") throw httpError(400, "判断只能是 是同款 / 近似款 / 不是，或撤回", { code });
-          if (code === "image_match_offer_unknown") throw httpError(409, "这次找同款的结果里没有这个 1688 商品", { code });
-          throw httpError(409, "这次找同款还没有读回结果，不能判断", { code: "image_match_not_judgeable" });
+          if (code === `${prefix}_judgement_invalid`) throw httpError(400, "判断只能是 是同款 / 近似款 / 不是，或撤回", { code });
+          if (code === (kind.key === "ozon" ? "ozon_match_product_unknown" : "image_match_offer_unknown")) {
+            throw httpError(409, `这次找同款的结果里没有这个 ${kind.site} 商品`, { code });
+          }
+          throw httpError(409, "这次找同款还没有读回结果，不能判断", { code: `${prefix}_not_judgeable` });
         }
         const label = input.judgement === "clear" ? "撤回了判断" : `判断为「${SUPPLIER_IMAGE_MATCH_JUDGEMENT_LABELS[input.judgement]}」`;
-        addHistory(current, "user", "supplierImageMatchJudged",
-          `主人把 1688 商品 offer/${input.offerId} ${label}；这只是同款判断，不是供货确认，业务状态没有改变`, timestamp);
+        addHistory(current, "user", `${kind.historyPrefix}Judged`,
+          `主人把 ${kind.itemLabel(itemId)} ${label}；这只是同款判断，不是供货确认，业务状态没有改变`, timestamp);
       }
       current.dataRevision = Number(current.dataRevision || 0) + 1;
       current.updatedAt = timestamp;
       current.lastModifiedBy = "user";
       return publicCandidate(current, data.rules);
     });
-    if (action === "compare") void runSupplierImageMatchComparison(candidateId, input.captureId);
+    if (action === "compare") void runImageMatchComparison(kind, candidateId, input.captureId);
     return json(res, action === "compare" ? 202 : 200, { candidate, dispatch: null });
   }
 
   if (req.method === "POST" && imageMatchRoute) {
-    const candidateId = imageMatchRoute[1];
+    const [, candidateId, routeName] = imageMatchRoute;
+    const kind = routeName === "ozon-match" ? IMAGE_MATCH_KINDS.ozon : IMAGE_MATCH_KINDS.supplier;
     const input = await requestBody(req);
-    const session = supplierImageMatchSessionFor(candidateId, String(input.captureId || ""));
+    const session = imageMatchSessionFor(kind, candidateId, String(input.captureId || ""));
     if (!session || session.candidateId !== candidateId) throw httpError(409, "找同款会话不存在或已失效", { code: "capture_session_invalid" });
-    assertClaimedCaptureResultOrigin(session, req, "1688找同款");
+    assertClaimedCaptureResultOrigin(session, req, kind.logLabel);
     if (!validCaptureToken(session.token, input.token)) throw httpError(403, "找同款令牌无效", { code: "capture_token_invalid" });
     if (!Number.isInteger(input.dataRevision) || input.dataRevision !== session.dataRevision) {
       throw httpError(409, "找同款修订号不一致", { code: "revision_conflict" });
@@ -4998,38 +5102,36 @@ async function handleApi(req, res, pathname) {
     const candidate = await mutateData((data) => {
       const current = data.candidates.find((item) => item.id === session.candidateId);
       if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
-      // The record is bound by its captureId and the picture locked when the job was queued. Unlike a supplier capture
-      // nothing else on the product feeds this read, so an unrelated save during the search must not throw the
+      // The record is bound by its captureId and the picture (and words) locked when the job was queued. Unlike a supplier
+      // capture nothing else on the product feeds this read, so an unrelated save during the search must not throw the
       // result away and leave the record to be closed later as "结果未知".
-      if (current.supplierImageMatch?.captureId !== session.captureId || current.supplierImageMatch.status !== "searching") {
+      if (current[kind.field]?.captureId !== session.captureId || current[kind.field].status !== "searching") {
         throw httpError(409, "当前商品不再等待这次找同款结果", { code: "capture_job_state_conflict" });
       }
       const timestamp = now();
       const observedAt = Number.isFinite(new Date(input.observedAt).getTime()) ? new Date(input.observedAt).toISOString() : timestamp;
       if (input.status === "failed") {
-        markSupplierImageMatchFailure(current, supplierImageMatchFailureCode(input.failureCode), { observedAt, timestamp });
+        markImageMatchFailure(kind, current, kind.rules.failureCode(input.failureCode), { observedAt, timestamp });
         return publicCandidate(current, data.rules);
       }
       let evidence;
       try {
-        evidence = sanitizeSupplierImageMatchEvidence(input.evidence, session.imageUrl);
+        evidence = kind.sanitize(input.evidence, session, current[kind.field]);
       } catch (error) {
-        markSupplierImageMatchFailure(current, supplierImageMatchFailureCode(error?.message), { observedAt, timestamp });
+        markImageMatchFailure(kind, current, kind.rules.failureCode(error?.message), { observedAt, timestamp });
         return publicCandidate(current, data.rules);
       }
-      current.supplierImageMatch = supplierImageMatchResultsRecorded(current.supplierImageMatch, evidence, timestamp);
+      current[kind.field] = kind.rules.resultsRecorded(current[kind.field], evidence, timestamp);
       current.dataRevision = Number(current.dataRevision || 0) + 1;
       current.updatedAt = timestamp;
       current.lastModifiedBy = "system";
-      addHistory(current, "system", "supplierImageMatchResultsSaved",
-        `插件在 1688 用拼多多首图搜到 ${evidence.cardCount} 条，已保存相似度最高的 ${evidence.items.length} 条，正在比对首图；` +
-        "没有选择 SKU、没有确认供货，业务状态没有改变", timestamp);
+      addHistory(current, "system", `${kind.historyPrefix}ResultsSaved`, kind.resultsHistory(current[kind.field], evidence), timestamp);
       return publicCandidate(current, data.rules);
     });
     session.consumedAt = Date.now();
     clearSourceCaptureJobTimer(session.captureId);
     imageMatchSessions.delete(session.captureId);
-    if (candidate.supplierImageMatch?.status === "comparing") void runSupplierImageMatchComparison(candidate.id, session.captureId);
+    if (candidate[kind.field]?.status === "comparing") void runImageMatchComparison(kind, candidate.id, session.captureId);
     return json(res, 200, { candidate, dispatch: null }, chromeExtensionCors(req));
   }
 
@@ -9848,10 +9950,10 @@ const lostOzonPageReads = await reconcileOzonPageReadJobsAfterRestart();
 if (lostOzonPageReads?.length) {
   console.log(`Ozon读页面作业已随服务重启收口为失败（不会再有结果，需要重新读一次）：${lostOzonPageReads.join("、")}`);
 }
-// The same closure for 1688 找同款: a record still waiting on the extension would refuse every later search of that product.
-const lostImageMatches = await reconcileSupplierImageMatchJobsAfterRestart();
+// The same closure for 找同款 (1688 and Ozon): a record still waiting on the extension would refuse every later search of that product.
+const lostImageMatches = await reconcileImageMatchJobsAfterRestart();
 if (lostImageMatches?.length) {
-  console.log(`1688找同款作业已随服务重启收口为失败（不会再有结果，需要重新找一次）：${lostImageMatches.join("、")}`);
+  console.log(`找同款作业已随服务重启收口为失败（不会再有结果，需要重新找一次）：${lostImageMatches.join("、")}`);
 }
 server.listen(port, host, () => {
   if (runtimeConfiguration.dPlatformObservation.pumpIntervalMs !== null ||

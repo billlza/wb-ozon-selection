@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T04:51:29.867Z",
+  "frozenAt": "2026-10-10T04:51:30.602Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 903,
-      "sha256": "180833bcd55dafbe02f0226d54084caa2dfe5f461eeb334bea1b42aad4fd0836",
+      "artifactCount": 914,
+      "sha256": "0077e59aa008d37b7e4b21981da716e11ba73ea7d833377a286f861abb77a534",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -40,19 +40,23 @@
       },
       {
         "path": "extension/1688-capture/background.js",
-        "sha256": "e4f17681f84ffe3f77d7535e4d96be64d7eb98786ac9b8976d32c3ed8c41d007"
+        "sha256": "65d6a0b5e7b3d3a4c0f8cbbe7a5177a3788811778a328f35a460cc92047c0c11"
       },
       {
         "path": "extension/1688-capture/bridge.js",
-        "sha256": "c560209c8f3591cb9afb48f9a69b73c6849dceb7435697231c51016218a5b2c7"
+        "sha256": "8659b63d671fc98825f0aa0ae1145690c6f3ce32198b10428e5ed557dc5079a7"
       },
       {
         "path": "extension/1688-capture/capture-request.js",
-        "sha256": "1709454ea5be6d9735639f9688628b0b9ae3c454f0312f379bddf612ceceb584"
+        "sha256": "14aded7da49394c3976ee683f7020af28b28a1bb8ac67da958ddde4b06ae392a"
       },
       {
         "path": "extension/1688-capture/collector-1688-image-search.js",
-        "sha256": "32113f0ad1872c92132eaca7107584cba4345f0425c55785960d536cb913d004"
+        "sha256": "3380aa4f77408a4ca75f1400af91441ab76e6df5c71a29071099fa1ddb1e40bf"
+      },
+      {
+        "path": "extension/1688-capture/collector-ozon-search.js",
+        "sha256": "68d57709458b516f49d560bb10ccc4f173585b32765570f2ff5b03956c983ad1"
       },
       {
         "path": "extension/1688-capture/collector-ozon.js",
@@ -64,15 +68,19 @@
       },
       {
         "path": "extension/1688-capture/collector.js",
-        "sha256": "2cfef52e82ff5a2a3c4df5506ac7a9df7c3cb5e42ab930ff66b6cb26e17f4735"
+        "sha256": "a1f054a09da426a1285ed3641bcc8878114a91ca516cd0ca59cca60e46a1a88a"
       },
       {
         "path": "extension/1688-capture/manifest.json",
-        "sha256": "0fc1c757b769024b8a00f5d943094b035a0520074ccb65c10dab7872459b9940"
+        "sha256": "012548da68f379c2ec6577e0fe093a6ca933a6b907c848adc955ae115b331a91"
       },
       {
         "path": "extension/1688-capture/source-routing.js",
-        "sha256": "8aa84dcdee71e148a6f79cb7deed20b067abdb979b54a820c4d34ad4f20955d3"
+        "sha256": "cd687a12815066b5ffb4c1cdb66f53fd39aa14a20abbb253d479cb3028f58d55"
+      },
+      {
+        "path": "extension/1688-capture/uploader-ozon-image-search.js",
+        "sha256": "33f9366c9f8325bc1e6e48ff5fe75f99166b89e83ca8c484f996958321bd55d0"
       },
       {
         "path": "index.html",
@@ -428,11 +436,11 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "eef383db7ba9326bae6211a4837192154124b45ddf033efdb823c2adb7b177a9"
+        "sha256": "972ab2ac1469bf11c93e9540a8228aa554ea36bbdd1035aed25e78637410e97b"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
-        "sha256": "c584fe854f5850388c0640ba398f8c11693667cef7aad51579d5eeec0c44e2e8"
+        "sha256": "1239536b9f996f046d69a6f6a4176a7fb7e2adf2eff5d7264fce3d9091978871"
       },
       {
         "path": "lib/cargo-facts-declaration.mjs",
@@ -624,11 +632,15 @@
       },
       {
         "path": "lib/http-api-boundary.mjs",
-        "sha256": "e193278d2d9d6dca30b18ccc75409caf04c4df6468a4ed4db954f1081416d712"
+        "sha256": "edff1bd9cb44d87a2d4f73a816a48be48b94ad797338e0ef758903db122cf88b"
       },
       {
         "path": "lib/image-fingerprint.mjs",
-        "sha256": "438185d154904c11a8b068be09564201646420e1825bff8760141b881d8f1e84"
+        "sha256": "dc278bd5f3b1218f3020329bc3b9e7573059d4719c6ee91c795d5f093f3f91ad"
+      },
+      {
+        "path": "lib/image-match-record.mjs",
+        "sha256": "8a32108a337bc8f6dbcb78f47df5cab4cfd220b3035a1344e4774c44aa5e76be"
       },
       {
         "path": "lib/keyword-evidence-orchestrator.mjs",
@@ -861,6 +873,14 @@
       {
         "path": "lib/ozon-sales-capture.mjs",
         "sha256": "26744a057435203b0db5785983a3329b8f17385c515f0517922f5f8acd9488cc"
+      },
+      {
+        "path": "lib/ozon-same-product-match.mjs",
+        "sha256": "bde4521cddb8bc97347cbe74027f6cc5623c34a2857daefca9aa0a456b71c72e"
+      },
+      {
+        "path": "lib/ozon-search-query.mjs",
+        "sha256": "695968cca3cda98742b4bf00682b7a116bb070b2232398eaae3462fc5014575c"
       },
       {
         "path": "lib/ozon-seller-api-de-adapter.mjs",
@@ -1151,8 +1171,12 @@
         "sha256": "837e6e7b41eb4950a578d190824ec01ec109c129011efb8eeec325190e4e36d2"
       },
       {
+        "path": "lib/supplier-image-match-source.mjs",
+        "sha256": "74743695a7240b384bdcb93253dda726254c240022e9da31f4a20ea2607423ad"
+      },
+      {
         "path": "lib/supplier-image-match.mjs",
-        "sha256": "a7ff5e69d420df1d0d995cc75073393fe3c101023d449b8e4e0429aa03cd5a73"
+        "sha256": "389b2c1be6bfc1e56b2b467bcbdc78014b680c91d504baf3d901cb1496473e38"
       },
       {
         "path": "lib/supplier-option.mjs",
@@ -1475,6 +1499,10 @@
         "sha256": "a08e3337fbe03edc5137c4d01f7f2b2a2e95eb5d095958a0a173095d63cd5724"
       },
       {
+        "path": "scripts/check-ozon-search-saved-page.mjs",
+        "sha256": "d8ded9241720a2a6e6e55394174fdfc1f9682b76912374c0de2e0e2ffc8b944a"
+      },
+      {
         "path": "scripts/check-pinduoduo-saved-page.mjs",
         "sha256": "dc0c378a3100987e7f7e928025421899575a70d83a09908d21c4d9928089da2b"
       },
@@ -1548,11 +1576,11 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "b7cded912ae42392d7921590f256470f16327d3f0e934974f5f7ecfcd96db68d"
+        "sha256": "7dedbebd101a872fd8f5d198da82574f996754a2541716a48aa2bf8c67a21543"
       },
       {
         "path": "src/App.jsx",
-        "sha256": "ee7b69c4ccbf102a1333fc69fd9763eb315beb4973dbef50c7d1b4f52626f205"
+        "sha256": "09862caed8cec8604097970f84c23698ed1d00189fd6fe35d123366a84f4593a"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1564,7 +1592,7 @@
       },
       {
         "path": "src/api.js",
-        "sha256": "47c33d53e7345db39e54dbd4211dbe83f6753088e462a84a117352139fa353cf"
+        "sha256": "8dd7541968acac420a09f9425dbced5e5962373620be1a0a651298e9d0fda305"
       },
       {
         "path": "src/bExactCommissionInput.js",
@@ -1592,7 +1620,7 @@
       },
       {
         "path": "src/captureStart.js",
-        "sha256": "aeb9685180af27bc70e6ba1ad0bd8e3ac769e6434434f2c5e3e9b55df5446c3c"
+        "sha256": "738b56e10084a0deb81ba7bd1894a9b61e31b3d48cef90411bdf51d0964a4cee"
       },
       {
         "path": "src/commentInput.js",
@@ -1728,7 +1756,7 @@
       },
       {
         "path": "src/components/ProductPage.jsx",
-        "sha256": "4ee35688b5f6b59b085ade610e59b189b71460ea31c8c821a7f9db1ce9bb690f"
+        "sha256": "4f053be13d8e496fb4873060cb0ba6d9dd75ab99f7d29129e6ea5c6b67619442"
       },
       {
         "path": "src/components/ProductionOwnerDecisionForm.jsx",
@@ -1792,7 +1820,7 @@
       },
       {
         "path": "src/extensionStatus.js",
-        "sha256": "e5da08f582e372c42b38567605801bd916f43b25946c0588ac79efd74d82f8ed"
+        "sha256": "bfeae80d3fdb459a326d2d4c604e03c5d88fb10515672cae7cf3e6d144c30c2f"
       },
       {
         "path": "src/finalPricingReviewInput.js",
@@ -1827,6 +1855,10 @@
         "sha256": "a41871aa0729252fdba2cbfb2acd5335c9cee91b341757c142985c48a756f940"
       },
       {
+        "path": "src/ozonImageMatchView.js",
+        "sha256": "2f6ece9762baa84edf1cdb42ed472f1757a01139a176a56a44880fd659d173bf"
+      },
+      {
         "path": "src/productionAuthorizationInput.js",
         "sha256": "63d6bab048a5597dbde9021e63364d759b55e4f4bb1b4bcb074383f6e31c6f2a"
       },
@@ -1856,11 +1888,11 @@
       },
       {
         "path": "src/styles.css",
-        "sha256": "918218310355735cb6bd416302e97d48128d771606691ccef3ea0b20ad2e5e9e"
+        "sha256": "4d81fd7e7ccdeddcc4f4748c22abe480e8941861eb76505034a71200b118065a"
       },
       {
         "path": "src/supplierImageMatchView.js",
-        "sha256": "3c156df8e9290cbece7e4174583f3fc63b3bc7a6f4f6a7de06de90349f93cc3f"
+        "sha256": "0b55c2a0a8c849871e45d39233b91056475ff3ab3fc4dc598a33f7138ad9d556"
       },
       {
         "path": "src/wbPresentation.js",
@@ -2612,7 +2644,7 @@
       },
       {
         "path": "tests/extension-capture-request.test.mjs",
-        "sha256": "097225032f0e5a4b609f812327ec5f8dd1d4bbe2a8a800ca409859946fb20090"
+        "sha256": "55a6c0660e43934e8366515dd0e1d5d53d95dc00fff3a8995dc72ddb24b88b0b"
       },
       {
         "path": "tests/extension-heartbeat-api.test.mjs",
@@ -2620,7 +2652,7 @@
       },
       {
         "path": "tests/extension-status.test.mjs",
-        "sha256": "36c9848c0d243a071e3c543ce918359085c7d7130b6e68d2f2f50a88b420fd3f"
+        "sha256": "02c2c0ff1f1cb63efa63359790f8470cd7fc6e77d241bf402febbd1fc2b62c14"
       },
       {
         "path": "tests/extra-handling-fees.test.mjs",
@@ -2779,6 +2811,10 @@
         "sha256": "f502bc1f76e8ea51f326bd49861239d76b9a01bedc98b90f554ab73e31d03d45"
       },
       {
+        "path": "tests/fixtures/ozon-search-state-fixture.mjs",
+        "sha256": "c5fba305b46c9530c5ca34339ace7ab99af23bf0a41979e0ed2953c544c8443a"
+      },
+      {
         "path": "tests/fixtures/prepare-sibling-batch-browser.mjs",
         "sha256": "fc3cf7143e65efe771a08354e37a25de1f178b0c11bd4b94f2ad2bd46fb672ef"
       },
@@ -2920,7 +2956,7 @@
       },
       {
         "path": "tests/helpers/extension-runtime-fixture.mjs",
-        "sha256": "14df4102aa9dc071ae5862c44713e99a2f2b0fb389464181c6a82fb55d7a1806"
+        "sha256": "cfb986f3bdc33ad8e14bc0bfbd097ce132c263243ba0924e29d2b153d26bdadd"
       },
       {
         "path": "tests/helpers/legacy-candidate-fixture.mjs",
@@ -2944,7 +2980,7 @@
       },
       {
         "path": "tests/image-fingerprint.test.mjs",
-        "sha256": "f88e1841d79b8256df4a213739c5e08464a3c4e7dc208a21945214e1705b6c0f"
+        "sha256": "c5b1cc53dc78ed2d9a0883d05779bede3b4bddba5fc0a45325f3e3b6de5c8d52"
       },
       {
         "path": "tests/keyword-evidence-orchestrator.test.mjs",
@@ -3188,7 +3224,7 @@
       },
       {
         "path": "tests/ozon-page-capture-job.test.mjs",
-        "sha256": "bcbbe8ad743f879235638359ce4e356c0f48369fc83e404ee2e4e721800f29ac"
+        "sha256": "21975d8ea19a6e04b2e57772d00699c08e39291b8ae127d5ebd5836184adf0ff"
       },
       {
         "path": "tests/ozon-product-import-batch-limit.test.mjs",
@@ -3200,7 +3236,15 @@
       },
       {
         "path": "tests/ozon-sales-capture-api.test.mjs",
-        "sha256": "807cbf2b07a468b85d96e984f0bf00e60a8ad487129c5579a9e2242bccba1704"
+        "sha256": "9e60da1a2709c4a62094559feba7e9b4fa528db3357d4b17d973d76e8a7c6fac"
+      },
+      {
+        "path": "tests/ozon-same-product-match.test.mjs",
+        "sha256": "40c5084b7d4b3281942f9d014973ca686c270a39719fef0f6ef3c5bb40422726"
+      },
+      {
+        "path": "tests/ozon-search-extension.test.mjs",
+        "sha256": "0f69d7124fb01d97ba968f5d6f83a97ae5028a098dd812b5e872a63aad0ad1db"
       },
       {
         "path": "tests/ozon-seller-api-de-adapter.test.mjs",
@@ -3260,7 +3304,7 @@
       },
       {
         "path": "tests/pinduoduo-capture.test.mjs",
-        "sha256": "114d7134512a8e6360d605b96ff62320c75812aaab041e7969621f5cff867a65"
+        "sha256": "a4aac1b584bf0990d0bd96c61b878a87ab3d27559d74143ccb782f71e53efbd4"
       },
       {
         "path": "tests/platform-write-bindings.test.mjs",
@@ -3288,7 +3332,7 @@
       },
       {
         "path": "tests/product-page-ui.test.mjs",
-        "sha256": "a69fc2ddff38b69417db28152a62352ade6e029c87172f2a8b9c655f3f9f01b4"
+        "sha256": "925243ac0f9e71516728d8dfb5e193c45afbf8f90a595b8167601c0ffde0eaf0"
       },
       {
         "path": "tests/production-authorization-rollback-acceptance.test.mjs",
@@ -3408,7 +3452,7 @@
       },
       {
         "path": "tests/runtime-package-api.test.mjs",
-        "sha256": "1d531c65cfb0daa339526a445fff708478593f96c9eb31355bcab9baf791832f"
+        "sha256": "ec5519fb28bc0dc8f1210a0933242a02e2e5d53c653ebe170d9e038a82dec77f"
       },
       {
         "path": "tests/runtime-preflight-api.test.mjs",
@@ -3540,27 +3584,27 @@
       },
       {
         "path": "tests/source-capture-inline-context.test.mjs",
-        "sha256": "6e8ce3f902f8feb0018b16c69c6083be33462a4901085ff5a14cbc90268efb2a"
+        "sha256": "10f6fe86754f444c430daef46223fb9435314c53acf3744a74e5e79c640e1224"
       },
       {
         "path": "tests/source-capture-job-api.test.mjs",
-        "sha256": "25eed28573cb8c91770828bf43209bff6567b0a854812b2636059a7c6e79d9d0"
+        "sha256": "4c789d89d6805351d82abfdb3c2f6066b8e3b5578086ae93a63485225aa8e239"
       },
       {
         "path": "tests/source-capture-recapture-api.test.mjs",
-        "sha256": "f7231045b4cca5ac39c79de4637664d66f2d486afb8968dd3f30af094baff920"
+        "sha256": "768fee06f97cda0b61efb0fe6592246acc7bfb016145e3b4ab6c7b71f26fbca5"
       },
       {
         "path": "tests/source-capture-restart-reconciliation.test.mjs",
-        "sha256": "c2be66a655df6d9497f0227ac1faadab8fbb1174e86e08e184f2517e5d7471ab"
+        "sha256": "9e0a7b097602e14e8eb1f0651dc1189bb8c022cba068aaa387c2a194688416c4"
       },
       {
         "path": "tests/source-capture-review-api.test.mjs",
-        "sha256": "b06a11f77b7ccf8fca2962c79baad332bbc65ca2394898a707c227ca9f1807cf"
+        "sha256": "d21886fdc96a61511966fc583bbaa0bf838bb194d25d6ffcc73c9b925fc45ff7"
       },
       {
         "path": "tests/source-capture.test.mjs",
-        "sha256": "05dc7eb6ee4b5761e27172d03a36538d7636ff2436d28698086fddad4d688fe1"
+        "sha256": "18c19999abf087bdab8c3422f79d91d6886f3546c53f706076394e0520146bec"
       },
       {
         "path": "tests/store-binding-api.test.mjs",
@@ -3584,19 +3628,19 @@
       },
       {
         "path": "tests/supplier-image-match-api.test.mjs",
-        "sha256": "9a6ded79eeb6e901be149158b768818c1d6fe81a1c7f3ad0b001b4fc67ccbb6b"
+        "sha256": "a366189d07ef0b411e0ffeea247309c7beaf1c6808a57e66b4f4e8d036c1f3af"
       },
       {
         "path": "tests/supplier-image-match-extension.test.mjs",
-        "sha256": "1485fd14213e45104a1e1c2261c6fa6096a2ff72c9059b5187b57c1664e81102"
+        "sha256": "363a1c5b5c3b1a307e63976b7e475189138615ecf5a726fb1603803e95b567bc"
       },
       {
         "path": "tests/supplier-image-match-ui.test.mjs",
-        "sha256": "7f32589a63d36f723ab689615a1daa2df9213b6374544402f5794ab928068517"
+        "sha256": "665bdf862e6c0b587b1bb7da4f5d612db087625acaa0bc88c03029b70f545391"
       },
       {
         "path": "tests/supplier-image-match.test.mjs",
-        "sha256": "9dc4a4c81c4af8d92b61bbf99310caaa1fac9d8dbee963ce88e267fbb70fdf5b"
+        "sha256": "e30a4663ca233a9038f8b9a8bb2e9bf083713e511a61ba087eef4bc95e305f55"
       },
       {
         "path": "tests/supplier-option.test.mjs",
@@ -3999,6 +4043,10 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "extension/1688-capture/collector-ozon-search.js",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "extension/1688-capture/collector-pinduoduo.js",
           "status": "present_in_integration_source"
         },
@@ -4012,6 +4060,10 @@
         },
         {
           "path": "extension/1688-capture/source-routing.js",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "extension/1688-capture/uploader-ozon-image-search.js",
           "status": "present_in_integration_source"
         },
         {
@@ -4031,11 +4083,27 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/image-match-record.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "lib/ozon-same-product-match.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "lib/ozon-search-query.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/sku-choice-estimate.mjs",
           "status": "present_in_integration_source"
         },
         {
           "path": "lib/source-capture.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "lib/supplier-image-match-source.mjs",
           "status": "present_in_integration_source"
         },
         {
@@ -4051,6 +4119,10 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "scripts/check-ozon-search-saved-page.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "scripts/check-pinduoduo-saved-page.mjs",
           "status": "present_in_integration_source"
         },
@@ -4060,6 +4132,10 @@
         },
         {
           "path": "src/components/ProductPage.jsx",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "src/ozonImageMatchView.js",
           "status": "present_in_integration_source"
         },
         {
@@ -4091,11 +4167,23 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "tests/fixtures/ozon-search-state-fixture.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "tests/helpers/a-supplier-image-search-fixture.mjs",
           "status": "present_in_integration_source"
         },
         {
           "path": "tests/image-fingerprint.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/ozon-same-product-match.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/ozon-search-extension.test.mjs",
           "status": "present_in_integration_source"
         },
         {

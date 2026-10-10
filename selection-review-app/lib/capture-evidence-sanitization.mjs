@@ -37,6 +37,11 @@ export function canonicalPinduoduoImageUrl(value) {
     host.endsWith(".yangkeduo.com"));
 }
 
+// A picture that may be handed to 1688's image search: a product picture from one of the three platforms we read.
+export function canonicalImageSearchSourceUrl(value) {
+  return canonicalPinduoduoImageUrl(value) ?? canonicalSupplierImageUrl(value) ?? canonicalOzonImageUrl(value);
+}
+
 function canonicalCaptureImageUrl(value, allowedHost) {
   if (typeof value !== "string") return null;
   try {

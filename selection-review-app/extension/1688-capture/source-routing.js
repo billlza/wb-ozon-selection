@@ -313,25 +313,37 @@ export function classifySupplierSource(value) {
   return pinduoduo ? { platform: "pinduoduo", ...pinduoduo } : null;
 }
 
-// ---- 1688 找同款：用拼多多首图在 1688 搜一次图 ----
+// ---- 1688 找同款：用首图在 1688 搜一次图 ----
 
-/** Mirrors canonicalPinduoduoImageUrl in lib/capture-evidence-sanitization.mjs: https, a Pinduoduo image host, no query. */
-export function canonicalPinduoduoImageUrl(value) {
+function canonicalPlatformImageUrl(value, allowedHost) {
   if (typeof value !== "string") return null;
   try {
     const url = new URL(value);
-    const host = url.hostname;
-    if (url.protocol !== "https:" || url.username || url.password || url.port ||
-        !(host === "pddpic.com" || host.endsWith(".pddpic.com") || host.endsWith(".yangkeduo.com"))) return null;
+    if (url.protocol !== "https:" || url.username || url.password || url.port || !allowedHost(url.hostname)) return null;
     return `${url.origin}${url.pathname}`;
   } catch {
     return null;
   }
 }
 
+/** Mirrors canonicalPinduoduoImageUrl in lib/capture-evidence-sanitization.mjs: https, a Pinduoduo image host, no query. */
+export function canonicalPinduoduoImageUrl(value) {
+  return canonicalPlatformImageUrl(value, host => host === "pddpic.com" || host.endsWith(".pddpic.com") || host.endsWith(".yangkeduo.com"));
+}
+
+/**
+ * Mirrors canonicalImageSearchSourceUrl in lib/capture-evidence-sanitization.mjs: a product picture from Pinduoduo, 1688
+ * (alicdn) or Ozon (ir.ozone.ru) image hosts, https, no query. These are the only pictures a search may be run with.
+ */
+export function canonicalImageSearchSourceUrl(value) {
+  return canonicalPinduoduoImageUrl(value) ??
+    canonicalPlatformImageUrl(value, host => host === "alicdn.com" || host.endsWith(".alicdn.com")) ??
+    canonicalPlatformImageUrl(value, host => host === "ir.ozone.ru");
+}
+
 /** Mirrors supplierImageMatchSearchUrl in lib/supplier-image-match.mjs, character for character. */
 export function imageSearchUrl(imageUrl) {
-  const canonical = canonicalPinduoduoImageUrl(imageUrl);
+  const canonical = canonicalImageSearchSourceUrl(imageUrl);
   if (!canonical || canonical !== imageUrl) return null;
   return `https://s.1688.com/youyuan/index.htm?tab=imageSearch&imageAddress=${encodeURIComponent(canonical)}`;
 }
@@ -366,4 +378,85 @@ export function imageSearchResultPage(value) {
   if (classify1688ImageSearchNavigation(value) !== "results") return null;
   const url = new URL(value);
   return `https://${url.hostname.toLowerCase()}${url.pathname.toLowerCase().replace(/\/+$/, "")}`;
+}
+
+/** Mirrors normalizeOzonSearchQuery in lib/ozon-same-product-match.mjs, character for character. */
+export function normalizeOzonSearchQuery(value) {
+  if (typeof value !== "string") return null;
+  const query = value.normalize("NFC").replace(/[\u0000-\u001f\u007f\u00a0\u2000-\u200b\u2028\u2029\u202f\u3000]/g, " ")
+    .replace(/\s+/g, " ").trim();
+  if (query.length < 2 || query.length > 100 || !/\p{L}/u.test(query) || /[<>{}]|:\/\//.test(query)) return null;
+  return query;
+}
+
+/** Mirrors ozonSearchUrl in lib/ozon-same-product-match.mjs: Ozon's own site search, the words in its own text parameter. */
+export function ozonSearchUrl(query) {
+  const normalized = normalizeOzonSearchQuery(query);
+  if (!normalized || normalized !== query) return null;
+  return `https://www.ozon.ru/search/?${new URLSearchParams({ text: normalized, from_global: "true" })}`;
+}
+
+const foldOzonQuery = (value) => normalizeOzonSearchQuery(value)?.toLowerCase() ?? null;
+
+/**
+ * Where an Ozon search tab has got to, as one fixed word. Ozon answers a search on /search/ or moves it to a category
+ * page that keeps the same words in its text parameter; both are this search. A verification page stops the job with its
+ * own reason; another search or any other page is not this one.
+ */
+export function classifyOzonSearchNavigation(value, query) {
+  try {
+    if (typeof value !== "string") return "invalid";
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return "invalid";
+    const host = url.hostname.toLowerCase();
+    if (host !== "www.ozon.ru" && host !== "ozon.ru") return "non_whitelisted_destination";
+    if (/(?:captcha|challenge|antibot|\/abt\/)/i.test(url.pathname)) return "verification_required";
+    if (!/^\/(?:search|category\/[^/]+)\/?$/.test(url.pathname) || host !== "www.ozon.ru") return "non_whitelisted_destination";
+    const words = foldOzonQuery(url.searchParams.get("text"));
+    return words !== null && words === foldOzonQuery(query) ? "results" : "other_search";
+  } catch {
+    return "invalid";
+  }
+}
+
+/** The result page as a fixed marker (path and words only), so the address read after extraction can be compared. */
+export function ozonSearchResultPage(value, query) {
+  if (classifyOzonSearchNavigation(value, query) !== "results") return null;
+  const url = new URL(value);
+  return `https://www.ozon.ru${url.pathname.replace(/\/+$/, "")}/?text=${encodeURIComponent(foldOzonQuery(query))}`;
+}
+
+/** Mirrors OZON_IMAGE_SEARCH_ENTRY_URL in lib/ozon-search-query.mjs: an image search starts from Ozon's home page search bar. */
+export const OZON_IMAGE_SEARCH_ENTRY_URL = "https://www.ozon.ru/";
+
+/** Mirrors ozonImageSearchId in lib/ozon-search-query.mjs: the image_id Ozon gives one upload, hex with one x between. */
+export function ozonImageSearchId(value) {
+  return typeof value === "string" && /^[0-9a-f]{8,64}(?:x[0-9a-f]{8,64})?$/i.test(value) ? value : null;
+}
+
+/**
+ * Where an Ozon image-search tab has got to, as one fixed word: the home page it starts on ("entry"), the result page Ozon
+ * moves it to after the upload ("results", with a well-formed image_id), a verification page, or anywhere else.
+ */
+export function classifyOzonImageSearchNavigation(value) {
+  try {
+    if (typeof value !== "string") return "invalid";
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return "invalid";
+    const host = url.hostname.toLowerCase();
+    if (host !== "www.ozon.ru" && host !== "ozon.ru") return "non_whitelisted_destination";
+    if (/(?:captcha|challenge|antibot|\/abt\/)/i.test(url.pathname)) return "verification_required";
+    if (host !== "www.ozon.ru") return "non_whitelisted_destination";
+    if (url.pathname === "/") return "entry";
+    if (/^\/search-by-image\/?$/.test(url.pathname)) return ozonImageSearchId(url.searchParams.get("image_id")) ? "results" : "other_search";
+    return "non_whitelisted_destination";
+  } catch {
+    return "invalid";
+  }
+}
+
+/** The image-search result page as a fixed marker (path and Ozon's upload id only), so it can be compared after extraction. */
+export function ozonImageSearchResultPage(value) {
+  if (classifyOzonImageSearchNavigation(value) !== "results") return null;
+  return `https://www.ozon.ru/search-by-image?image_id=${new URL(value).searchParams.get("image_id")}`;
 }

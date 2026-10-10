@@ -59,7 +59,7 @@ function session(extra = {}) {
     claimedAt: null,
     jobStatus: "queued",
     attempt: 1,
-    requiredExtensionVersion: "1.2.9",
+    requiredExtensionVersion: "1.4.0",
     ...extra
   };
 }
@@ -139,20 +139,20 @@ test("插件领取时拿到的作业形状通过 validateOzonCaptureRequest，�
   assert.equal(isOzonCaptureJob(payload), true);
   assert.equal(Object.hasOwn(payload, "mode"), false, "带 mode 会被插件判成 capture_mode_invalid");
   assert.equal(Object.hasOwn(payload, "sourceUrl"), false, "带 sourceUrl 会被插件判成 capture_mode_invalid");
-  const validation = validateOzonCaptureRequest({ payload, manifestVersion: "1.2.9" });
+  const validation = validateOzonCaptureRequest({ payload, manifestVersion: "1.4.0" });
   assert.deepEqual(validation, { ok: true, sourceUrl: CANONICAL });
   assert.equal(validateOzonCaptureRequest({ payload, manifestVersion: "1.2.6" }).code, "extension_version_mismatch");
-  assert.equal(validateOzonCaptureRequest({ payload: { ...payload, mode: "a_supplier_capture" }, manifestVersion: "1.2.9" }).code, "capture_mode_invalid");
-  assert.equal(validateOzonCaptureRequest({ payload: { ...payload, attempt: 2 }, manifestVersion: "1.2.9" }).code, "attempt_invalid");
-  assert.equal(validateOzonCaptureRequest({ payload: { ...payload, productUrl: "https://ozon.ru/product/9999000001/" }, manifestVersion: "1.2.9" }).code, "source_url_invalid");
+  assert.equal(validateOzonCaptureRequest({ payload: { ...payload, mode: "a_supplier_capture" }, manifestVersion: "1.4.0" }).code, "capture_mode_invalid");
+  assert.equal(validateOzonCaptureRequest({ payload: { ...payload, attempt: 2 }, manifestVersion: "1.4.0" }).code, "attempt_invalid");
+  assert.equal(validateOzonCaptureRequest({ payload: { ...payload, productUrl: "https://ozon.ru/product/9999000001/" }, manifestVersion: "1.4.0" }).code, "source_url_invalid");
 
   // 两种作业不会互相认领：1688 的那一份在插件眼里根本不是 Ozon 作业，反过来也一样。
   const supplier = { captureId: "SCJ-1", jobId: "SCJ-1", candidateId: payload.candidateId, dataRevision: 12,
     expectedOfferId: "", sourceUrl: "https://qr.1688.com/s/7OnLCakq", mode: "a_supplier_capture",
-    allowShortLinkResolution: true, requiredExtensionVersion: "1.2.9", attempt: 1, token: "t" };
+    allowShortLinkResolution: true, requiredExtensionVersion: "1.4.0", attempt: 1, token: "t" };
   assert.equal(isOzonCaptureJob(supplier), false);
-  assert.equal(validateSupplierCaptureRequest({ payload: supplier, manifestVersion: "1.2.9" }).ok, true);
-  assert.equal(validateSupplierCaptureRequest({ payload, manifestVersion: "1.2.9" }).ok, false);
+  assert.equal(validateSupplierCaptureRequest({ payload: supplier, manifestVersion: "1.4.0" }).ok, true);
+  assert.equal(validateSupplierCaptureRequest({ payload, manifestVersion: "1.4.0" }).ok, false);
 });
 
 test("页面拿到的回执不含一次性令牌", () => {

@@ -1,7 +1,10 @@
+import { SUPPLIER_IMAGE_MATCH_SOURCE_LABELS, supplierImageMatchSource } from "../lib/supplier-image-match-source.mjs";
+
 /**
- * 商品页「在 1688 找同款」那一块要显示的东西，全部从服务端保存的 candidate.supplierImageMatch 和这次拼多多采集里读出来。
+ * 商品页「在 1688 找同款」那一块要显示的东西，全部从服务端保存的 candidate.supplierImageMatch 和这件商品的货源采集、Ozon 主图里读出来。
  *
- * 页面不判断是不是同款：首图一致 / 很像 / 不像 只说两张首图看起来像不像，是不是同款由主人逐条点。这里也不 import
+ * 用哪张图搜，和服务端读的是同一份规则（lib/supplier-image-match-source.mjs）：拼多多或 1688 货源首图优先，没有就用 Ozon 主图。
+ * 页面不判断是不是同款：首图一致 / 很像 / 不像 只说两张首图看起来像不像，是不是同款由主人逐条点。这里不 import
  * lib/supplier-image-match.mjs——那边连着图片解码库，进不了浏览器；同样的几句标签由测试逐字对齐。
  */
 export const IMAGE_MATCH_SIMILARITY_LABELS = Object.freeze({
@@ -9,31 +12,18 @@ export const IMAGE_MATCH_SIMILARITY_LABELS = Object.freeze({
 });
 export const IMAGE_MATCH_JUDGEMENT_LABELS = Object.freeze({ exact: "是同款", near: "近似款", wrong: "不是" });
 const SIMILARITY_ORDER = Object.freeze(["identical", "similar", "unknown", "different"]);
+// 拿哪家的价格去比：拼多多比的是拼单价，1688 比的是主人给的那一家；Ozon 主图搜出来的没有人民币进价可比。
+const PRICE_BASE_LABELS = Object.freeze({ pinduoduo: "拼多多", 1688: "你给的这家" });
 const isObject = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const finite = value => (typeof value === "number" && Number.isFinite(value) ? value : null);
-
-function pinduoduoSource(capture) {
-  if (typeof capture?.sourceUrl !== "string") return false;
-  try {
-    const host = new URL(capture.sourceUrl).hostname;
-    return host === "mobile.yangkeduo.com" || host === "mobile.pinduoduo.com";
-  } catch { return false; }
-}
+const knownPlatform = value => (Object.hasOwn(SUPPLIER_IMAGE_MATCH_SOURCE_LABELS, value) ? value : null);
 
 /** 这件商品能不能拿首图去 1688 搜；不能的话为什么。服务端会再判一次，这里只决定按钮亮不亮、说哪句话。 */
 export function imageMatchSourceState(candidate) {
-  const capture = candidate?.sourceCapture;
-  if (!isObject(capture) || capture.mode !== "a_supplier_capture" || capture.status !== "captured_waiting_owner_selection" ||
-      !pinduoduoSource(capture)) {
-    return { ready: false, imageUrl: null, lowestPriceCny: null, reason: "先用插件采到拼多多货源页面，才有首图可以拿去 1688 搜。" };
-  }
-  const prices = (Array.isArray(capture.skuChoices) ? capture.skuChoices : []).map(sku => finite(sku?.priceCny)).filter(value => value !== null && value > 0);
-  const lowestPriceCny = prices.length ? Math.min(...prices) : null;
-  if (typeof capture.mainImageUrl !== "string" || !capture.mainImageUrl.startsWith("https://")) {
-    return { ready: false, imageUrl: null, lowestPriceCny,
-      reason: "这次采集没有读到拼多多首图（插件升级到 1.2.9 之前采的没有这一项），请先重新采一次这个拼多多页面。" };
-  }
-  return { ready: true, imageUrl: capture.mainImageUrl, lowestPriceCny, reason: null };
+  const source = supplierImageMatchSource(candidate);
+  if (!source.ok) return { ready: false, platform: null, imageUrl: null, lowestPriceCny: null, reason: source.reason, code: source.code };
+  return { ready: true, platform: source.source.platform, imageUrl: source.imageUrl, lowestPriceCny: finite(source.source.lowestPriceCny),
+    reason: null, code: null };
 }
 
 function quantityLine(value) {
@@ -53,12 +43,20 @@ function statusLine(record, counts) {
   }
 }
 
-/** 整块的显示数据。没有拼多多采集、也没有找过同款时返回 null，这一块就不出现。 */
+/** 整块的显示数据。没有图可搜、没有待重采的货源、也没有找过同款时返回 null，这一块就不出现。 */
 export function supplierImageMatchView(candidate) {
   const source = imageMatchSourceState(candidate);
   const record = isObject(candidate?.supplierImageMatch) ? candidate.supplierImageMatch : null;
-  if (!source.ready && record === null && !(isObject(candidate?.sourceCapture) && pinduoduoSource(candidate.sourceCapture) &&
-      candidate.sourceCapture.status === "captured_waiting_owner_selection")) return null;
+  if (!source.ready && record === null && source.code !== "main_image_missing") return null;
+  // 结果是用上一次那张图搜出来的，价格也跟那一次比；那次之前的记录没有写平台，那时只有拼多多一种。
+  const searched = isObject(record?.source) ? record.source : null;
+  const searchedPlatform = searched ? knownPlatform(searched.platform) ?? "pinduoduo" : null;
+  const sourcePlatform = source.platform ?? searchedPlatform;
+  const priceBasePlatform = searchedPlatform ?? source.platform;
+  const priceBaseCny = searched
+    ? finite(searched.lowestPriceCny) ?? (source.platform === searchedPlatform ? source.lowestPriceCny : null)
+    : source.lowestPriceCny;
+  const priceBaseLabel = priceBaseCny === null ? null : PRICE_BASE_LABELS[priceBasePlatform] ?? null;
   const results = Array.isArray(record?.results) ? record.results : [];
   const judgements = isObject(record?.judgements) ? record.judgements : {};
   const counts = { identical: 0, similar: 0, different: 0, unknown: 0 };
@@ -77,8 +75,9 @@ export function supplierImageMatchView(candidate) {
       distance: finite(item.distance),
       priceCny: finite(item.priceCny),
       priceNote: item.priceNote || null,
-      priceDifferenceCny: finite(item.priceCny) !== null && source.lowestPriceCny !== null
-        ? Math.round((item.priceCny - source.lowestPriceCny) * 100) / 100 : null,
+      priceDifferenceCny: finite(item.priceCny) !== null && priceBaseLabel !== null
+        ? Math.round((item.priceCny - priceBaseCny) * 100) / 100 : null,
+      isSourceOffer: item.isSourceOffer === true,
       quantity: quantityLine(item.quantityBegin),
       saleQuantity: finite(item.saleQuantity),
       shopName: item.shopName || null,
@@ -94,8 +93,11 @@ export function supplierImageMatchView(candidate) {
   return {
     sourceReady: source.ready,
     sourceReason: source.reason,
-    sourceImageUrl: source.imageUrl ?? record?.source?.imageUrl ?? null,
+    sourcePlatform,
+    sourceLabel: SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[sourcePlatform] ?? "首图",
+    sourceImageUrl: source.imageUrl ?? searched?.imageUrl ?? null,
     lowestPriceCny: source.lowestPriceCny,
+    priceBaseLabel,
     captureId: record?.captureId ?? null,
     status: record?.status ?? null,
     statusLine: record === null ? "" : statusLine({ ...record, results }, counts),

@@ -12,13 +12,15 @@ export async function collect1688ImageSearchPage(expectedImageUrl, maxResults = 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const plain = (value, limit) => (typeof value === "string" ? value : typeof value === "number" && Number.isFinite(value) ? String(value) : "")
     .replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, limit);
-  const canonicalPinduoduoImage = (value) => {
+  // Same hosts as canonicalImageSearchSourceUrl in source-routing.js: Pinduoduo, 1688 (alicdn) and Ozon product pictures.
+  const canonicalSearchImage = (value) => {
     if (typeof value !== "string") return null;
     try {
       const url = new URL(value);
       const host = url.hostname;
       if (url.protocol !== "https:" || url.username || url.password || url.port ||
-          !(host === "pddpic.com" || host.endsWith(".pddpic.com") || host.endsWith(".yangkeduo.com"))) return null;
+          !(host === "pddpic.com" || host.endsWith(".pddpic.com") || host.endsWith(".yangkeduo.com") ||
+            host === "alicdn.com" || host.endsWith(".alicdn.com") || host === "ir.ozone.ru")) return null;
       return `${url.origin}${url.pathname}`;
     } catch { return null; }
   };
@@ -66,7 +68,7 @@ export async function collect1688ImageSearchPage(expectedImageUrl, maxResults = 
   const searchedImage = (report) => {
     for (const text of [report, looseDecode(report)]) {
       const raw = text.match(/(?:^|[\^&{,;"\s@=])query_url["']?\s*[:=]\s*["']?([^\^&"'\s,;}]+)/)?.[1];
-      if (raw) return canonicalPinduoduoImage(decodeRepeatedly(raw).split(/[;\s"'^,}]/)[0]);
+      if (raw) return canonicalSearchImage(decodeRepeatedly(raw).split(/[;\s"'^,}]/)[0]);
     }
     return null;
   };
@@ -155,7 +157,7 @@ export async function collect1688ImageSearchPage(expectedImageUrl, maxResults = 
   if (queries.size > 1) return failed("wrong_query");
   let searchImageUrl = [...queries][0] || null;
   if (!searchImageUrl) {
-    try { searchImageUrl = canonicalPinduoduoImage(new URL(window.location.href).searchParams.get("imageAddress") || ""); }
+    try { searchImageUrl = canonicalSearchImage(new URL(window.location.href).searchParams.get("imageAddress") || ""); }
     catch { searchImageUrl = null; }
   }
   if (!searchImageUrl) return failed("structured_data_unavailable");

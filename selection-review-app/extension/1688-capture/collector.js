@@ -521,6 +521,22 @@ export async function collect1688Page(expectedOfferId) {
   ].map(([value, source]) => [plainText(value, 800).replace(/\s*[-_|]\s*阿里巴巴.*$/i, "").trim(), source])
     .filter(([value]) => value);
   const titleChoice = rawTitleCandidates.find(([value]) => !/(?:有限责任公司|有限公司|个体工商户|经营部)$/.test(value)) || rawTitleCandidates[0] || ["", null];
+  // The offer's own first picture, so the owner can later search 1688 with it for the same goods from other sellers.
+  // Read from the gallery data the page ships, then og:image; only alicdn product pictures count, and the field is named.
+  const firstOf = (value) => (Array.isArray(value) ? value[0] : value);
+  const pictureAddress = (value) => {
+    const raw = typeof value === "string" ? value : firstObject(value) ? first(value.fullPathImageURI, value.imageURI, value.url) : null;
+    return typeof raw === "string" && raw.startsWith("//") ? `https:${raw}` : raw;
+  };
+  const galleryFields = pageData?.data?.gallery?.fields || root?.gallery?.fields || null;
+  const mainImageChoice = [
+    [firstOf(galleryFields?.mainImage), "data.gallery.fields.mainImage[0]"],
+    [firstOf(galleryFields?.offerImgList), "data.gallery.fields.offerImgList[0]"],
+    [firstOf(galleryFields?.images), "data.gallery.fields.images[0]"],
+    [firstOf(offerDetail?.mainImage), "offerDetail.mainImage[0]"],
+    [firstOf(offerDetail?.imageList), "offerDetail.imageList[0]"],
+    [document.querySelector?.('meta[property="og:image"]')?.content, "dom.meta.og:image"]
+  ].map(([value, source]) => [imageUrlFrom(pictureAddress(value)), source]).find(([value]) => value) || [null, null];
   const pageProductPrice = explicitScalarField([
     ["offerBaseInfo.offerPrice", offerBaseInfo?.offerPrice],
     ["offerBaseInfo.price", offerBaseInfo?.price],
@@ -548,6 +564,8 @@ export async function collect1688Page(expectedOfferId) {
       titleSource: titleChoice[1],
       offerIdSource: structuredOfferId ? structuredOfferIdSource : "location.pathname",
       pageSelectedSkuId: pageSelectedSkuId || null,
+      mainImageUrl: mainImageChoice[0],
+      mainImageSource: mainImageChoice[1],
       priceRanges,
       pageFields: {
         unitProductPriceCny: pageProductPrice.value,

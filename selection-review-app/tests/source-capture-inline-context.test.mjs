@@ -68,6 +68,9 @@ test("1688 collector reads offer, title, prices and weighted SKUs from a purely 
   assert.equal(result.evidence.title, "纯合成供应商品用于解析测试");
   assert.equal(result.evidence.titleSource, "offerDetail.subject");
   assert.equal(result.evidence.offerStatus, "PUBLISHED");
+  // The offer's own main picture is what a later 1688 image search starts from.
+  assert.equal(result.evidence.mainImageUrl, "https://cbu01.alicdn.com/img/ibank/SYNTHETIC-TEST-IMAGE.jpg");
+  assert.equal(result.evidence.mainImageSource, "offerDetail.imageList[0]");
   assert.deepEqual(result.evidence.priceRanges, [
     { minimumQuantity: 1, priceCny: 27.4, source: "tradeModel.offerPriceModel.currentPrices" },
     { minimumQuantity: 1, priceCny: 58.6, source: "tradeModel.offerPriceModel.currentPrices" }
@@ -98,6 +101,25 @@ test("1688 collector reads offer, title, prices and weighted SKUs from a purely 
   assert.equal(evidence.skus.length, 6);
   assert.equal(evidence.skus[0].priceCny, 27.4);
   assert.equal(evidence.title, result.evidence.title);
+  assert.equal(evidence.mainImageUrl, result.evidence.mainImageUrl);
+});
+
+test("the 1688 gallery's own main picture wins, and a protocol-relative address is read as https", async () => {
+  const gallery = '"gallery":{"fields":{"offerId":999999000001,"subject":"纯合成供应商品用于解析测试"},';
+  const withGallery = SYNTHETIC_1688_INLINE_SCRIPT.replace(gallery,
+    '"gallery":{"fields":{"offerId":999999000001,"subject":"纯合成供应商品用于解析测试","mainImage":["//cbu01.alicdn.com/img/ibank/SYNTHETIC-GALLERY-MAIN.jpg"]},');
+  assert.notEqual(withGallery, SYNTHETIC_1688_INLINE_SCRIPT);
+  const result = await collectFrom(pageDocument({ scripts: [withGallery] }));
+  assert.equal(result.status, "captured");
+  assert.equal(result.evidence.mainImageUrl, "https://cbu01.alicdn.com/img/ibank/SYNTHETIC-GALLERY-MAIN.jpg");
+  assert.equal(result.evidence.mainImageSource, "data.gallery.fields.mainImage[0]");
+
+  // A picture from anywhere but 1688's image hosts is not a main picture; the next field is used instead.
+  const foreign = SYNTHETIC_1688_INLINE_SCRIPT.replace(gallery,
+    '"gallery":{"fields":{"offerId":999999000001,"subject":"纯合成供应商品用于解析测试","mainImage":["https://img.example.com/a.jpg"]},');
+  const fallback = await collectFrom(pageDocument({ scripts: [foreign] }));
+  assert.equal(fallback.evidence.mainImageUrl, "https://cbu01.alicdn.com/img/ibank/SYNTHETIC-TEST-IMAGE.jpg");
+  assert.equal(fallback.evidence.mainImageSource, "offerDetail.imageList[0]");
 });
 
 test("the inline capture result satisfies the background result contract and is reported unchanged", async () => {

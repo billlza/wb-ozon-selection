@@ -25,6 +25,8 @@ import {
 const IMAGE = "https://img.pddpic.com/garner-api-new/synthetic-main.jpeg";
 const GOODS_URL = "https://mobile.yangkeduo.com/goods.html?goods_id=600000000001";
 const OBSERVED = "2026-10-09T08:00:00.000Z";
+const ALI_IMAGE = "https://cbu01.alicdn.com/img/ibank/O1CN01syntheticmain.jpg";
+const OZON_IMAGE = "https://ir.ozone.ru/s3/multimedia-1-d/wc1000/9000000001.jpg";
 
 function capturedCandidate(overrides = {}) {
   return {
@@ -65,31 +67,42 @@ function rawEvidence(overrides = {}) {
 
 function queued(previous = null) {
   const source = supplierImageMatchSource(capturedCandidate()).source;
-  return queuedSupplierImageMatchRecord(previous, { captureId: "IMJ-synthetic", source, requiredExtensionVersion: "1.2.9",
+  return queuedSupplierImageMatchRecord(previous, { captureId: "IMJ-synthetic", source, requiredExtensionVersion: "1.4.0",
     authorizedBy: "owner:synthetic", authorizedAt: "2026-10-09T07:59:00.000Z", candidateRevision: 7 });
 }
 
-test("the 1688 search address is built only from an already canonical Pinduoduo picture", () => {
+test("the 1688 search address is built only from an already canonical Pinduoduo, 1688 or Ozon picture", () => {
   assert.equal(supplierImageMatchSearchUrl(IMAGE),
     "https://s.1688.com/youyuan/index.htm?tab=imageSearch&imageAddress=https%3A%2F%2Fimg.pddpic.com%2Fgarner-api-new%2Fsynthetic-main.jpeg");
-  for (const refused of [`${IMAGE}?imageMogr2=1`, "http://img.pddpic.com/a.jpeg", "https://cbu01.alicdn.com/img/ibank/a.jpg",
-    "https://img.pddpic.com.evil.example/a.jpeg", "", null, 42]) {
+  assert.equal(supplierImageMatchSearchUrl(ALI_IMAGE),
+    "https://s.1688.com/youyuan/index.htm?tab=imageSearch&imageAddress=https%3A%2F%2Fcbu01.alicdn.com%2Fimg%2Fibank%2FO1CN01syntheticmain.jpg");
+  assert.equal(supplierImageMatchSearchUrl(OZON_IMAGE),
+    "https://s.1688.com/youyuan/index.htm?tab=imageSearch&imageAddress=https%3A%2F%2Fir.ozone.ru%2Fs3%2Fmultimedia-1-d%2Fwc1000%2F9000000001.jpg");
+  for (const refused of [`${IMAGE}?imageMogr2=1`, "http://img.pddpic.com/a.jpeg", `${ALI_IMAGE}_.webp?x=1`, `${OZON_IMAGE}?w=1`,
+    "https://cdn1.ozone.ru/s3/a.jpg", "https://img.pddpic.com.evil.example/a.jpeg", "https://example.com/a.jpg", "", null, 42]) {
     assert.equal(supplierImageMatchSearchUrl(refused), null, String(refused));
   }
 });
 
-test("only a captured Pinduoduo source with its first picture can be searched, and the reason is said when it cannot", () => {
+test("a captured Pinduoduo or 1688 source searches with its first picture, and the reason is said when nothing can be searched", () => {
   const ready = supplierImageMatchSource(capturedCandidate());
   assert.equal(ready.ok, true);
   assert.equal(ready.imageUrl, IMAGE);
   assert.equal(ready.searchUrl, supplierImageMatchSearchUrl(IMAGE));
   assert.deepEqual({ ...ready.source }, { platform: "pinduoduo", offerId: "600000000001", captureId: "SC-synthetic", imageUrl: IMAGE, lowestPriceCny: 16.5 });
 
+  const ali = supplierImageMatchSource(capturedCandidate({ sourceCapture: { sourceUrl: "https://detail.1688.com/offer/123456789.html",
+    offerId: "123456789", mainImageUrl: ALI_IMAGE, mainImageSource: "data.gallery.fields.mainImage[0]" } }));
+  assert.equal(ali.ok, true);
+  assert.deepEqual({ ...ali.source }, { platform: "1688", offerId: "123456789", captureId: "SC-synthetic", imageUrl: ALI_IMAGE, lowestPriceCny: 16.5 });
+
   const code = candidate => supplierImageMatchSource(candidate).code;
-  assert.equal(code({}), "source_capture_missing");
-  assert.equal(code(capturedCandidate({ sourceCapture: { status: "needs_sku_selection" } })), "source_capture_missing");
-  assert.equal(code(capturedCandidate({ sourceCapture: { mode: "legacy" } })), "source_capture_missing");
-  assert.equal(code(capturedCandidate({ sourceCapture: { sourceUrl: "https://detail.1688.com/offer/123456789.html" } })), "source_platform_unsupported");
+  assert.equal(code({}), "source_image_missing");
+  assert.equal(code(capturedCandidate({ sourceCapture: { status: "needs_sku_selection" } })), "source_image_missing");
+  assert.equal(code(capturedCandidate({ sourceCapture: { mode: "legacy" } })), "source_image_missing");
+  assert.equal(code(capturedCandidate({ sourceCapture: { sourceUrl: "https://detail.1688.com/offer/123456789.html" } })), "main_image_missing");
+  assert.equal(code(capturedCandidate({ sourceCapture: { sourceUrl: "https://detail.1688.com/offer/123456789.html", mainImageUrl: OZON_IMAGE } })),
+    "main_image_missing");
   assert.equal(code(capturedCandidate({ sourceCapture: { mainImageUrl: null } })), "main_image_missing");
   assert.equal(code(capturedCandidate({ sourceCapture: { mainImageUrl: `${IMAGE}?w=200` } })), "main_image_missing");
   assert.equal(code(capturedCandidate({ sourceCapture: { mainImageUrl: "https://cbu01.alicdn.com/img/ibank/a.jpg" } })), "main_image_missing");
@@ -98,6 +111,35 @@ test("only a captured Pinduoduo source with its first picture can be searched, a
     assert.ok(result.reason.length > 5);
   }
   assert.equal(supplierImageMatchSource(capturedCandidate({ sourceCapture: { skuChoices: [{ priceCny: null }] } })).source.lowestPriceCny, null);
+});
+
+test("without a supplier capture a product from Seerfar or an Ozon link searches with its Ozon main picture", () => {
+  const ozon = (overrides = {}) => ({ id: "candidate:ozon", workflowStatus: "needs_user_data", productUrl: "https://www.ozon.ru/product/9000000001",
+    imageUrl: OZON_IMAGE, ...overrides });
+  const ready = supplierImageMatchSource(ozon());
+  assert.equal(ready.ok, true);
+  assert.equal(ready.searchUrl, supplierImageMatchSearchUrl(OZON_IMAGE));
+  assert.deepEqual({ ...ready.source }, { platform: "ozon", offerId: "9000000001", captureId: "", imageUrl: OZON_IMAGE, lowestPriceCny: null });
+  assert.equal(supplierImageMatchSource(ozon({ productUrl: "https://www.ozon.ru/product/sobachiy-dozhdevik-9000000001/" })).source.offerId, "9000000001");
+
+  // The latest sales snapshot's first Ozon picture is used when the candidate itself names none.
+  const fromSnapshot = supplierImageMatchSource(ozon({ imageUrl: "", salesSnapshotsV11: [
+    { imageRefs: ["https://ir.ozone.ru/s3/old.jpg"] }, { imageRefs: [OZON_IMAGE, "https://ir.ozone.ru/s3/second.jpg"] }] }));
+  assert.equal(fromSnapshot.imageUrl, OZON_IMAGE);
+
+  // A captured supplier picture always wins; a capture without one falls back to the Ozon picture rather than stopping.
+  assert.equal(supplierImageMatchSource({ ...capturedCandidate(), productUrl: "https://www.ozon.ru/product/9000000001", imageUrl: OZON_IMAGE }).source.platform,
+    "pinduoduo");
+  assert.equal(supplierImageMatchSource({ ...capturedCandidate({ sourceCapture: { mainImageUrl: null } }),
+    productUrl: "https://www.ozon.ru/product/9000000001", imageUrl: OZON_IMAGE }).source.platform, "ozon");
+
+  // Not an Ozon product, or no Ozon picture: nothing to search, and no other picture is borrowed.
+  const code = candidate => supplierImageMatchSource(candidate).code;
+  assert.equal(code(ozon({ productUrl: "https://www.wildberries.ru/catalog/1/detail.aspx" })), "source_image_missing");
+  assert.equal(code(ozon({ productUrl: "https://www.ozon.ru/category/odezhda-dlya-sobak/" })), "source_image_missing");
+  assert.equal(code(ozon({ imageUrl: "https://example.com/a.jpg" })), "source_image_missing");
+  // A size or format query on the stored Ozon picture is dropped; the search always uses the bare picture address.
+  assert.equal(supplierImageMatchSource(ozon({ imageUrl: `${OZON_IMAGE}?w=1` })).imageUrl, OZON_IMAGE);
 });
 
 test("a search cannot start for an eliminated product, while one is running, or over an unreconciled unknown outcome", () => {
@@ -129,8 +171,9 @@ test("search results are kept only as product facts, with the 1688 address rebui
   assert.equal(evidence.observedAt, OBSERVED);
   assert.equal(evidence.cardCount, 60);
   const [first, second, third] = evidence.items;
-  assert.deepEqual(Object.keys(first).sort(), ["imageUrl", "isAd", "location", "offerId", "priceCny", "priceNote", "quantityBegin", "rank",
-    "saleQuantity", "shopName", "sourceUrl", "superFactory", "title", "vendorSimilarity"]);
+  assert.deepEqual(Object.keys(first).sort(), ["imageUrl", "isAd", "isSourceOffer", "location", "offerId", "priceCny", "priceNote", "quantityBegin",
+    "rank", "saleQuantity", "shopName", "sourceUrl", "superFactory", "title", "vendorSimilarity"]);
+  assert.equal(evidence.items.some(item => item.isSourceOffer), false);
   assert.equal(first.sourceUrl, "https://detail.1688.com/offer/700000000000.html");
   assert.equal(first.title, "合成 商品 第一条");
   assert.equal(first.imageUrl, "https://cbu01.alicdn.com/img/ibank/O1CN01synthetic0.jpg");
@@ -142,6 +185,12 @@ test("search results are kept only as product facts, with the 1688 address rebui
   assert.deepEqual([second.isAd, second.priceCny, second.quantityBegin, second.vendorSimilarity, second.rank, second.imageUrl,
     second.priceNote, second.shopName, second.location], [true, null, null, null, null, null, null, null, null]);
   assert.deepEqual([third.isAd, third.superFactory, third.priceCny, third.saleQuantity, third.quantityBegin], [false, true, null, null, 2]);
+
+  // Searching with a 1688 picture: the owner's own offer shows up in the results and is marked as such.
+  const fromAli = sanitizeSupplierImageMatchEvidence(rawEvidence({ searchImageUrl: ALI_IMAGE }), ALI_IMAGE, { sourceOfferId: "700000000001" });
+  assert.deepEqual(fromAli.items.map(item => item.isSourceOffer), [false, true, false]);
+  const fromOzon = sanitizeSupplierImageMatchEvidence(rawEvidence({ searchImageUrl: OZON_IMAGE }), OZON_IMAGE);
+  assert.equal(fromOzon.searchImageUrl, OZON_IMAGE);
 });
 
 test("a search for another picture, an empty page or a malformed result is refused, never read as no match", () => {
@@ -151,6 +200,8 @@ test("a search for another picture, an empty page or a malformed result is refus
   assert.equal(code(rawEvidence({ searchImageUrl: "https://img.pddpic.com/garner-api-new/other.jpeg" })), "wrong_query");
   assert.equal(code(rawEvidence({ searchImageUrl: `${IMAGE}?w=1` })), "wrong_query");
   assert.equal(code(rawEvidence({ searchImageUrl: undefined })), "wrong_query");
+  assert.equal(code(rawEvidence({ searchImageUrl: ALI_IMAGE })), "wrong_query");
+  assert.equal(code(rawEvidence({ searchImageUrl: OZON_IMAGE }), ALI_IMAGE), "wrong_query");
   assert.equal(code(rawEvidence({ items: [], cardCount: 0 })), "results_unverifiable");
   assert.equal(code(rawEvidence({ items: [] })), "results_unverifiable");
   assert.equal(code(rawEvidence({ cardCount: null })), "results_unverifiable");

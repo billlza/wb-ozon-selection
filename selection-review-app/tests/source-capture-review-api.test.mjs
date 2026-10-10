@@ -153,7 +153,7 @@ test("主人核实“结果未知”的采集记录：只记核实、不动业�
   assert.equal(queued.status, 202, JSON.stringify(queued.body));
   assert.equal(queued.body.status, "supplier_capture_job_queued");
   const firstCaptureId = queued.body.captureJob.jobId;
-  const claim = await post(`/api/extension/capture-jobs/${firstCaptureId}/claim`, { version: "1.2.9" }, { Origin: extensionOrigin, Cookie: "" });
+  const claim = await post(`/api/extension/capture-jobs/${firstCaptureId}/claim`, { version: "1.4.0" }, { Origin: extensionOrigin, Cookie: "" });
   assert.equal(claim.status, 200, JSON.stringify(claim.body));
   await new Promise(resolve => setTimeout(resolve, 900));
   const stuck = (await state()).candidates.find(item => item.id === "REVIEW-UNKNOWN");
