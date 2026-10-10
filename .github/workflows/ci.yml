@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+      # 流程改造的起点分支：每块合进来前后都在真实 runner 上跑一遍常规测试和接口测试。
+      - "integration/**"
   pull_request:
     branches:
       - main
