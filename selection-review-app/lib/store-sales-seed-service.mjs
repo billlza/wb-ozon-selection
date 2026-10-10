@@ -8,6 +8,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { assertSafeRuntimeRecord } from './runtime-identity.mjs';
+import { readStoreProfile } from './store-profile.mjs';
 import { OzonStoreSalesReadError, STORE_SALES_FAILURES } from './ozon-store-sales-reader.mjs';
 import { STORE_SALES_SNAPSHOT_SCHEMA, pickStoreSeeds, planSeed, storeSalesWindows } from './store-sales-seeds.mjs';
 
@@ -95,7 +96,7 @@ export function createStoreSalesSeedService({ readData, mutateData, mutateDataWh
 
   /** Starts one read and returns as soon as its running record is saved; the page polls the view. */
   async function startRead({ actor, targetStore }) {
-    const profile = config?.profiles?.[targetStore];
+    const profile = readStoreProfile(await readData(), targetStore, { config });
     if (!profile) throw httpFail(400, 'STORE_UNKNOWN', '这家店没有选品档案。');
     if (!reader?.stores().includes(targetStore)) throw httpFail(409, 'NOT_CONFIGURED', `${FAILURES.not_configured}，没有读。`);
     if (running.has(targetStore)) throw httpFail(409, 'ALREADY_RUNNING', '这家店的销量正在读，不会再读一次。');

@@ -13,6 +13,7 @@ import { createInitialCandidate } from './candidate-initialization.mjs';
 import { assertSafeBusinessMutationCandidate } from './runtime-identity.mjs';
 import { planSeerfarQueries } from './seerfar-selection-plan.mjs';
 import { storeSeedsForPlan } from './store-sales-seed-service.mjs';
+import { readStoreProfile, readStoreProfiles } from './store-profile.mjs';
 import { SEERFAR_WEB_SEARCH_ENDPOINT, SEERFAR_WEB_SEARCH_PAGE, SEERFAR_WEB_PAGE_SIZE } from './seerfar-web-discovery-contract.mjs';
 import { SEERFAR_WEB_CAPTURE_WAIT_MS, SEERFAR_WEB_ROUND_MODE, SeerfarWebRoundError, claimSeerfarWebRound, completeSeerfarWebRound,
   createSeerfarWebRoundRecord, failSeerfarWebRound, normalizeSeerfarWebCapture, sameQueryRoundToday, seerfarWebCandidateEvidence,
@@ -69,7 +70,7 @@ export function createSeerfarWebRoundService({ readData, mutateData, mutateDataW
   function plans(document) {
     if (!config) return {};
     const date = businessDate();
-    return Object.fromEntries(Object.entries(config.profiles).map(([store, profile]) =>
+    return Object.fromEntries(Object.entries(readStoreProfiles(document, { config })).map(([store, profile]) =>
       [store, planSeerfarQueries({ businessDate: date, profile, calendar: config.calendar, seeds: storeSeedsForPlan(document, store) })]));
   }
 
@@ -200,7 +201,7 @@ export function createSeerfarWebRoundService({ readData, mutateData, mutateDataW
     const completed = await mutateData(document => {
       const record = seerfarWebRounds(document)[roundId];
       if (!record || record.status !== 'capturing' || record.captureId !== session.captureId) throw httpFail(409, 'STATE_CONFLICT', '这一轮不再等这次结果。');
-      const profile = config.profiles[record.targetStore];
+      const { source: _source, editedBy: _editedBy, editedAt: _editedAt, ...profile } = readStoreProfile(document, record.targetStore, { config });
       return completeSeerfarWebRound({ document, record, result, profile, knownProductIds: knownMarketProductIds(document.candidates), estimates, at,
         requestTemplate: input.requestTemplate, createCandidate: (product, entry) => {
           const id = `candidate:${randomUUID()}`;

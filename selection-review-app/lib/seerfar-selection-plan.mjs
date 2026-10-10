@@ -62,14 +62,16 @@ export function assertSeedPolicy(policy) {
 
 /** One store's standing search profile. Empty categoryPaths is allowed: the store simply has no store-category query yet. */
 export function assertStoreSelectionProfile(profile) {
-  const fields = ['schemaVersion', 'targetStore', 'version', 'categoryPaths', 'excludedCategoryPaths', 'priceRub', 'maxWeightGrams',
-    'minMonthlySales', 'picksPerRound', 'similarPriceBandRate', 'seedPolicy', 'note'];
+  const fields = ['schemaVersion', 'targetStore', 'version', 'positioning', 'categoryPaths', 'excludedCategoryPaths', 'priceRub', 'maxWeightGrams',
+    'presaleMaxDays', 'minMonthlySales', 'picksPerRound', 'similarPriceBandRate', 'seedPolicy', 'note'];
   if (!isObject(profile) || Object.keys(profile).length !== fields.length || !fields.every(field => Object.hasOwn(profile, field))) fail('CONFIG_INVALID', 'profile fields');
   if (profile.schemaVersion !== STORE_SELECTION_PROFILE_SCHEMA || !STORES.includes(profile.targetStore) || !text(profile.version, 80)) fail('CONFIG_INVALID', 'profile identity');
   const categoryPaths = uniquePaths(profile.categoryPaths, 'categoryPaths');
   const excludedCategoryPaths = uniquePaths(profile.excludedCategoryPaths, 'excludedCategoryPaths');
   if (categoryPaths.some(path => excludedCategoryPaths.includes(path))) fail('CONFIG_INVALID', 'a category is both searched and excluded');
   if (!positiveNumberOrNull(profile.maxWeightGrams)) fail('CONFIG_INVALID', 'maxWeightGrams');
+  if (!text(profile.positioning, 200)) fail('CONFIG_INVALID', 'positioning');
+  if (!Number.isSafeInteger(profile.presaleMaxDays) || profile.presaleMaxDays < 0 || profile.presaleMaxDays > 90) fail('CONFIG_INVALID', 'presaleMaxDays');
   if (!Number.isSafeInteger(profile.minMonthlySales) || profile.minMonthlySales < 0) fail('CONFIG_INVALID', 'minMonthlySales');
   if (!Number.isSafeInteger(profile.picksPerRound) || profile.picksPerRound < 1 || profile.picksPerRound > SEERFAR_WEB_PAGE_SIZE) fail('CONFIG_INVALID', 'picksPerRound');
   if (typeof profile.similarPriceBandRate !== 'number' || !(profile.similarPriceBandRate > 0 && profile.similarPriceBandRate < 1)) fail('CONFIG_INVALID', 'similarPriceBandRate');

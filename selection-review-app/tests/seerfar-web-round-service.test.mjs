@@ -11,8 +11,8 @@ const ORIGIN = 'chrome-extension://synthetic-extension-id';
 const owner = { userId: 'user:owner' };
 
 const config = {
-  profiles: { miska: { schemaVersion: 'seerfar-store-selection-profile-v1', targetStore: 'miska', version: 'miska-test-1', categoryPaths: [CLOTHING],
-    excludedCategoryPaths: [], priceRub: { min: 800, max: null }, maxWeightGrams: 1000, minMonthlySales: 20, picksPerRound: 2,
+  profiles: { miska: { schemaVersion: 'seerfar-store-selection-profile-v1', targetStore: 'miska', version: 'miska-test-1', positioning: '合成测试店', categoryPaths: [CLOTHING],
+    excludedCategoryPaths: [], priceRub: { min: 800, max: null }, maxWeightGrams: 1000, presaleMaxDays: 14, minMonthlySales: 20, picksPerRound: 2,
     similarPriceBandRate: 0.3, seedPolicy: { maxSeeds: 3, hotMinUnits: 3, risingMinUnits: 2, risingMinRatio: 2, potentialMinViews: 2000, potentialMinToCartRate: 0.01, potentialMaxUnits: 1 }, note: null } },
   calendar: { schemaVersion: 'seerfar-season-calendar-v1', version: 'season-test-1', windows: [] }
 };

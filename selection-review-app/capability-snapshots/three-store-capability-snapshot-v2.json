@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T04:55:35.514Z",
+  "frozenAt": "2026-10-10T04:58:05.358Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 930,
-      "sha256": "d7c9bfaac2fb9158d7ec2a71e69ba4f61c5d8d4d6c3e5613529487735bc66e23",
+      "artifactCount": 932,
+      "sha256": "531d459cdf2eac791e2b6d157302110ab8422d2e0f284a832f4a6aaf6ec35532",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -440,7 +440,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "063e71442a9ed6b702bd061a47917a0395285de3276da09bbb9d54441343c09f"
+        "sha256": "b3d87f2d000d464572e9e039ea92bcad77082f93df887401ccb8d391ea9c6ec8"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -1104,7 +1104,7 @@
       },
       {
         "path": "lib/seerfar-selection-plan.mjs",
-        "sha256": "9ac113186b2b227a5585e9872db3a476c5263beae6b0253a7aeeee210486f1fa"
+        "sha256": "51e4c2b00873f6ea189e55dae21cd12832572b90f7a3ef8d7edb92600004f934"
       },
       {
         "path": "lib/seerfar-selection-screening.mjs",
@@ -1120,7 +1120,7 @@
       },
       {
         "path": "lib/seerfar-web-round-service.mjs",
-        "sha256": "fae2c6a0a7b19a3a609eb7ffa2c385a1ecd7ff59f8b5112a892c130ce9669e03"
+        "sha256": "eb3479131e47c897af3482a9eb2354100cf7aad9fbfb7e760e890d73bddda5ba"
       },
       {
         "path": "lib/seerfar-web-round.mjs",
@@ -1199,8 +1199,12 @@
         "sha256": "aea684659cad84c6c8e1bd2b0d57f89ac5b5e708ff319c21bd53c75c296c0310"
       },
       {
+        "path": "lib/store-profile.mjs",
+        "sha256": "a59d8916acf569f88f01eb0be6bdaa92686ca05e9e13ec0489a45e4e94bd4a05"
+      },
+      {
         "path": "lib/store-sales-seed-service.mjs",
-        "sha256": "55bdd8d6446fe529cd3a75b1a7af67ff9f71e232235981e20cac58070c036ede"
+        "sha256": "550a718cdb80a54d0281e492d760aa21b54f129707cb54478acde81a4a01bef1"
       },
       {
         "path": "lib/store-sales-seeds.mjs",
@@ -1616,7 +1620,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "02e4cc8db7ad8cbd064f3f97d378dc167590cd1d5ccb896107ce957490f28369"
+        "sha256": "43f9ec33727edbce337b492f299f06b1105b24bf04a1011dc49e28e1c3f14929"
       },
       {
         "path": "src/App.jsx",
@@ -3524,7 +3528,7 @@
       },
       {
         "path": "tests/seerfar-selection-plan.test.mjs",
-        "sha256": "1a5e55337ea2d3d01941a9a9a00c7f7b1be4114c23914128afcbeb335c039fd9"
+        "sha256": "508db394492e1fb0168825b337b8369a225bccb03bc42b6ada157f869c92aef5"
       },
       {
         "path": "tests/seerfar-software-api-guard.test.mjs",
@@ -3544,11 +3548,11 @@
       },
       {
         "path": "tests/seerfar-web-round-service.test.mjs",
-        "sha256": "408998a6a89b6966bf1ae496ea8ea6582a186d3706eed4e665fb2bf06e89c60e"
+        "sha256": "17981f5b9789f7922ae1783d658e28a60d270e7eb0926be1067b333e9e7c4b86"
       },
       {
         "path": "tests/seerfar-web-round.test.mjs",
-        "sha256": "fe8897d840475d9e36e8ff37529aaaf725d2a31a1a80c47fcdc3802f04370bfd"
+        "sha256": "cd385e01c27ffe57b01f9597ca9d7b49025140ffe15af66dd6c83b75d3664bb7"
       },
       {
         "path": "tests/selection-desk-ui.test.mjs",
@@ -3673,6 +3677,10 @@
       {
         "path": "tests/store-binding.test.mjs",
         "sha256": "dbc1e3482a9a53bcbac23dc3dd83a24cf25fa73f19c288df8e6cbb06f2420e20"
+      },
+      {
+        "path": "tests/store-profile.test.mjs",
+        "sha256": "d94f352f0a50d94ada75df25864033a874da03f29a7e9534b1442ac1318ee13e"
       },
       {
         "path": "tests/store-sales-seeds.test.mjs",
@@ -6150,6 +6158,7 @@
         "lib/ozon-store-sales-reader.mjs",
         "lib/store-sales-seed-service.mjs",
         "lib/seerfar-todos.mjs",
+        "lib/store-profile.mjs",
         "lib/seerfar-web-round.mjs",
         "lib/seerfar-web-round-service.mjs",
         "src/components/SeerfarWebRoundCard.jsx",
@@ -6190,6 +6199,7 @@
         "tests/seerfar-web-round.test.mjs",
         "tests/seerfar-web-round-service.test.mjs",
         "tests/store-sales-seeds.test.mjs",
+        "tests/store-profile.test.mjs",
         "tests/seerfar-web-extension.test.mjs",
         "tests/a-discovery-estimate.test.mjs",
         "tests/a-discovery-estimate-store.test.mjs",

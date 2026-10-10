@@ -17,6 +17,7 @@ import { loadSeerfarSelectionConfig } from './lib/seerfar-selection-config.mjs';
 import { createSeerfarWebRoundService } from './lib/seerfar-web-round-service.mjs';
 import { createStoreSalesSeedService } from './lib/store-sales-seed-service.mjs';
 import { seerfarTodos } from './lib/seerfar-todos.mjs';
+import { StoreProfileError, storeProfileView, updateStoreProfile } from './lib/store-profile.mjs';
 import { createOzonStoreSalesReader, storeSalesRoutes } from './lib/ozon-store-sales-reader.mjs';
 import { createDiscoveryTitleTranslator, DiscoveryTitleTranslationError } from './lib/discovery-title-translation.mjs';
 import { createADiscoveryTitleTranslationUseCase } from './lib/discovery-title-translation-store.mjs';
@@ -4271,6 +4272,31 @@ async function handleApi(req, res, pathname) {
       return json(res, 200, { accepted: true, round }, headers);
     } catch (error) { throw seerfarWebHttpError(error); }
   }
+  // 店铺档案：卖什么、价格带、重量上限、预售最多等几天、不做原因汇总。主人改的另存新版本，旧版本保留。
+  const storeProfileRoute = pathname.match(/^\/api\/store-profiles(?:\/([a-z]+))?$/);
+  if (storeProfileRoute && (req.method === 'GET' && !storeProfileRoute[1] || req.method === 'POST' && storeProfileRoute[1])) {
+    const actor = runtimeIdentityProvider.resolveActor({ request: req });
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+      throw httpError(403, '请先登录主人身份后再看店铺档案。');
+    }
+    if (!seerfarSelectionConfig.config) throw httpError(503, '店铺档案配置读不出来。', { code: 'store_profile_config_unavailable' });
+    const config = seerfarSelectionConfig.config;
+    if (req.method === 'POST') {
+      const input = await readJsonRequestBody(req, { maxBytes: 16 * 1024, requireJsonContentType: true });
+      if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['baseVersion', 'values'].includes(key)) ||
+          typeof input.baseVersion !== 'string') throw httpError(400, '店铺档案的字段无效', { code: 'store_profile_input_invalid' });
+      try {
+        await mutateData(document => updateStoreProfile(document, { targetStore: storeProfileRoute[1], baseVersion: input.baseVersion, values: input.values,
+          actor, at: now(), config }));
+      } catch (error) {
+        if (error instanceof StoreProfileError) throw httpError(error.status, error.publicMessage, { code: `store_profile_${error.code.toLowerCase()}` });
+        throw error;
+      }
+    }
+    const document = await readData();
+    return json(res, 200, { profiles: Object.fromEntries(Object.keys(config.profiles).map(store => [store, storeProfileView(document, store, { config })])) });
+  }
+
   // 读本店近 8 周按 SKU 的销量（只读 Seller API），挑出"本店爆款找相似"的种子。
   if (req.method === 'POST' && pathname === '/api/seerfar-selection/store-sales') {
     const actor = runtimeIdentityProvider.resolveActor({ request: req });

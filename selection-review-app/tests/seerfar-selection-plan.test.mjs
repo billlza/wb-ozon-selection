@@ -9,8 +9,8 @@ const CLOTHING = '宠物用品 > 宠物服装和靴子 > 宠物服装';
 const BED = '宠物用品 > 携带和睡眠配件 > 宠物躺床';
 
 function profile(overrides = {}) {
-  return { schemaVersion: 'seerfar-store-selection-profile-v1', targetStore: 'miska', version: 'miska-test-1', categoryPaths: [CLOTHING, BED],
-    excludedCategoryPaths: [], priceRub: { min: 800, max: null }, maxWeightGrams: 1000, minMonthlySales: 20, picksPerRound: 5,
+  return { schemaVersion: 'seerfar-store-selection-profile-v1', targetStore: 'miska', version: 'miska-test-1', positioning: '合成测试店', categoryPaths: [CLOTHING, BED],
+    excludedCategoryPaths: [], priceRub: { min: 800, max: null }, maxWeightGrams: 1000, presaleMaxDays: 14, minMonthlySales: 20, picksPerRound: 5,
     similarPriceBandRate: 0.3, seedPolicy: { maxSeeds: 3, hotMinUnits: 3, risingMinUnits: 2, risingMinRatio: 2, potentialMinViews: 2000, potentialMinToCartRate: 0.01, potentialMaxUnits: 1 }, note: null, ...overrides };
 }
 function calendar(windows) {
