@@ -1257,6 +1257,20 @@ export default function App() {
     }
   }
 
+  async function reconcileDFromPlatformState(candidateId, payload) {
+    if (!selected || candidateId !== selected.id) throw new Error("当前商品已变化，未收口。");
+    try {
+      const result = await api.reconcileDFromPlatformState(candidateId, payload);
+      setNotice({ type: "success", message: "已排了两次只读查询（商品现状和仓库库存），没有往平台写任何东西。稍等片刻页面会更新：库存正好等于你授权的数，这一轮就登记成「库存由你填写」并收口；对不上会停下，并说明停在哪一步。" });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
+
   async function recoverDInitialImport(candidateId, payload) {
     if (!selected || candidateId !== selected.id) throw new Error("当前商品已变化，未登记任何导入。");
     try {
@@ -1577,6 +1591,7 @@ export default function App() {
               onRollbackProductionAuthorization={rollbackProductionAuthorization}
               onRecoverDInitialImport={recoverDInitialImport}
               onReobserveDUnknownOutcome={reobserveDUnknownOutcome}
+              onReconcileDFromPlatformState={reconcileDFromPlatformState}
               onAuthorizeAccountRead={payload => runAccountRead(api.authorizeAccountRead, payload)}
               onContinueAccountRead={payload => runAccountRead(api.continueAccountRead, payload)}
             />

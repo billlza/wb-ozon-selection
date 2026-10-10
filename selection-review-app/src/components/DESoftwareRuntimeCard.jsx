@@ -2,7 +2,8 @@ import { dESoftwareRuntimeDisplay, eReadbackRuntimeDisplay, dESavedJobRuntimeDis
 import { useSubmit } from "./FormRevisionNotice.jsx";
 
 export default function DESoftwareRuntimeCard({ runtime, readback, savedJobRuntime = null, onContinueSaved = null,
-  onDispatchNewRound = null, onRollbackAuthorization = null, onRecoverInitialImport = null, onReobserveUnknownOutcome = null }) {
+  onDispatchNewRound = null, onRollbackAuthorization = null, onRecoverInitialImport = null, onReobserveUnknownOutcome = null,
+  onReconcileFromPlatformState = null }) {
   const { saving, error, run } = useSubmit();
   const saved = dESavedJobRuntimeDisplay(savedJobRuntime);
   if (saved) return (
@@ -24,6 +25,17 @@ export default function DESoftwareRuntimeCard({ runtime, readback, savedJobRunti
           onClick={() => run(async () => { await onDispatchNewRound(saved.newRound); })}>
           {saving ? "正在再派一轮…" : "再派一轮生产作业"}</button>
       </div> : saved.newRoundBlocker ? <p>{saved.newRoundBlocker}</p> : null}
+      {saved.canReconcileFromPlatformState ? <div aria-label="按平台现状收口">
+        <p>平台已经把这件商品建好了（商品号 {saved.platformStateReconciliation?.productId}）。导入任务过一段时间会被平台清掉，
+          清掉以后「按新分类重新观察一次」读不到它，只会再停一次。按平台现状收口改为<strong>只读</strong>查两次：
+          这件商品现在的状态（同一商品号、没有错误、价格已生效），和你授权的那个仓库的库存。
+          库存正好等于你授权的数，就把这一轮登记成「库存由你填写」并收口；
+          <strong>不会重发导入，也不会写库存，读到 0 也不写</strong>。核实不了会照旧停下，并说明停在哪一步。
+          {saved.platformStateReconciliationAttemptsLeft !== null ? ` 这个导入任务还能这样收口 ${saved.platformStateReconciliationAttemptsLeft} 次。` : ""}</p>
+        <button type="button" disabled={saving || typeof onReconcileFromPlatformState !== "function"}
+          onClick={() => run(async () => { await onReconcileFromPlatformState(saved.platformStateReconciliation); })}>
+          {saving ? "正在按平台现状收口…" : "按平台现状收口"}</button>
+      </div> : saved.platformStateReconciliationBlocker ? <p>{saved.platformStateReconciliationBlocker.message ?? saved.platformStateReconciliationBlocker}</p> : null}
       {saved.canReobserveUnknownOutcome ? <div aria-label="按新分类重新观察一次">
         <p>上一次查询时，平台在导入任务上报了错误，当时的软件只要见到错误就一律判「结果未知」并停下，
           不区分「警告」和「真错误」。现在已经会区分了，所以可以按新规则再看一次。
