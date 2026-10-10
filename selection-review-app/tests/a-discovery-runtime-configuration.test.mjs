@@ -93,7 +93,7 @@ test('LinkFox credential failures redact subprocess output and preserve unknown 
   await assert.rejects(read(input),error=>error===unknown);
   const controller=new AbortController(),reason=new Error('synthetic cancellation');controller.abort(reason);
   await assert.rejects(read({...input,signal:controller.signal}),error=>error===reason);
-  for(const patch of [{runtimeMode:'central_production',platform:'darwin'},{runtimeMode:'local_development',platform:'linux'}]) {
+  for(const patch of [{runtimeMode:'central_production',platform:'darwin'},{runtimeMode:'local_development',platform:'aix'}]) {
     const unavailable=createLinkfoxDiscoverySecretReader({bindings:[credential],...patch,execFileImpl:async()=>{throw new Error('must not run');}});
     await assert.rejects(unavailable(input),/CREDENTIAL_UNAVAILABLE/);
   }

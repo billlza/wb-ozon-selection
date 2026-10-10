@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T04:51:30.602Z",
+  "frozenAt": "2026-10-10T05:19:28.666Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 914,
-      "sha256": "0077e59aa008d37b7e4b21981da716e11ba73ea7d833377a286f861abb77a534",
+      "artifactCount": 916,
+      "sha256": "4d13f746c5478f842d331836572a8e1195f0f9fee5823f0b4a19b72967966f52",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -152,7 +152,7 @@
       },
       {
         "path": "lib/aliyun-oss-asset-transport.mjs",
-        "sha256": "74505711eadb731e56f806994b4b1871c43bad69815254e871a0a2ceea75db07"
+        "sha256": "89da63d91fe65b0bc43993445e5da5fee928d281c3d532207eed0b4c2b4f86f6"
       },
       {
         "path": "lib/aliyun-oss-d-asset-integration.mjs",
@@ -164,7 +164,7 @@
       },
       {
         "path": "lib/aliyun-oss-runtime-provider.mjs",
-        "sha256": "8ec6a74b9135ace161616a07dc2302bf3a45484d69af39448ce7a9565ba88914"
+        "sha256": "947e49c5d480fa633a8f23bc0c6d3f98f70b0d4da1b01ef091873db392e2de36"
       },
       {
         "path": "lib/atomic-json-persistence.mjs",
@@ -436,7 +436,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "972ab2ac1469bf11c93e9540a8228aa554ea36bbdd1035aed25e78637410e97b"
+        "sha256": "114798c7cda190c7f61351e4e41c55396c43028db8d5d1e71cbfabc74bf8958a"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -461,6 +461,10 @@
       {
         "path": "lib/confirmed-supplier-inputs.mjs",
         "sha256": "6cb766f72d33f8d18ebd696fcf769ddc04b5ad79dbc102eb5bb5e8ec2b90a0b8"
+      },
+      {
+        "path": "lib/credential-store.mjs",
+        "sha256": "d7a126361c6ab9e40d289da64ba6e1909c84845b0cbe2d4170c560d7a4a548dc"
       },
       {
         "path": "lib/d-asset-transport-software-use-case.mjs",
@@ -724,7 +728,7 @@
       },
       {
         "path": "lib/linkfox-discovery-credentials.mjs",
-        "sha256": "f132cc0cf39e4f86d35e7c94e1d502d785bdf755144d1dff0b8bc51114c9bbac"
+        "sha256": "bd72339ce8fa95e823741e2c1e5cd4742e19b2fc2faad47cf1cf28c28cf56559"
       },
       {
         "path": "lib/linkfox-gateway-transport.mjs",
@@ -760,7 +764,7 @@
       },
       {
         "path": "lib/multi-user-central-runtime.mjs",
-        "sha256": "5310dec9252e47f7abfeff3285da418a4d8c3f4a8e3efb1da802d09780f262eb"
+        "sha256": "934d0a3f1b663e23a32a9fc03b3058dc6555b9d714faebf9611b9779794aa6c6"
       },
       {
         "path": "lib/official-fx-reader.mjs",
@@ -820,7 +824,7 @@
       },
       {
         "path": "lib/ozon-de-http-transport.mjs",
-        "sha256": "dda208bd4094efce09d9061f9e1ed0f6635b66c78ba208f6bee283fd2fcdc11a"
+        "sha256": "7ead7840f149c5050585d5cff822efe02a4c91579cf6a44b6bae9f4b3bbaf757"
       },
       {
         "path": "lib/ozon-de-preflight-evidence-reader.mjs",
@@ -1088,7 +1092,7 @@
       },
       {
         "path": "lib/seerfar-runtime-connector.mjs",
-        "sha256": "1b1d65318222cba9e3023039e56101bb10dd70a88aa16d4d53991de0d28f814b"
+        "sha256": "e280b0cc67ff16b4c63fc1082ffdc7d0cd5d5b0ab54be428022b1c46b26d23fe"
       },
       {
         "path": "lib/seerfar-web-discovery-contract.mjs",
@@ -1920,7 +1924,7 @@
       },
       {
         "path": "tests/a-discovery-runtime-configuration.test.mjs",
-        "sha256": "7fc511ce3de8e9ddf303f1c5e99e660917b867a4ce0d59d7ef2a5118e44d5667"
+        "sha256": "839de7af8272202a90a70157128b4b6b199e19a0a76ff89b192e6c390fef073d"
       },
       {
         "path": "tests/a-discovery-runtime-services.test.mjs",
@@ -2012,7 +2016,7 @@
       },
       {
         "path": "tests/aliyun-oss-runtime-provider.test.mjs",
-        "sha256": "abf245fcfcbda89d0f2a1a6dbac83893af74570531ddb19e285311d8dcd3b3c5"
+        "sha256": "e6098d6a2dca93ed9a24043277d98fdd5498262586a87e489d468e568a599bff"
       },
       {
         "path": "tests/api-process-lifecycle.test.mjs",
@@ -2461,6 +2465,10 @@
       {
         "path": "tests/confirmed-supplier-inputs.test.mjs",
         "sha256": "ccf02af9696c82afb34548b1549b325f05fb277e2f7bffe4360f7c690d11405d"
+      },
+      {
+        "path": "tests/credential-store.test.mjs",
+        "sha256": "0cc4cddfe35519d72772679ce458a8e2a74935668fcfd38f4555709dceaa598f"
       },
       {
         "path": "tests/cross-stage-contract-schema.test.mjs",
@@ -3476,7 +3484,7 @@
       },
       {
         "path": "tests/seerfar-runtime-connector.test.mjs",
-        "sha256": "fa320c8114fbef3ef42cc51b08cf7ccb815710123240345378e46f14eab9cd8e"
+        "sha256": "c48fa02d2d711da9dc64c27529de209194e857240c64898115e2d3e7e11752ae"
       },
       {
         "path": "tests/seerfar-software-api-guard.test.mjs",
@@ -5409,11 +5417,19 @@
       "verificationStatus": "test_files_present_not_run",
       "artifacts": [
         {
+          "path": "lib/credential-store.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/multi-user-central-runtime.mjs",
           "status": "present_in_integration_source"
         },
         {
           "path": "src/components/HeaderStatus.jsx",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/credential-store.test.mjs",
           "status": "present_in_integration_source"
         },
         {

@@ -1447,9 +1447,11 @@ export const CAPABILITY_NODES = Object.freeze([
     nextStep: "按单机多身份、中央测试、两人试用、迁移、多 Worker 顺序推进。",
     position: { x: 780, y: 500 },
     aliases: ["旧 8.2"],
-    codeRefs: [capabilityRef("lib/multi-user-central-runtime.mjs", "MULTI_USER_MIGRATION_STAGES", "多人迁移阶段")],
+    codeRefs: [capabilityRef("lib/multi-user-central-runtime.mjs", "MULTI_USER_MIGRATION_STAGES", "多人迁移阶段"),
+      capabilityRef("lib/credential-store.mjs", "createOsCredentialStore", "按操作系统选择的本机凭据层")],
     uiRefs: [capabilityRef("src/components/HeaderStatus.jsx", "HeaderStatus", "顶栏运行方式提示")],
-    testRefs: [capabilityRef("tests/multi-user-central-runtime.test.mjs", "test(", "中央运行边界测试")]
+    testRefs: [capabilityRef("tests/multi-user-central-runtime.test.mjs", "test(", "中央运行边界测试"),
+      capabilityRef("tests/credential-store.test.mjs", "test(", "本机凭据层测试")]
   })
 ]);
 

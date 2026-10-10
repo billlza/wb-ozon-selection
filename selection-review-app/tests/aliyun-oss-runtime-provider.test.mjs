@@ -7,6 +7,7 @@ import sharp from "sharp";
 import { createAliyunOssRuntimeProvider, normalizeAliyunOssRuntimeConfiguration } from "../lib/aliyun-oss-runtime-provider.mjs";
 import { readAliyunOssKeychainSecret } from "../lib/aliyun-oss-asset-transport.mjs";
 import { AliyunOssLocalPreparationError } from "../lib/production-execution-failure.mjs";
+import { CredentialStoreError } from "../lib/credential-store.mjs";
 import { createC2LocalAssetStore } from "../lib/c2-local-asset-store.mjs";
 import { authorizedProductionFixture, localFinalAssets } from "./helpers/c2-software-fixture.mjs";
 
@@ -112,7 +113,7 @@ test("construction has zero credential, filesystem and network IO; configuration
 
 test("keychain reader uses the explicitly configured service and account without a real keychain call", async () => {
   let commands = 0;
-  const secret = await readAliyunOssKeychainSecret("runtime-id", { service: "synthetic.oss.runtime", execFileImpl: async (file, args) => {
+  const secret = await readAliyunOssKeychainSecret("runtime-id", { service: "synthetic.oss.runtime", platform: "darwin", execFileImpl: async (file, args) => {
     commands++; assert.equal(file, "/usr/bin/security");
     assert.deepEqual(args, ["find-generic-password", "-w", "-s", "synthetic.oss.runtime", "-a", "runtime-id"]);
     return { stdout: "synthetic-value\n" };
@@ -183,10 +184,11 @@ test("missing gate, local-file errors and missing secrets produce no writes and 
 
 test("known local file and keychain failures have safe prewrite types; programming errors remain unchanged", async t => {
   const f = await fixture(t);
-  for (const stage of ["local", "secret", "program"]) {
+  for (const stage of ["local", "secret", "store_secret", "program"]) {
     const failure = stage === "program" ? new TypeError("synthetic programmer failure") :
+      stage === "store_secret" ? new CredentialStoreError("credential_access_denied") :
       Object.assign(new Error("synthetic private source must not escape"), { code: stage === "local" ? "ENOENT" : 44 });
-    const dependency = syntheticDependencies(f, stage === "secret" ? { secretReader: async () => { throw failure; } } :
+    const dependency = syntheticDependencies(f, stage !== "local" && stage !== "program" ? { secretReader: async () => { throw failure; } } :
       { localAssetStore: { read: async () => { throw failure; } } });
     const provider = createAliyunOssRuntimeProvider(dependency.options);
     await assert.rejects(provider.upload(uploadInput(f, provider)), error => stage === "program" ? error === failure :

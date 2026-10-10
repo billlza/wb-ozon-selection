@@ -1,5 +1,6 @@
 import { createAliyunOssClient, readAliyunOssKeychainSecret, uploadAliyunOssFinalAssets } from "./aliyun-oss-asset-transport.mjs";
 import { resolveRegisteredC2FinalAsset } from "./c2-upload-draft.mjs";
+import { CredentialStoreError } from "./credential-store.mjs";
 
 import { normalizeAliyunOssRuntimeConfiguration } from "./aliyun-oss-runtime-configuration.mjs";
 import { AliyunOssLocalPreparationError } from "./production-execution-failure.mjs";
@@ -35,7 +36,8 @@ export function createAliyunOssRuntimeProvider({ config = null, localAssetStore 
   async function readConfiguredSecret(account, options) {
     try { return await secretReader(account, options); }
     catch (error) {
-      if (error?.constructor === Error && (Number.isInteger(error.code) || ["ENOENT", "EACCES", "EPERM", "ETIMEDOUT"].includes(error.code))) {
+      if (error instanceof CredentialStoreError && error.code !== "credential_read_cancelled" ||
+          error?.constructor === Error && (Number.isInteger(error.code) || ["ENOENT", "EACCES", "EPERM", "ETIMEDOUT"].includes(error.code))) {
         throw new AliyunOssLocalPreparationError("OSS_CREDENTIAL_UNAVAILABLE");
       }
       throw error;
