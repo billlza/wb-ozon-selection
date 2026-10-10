@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T05:19:28.666Z",
+  "frozenAt": "2026-10-10T05:55:39.250Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 916,
-      "sha256": "4d13f746c5478f842d331836572a8e1195f0f9fee5823f0b4a19b72967966f52",
+      "sha256": "e06aaa468a945e68f4b62a78648844069d27ef8685b0c61996d1d14c5a87a4ec",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -728,7 +728,7 @@
       },
       {
         "path": "lib/linkfox-discovery-credentials.mjs",
-        "sha256": "bd72339ce8fa95e823741e2c1e5cd4742e19b2fc2faad47cf1cf28c28cf56559"
+        "sha256": "6d3a45a3f1da237b52cc6370e07d5324c74ec3b30b1aada2d87a69f3cfff247d"
       },
       {
         "path": "lib/linkfox-gateway-transport.mjs",
@@ -824,7 +824,7 @@
       },
       {
         "path": "lib/ozon-de-http-transport.mjs",
-        "sha256": "7ead7840f149c5050585d5cff822efe02a4c91579cf6a44b6bae9f4b3bbaf757"
+        "sha256": "67707865c15f330533e5c6e5fc66248dd2c204dd84405382dadd2bd92dc8d03a"
       },
       {
         "path": "lib/ozon-de-preflight-evidence-reader.mjs",
@@ -1904,7 +1904,7 @@
       },
       {
         "path": "tests/a-discovery-api-boundary.test.mjs",
-        "sha256": "80fa39f2cb0f7417fb27ea38795ae74e361ec3113bc76a080a3d65e006b4ac04"
+        "sha256": "89f7d12f5589fc46462761605bf9bcd2bb9d103a366bf2b9cbae8738359f7875"
       },
       {
         "path": "tests/a-discovery-candidate-import.test.mjs",
@@ -1924,7 +1924,7 @@
       },
       {
         "path": "tests/a-discovery-runtime-configuration.test.mjs",
-        "sha256": "839de7af8272202a90a70157128b4b6b199e19a0a76ff89b192e6c390fef073d"
+        "sha256": "8be96857293c939093d0546f5d5191c52acdef68b4501c5a09004b9ed32602da"
       },
       {
         "path": "tests/a-discovery-runtime-services.test.mjs",
@@ -2468,7 +2468,7 @@
       },
       {
         "path": "tests/credential-store.test.mjs",
-        "sha256": "0cc4cddfe35519d72772679ce458a8e2a74935668fcfd38f4555709dceaa598f"
+        "sha256": "1b60b5266f50773f984fb33ee290466869750e026d7602c1a4abf02e349005e5"
       },
       {
         "path": "tests/cross-stage-contract-schema.test.mjs",

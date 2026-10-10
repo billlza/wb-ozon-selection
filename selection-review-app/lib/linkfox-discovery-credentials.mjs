@@ -52,7 +52,8 @@ function createLocalDiscoverySecretReader({ bindings, runtimeMode, execFileImpl,
       signal?.throwIfAborted();
       // The credential store already reduced subprocess failures to a code; subprocess text can contain secrets.
       if (error instanceof CredentialStoreError) {
-        throw new ErrorType(error.code === 'credential_missing' ? 'CREDENTIAL_MISSING' : 'CREDENTIAL_READ_FAILED');
+        throw new ErrorType(error.code === 'credential_missing' ? 'CREDENTIAL_MISSING'
+          : error.code === 'credential_store_unavailable' ? 'CREDENTIAL_UNAVAILABLE' : 'CREDENTIAL_READ_FAILED');
       }
       throw error;
     }

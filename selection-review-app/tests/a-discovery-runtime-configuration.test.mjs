@@ -83,7 +83,7 @@ test('LinkFox credential reader resolves only its explicitly configured route af
 
 test('LinkFox credential failures redact subprocess output and preserve unknown errors and cancellation', async () => {
   const input={credentialAlias:credential.credentialAlias,provider:'linkfox'};
-  for(const [code,expected] of [[44,'CREDENTIAL_MISSING'],[1,'CREDENTIAL_READ_FAILED'],['ENOENT','CREDENTIAL_READ_FAILED']]) {
+  for(const [code,expected] of [[44,'CREDENTIAL_MISSING'],[1,'CREDENTIAL_READ_FAILED'],['EACCES','CREDENTIAL_READ_FAILED'],['ENOENT','CREDENTIAL_UNAVAILABLE']]) {
     const read=createLinkfoxDiscoverySecretReader({bindings:[credential],runtimeMode:'local_development',platform:'darwin',
       execFileImpl:async()=>{throw Object.assign(new Error('synthetic-sensitive-stderr'),{code,stdout:'synthetic-sensitive-stdout'});}});
     await assert.rejects(read(input),error=>{assert.match(error.message,new RegExp(expected));assert.doesNotMatch(JSON.stringify(error),/synthetic-sensitive/);return true;});

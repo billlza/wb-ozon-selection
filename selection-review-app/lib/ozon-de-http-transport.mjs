@@ -1,4 +1,4 @@
-import { createOsCredentialStore, isCredentialStorePlatformSupported } from "./credential-store.mjs";
+import { CredentialStoreError, createOsCredentialStore, isCredentialStorePlatformSupported } from "./credential-store.mjs";
 import { sameStoreRef, isCompleteStoreRef } from "./store-binding.mjs";
 import { assertNoProductionSecrets, isCanonicalFrozenRef, fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
 import { OzonDEHttpTransportError, normalizeOzonDECredentialBindings, assertOzonDECredentialBinding,
@@ -46,6 +46,9 @@ export async function readOzonDEKeychainSecret(binding, { signal, runtimeMode = 
     stdout = await store.readSecret({ service: binding.keychainService, account: binding.keychainAccount }, { maxBuffer: 8 * 1024, timeout: 5000, signal });
   } catch (error) {
     if (programError(error)) throw error;
+    if (error instanceof CredentialStoreError && error.code === "credential_store_unavailable") {
+      throw transportError("OZON_DE_CREDENTIAL_READER_UNAVAILABLE", { layer: "credential" });
+    }
     // This process boundary deliberately excludes stdout, stderr, command arguments and the original error object.
     throw transportError(signal?.aborted ? "OZON_DE_HTTP_CANCELLED" : "OZON_DE_CREDENTIAL_READ_FAILED", { layer: "credential" });
   }

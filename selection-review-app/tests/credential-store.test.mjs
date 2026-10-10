@@ -144,6 +144,9 @@ test("every caller reads through the store on Windows and Linux with unchanged n
   assert.deepEqual(ozonLinux.calls[0][1], ["lookup", "service", "egg-ozon-operations-center", "account", "ozon-store-b-seller-api"]);
   await assert.rejects(readOzonDEKeychainSecret(ozonBinding, { credentialStore: createFakeCredentialStore([]) }),
     error => error instanceof OzonDEHttpTransportError && error.code === "OZON_DE_CREDENTIAL_READ_FAILED");
+  const noSecretTool = async () => { throw Object.assign(new Error("spawn secret-tool ENOENT"), { code: "ENOENT" }); };
+  await assert.rejects(readOzonDEKeychainSecret(ozonBinding, { platform: "linux", execFileImpl: noSecretTool }),
+    error => error.code === "OZON_DE_CREDENTIAL_READER_UNAVAILABLE");
   await assert.rejects(readOzonDEKeychainSecret(ozonBinding, { credentialStore: ozonStore, runtimeMode: "central_test" }),
     error => error.code === "OZON_DE_CREDENTIAL_READER_UNAVAILABLE");
 
@@ -154,6 +157,8 @@ test("every caller reads through the store on Windows and Linux with unchanged n
   assert.equal(win.calls[0][2].env.WB_OZON_CREDENTIAL_TARGET, "egg-ozon-operations-center/linkfox-api");
   const fakeLinkfox = createLinkfoxDiscoverySecretReader({ bindings: [discovery], runtimeMode: "local_development", credentialStore: createFakeCredentialStore([]) });
   await assert.rejects(fakeLinkfox({ credentialAlias: discovery.credentialAlias, provider: "linkfox" }), /CREDENTIAL_MISSING/);
+  const linuxWithoutStore = createLinkfoxDiscoverySecretReader({ bindings: [discovery], runtimeMode: "local_development", platform: "linux", execFileImpl: noSecretTool });
+  await assert.rejects(linuxWithoutStore({ credentialAlias: discovery.credentialAlias, provider: "linkfox" }), /CREDENTIAL_UNAVAILABLE/);
 
   const seerfarStore = createFakeCredentialStore([{ service: SEERFAR_KEYCHAIN_SERVICE, account: SEERFAR_KEYCHAIN_ACCOUNT, value: "synthetic-seerfar\n" }]);
   assert.equal(await readSeerfarKeychainSecret({ credentialStore: seerfarStore }), "synthetic-seerfar");
