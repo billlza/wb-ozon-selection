@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-09T23:05:50.061Z",
+  "frozenAt": "2026-10-10T00:22:36.205Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 896,
-      "sha256": "059b9da6fba227387a38140f72ad0d6cf88a8ea7f92ede6edee378bde9183ebb",
+      "artifactCount": 899,
+      "sha256": "8b7c84a2c8bb24ce5bbf83f04c5a002bcc154ad8fe858f6a9d251aa8a8bab34c",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -428,7 +428,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "05db9bd1f3fcaedc20e6140a12e96cc661e68a32ca4c943d15bfb04668ba534e"
+        "sha256": "39a302e4b707b691681f66381bc2d9e398342c01058dc45bb990e4a2bb466270"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -903,6 +903,10 @@
         "sha256": "4bb3b17e9f2954a25dcf281f068cfe210c62524526e8b7bf97e511e154d753d1"
       },
       {
+        "path": "lib/platform-projection.mjs",
+        "sha256": "99e77c2aa4aeae882ad5009c88234cbf9711ec1eb669c2a26f064eaaf1d2216e"
+      },
+      {
         "path": "lib/platform-write-bindings.mjs",
         "sha256": "d85788107a419050d89e47c52af1709d6fb1ce3c7612314b7035dcd653cb91ce"
       },
@@ -917,6 +921,10 @@
       {
         "path": "lib/post-launch-observation.mjs",
         "sha256": "e6c0af593f640e2c80d33058ed1d29dbe4aed0b759ab1ec81243ca9796761b70"
+      },
+      {
+        "path": "lib/product-core.mjs",
+        "sha256": "49410c373847422537ea71157c03ce9a84262c313f96092d3c87303dabb51793"
       },
       {
         "path": "lib/product-lifecycle-schema.mjs",
@@ -3255,6 +3263,10 @@
         "sha256": "68b33899c9a239e25f7b53aa08713d4e762b65dd74856ed0a6f00dd778de9995"
       },
       {
+        "path": "tests/product-core.test.mjs",
+        "sha256": "7437f2bc797d25eb7499b36990dc66f7f151427212c6ef28e5d6b0dc77c59650"
+      },
+      {
         "path": "tests/product-lifecycle-schema.test.mjs",
         "sha256": "be3bee5ec20a1880e96f9d97caba7e6180d0b056a93c52c780765bd30bc63545"
       },
@@ -4275,11 +4287,23 @@
       "verificationStatus": "test_files_present_not_run",
       "artifacts": [
         {
+          "path": "lib/platform-projection.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "lib/product-core.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/real-a-b-c1-flow.mjs",
           "status": "present_in_integration_source"
         },
         {
           "path": "lib/supplier-selection-flow.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/product-core.test.mjs",
           "status": "present_in_integration_source"
         },
         {

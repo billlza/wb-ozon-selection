@@ -759,8 +759,11 @@ export const CAPABILITY_NODES = Object.freeze([
     breakpoint: "当前中央持久化尚未完成。",
     nextStep: "进入 B 输入完整性检查。",
     position: { x: 1580, y: 250 },
-    codeRefs: [capabilityRef("lib/supplier-selection-flow.mjs", "createSkuLifecycleFromConfirmedSupply", "SKU 生命周期创建")],
-    testRefs: [capabilityRef("tests/real-a-b-c1-flow.test.mjs", "test(", "A→B→C1 测试")],
+    codeRefs: [capabilityRef("lib/supplier-selection-flow.mjs", "createSkuLifecycleFromConfirmedSupply", "SKU 生命周期创建"),
+      capabilityRef("lib/product-core.mjs", "buildProductCore", "商品中立核心：事实、变体组、素材集，不带平台字段；尚未接入主流程"),
+      capabilityRef("lib/platform-projection.mjs", "buildPlatformListingDraft", "从中立核心生成 Ozon / WB 上架草稿并列出缺口；只算不写，尚未接入主流程")],
+    testRefs: [capabilityRef("tests/real-a-b-c1-flow.test.mjs", "test(", "A→B→C1 测试"),
+      capabilityRef("tests/product-core.test.mjs", "test(", "中立核心与 Ozon / WB 投影测试")],
     artifactRefs: ["lib/real-a-b-c1-flow.mjs"]
   }),
 
