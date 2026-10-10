@@ -4,7 +4,7 @@ import { createPreparationSaveState } from './siblingPreparationState.js';
 import { createLatestRead, createSelectionGuard, openSavedCandidate, runMutation, shouldContinuePolling, errorMessage, candidatePlatform } from "./formState.js";
 import { validateCandidateCommentReceipt } from "./commentInput.js";
 import { c2ReferenceFailureMessage } from "./c2UploadInput.js";
-import { IMAGE_MATCH_CHANNEL, OZON_IMAGE_MATCH_CHANNEL, OZON_PAGE_READ_CHANNEL, startQueuedSupplierCapture } from "./captureStart.js";
+import { IMAGE_MATCH_CHANNEL, OZON_IMAGE_MATCH_CHANNEL, OZON_PAGE_READ_CHANNEL, SEERFAR_WEB_CHANNEL, captureStartMessage, requestSupplierCaptureStart, startQueuedSupplierCapture } from "./captureStart.js";
 import { firstInQueue, matchesQueue } from "./candidateViews";
 import AddCandidateModal from "./components/AddCandidateModal";
 import CandidateDetail, { CandidateReview } from "./components/CandidateDetail";
@@ -17,6 +17,7 @@ import HeaderStatus from "./components/HeaderStatus.jsx";
 import LocalOwnerAccessPanel from "./components/LocalOwnerAccessPanel.jsx";
 import OzonAccountPreparationCard from './components/OzonAccountPreparationCard.jsx';
 import ProductDiscoveryCard from './components/ProductDiscoveryCard.jsx';
+import SeerfarWebRoundCard from './components/SeerfarWebRoundCard.jsx';
 import ProductDetailPreparationCard from './components/ProductDetailPreparationCard.jsx';
 import Phase2ASimulation from "./components/Phase2ASimulation";
 const UserInspector = lazy(() => import("./components/UserInspector.jsx"));
@@ -133,6 +134,40 @@ export default function App() {
     read();
     return ()=>{controller.abort();window.clearTimeout(timer);discoveryReads.current.cancel();};
   },[view,accountOwnerId,discoveryRefresh]);
+  /** Seerfar 榜单（方案 B）：选品台下方的面板。一轮在等插件或等主人搜索时每 3 秒回读一次，收完就停。 */
+  const [seerfarView,setSeerfarView]=useState(null);
+  const [seerfarError,setSeerfarError]=useState(null);
+  const [seerfarRefresh,setSeerfarRefresh]=useState(0);
+  useEffect(()=>{
+    setSeerfarError(null);
+    if(view!=='desk'||!accountOwner)return undefined;
+    const controller=new AbortController();let timer;
+    async function read(){
+      try{
+        const next=await api.getSeerfarSelection(controller.signal);
+        if(controller.signal.aborted)return;
+        setSeerfarView(next);
+        if(next.rounds.some(round=>['waiting_extension','capturing'].includes(round.status))||
+          Object.values(next.storeSales||{}).some(store=>store.running))timer=window.setTimeout(read,3000);
+      }catch(error){if(!controller.signal.aborted)setSeerfarError(error.message);}
+    }
+    read();
+    return ()=>{controller.abort();window.clearTimeout(timer);};
+  },[view,accountOwnerId,seerfarRefresh]);
+  async function startSeerfarRound(payload){
+    const result=await api.startSeerfarRound(payload);
+    setSeerfarView(result);
+    const jobId=result.operationResult?.captureJob?.jobId;
+    const ack=jobId?await requestSupplierCaptureStart(jobId,window,SEERFAR_WEB_CHANNEL):null;
+    setSeerfarRefresh(value=>value+1);
+    return {type:ack?.accepted?'success':'error',text:captureStartMessage(ack,SEERFAR_WEB_CHANNEL)};
+  }
+  async function readStoreSales(targetStore){
+    const result=await api.readStoreSales({targetStore});
+    setSeerfarView(result);
+    setSeerfarRefresh(value=>value+1);
+    return {type:'success',text:'开始读了：两次销量请求之间要隔一分钟，读完这里会自己更新。'};
+  }
   /**
    * Every discovery write goes through here and never through the read guard: the guard drops its result whenever a
    * refresh or a view switch happens mid-flight, which is how a confirmed round reached the server and was reported to
@@ -1410,7 +1445,7 @@ export default function App() {
       {notice ? <div role={notice.type === "error" ? "alert" : "status"} className={`global-notice ${notice.type}`}>{notice.message}</div> : null}
 
       {DESK_VIEWS.includes(view) ? (
-        view === "desk" ? (
+        view === "desk" ? (<>
           <SelectionDesk
             discoveryView={discoveryView}
             candidates={state.candidates}
@@ -1441,7 +1476,9 @@ export default function App() {
             onEliminateCandidate={eliminateCandidate}
             onRestoreCandidate={restoreCandidate}
           />
-        ) : view === "board" ? (
+          {accountOwner ? seerfarError ? <p role="alert">读取 Seerfar 榜单失败：{seerfarError}</p>
+            : seerfarView ? <SeerfarWebRoundCard view={seerfarView} onStart={startSeerfarRound} onReadStoreSales={readStoreSales} onOpenCandidate={openDiscoveredCandidate} /> : null : null}
+        </>) : view === "board" ? (
           <PipelineBoard candidates={state.candidates} store={deskStore} onOpenCandidate={openDiscoveredCandidate}
             onEliminateCandidate={eliminateCandidate} onRestoreCandidate={restoreCandidate} />
         ) : view === "inbox" ? (

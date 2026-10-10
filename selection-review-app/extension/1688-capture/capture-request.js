@@ -30,8 +30,8 @@ export function isReviewSender(value) {
 export function validateCaptureStartSignal(message) {
   const valid = message && typeof message === "object" && !Array.isArray(message) &&
     Object.keys(message).length === 2 &&
-    [SUPPLIER_CAPTURE_REQUEST_TYPE, "SELECTION_REVIEW_OZON_CAPTURE_REQUEST", IMAGE_MATCH_REQUEST_TYPE, OZON_IMAGE_MATCH_REQUEST_TYPE]
-      .includes(message.type) &&
+    [SUPPLIER_CAPTURE_REQUEST_TYPE, "SELECTION_REVIEW_OZON_CAPTURE_REQUEST", IMAGE_MATCH_REQUEST_TYPE, OZON_IMAGE_MATCH_REQUEST_TYPE,
+      "SELECTION_REVIEW_SEERFAR_WEB_REQUEST"].includes(message.type) &&
     typeof message.captureId === "string" && /^[A-Za-z0-9_-]{1,160}$/.test(message.captureId);
   return valid ? { ok: true } : { ok: false, code: "start_signal_invalid" };
 }

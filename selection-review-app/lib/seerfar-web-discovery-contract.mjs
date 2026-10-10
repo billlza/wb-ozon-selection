@@ -34,6 +34,16 @@ const time = value => typeof value === 'string' && value.length <= 32 && Number.
 const clone = value => { assertSafeRuntimeRecord(value); return structuredClone(value); };
 const categoryPathText = value => text(value, 500) && value.trim() === value && value.split(' > ').every(segment => segment.trim().length > 0);
 
+/**
+ * A declared category is a run of whole segments: a full path ("宠物用品 > 宠物服装和靴子 > 宠物服装") or a shorter run such
+ * as one segment ("收藏品"). A product sits in it when its Chinese path contains that run at segment boundaries, so a store
+ * profile can name a category without knowing every level above it. "收藏" never matches "收藏品".
+ */
+export function seerfarCategoryMatches(path, declared) {
+  if (typeof path !== 'string' || typeof declared !== 'string' || !declared) return false;
+  return ` > ${path} > `.includes(` > ${declared} > `);
+}
+
 export function assertSeerfarWebDiscoveryRequest(request) {
   requireValue(closed(request, ['requestId', 'provider', 'contractVersion', 'platform', 'pageUrl', 'categoryPaths', 'sellerType', 'dateRange', 'maxRecords']) &&
     ref(request.requestId) && request.provider === SEERFAR_WEB_DISCOVERY_PROVIDER && request.contractVersion === SEERFAR_WEB_DISCOVERY_CONTRACT_VERSION &&
@@ -176,7 +186,7 @@ export function assertSeerfarWebDiscoveryResult(result, request) {
     try { canonical = normalizeSeerfarWebRecord(rawFromProduct(product), index, result.evidenceRef); }
     catch (error) { throw new SeerfarWebDiscoveryContractError('RESULT_INVALID', `#${index} not canonical (${error.message})`); }
     requireValue(JSON.stringify(canonical) === JSON.stringify(product), 'RESULT_INVALID', `#${index} not canonical`);
-    requireValue(declared.categoryPaths.includes(product.categoryPath.cnTitlePath), 'SCOPE_MISMATCH', `${product.productId} ${product.categoryPath.cnTitlePath}`);
+    requireValue(declared.categoryPaths.some(entry => seerfarCategoryMatches(product.categoryPath.cnTitlePath, entry)), 'SCOPE_MISMATCH', `${product.productId} ${product.categoryPath.cnTitlePath}`);
     if (declared.sellerType === 'cross_border') requireValue(product.rawSellerType === SEERFAR_WEB_RAW_SELLER_TYPE_CROSS_BORDER, 'SCOPE_MISMATCH', `${product.productId} sellerType`);
   });
   requireValue(new Set(result.products.map(product => product.productId)).size === result.products.length, 'RESULT_INVALID', 'duplicate productId');

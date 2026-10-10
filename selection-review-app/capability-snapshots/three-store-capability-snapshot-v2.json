@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T04:51:30.602Z",
+  "frozenAt": "2026-10-10T04:55:35.514Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 914,
-      "sha256": "0077e59aa008d37b7e4b21981da716e11ba73ea7d833377a286f861abb77a534",
+      "artifactCount": 930,
+      "sha256": "d7c9bfaac2fb9158d7ec2a71e69ba4f61c5d8d4d6c3e5613529487735bc66e23",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -40,15 +40,15 @@
       },
       {
         "path": "extension/1688-capture/background.js",
-        "sha256": "65d6a0b5e7b3d3a4c0f8cbbe7a5177a3788811778a328f35a460cc92047c0c11"
+        "sha256": "43d09c42d2a11782f9b8ee58e549c8477537dcf71589df09cb18da0052b5b595"
       },
       {
         "path": "extension/1688-capture/bridge.js",
-        "sha256": "8659b63d671fc98825f0aa0ae1145690c6f3ce32198b10428e5ed557dc5079a7"
+        "sha256": "ac1832afb35e61eaee561ffa93efe05af56bca01d7fa898b39a753a078225de8"
       },
       {
         "path": "extension/1688-capture/capture-request.js",
-        "sha256": "14aded7da49394c3976ee683f7020af28b28a1bb8ac67da958ddde4b06ae392a"
+        "sha256": "3fdeccc64522754632fbae6d0b8c8149cde83f382c0df0c391faf0a3a36dd7a1"
       },
       {
         "path": "extension/1688-capture/collector-1688-image-search.js",
@@ -72,7 +72,11 @@
       },
       {
         "path": "extension/1688-capture/manifest.json",
-        "sha256": "012548da68f379c2ec6577e0fe093a6ca933a6b907c848adc955ae115b331a91"
+        "sha256": "4761d1838de2af016459936287053eb9f6e38d65efbebcc0316d7d832f43dc0a"
+      },
+      {
+        "path": "extension/1688-capture/seerfar-web-capture.js",
+        "sha256": "3f9ab4ee9f2894f929fff707bfc983dd016f9a2c8474229d338d6c113580da8e"
       },
       {
         "path": "extension/1688-capture/source-routing.js",
@@ -436,7 +440,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "972ab2ac1469bf11c93e9540a8228aa554ea36bbdd1035aed25e78637410e97b"
+        "sha256": "063e71442a9ed6b702bd061a47917a0395285de3276da09bbb9d54441343c09f"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -891,6 +895,10 @@
         "sha256": "c9d0a2122219da113ce39c5d480085b257c7e32d134362a3b3643a21804e40d0"
       },
       {
+        "path": "lib/ozon-store-sales-reader.mjs",
+        "sha256": "1672bb3f488b0c28379cdfdc850678287ab7f673d2007f19448b196eb59a6d46"
+      },
+      {
         "path": "lib/ozon-submission-attributes.mjs",
         "sha256": "be171ffd1cd42d14f4e4d8208545297444d4f6b1667733f080ef895a65e7b42d"
       },
@@ -1091,8 +1099,32 @@
         "sha256": "1b1d65318222cba9e3023039e56101bb10dd70a88aa16d4d53991de0d28f814b"
       },
       {
+        "path": "lib/seerfar-selection-config.mjs",
+        "sha256": "30b859bcdbd477aa61ad3bb05a354f0da9d96be1c5571fefa132a5eb141fbcab"
+      },
+      {
+        "path": "lib/seerfar-selection-plan.mjs",
+        "sha256": "9ac113186b2b227a5585e9872db3a476c5263beae6b0253a7aeeee210486f1fa"
+      },
+      {
+        "path": "lib/seerfar-selection-screening.mjs",
+        "sha256": "4014309a921a1b958af710bbe07e8336e5469faeca0ffb65219e6140cd8d4a32"
+      },
+      {
+        "path": "lib/seerfar-todos.mjs",
+        "sha256": "ea2819121f3bacb5ff5b206eeec6eedbac359bd7eefff0260e6113e7e29ed70b"
+      },
+      {
         "path": "lib/seerfar-web-discovery-contract.mjs",
-        "sha256": "24bbde5214cc241c9cb799367d9cfacda861950759f77df92448a655b0931f20"
+        "sha256": "1a4d9127ab2dd4576ae4d5b9d472f39cdb3fc0c2f55c4705b5e614fc55c80447"
+      },
+      {
+        "path": "lib/seerfar-web-round-service.mjs",
+        "sha256": "fae2c6a0a7b19a3a609eb7ffa2c385a1ecd7ff59f8b5112a892c130ce9669e03"
+      },
+      {
+        "path": "lib/seerfar-web-round.mjs",
+        "sha256": "e528b3d99a1e529adf39ed3df6474f4a7a086a62801cc102f42d7ec0628b5a87"
       },
       {
         "path": "lib/sibling-batch-a-b-c1.mjs",
@@ -1165,6 +1197,14 @@
       {
         "path": "lib/store-binding.mjs",
         "sha256": "aea684659cad84c6c8e1bd2b0d57f89ac5b5e708ff319c21bd53c75c296c0310"
+      },
+      {
+        "path": "lib/store-sales-seed-service.mjs",
+        "sha256": "55bdd8d6446fe529cd3a75b1a7af67ff9f71e232235981e20cac58070c036ede"
+      },
+      {
+        "path": "lib/store-sales-seeds.mjs",
+        "sha256": "867378e253db369c26802e872d37d86d21042587fa6340e154734ccee22d6fe1"
       },
       {
         "path": "lib/supplier-draft.mjs",
@@ -1576,11 +1616,11 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "7dedbebd101a872fd8f5d198da82574f996754a2541716a48aa2bf8c67a21543"
+        "sha256": "02e4cc8db7ad8cbd064f3f97d378dc167590cd1d5ccb896107ce957490f28369"
       },
       {
         "path": "src/App.jsx",
-        "sha256": "09862caed8cec8604097970f84c23698ed1d00189fd6fe35d123366a84f4593a"
+        "sha256": "36e4e6f89650af1e6dc9747f9ad54e779d3e9d6049428cb6876a52a3b8534615"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1592,7 +1632,7 @@
       },
       {
         "path": "src/api.js",
-        "sha256": "8dd7541968acac420a09f9425dbced5e5962373620be1a0a651298e9d0fda305"
+        "sha256": "a33c680b05f41a8b12ff6e3ec35bf8f10c63c1d992f30c42ff593e1202a1fde5"
       },
       {
         "path": "src/bExactCommissionInput.js",
@@ -1620,7 +1660,7 @@
       },
       {
         "path": "src/captureStart.js",
-        "sha256": "738b56e10084a0deb81ba7bd1894a9b61e31b3d48cef90411bdf51d0964a4cee"
+        "sha256": "6c959a2a48fbe8ee0907e9eb22ac60094e0f8ee3ed214424356f13c370ac5c08"
       },
       {
         "path": "src/commentInput.js",
@@ -1771,6 +1811,10 @@
         "sha256": "a74ae3e783be6938dc57ccf075de1af43d3916184daa7cb2d4aeff8997a5d340"
       },
       {
+        "path": "src/components/SeerfarWebRoundCard.jsx",
+        "sha256": "7950f0dd2f4f30daad3cb2f8408c81a14a9231f000f8caad4ff0d93a0e5ef70f"
+      },
+      {
         "path": "src/components/SelectionDesk.jsx",
         "sha256": "baad82c4103c8bdf3227e6ebedde453c64cd5fd2aaf9c0c1d75d764b762264e9"
       },
@@ -1820,7 +1864,7 @@
       },
       {
         "path": "src/extensionStatus.js",
-        "sha256": "bfeae80d3fdb459a326d2d4c604e03c5d88fb10515672cae7cf3e6d144c30c2f"
+        "sha256": "8effff016560324bd27be4945eead8670906da79ad37ba4b8f838af0413ec30f"
       },
       {
         "path": "src/finalPricingReviewInput.js",
@@ -1888,7 +1932,7 @@
       },
       {
         "path": "src/styles.css",
-        "sha256": "4d81fd7e7ccdeddcc4f4748c22abe480e8941861eb76505034a71200b118065a"
+        "sha256": "6656c9c58fc30fb3c466e1866b3712acc1814e10c033162667c8a66a9cee74e7"
       },
       {
         "path": "src/supplierImageMatchView.js",
@@ -2644,7 +2688,7 @@
       },
       {
         "path": "tests/extension-capture-request.test.mjs",
-        "sha256": "55a6c0660e43934e8366515dd0e1d5d53d95dc00fff3a8995dc72ddb24b88b0b"
+        "sha256": "96a55e15b06277badfa792c6f13a12e26a4882091a7ef4b633d3828e65d9d689"
       },
       {
         "path": "tests/extension-heartbeat-api.test.mjs",
@@ -2652,7 +2696,7 @@
       },
       {
         "path": "tests/extension-status.test.mjs",
-        "sha256": "02c2c0ff1f1cb63efa63359790f8470cd7fc6e77d241bf402febbd1fc2b62c14"
+        "sha256": "fc9185f6d0a177829e7bc5588c4dcca0a0fc07d97c65d07c6563cc443bd86ef3"
       },
       {
         "path": "tests/extra-handling-fees.test.mjs",
@@ -2956,7 +3000,7 @@
       },
       {
         "path": "tests/helpers/extension-runtime-fixture.mjs",
-        "sha256": "cfb986f3bdc33ad8e14bc0bfbd097ce132c263243ba0924e29d2b153d26bdadd"
+        "sha256": "eedd36c42b4e5ccebc0a5d71ea8e9d2a2a3130d3f686ef3f0f335ca9c8c9abc4"
       },
       {
         "path": "tests/helpers/legacy-candidate-fixture.mjs",
@@ -3224,7 +3268,7 @@
       },
       {
         "path": "tests/ozon-page-capture-job.test.mjs",
-        "sha256": "21975d8ea19a6e04b2e57772d00699c08e39291b8ae127d5ebd5836184adf0ff"
+        "sha256": "9001c71a3b4913cb40129f49b504e2d321a568af3eadb31ba356041b0245e3c0"
       },
       {
         "path": "tests/ozon-product-import-batch-limit.test.mjs",
@@ -3236,15 +3280,15 @@
       },
       {
         "path": "tests/ozon-sales-capture-api.test.mjs",
-        "sha256": "9e60da1a2709c4a62094559feba7e9b4fa528db3357d4b17d973d76e8a7c6fac"
+        "sha256": "cd86f1f6987f4aa2c06eb640c47fd9d8e1da04d91f58489c344ccdefee87cbcb"
       },
       {
         "path": "tests/ozon-same-product-match.test.mjs",
-        "sha256": "40c5084b7d4b3281942f9d014973ca686c270a39719fef0f6ef3c5bb40422726"
+        "sha256": "1f65e6b0e63a7265d42b6d42b037af69c4204103c6fe8b13d482e1e015cf4f96"
       },
       {
         "path": "tests/ozon-search-extension.test.mjs",
-        "sha256": "0f69d7124fb01d97ba968f5d6f83a97ae5028a098dd812b5e872a63aad0ad1db"
+        "sha256": "743343c57257d6ff89b247cfe199b5e5123216939c6f562ef4a2fcfb8066daa5"
       },
       {
         "path": "tests/ozon-seller-api-de-adapter.test.mjs",
@@ -3304,7 +3348,7 @@
       },
       {
         "path": "tests/pinduoduo-capture.test.mjs",
-        "sha256": "a4aac1b584bf0990d0bd96c61b878a87ab3d27559d74143ccb782f71e53efbd4"
+        "sha256": "2790d86e8200e6dafbdf63072988d21386e7c8d1be62583e70590b71a295f025"
       },
       {
         "path": "tests/platform-write-bindings.test.mjs",
@@ -3332,7 +3376,7 @@
       },
       {
         "path": "tests/product-page-ui.test.mjs",
-        "sha256": "925243ac0f9e71516728d8dfb5e193c45afbf8f90a595b8167601c0ffde0eaf0"
+        "sha256": "a6e678c94b122541f9800ba03b46f19b3a36a76cca1a7a148825a1d26c6166ae"
       },
       {
         "path": "tests/production-authorization-rollback-acceptance.test.mjs",
@@ -3452,7 +3496,7 @@
       },
       {
         "path": "tests/runtime-package-api.test.mjs",
-        "sha256": "ec5519fb28bc0dc8f1210a0933242a02e2e5d53c653ebe170d9e038a82dec77f"
+        "sha256": "19d40cd11df775d9cd8c291f4a8d74e606cd3ef0952f76279c8b37035be09b11"
       },
       {
         "path": "tests/runtime-preflight-api.test.mjs",
@@ -3479,6 +3523,10 @@
         "sha256": "fa320c8114fbef3ef42cc51b08cf7ccb815710123240345378e46f14eab9cd8e"
       },
       {
+        "path": "tests/seerfar-selection-plan.test.mjs",
+        "sha256": "1a5e55337ea2d3d01941a9a9a00c7f7b1be4114c23914128afcbeb335c039fd9"
+      },
+      {
         "path": "tests/seerfar-software-api-guard.test.mjs",
         "sha256": "93fe402b877f5aac9952ad3681d841c27adcb8c746f2350b284b6ec156e72d43"
       },
@@ -3489,6 +3537,18 @@
       {
         "path": "tests/seerfar-web-discovery-contract.test.mjs",
         "sha256": "f4b7cacc1ba7b84e7193a27d1e4e65cf9c454fe6e31fee1eb73048d635168201"
+      },
+      {
+        "path": "tests/seerfar-web-extension.test.mjs",
+        "sha256": "8515bb7a575e5aafbd55ffd95aa463f5a7b050233a225468435c744de20195bf"
+      },
+      {
+        "path": "tests/seerfar-web-round-service.test.mjs",
+        "sha256": "408998a6a89b6966bf1ae496ea8ea6582a186d3706eed4e665fb2bf06e89c60e"
+      },
+      {
+        "path": "tests/seerfar-web-round.test.mjs",
+        "sha256": "fe8897d840475d9e36e8ff37529aaaf725d2a31a1a80c47fcdc3802f04370bfd"
       },
       {
         "path": "tests/selection-desk-ui.test.mjs",
@@ -3588,23 +3648,23 @@
       },
       {
         "path": "tests/source-capture-job-api.test.mjs",
-        "sha256": "4c789d89d6805351d82abfdb3c2f6066b8e3b5578086ae93a63485225aa8e239"
+        "sha256": "f2ba34869462bf22269b974e69e06f43ff2a4b8c37cf4bd7bc247c374aafff93"
       },
       {
         "path": "tests/source-capture-recapture-api.test.mjs",
-        "sha256": "768fee06f97cda0b61efb0fe6592246acc7bfb016145e3b4ab6c7b71f26fbca5"
+        "sha256": "5c990ef907a3907e3a4b6ba58789196edc061c63e01048fda3babdbacfbe1fa1"
       },
       {
         "path": "tests/source-capture-restart-reconciliation.test.mjs",
-        "sha256": "9e0a7b097602e14e8eb1f0651dc1189bb8c022cba068aaa387c2a194688416c4"
+        "sha256": "1a6104d5938dd59d0b17429a4c825e18a906df053eeb76563f30cae2a7723e97"
       },
       {
         "path": "tests/source-capture-review-api.test.mjs",
-        "sha256": "d21886fdc96a61511966fc583bbaa0bf838bb194d25d6ffcc73c9b925fc45ff7"
+        "sha256": "30ca9d13212109064c1ca0b6d555c34da493a786930682a919844a47b0851125"
       },
       {
         "path": "tests/source-capture.test.mjs",
-        "sha256": "18c19999abf087bdab8c3422f79d91d6886f3546c53f706076394e0520146bec"
+        "sha256": "b62e60cdc736e3e815ca015fd552c818fcbc27ca30b99d389df68071384fd62e"
       },
       {
         "path": "tests/store-binding-api.test.mjs",
@@ -3613,6 +3673,10 @@
       {
         "path": "tests/store-binding.test.mjs",
         "sha256": "dbc1e3482a9a53bcbac23dc3dd83a24cf25fa73f19c288df8e6cbb06f2420e20"
+      },
+      {
+        "path": "tests/store-sales-seeds.test.mjs",
+        "sha256": "9efe9a1d5d0b20f7a501bf0cdaea5fae7b0069ee458820087137cb849bb80d8c"
       },
       {
         "path": "tests/structured-dispatch-integration.test.mjs",
@@ -3628,11 +3692,11 @@
       },
       {
         "path": "tests/supplier-image-match-api.test.mjs",
-        "sha256": "a366189d07ef0b411e0ffeea247309c7beaf1c6808a57e66b4f4e8d036c1f3af"
+        "sha256": "2a9d17fbdf6858d1dc4e56d3dc0a4ab7010b71c72b0700cdac34c31b45424b0b"
       },
       {
         "path": "tests/supplier-image-match-extension.test.mjs",
-        "sha256": "363a1c5b5c3b1a307e63976b7e475189138615ecf5a726fb1603803e95b567bc"
+        "sha256": "5b5ccdcd80b317304f7a92fe7ae787bbdc0dffe5a1315ae766e7ce152def9e93"
       },
       {
         "path": "tests/supplier-image-match-ui.test.mjs",
@@ -3640,7 +3704,7 @@
       },
       {
         "path": "tests/supplier-image-match.test.mjs",
-        "sha256": "e30a4663ca233a9038f8b9a8bb2e9bf083713e511a61ba087eef4bc95e305f55"
+        "sha256": "e404de9d2f4da644177720ee6288782fda709afe76c2f0f60c449c815a1ee981"
       },
       {
         "path": "tests/supplier-option.test.mjs",
@@ -4056,6 +4120,10 @@
         },
         {
           "path": "extension/1688-capture/manifest.json",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "extension/1688-capture/seerfar-web-capture.js",
           "status": "present_in_integration_source"
         },
         {
@@ -6075,6 +6143,16 @@
         "lib/a-discovery-contract.mjs",
         "lib/seerfar-discovery-contract.mjs",
         "lib/seerfar-web-discovery-contract.mjs",
+        "lib/seerfar-selection-plan.mjs",
+        "lib/seerfar-selection-config.mjs",
+        "lib/seerfar-selection-screening.mjs",
+        "lib/store-sales-seeds.mjs",
+        "lib/ozon-store-sales-reader.mjs",
+        "lib/store-sales-seed-service.mjs",
+        "lib/seerfar-todos.mjs",
+        "lib/seerfar-web-round.mjs",
+        "lib/seerfar-web-round-service.mjs",
+        "src/components/SeerfarWebRoundCard.jsx",
         "lib/a-discovery-estimate.mjs",
         "lib/a-discovery-estimate-store.mjs",
         "lib/discovery-market-snapshot.mjs",
@@ -6108,6 +6186,11 @@
         "tests/a-discovery-contract.test.mjs",
         "tests/seerfar-discovery-contract.test.mjs",
         "tests/seerfar-web-discovery-contract.test.mjs",
+        "tests/seerfar-selection-plan.test.mjs",
+        "tests/seerfar-web-round.test.mjs",
+        "tests/seerfar-web-round-service.test.mjs",
+        "tests/store-sales-seeds.test.mjs",
+        "tests/seerfar-web-extension.test.mjs",
         "tests/a-discovery-estimate.test.mjs",
         "tests/a-discovery-estimate-store.test.mjs",
         "tests/discovery-market-snapshot.test.mjs",

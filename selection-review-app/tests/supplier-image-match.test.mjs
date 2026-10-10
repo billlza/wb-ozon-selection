@@ -67,7 +67,7 @@ function rawEvidence(overrides = {}) {
 
 function queued(previous = null) {
   const source = supplierImageMatchSource(capturedCandidate()).source;
-  return queuedSupplierImageMatchRecord(previous, { captureId: "IMJ-synthetic", source, requiredExtensionVersion: "1.4.0",
+  return queuedSupplierImageMatchRecord(previous, { captureId: "IMJ-synthetic", source, requiredExtensionVersion: "1.4.1",
     authorizedBy: "owner:synthetic", authorizedAt: "2026-10-09T07:59:00.000Z", candidateRevision: 7 });
 }
 

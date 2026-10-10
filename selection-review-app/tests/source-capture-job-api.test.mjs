@@ -88,7 +88,7 @@ function patch(pathname, body) {
   });
 }
 
-function heartbeat(version = "1.4.0") {
+function heartbeat(version = "1.4.1") {
   return post("/api/extension/heartbeat", {
     version,
     backgroundReady: true,
@@ -96,7 +96,7 @@ function heartbeat(version = "1.4.0") {
   }, { Origin: extensionOrigin });
 }
 
-function claimJob(jobId, version = "1.4.0") {
+function claimJob(jobId, version = "1.4.1") {
   return post(`/api/extension/capture-jobs/${jobId}/claim`, { version }, { Origin: extensionOrigin });
 }
 
@@ -186,7 +186,7 @@ test("A确认只建立本次作业，明确领取一次并原子保存SKU，心�
   assert.equal(queued.status, "supplier_capture_job_queued");
   assert.equal(queued.captureJob.status, "queued");
   assert.equal(queued.captureJob.attempt, 0);
-  assert.equal(queued.captureJob.requiredExtensionVersion, "1.4.0");
+  assert.equal(queued.captureJob.requiredExtensionVersion, "1.4.1");
   assert.equal(queued.candidate.sourceCapture.status, "waiting_extension");
   assert.equal(queued.bStarted, false);
   assert.equal(queued.c1Created, false);
@@ -343,7 +343,7 @@ test("A确认只建立本次作业，明确领取一次并原子保存SKU，心�
   assert.equal((await repeat.json()).code, "previous_capture_requires_review");
   assert.equal(await readFile(dataFile, "utf8"), beforeRepeat);
   assert.equal(timedOut.workflowStatus, "codex_processing");
-  assert.equal((await (await heartbeat("1.4.0")).json()).captureJob, null, "unknown_outcome不得自动重新领取");
+  assert.equal((await (await heartbeat("1.4.1")).json()).captureJob, null, "unknown_outcome不得自动重新领取");
 
   // 等插件的过程中主人改了别的资料，商品修订号就会前进。收口只认这条采集记录本身（captureId），不再因为修订号变了
   // 就放弃：否则候选永远停在 waiting_extension，previous_capture_requires_review 会拒绝之后的每一次采集申请。

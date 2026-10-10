@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "minimum_chrome_version": "120",
   "name": "全店经营工作台 · 商品只读采集器",
-  "version": "1.4.0",
-  "description": "仅领取本机全店经营工作台明确建立的单候选只读作业，读取1688、拼多多或Ozon商品页结构化证据，用首图在1688搜一次图，或在Ozon首页搜索栏上传首图以图搜一次、按俄文词搜一次，并回传到127.0.0.1:4317。",
+  "version": "1.4.1",
+  "description": "仅领取本机全店经营工作台明确建立的单项只读作业：读取1688、拼多多或Ozon商品页结构化证据，用首图在1688搜一次图，或在Ozon首页搜索栏上传首图以图搜一次、按俄文词搜一次，或在主人已登录的Seerfar热销榜单选品页收下主人搜出的一页结果，回传到127.0.0.1:4317。",
   "permissions": [
     "alarms",
     "scripting"
@@ -22,6 +22,7 @@
     "https://www.ozon.ru/search-by-image*",
     "https://s.1688.com/youyuan/*",
     "https://air.1688.com/kapp/*",
+    "https://www.seerfar.cn/*",
     "http://127.0.0.1:4317/*"
   ],
   "background": {

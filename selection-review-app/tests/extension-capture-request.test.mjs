@@ -139,7 +139,7 @@ function validPayload(overrides = {}) {
     sourceUrl: "https://qr.1688.com/s/Abc_123",
     expectedOfferId: "",
     allowShortLinkResolution: true,
-    requiredExtensionVersion: "1.4.0",
+    requiredExtensionVersion: "1.4.1",
     attempt: 1,
     ...overrides
   };
@@ -148,7 +148,7 @@ function validPayload(overrides = {}) {
 const captureTab = overrides => ({ id: 7, url: "https://detail.1688.com/offer/943009939489.html", status: "complete", ...overrides });
 const captureJob = () => ({ captureId: "SCJ-t", candidateId: "candidate:x", token: "t", dataRevision: 1, attempt: 1,
   mode: "a_supplier_capture", sourceUrl: "https://detail.1688.com/offer/943009939489.html", expectedOfferId: "943009939489",
-  requiredExtensionVersion: "1.4.0" });
+  requiredExtensionVersion: "1.4.1" });
 const fakeChrome = tab => ({ tabs: { onUpdated: { addListener() {}, removeListener() {} }, get: async () => tab } });
 
 test("目标页面一落地就可以开始采集，不必等整页加载完", async () => {
@@ -181,12 +181,12 @@ test("服务端真实作业里的候选编号带冒号，插件必须接受它�
   // 2026-09-12：主人连续四次申请采集全部失败，插件的结论码是 capture_job_invalid，插件一次页面都没打开。
   // 根因就是这条身份校验：候选编号是 `candidate:<uuid>`，而当时的正则不许冒号，于是每一份真实作业都无效。
   const real = validPayload({ candidateId: "candidate:2e417eaf-7207-4e89-b0d3-5f2c4d9eade3" });
-  assert.deepEqual(validateSupplierCaptureRequest({ payload: real, manifestVersion: "1.4.0" }).ok, true);
+  assert.deepEqual(validateSupplierCaptureRequest({ payload: real, manifestVersion: "1.4.1" }).ok, true);
   // 采集作业编号自己仍然是严格的那一套，冒号不属于它。
-  assert.equal(validateSupplierCaptureRequest({ payload: validPayload({ captureId: "SCJ:test" }), manifestVersion: "1.4.0" }).code, "request_payload_missing");
+  assert.equal(validateSupplierCaptureRequest({ payload: validPayload({ captureId: "SCJ:test" }), manifestVersion: "1.4.1" }).code, "request_payload_missing");
   // 放宽只加了冒号和点：空格、斜杠、问号这些能改变请求含义的字符仍然被拒。
   for (const bad of ["candidate:2e417 eaf", "candidate:../other", "candidate:2e417eaf?x=1", ""]) {
-    assert.equal(validateSupplierCaptureRequest({ payload: validPayload({ candidateId: bad }), manifestVersion: "1.4.0" }).code,
+    assert.equal(validateSupplierCaptureRequest({ payload: validPayload({ candidateId: bad }), manifestVersion: "1.4.1" }).code,
       "request_payload_missing", `候选编号「${bad}」必须被拒`);
   }
 });
@@ -195,25 +195,25 @@ test("页面桥接请求按来源、字段、模式、revision和版本返回精
   assert.deepEqual(validateSupplierCaptureRequest({
     payload: validPayload(),
     senderUrl: "https://example.com/",
-    manifestVersion: "1.4.0"
+    manifestVersion: "1.4.1"
   }), { ok: false, code: "request_origin_invalid" });
-  assert.equal(validateSupplierCaptureRequest({ payload: null, manifestVersion: "1.4.0" }).code, "request_payload_missing");
-  assert.equal(validateSupplierCaptureRequest({ payload: validPayload({ token: "" }), manifestVersion: "1.4.0" }).code, "request_payload_missing");
-  assert.equal(validateSupplierCaptureRequest({ payload: validPayload({ mode: "listing_preparation" }), manifestVersion: "1.4.0" }).code, "capture_mode_invalid");
-  assert.equal(validateSupplierCaptureRequest({ payload: validPayload({ dataRevision: "3" }), manifestVersion: "1.4.0" }).code, "revision_invalid");
+  assert.equal(validateSupplierCaptureRequest({ payload: null, manifestVersion: "1.4.1" }).code, "request_payload_missing");
+  assert.equal(validateSupplierCaptureRequest({ payload: validPayload({ token: "" }), manifestVersion: "1.4.1" }).code, "request_payload_missing");
+  assert.equal(validateSupplierCaptureRequest({ payload: validPayload({ mode: "listing_preparation" }), manifestVersion: "1.4.1" }).code, "capture_mode_invalid");
+  assert.equal(validateSupplierCaptureRequest({ payload: validPayload({ dataRevision: "3" }), manifestVersion: "1.4.1" }).code, "revision_invalid");
   assert.equal(validateSupplierCaptureRequest({ payload: validPayload(), manifestVersion: "1.2.6" }).code, "extension_version_mismatch");
   assert.match(captureRequestErrorMessage("extension_version_mismatch"), /插件版本/);
 });
 
 test("短链和精确detail链接只接受锁定模式与offer", () => {
-  assert.equal(validateSupplierCaptureRequest({ payload: validPayload(), manifestVersion: "1.4.0" }).ok, true);
+  assert.equal(validateSupplierCaptureRequest({ payload: validPayload(), manifestVersion: "1.4.1" }).ok, true);
   assert.equal(validateSupplierCaptureRequest({
     payload: validPayload({ allowShortLinkResolution: false }),
-    manifestVersion: "1.4.0"
+    manifestVersion: "1.4.1"
   }).code, "short_link_resolution_not_allowed");
   assert.equal(validateSupplierCaptureRequest({
     payload: validPayload({ sourceUrl: "https://example.com/s/Abc_123" }),
-    manifestVersion: "1.4.0"
+    manifestVersion: "1.4.1"
   }).code, "source_url_invalid");
   assert.equal(validateSupplierCaptureRequest({
     payload: validPayload({
@@ -221,7 +221,7 @@ test("短链和精确detail链接只接受锁定模式与offer", () => {
       expectedOfferId: "876240928352",
       allowShortLinkResolution: false
     }),
-    manifestVersion: "1.4.0"
+    manifestVersion: "1.4.1"
   }).ok, true);
   assert.equal(validateSupplierCaptureRequest({
     payload: validPayload({
@@ -229,6 +229,6 @@ test("短链和精确detail链接只接受锁定模式与offer", () => {
       expectedOfferId: "999",
       allowShortLinkResolution: false
     }),
-    manifestVersion: "1.4.0"
+    manifestVersion: "1.4.1"
   }).code, "expected_offer_invalid");
 });
