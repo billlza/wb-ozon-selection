@@ -13,6 +13,12 @@ import { supplierImageSearchAvailability, readSupplierImageSearchPreparation, re
 import { ADiscoveryError } from './lib/a-discovery-contract.mjs';
 import { createLinkfoxDiscoverySecretReader, createSeerfarDiscoverySecretReader } from './lib/linkfox-discovery-credentials.mjs';
 import { createADiscoveryCandidateImportUseCase } from './lib/a-discovery-candidate-import.mjs';
+import { loadSeerfarSelectionConfig } from './lib/seerfar-selection-config.mjs';
+import { createSeerfarWebRoundService } from './lib/seerfar-web-round-service.mjs';
+import { createStoreSalesSeedService } from './lib/store-sales-seed-service.mjs';
+import { seerfarTodos } from './lib/seerfar-todos.mjs';
+import { StoreProfileError, storeProfileView, updateStoreProfile } from './lib/store-profile.mjs';
+import { createOzonStoreSalesReader, storeSalesRoutes } from './lib/ozon-store-sales-reader.mjs';
 import { createDiscoveryTitleTranslator, DiscoveryTitleTranslationError } from './lib/discovery-title-translation.mjs';
 import { createADiscoveryTitleTranslationUseCase } from './lib/discovery-title-translation-store.mjs';
 import { createADiscoveryEstimateInputs, createADiscoveryEstimateUseCase } from './lib/a-discovery-estimate-store.mjs';
@@ -562,6 +568,34 @@ const aDiscoveryEstimateUseCase = createADiscoveryEstimateUseCase({
 const supplierDraftEstimateInputs = createADiscoveryEstimateInputs({
   rules:DEFAULT_RULES,readers:aEstimateReaders,configuration:aEstimateConfiguration
 });
+/**
+ * Seerfar 自动选品方案 B（主人 2026-10-10 定）：会员前台「热销榜单选品」一页结果 → 固定规则筛 → 前几个收成待核验候选。
+ * 档案和季节日历是 data/seerfar-selection/ 里的版本化配置；读不出来时不启动任何一轮，页面照实显示原因。
+ */
+const seerfarSelectionConfig = await loadSeerfarSelectionConfig().then(config => ({ config, error: null }),
+  error => ({ config: null, error: String(error?.code || 'CONFIG_UNREADABLE') }));
+const seerfarWebRounds = createSeerfarWebRoundService({
+  readData: () => readData(), mutateData: mutator => mutateData(mutator), mutateDataWhenChanged: mutator => mutateDataWhenChanged(mutator),
+  now: () => now(), businessDate: () => businessDate(), estimateInputs: supplierDraftEstimateInputs, storeBindings: runtimeConfiguration.storeBindings,
+  config: seerfarSelectionConfig.config, configError: seerfarSelectionConfig.error, requiredExtensionVersion: REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION,
+  isCaptureControlBusy: () => captureControlSnapshot().status === "busy",
+  log: (message, error) => console.error(message, error)
+});
+// 本店爆款从销量数据里挑（主人 2026-10-10）：本机只读 Seller API，复用账户读取已声明的店铺与钥匙串绑定。
+const storeSalesSeeds = createStoreSalesSeedService({
+  readData: () => readData(), mutateData: mutator => mutateData(mutator), mutateDataWhenChanged: mutator => mutateDataWhenChanged(mutator),
+  now: () => now(), businessDate: () => businessDate(), estimateInputs: supplierDraftEstimateInputs, config: seerfarSelectionConfig.config,
+  reader: createOzonStoreSalesReader({ runtimeMode: runtimeConfiguration.deploymentMode, fetchImpl: fetch,
+    routes: storeSalesRoutes({ discoveryBindings: runtimeConfiguration.ozonAccountDiscoveryBindings,
+      credentialBindings: runtimeConfiguration.ozonDECredentialBindings, productionBindings: runtimeConfiguration.productionBindings }) }),
+  log: (message, detail) => console.error(message, detail)
+});
+/** Rounds, store sales and the home to-dos derived from both, in one payload. */
+function seerfarSelectionView(document, operationResult = null) {
+  const rounds = seerfarWebRounds.view(document);
+  const storeSales = storeSalesSeeds.view(document);
+  return { ...rounds, storeSales, todos: seerfarTodos({ rounds: rounds.rounds, storeSales, businessDate: rounds.businessDate }), operationResult };
+}
 const aProductDetailApplication = createAProductDetailApplicationUseCase({repository:businessStateRepository,serverClock:now});
 const aProductDetailRuntime = createAProductDetailRuntimeServices({repository:businessStateRepository,softwareJobStore,
   runtimeMode:runtimeConfiguration.deploymentMode,serverClock:now,workerRegistry,
@@ -703,7 +737,7 @@ function activeDispatchForCandidate(data, candidateId) {
 const SOURCE_CAPTURE_TTL_MS = 3 * 60 * 1000;
 const SOURCE_CAPTURE_JOB_QUEUE_TTL_MS = Math.max(50, Number(process.env.SELECTION_REVIEW_SOURCE_JOB_QUEUE_TTL_MS || 2 * 60 * 1000));
 const SOURCE_CAPTURE_JOB_EXECUTION_TTL_MS = Math.max(50, Number(process.env.SELECTION_REVIEW_SOURCE_JOB_EXECUTION_TTL_MS || 60 * 1000));
-const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.4.0";
+const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.4.1";
 /** Marks a sales-capture session that is a leased, claimable page-read job rather than a bare legacy session. */
 const OZON_PAGE_READ_CAPTURE_KIND = "ozon_page_read";
 /** Marks a 1688 image search started from a first picture (Pinduoduo, 1688 or Ozon). */
@@ -761,7 +795,8 @@ function captureControlSnapshot(timestamp = Date.now()) {
     ...[...sourceCaptureSessions.values()].map((session) => ({ ...session, platform: "1688", captureKind: "supplier" })),
     ...[...salesCaptureSessions.values()].map((session) => ({ ...session, platform: "ozon", captureKind: "sales" })),
     ...[...imageMatchSessions.values()].map((session) => ({ ...session, platform: session.matchKind === "ozon" ? "ozon" : "1688",
-      captureKind: session.matchKind === "ozon" ? "ozon_image_match" : "image_match" }))
+      captureKind: session.matchKind === "ozon" ? "ozon_image_match" : "image_match" })),
+    ...[seerfarWebRounds.activeSession()].filter(Boolean).map((session) => ({ ...session, candidateId: "Seerfar 榜单", platform: "seerfar", captureKind: "seerfar_web" }))
   ].sort((left, right) => left.createdAt - right.createdAt)[0];
   if (!active) {
     return {
@@ -1651,6 +1686,7 @@ function claimOzonPageReadJob(captureId, extensionVersion, extensionOrigin) {
 function claimCaptureJob(captureId, extensionVersion, extensionOrigin) {
   if (salesCaptureSessions.has(captureId)) return claimOzonPageReadJob(captureId, extensionVersion, extensionOrigin);
   if (imageMatchSessions.has(captureId)) return claimImageMatchJob(captureId, extensionVersion, extensionOrigin);
+  if (seerfarWebRounds.owns(captureId)) return seerfarWebClaim(captureId, extensionVersion, extensionOrigin);
   return claimASupplierCaptureJob(captureId, extensionVersion, extensionOrigin);
 }
 
@@ -1849,6 +1885,19 @@ async function enqueueImageMatchJob(kind, { candidateId, requestRevision, acknow
   }
   scheduleImageMatchJobExpiry(session, "queued", SOURCE_CAPTURE_JOB_QUEUE_TTL_MS);
   return { candidate, captureJob: kind.jobPublic(session), duplicate: false };
+}
+
+/** Seerfar 榜单作业和其他插件作业排同一个领取队列，避免两张领取请求交错写数据。 */
+function seerfarWebClaim(captureId, extensionVersion, extensionOrigin) {
+  const operation = sourceCaptureJobClaimQueue.then(() => seerfarWebRounds.claim(captureId, extensionVersion, extensionOrigin)
+    .catch((error) => { throw seerfarWebHttpError(error); }));
+  sourceCaptureJobClaimQueue = operation.then(() => undefined, () => undefined);
+  return operation;
+}
+
+function seerfarWebHttpError(error) {
+  if (!Number.isInteger(error?.status)) return error;
+  return httpError(error.status, error.publicMessage || "Seerfar 榜单作业没有继续", { code: `seerfar_web_${String(error.code).toLowerCase()}` });
 }
 
 function claimImageMatchJob(captureId, extensionVersion, extensionOrigin) {
@@ -3994,12 +4043,13 @@ async function handleApi(req, res, pathname) {
   }
   const extensionCallback = pathname === "/api/extension/heartbeat" ||
     /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/(?:claim|search-image)$/.test(pathname) ||
-    /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(pathname);
+    /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(pathname) ||
+    /^\/api\/seerfar-selection\/rounds\/[^/]+\/result$/.test(pathname);
   if (runtimeIdentityProvider.providerType === "local_owner_password" && ["POST", "PUT", "PATCH", "DELETE"].includes(req.method) &&
       !extensionCallback && !isTrustedInternalApiRequest(req.headers, internalApiRequestToken)) {
     runtimeIdentityProvider.resolveActor({ request: req, touch: true });
   }
-  if (req.method === "OPTIONS" && (pathname === "/api/extension/heartbeat" || /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/(?:claim|search-image)$/.test(pathname) || /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(pathname))) {
+  if (req.method === "OPTIONS" && (pathname === "/api/extension/heartbeat" || /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/(?:claim|search-image)$/.test(pathname) || /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(pathname) || /^\/api\/seerfar-selection\/rounds\/[^/]+\/result$/.test(pathname))) {
     const headers = chromeExtensionCors(req);
     if (!headers["Access-Control-Allow-Origin"]) throw httpError(403, "只接受本机Chrome扩展回传");
     res.writeHead(204, headers);
@@ -4189,6 +4239,79 @@ async function handleApi(req, res, pathname) {
       const status = error.code === 'SERVICE_NOT_CONFIGURED' ? 503 : error.code === 'INPUT_INVALID' ? 400 : 409;
       return json(res,status,{code:error.code,message:'利润区间未估算，请核对当前批次版本及已保存的查询结果。'});
     }
+  }
+
+  // Seerfar 方案 B：今天建议搜什么、最近几轮的结果；主人点"收一轮"建立一次性只读作业；插件回传这一页结果。
+  if (pathname === '/api/seerfar-selection' && req.method === 'GET' ||
+      pathname === '/api/seerfar-selection/rounds' && req.method === 'POST') {
+    const actor = runtimeIdentityProvider.resolveActor({ request: req });
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+      throw httpError(403, '请先登录主人身份后再看 Seerfar 榜单。');
+    }
+    try {
+      let operationResult = null;
+      if (req.method === 'POST') {
+        const input = await readJsonRequestBody(req, { maxBytes: 4096, requireJsonContentType: true });
+        if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['targetStore', 'queryId'].includes(key)) ||
+            typeof input.targetStore !== 'string' || typeof input.queryId !== 'string' || input.queryId.length > 300) {
+          throw httpError(400, 'Seerfar 榜单请求的字段无效', { code: 'seerfar_web_input_invalid' });
+        }
+        operationResult = await seerfarWebRounds.startRound({ actor, targetStore: input.targetStore, queryId: input.queryId });
+      }
+      const document = await readData();
+      return json(res, req.method === 'POST' ? 202 : 200, seerfarSelectionView(document, operationResult));
+    } catch (error) { throw seerfarWebHttpError(error); }
+  }
+  const seerfarWebResultRoute = pathname.match(/^\/api\/seerfar-selection\/rounds\/([^/]+)\/result$/);
+  if (req.method === 'POST' && seerfarWebResultRoute) {
+    const headers = chromeExtensionCors(req);
+    if (!headers['Access-Control-Allow-Origin']) throw httpError(403, '只接受已配置的Chrome扩展回传');
+    const input = await readJsonRequestBody(req, { maxBytes: 512 * 1024, requireJsonContentType: true });
+    try {
+      const round = await seerfarWebRounds.acceptResult({ roundId: decodeURIComponent(seerfarWebResultRoute[1]), input, origin: String(req.headers.origin || '') });
+      return json(res, 200, { accepted: true, round }, headers);
+    } catch (error) { throw seerfarWebHttpError(error); }
+  }
+  // 店铺档案：卖什么、价格带、重量上限、预售最多等几天、不做原因汇总。主人改的另存新版本，旧版本保留。
+  const storeProfileRoute = pathname.match(/^\/api\/store-profiles(?:\/([a-z]+))?$/);
+  if (storeProfileRoute && (req.method === 'GET' && !storeProfileRoute[1] || req.method === 'POST' && storeProfileRoute[1])) {
+    const actor = runtimeIdentityProvider.resolveActor({ request: req });
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+      throw httpError(403, '请先登录主人身份后再看店铺档案。');
+    }
+    if (!seerfarSelectionConfig.config) throw httpError(503, '店铺档案配置读不出来。', { code: 'store_profile_config_unavailable' });
+    const config = seerfarSelectionConfig.config;
+    if (req.method === 'POST') {
+      const input = await readJsonRequestBody(req, { maxBytes: 16 * 1024, requireJsonContentType: true });
+      if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['baseVersion', 'values'].includes(key)) ||
+          typeof input.baseVersion !== 'string') throw httpError(400, '店铺档案的字段无效', { code: 'store_profile_input_invalid' });
+      try {
+        await mutateData(document => updateStoreProfile(document, { targetStore: storeProfileRoute[1], baseVersion: input.baseVersion, values: input.values,
+          actor, at: now(), config }));
+      } catch (error) {
+        if (error instanceof StoreProfileError) throw httpError(error.status, error.publicMessage, { code: `store_profile_${error.code.toLowerCase()}` });
+        throw error;
+      }
+    }
+    const document = await readData();
+    return json(res, 200, { profiles: Object.fromEntries(Object.keys(config.profiles).map(store => [store, storeProfileView(document, store, { config })])) });
+  }
+
+  // 读本店近 8 周按 SKU 的销量（只读 Seller API），挑出"本店爆款找相似"的种子。
+  if (req.method === 'POST' && pathname === '/api/seerfar-selection/store-sales') {
+    const actor = runtimeIdentityProvider.resolveActor({ request: req });
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+      throw httpError(403, '请先登录主人身份后再读本店销量。');
+    }
+    const input = await readJsonRequestBody(req, { maxBytes: 1024, requireJsonContentType: true });
+    if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => key !== 'targetStore') || typeof input.targetStore !== 'string') {
+      throw httpError(400, '读本店销量的字段无效', { code: 'store_sales_input_invalid' });
+    }
+    try {
+      const operationResult = await storeSalesSeeds.startRead({ actor, targetStore: input.targetStore });
+      const document = await readData();
+      return json(res, 202, seerfarSelectionView(document, operationResult));
+    } catch (error) { throw seerfarWebHttpError(error); }
   }
 
   const imageSearchRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/supplier-image-search(?:\/(authorize))?$/);
@@ -9952,6 +10075,11 @@ if (lostOzonPageReads?.length) {
 }
 // The same closure for 找同款 (1688 and Ozon): a record still waiting on the extension would refuse every later search of that product.
 const lostImageMatches = await reconcileImageMatchJobsAfterRestart();
+const lostSeerfarWebRounds = await seerfarWebRounds.reconcileRoundsAfterRestart();
+await storeSalesSeeds.reconcileReadsAfterRestart();
+if (lostSeerfarWebRounds?.length) {
+  console.log(`Seerfar 榜单作业已随服务重启收口为失败（不会再有结果，需要重新收一轮）：${lostSeerfarWebRounds.join("、")}`);
+}
 if (lostImageMatches?.length) {
   console.log(`找同款作业已随服务重启收口为失败（不会再有结果，需要重新找一次）：${lostImageMatches.join("、")}`);
 }

@@ -31,7 +31,7 @@ function candidate(id, { mainImageUrl = IMAGE, ...extra } = {}) {
       captureId: `SCJ-synthetic-${id}`, status: "captured_waiting_owner_selection", mode: "a_supplier_capture",
       jobId: `SCJ-synthetic-${id}`, jobStatus: "completed", attempt: 1, offerId: "600000000001",
       sourceUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=600000000001", title: "合成背心",
-      originalSourceUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=600000000001", requiredExtensionVersion: "1.4.0",
+      originalSourceUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=600000000001", requiredExtensionVersion: "1.4.1",
       offerStatus: "on_sale", observedAt: "2026-10-09T07:00:00.000Z", collectionMethod: "chrome_extension_structured_page_v1",
       titleSource: "rawData.goods.goodsName", offerIdSource: "rawData.goods.goodsID", pageSelectedSkuId: null, priceRanges: [],
       pageFields: { unitProductPriceCny: null, unitProductPriceSource: null, unitDomesticFreightCny: null, unitDomesticFreightSource: null },
@@ -123,7 +123,7 @@ async function startApi(t, candidates, { ttlMs = 2000, executionTtlMs = 500 } = 
       cookie = response.cookie.split(";")[0];
     },
     start: (id, body) => post(`/api/candidates/${encodeURIComponent(id)}/image-match/start`, body),
-    claim: (jobId, version = "1.4.0") =>
+    claim: (jobId, version = "1.4.1") =>
       post(`/api/extension/capture-jobs/${jobId}/claim`, { version }, { authenticated: false, headers: { Origin: extensionOrigin } }),
     result: (id, body) => post(`/api/candidates/${encodeURIComponent(id)}/image-match/result`, body,
       { authenticated: false, headers: { Origin: extensionOrigin } }),
@@ -175,7 +175,7 @@ test("找同款：只有主人能发起，插件领取一次、回传核验过�
   assert.equal(claim.status, 200, JSON.stringify(claim.body));
   const payload = claim.body.captureJob;
   assert.equal(isImageMatchJob(payload), true);
-  assert.deepEqual(validateImageMatchRequest({ payload, manifestVersion: "1.4.0" }), { ok: true, imageUrl: IMAGE, searchUrl: supplierImageMatchSearchUrl(IMAGE) });
+  assert.deepEqual(validateImageMatchRequest({ payload, manifestVersion: "1.4.1" }), { ok: true, imageUrl: IMAGE, searchUrl: supplierImageMatchSearchUrl(IMAGE) });
   assert.equal((await api.claim(jobId)).status, 409, "同一个作业不能被领取第二次");
   assert.equal((await api.record("IMG-1")).supplierImageMatch.status, "searching");
 
@@ -319,7 +319,7 @@ test("找同款三个入口共用一条作业链：1688 货源用它自己的首
     const claim = await api.claim(queued.body.captureJob.jobId);
     assert.equal(claim.status, 200, JSON.stringify(claim.body));
     const payload = claim.body.captureJob;
-    assert.deepEqual(validateImageMatchRequest({ payload, manifestVersion: "1.4.0" }),
+    assert.deepEqual(validateImageMatchRequest({ payload, manifestVersion: "1.4.1" }),
       { ok: true, imageUrl, searchUrl: supplierImageMatchSearchUrl(imageUrl) });
     const saved = await api.result(id, { captureId: payload.captureId, token: payload.token, dataRevision: payload.dataRevision,
       status: "captured", evidence: evidence({ searchImageUrl: imageUrl }) });
@@ -376,7 +376,7 @@ test("在 Ozon 找同款：主人填俄文词，插件在 Ozon 搜一次、回�
   assert.equal(claim.status, 200, JSON.stringify(claim.body));
   const payload = claim.body.captureJob;
   assert.deepEqual([isOzonImageMatchJob(payload), isImageMatchJob(payload)], [true, false]);
-  assert.deepEqual(validateOzonImageMatchRequest({ payload, manifestVersion: "1.4.0" }),
+  assert.deepEqual(validateOzonImageMatchRequest({ payload, manifestVersion: "1.4.1" }),
     { ok: true, searchBy: "text", query: QUERY, searchUrl: ozonSearchUrl(QUERY) });
   const item = (index, extra = {}) => ({ productId: String(9000000100 + index), title: `Синтетический жилет ${index}`,
     imageUrl: `https://ir.ozone.ru/s3/multimedia-1-z/wc500/${9000000100 + index}.jpg`, priceRub: 1299, originalPriceRub: 2599, rating: 4.8,
@@ -457,7 +457,7 @@ test("在 Ozon 以图搜：不带词，插件凭令牌取一次要上传的图�
   assert.equal(early.body.code, "capture_job_not_claimed");
   const payload = (await api.claim(jobId)).body.captureJob;
   assert.deepEqual([payload.searchBy, Object.hasOwn(payload, "query"), payload.searchUrl], ["image", false, "https://www.ozon.ru/"]);
-  assert.deepEqual(validateOzonImageMatchRequest({ payload, manifestVersion: "1.4.0" }), { ok: true, searchBy: "image", searchUrl: "https://www.ozon.ru/" });
+  assert.deepEqual(validateOzonImageMatchRequest({ payload, manifestVersion: "1.4.1" }), { ok: true, searchBy: "image", searchUrl: "https://www.ozon.ru/" });
 
   const picture = body => api.post(`/api/extension/capture-jobs/${jobId}/search-image`, body, extension);
   assert.equal((await picture({ token: payload.token })).body.code, "search_image_request_invalid");

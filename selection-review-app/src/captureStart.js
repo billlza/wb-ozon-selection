@@ -35,6 +35,13 @@ export const OZON_IMAGE_MATCH_CHANNEL = Object.freeze({
   acceptedMessage: "插件已领取这次在 Ozon 找同款，正在这台电脑的 Chrome 里打开 Ozon 搜这几个词；读完这里会按首图像不像列出结果"
 });
 
+export const SEERFAR_WEB_CHANNEL = Object.freeze({
+  queuedStatus: "seerfar_web_round_queued",
+  request: "SELECTION_REVIEW_SEERFAR_WEB_REQUEST",
+  ack: "SELECTION_REVIEW_SEERFAR_WEB_ACK",
+  acceptedMessage: "插件已领取这一轮，Seerfar 热销榜单选品页已经打开：请在 3 分钟内按建议的类目、跨境卖家、近 30 天搜一次"
+});
+
 export const CAPTURE_START_TIMEOUT_MS = 12000;
 
 // Called only after this page receives the receipt for a newly created, explicit job.

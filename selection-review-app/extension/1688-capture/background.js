@@ -34,17 +34,19 @@ import {
   validateOzonCaptureRequest,
   validateSupplierCaptureRequest
 } from "./capture-request.js";
+import { SEERFAR_WEB_REQUEST_TYPE, isSeerfarWebJob, runSeerfarWebCapture, validateSeerfarWebRequest } from "./seerfar-web-capture.js";
 
 export const HEARTBEAT_ALARM = "selection-review-extension-heartbeat";
 const API_ORIGIN = "http://127.0.0.1:4317"; // Explicit local-development adapter, not central identity.
 const BACKGROUND_PING = "SELECTION_REVIEW_EXTENSION_BACKGROUND_PING";
 const START_TYPES = new Set(["SELECTION_REVIEW_1688_CAPTURE_REQUEST", "SELECTION_REVIEW_OZON_CAPTURE_REQUEST", IMAGE_MATCH_REQUEST_TYPE,
-  OZON_IMAGE_MATCH_REQUEST_TYPE]);
+  OZON_IMAGE_MATCH_REQUEST_TYPE, SEERFAR_WEB_REQUEST_TYPE]);
 const FAILURE_CODES = new Set([
   "wrong_offer", "wrong_product", "structured_data_unavailable", "site_login_required",
   "site_verification_required", "short_link_resolution_failed", "timeout", "sku_limit_exceeded",
   "precise_price_missing", "exact_price_unavailable", "invalid_capture", "system_error",
-  "results_unverifiable", "results_empty", "wrong_query", "navigation_rejected", "image_upload_unavailable", "search_image_unavailable"
+  "results_unverifiable", "results_empty", "wrong_query", "navigation_rejected", "image_upload_unavailable", "search_image_unavailable",
+  "no_matching_search"
 ]);
 const safeFailureCode = (code) => FAILURE_CODES.has(code) ? code : "system_error";
 const failure = (code) => Object.assign(new Error(code), { code });
@@ -240,6 +242,14 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
   };
 
   async function sendResult(payload, result) {
+    if (isSeerfarWebJob(payload)) {
+      const response = await fetchImpl(`${API_ORIGIN}/api/seerfar-selection/rounds/${encodeURIComponent(payload.roundId)}/result`, {
+        method: "POST", signal: AbortSignal.timeout(10000), headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ captureId: payload.captureId, token: payload.token, ...result })
+      });
+      if (!response.ok) throw failure([401, 403].includes(response.status) ? "extension_identity_rejected" : "result_rejected");
+      return;
+    }
     const route = isImageMatchJob(payload) ? "image-match" : isOzonImageMatchJob(payload) ? "ozon-match"
       : isOzonCaptureJob(payload) ? "sales-capture" : "source-capture";
     const response = await fetchImpl(`${API_ORIGIN}/api/candidates/${encodeURIComponent(payload.candidateId)}/${route}/result`, {
@@ -269,7 +279,42 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
     return { contentType: body.contentType, base64: body.base64 };
   }
 
+  /**
+   * Seerfar 榜单：主人要在打开的页面里自己搜一次，所以等得比别的作业久（作业里写明，最多 3 分钟），每 2 秒看一次。
+   * 标签页是插件开的，结束时照样关掉；回传只发一次。
+   */
+  async function executeSeerfarWebCapture(payload) {
+    let tabId = null;
+    let result;
+    const cancellation = new AbortController();
+    let deadlineTimer;
+    const deadline = new Promise((_resolve, reject) => {
+      deadlineTimer = jobTimerOptions.setTimer(() => { cancellation.abort(); reject(failure("timeout")); }, payload.waitMs + 20000);
+    });
+    try {
+      result = await Promise.race([runSeerfarWebCapture({ chromeApi, payload, signal: cancellation.signal, clock,
+        onTab: (id) => { tabId = id; } }), deadline]);
+    } catch (error) {
+      result = { status: "failed", failureCode: safeFailureCode(error?.code), observedAt: clock() };
+    } finally {
+      jobTimerOptions.clearTimer(deadlineTimer);
+      cancellation.abort();
+      if (tabId !== null) {
+        try { await chromeApi.tabs.remove(tabId); } catch { cleanupBlocked = "tab_cleanup_failed"; lastCaptureCode = "tab_cleanup_failed"; }
+      }
+    }
+    try {
+      await sendResult(payload, result);
+      lastCaptureCode = result.status === "failed" ? result.failureCode : "capture_reported";
+    } catch (error) {
+      lastCaptureCode = ["extension_identity_rejected", "result_rejected"].includes(error?.code) ? error.code : "result_delivery_unconfirmed";
+    } finally {
+      activeCapture = null;
+    }
+  }
+
   async function executeCapture(payload) {
+    if (isSeerfarWebJob(payload)) return executeSeerfarWebCapture(payload);
     let tabId = null;
     let result;
     const cancellation = new AbortController();
@@ -405,17 +450,19 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       if (!response.ok) throw failure([401, 403].includes(response.status) ? "extension_identity_rejected" : "capture_job_not_claimed");
       const body = await response.json();
       const payload = body?.captureJob;
-      const validation = isImageMatchJob(payload) ? validateImageMatchRequest({ payload, manifestVersion: version })
+      const validation = isSeerfarWebJob(payload) ? validateSeerfarWebRequest({ payload, manifestVersion: version })
+        : isImageMatchJob(payload) ? validateImageMatchRequest({ payload, manifestVersion: version })
         : isOzonImageMatchJob(payload) ? validateOzonImageMatchRequest({ payload, manifestVersion: version })
         : isOzonCaptureJob(payload) ? validateOzonCaptureRequest({ payload, manifestVersion: version })
         : validateSupplierCaptureRequest({ payload, manifestVersion: version });
       const expectedOzon = message.type === "SELECTION_REVIEW_OZON_CAPTURE_REQUEST";
       const expectedImageMatch = message.type === IMAGE_MATCH_REQUEST_TYPE;
       const expectedOzonMatch = message.type === OZON_IMAGE_MATCH_REQUEST_TYPE;
+      const expectedSeerfar = message.type === SEERFAR_WEB_REQUEST_TYPE;
       // Each start signal may only start its own kind of job: a page asking for a supplier capture never gets a search.
       if (body?.accepted !== true || !validation.ok || payload.captureId !== message.captureId ||
           isOzonCaptureJob(payload) !== expectedOzon || isImageMatchJob(payload) !== expectedImageMatch ||
-          isOzonImageMatchJob(payload) !== expectedOzonMatch) throw failure("capture_job_invalid");
+          isOzonImageMatchJob(payload) !== expectedOzonMatch || isSeerfarWebJob(payload) !== expectedSeerfar) throw failure("capture_job_invalid");
       void executeCapture(payload);
       return { accepted: true, claimedCaptureId: message.captureId };
     } catch (error) {

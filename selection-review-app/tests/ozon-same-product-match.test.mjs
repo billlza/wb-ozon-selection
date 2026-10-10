@@ -70,7 +70,7 @@ test("an image search needs only the picture: no words, Ozon's home page as the 
   assert.equal(ozonImageMatchTarget(candidate(), QUERY).searchBy, "text");
 
   const queued = queuedOzonImageMatchRecord(null, { captureId: "OMJ-image", source: target.source, searchBy: "image", query: "ignored",
-    queryOrigin: "owner", requiredExtensionVersion: "1.4.0", authorizedBy: "owner", authorizedAt: "2026-10-10T08:00:00.000Z", candidateRevision: 3 });
+    queryOrigin: "owner", requiredExtensionVersion: "1.4.1", authorizedBy: "owner", authorizedAt: "2026-10-10T08:00:00.000Z", candidateRevision: 3 });
   assert.deepEqual([queued.searchBy, queued.query, queued.queryOrigin, queued.searchUrl], ["image", null, null, "https://www.ozon.ru/"]);
   assert.deepEqual(queued.authorization, { action: "ozon_image_search", site: "ozon", loginStateRead: false, ownerBrowser: true,
     maxSearches: 1, imageUploads: 1, maxResults: 36, publicImageReads: 37, authorizedBy: "owner", authorizedAt: "2026-10-10T08:00:00.000Z",
@@ -114,7 +114,7 @@ test("Ozon results are kept only as product facts, with the address rebuilt from
 test("an Ozon search record runs the same life as a 1688 one: queued with its words, results, picture comparison, the owner's judgement", async () => {
   const target = ozonImageMatchTarget(candidate(), QUERY);
   const queued = queuedOzonImageMatchRecord(null, { captureId: "OMJ-synthetic", source: target.source, query: target.query,
-    queryOrigin: target.queryOrigin, requiredExtensionVersion: "1.4.0", authorizedBy: "owner", authorizedAt: "2026-10-10T08:00:00.000Z",
+    queryOrigin: target.queryOrigin, requiredExtensionVersion: "1.4.1", authorizedBy: "owner", authorizedAt: "2026-10-10T08:00:00.000Z",
     candidateRevision: 3 });
   assert.deepEqual([queued.schemaVersion, queued.status, queued.query, queued.queryOrigin, queued.searchUrl],
     ["ozon-image-match-v1", "waiting_extension", QUERY, "owner", ozonSearchUrl(QUERY)]);
@@ -139,7 +139,7 @@ test("an Ozon search record runs the same life as a 1688 one: queued with its wo
   assert.equal(code({ productId: "9000000100", judgement: "maybe" }), "ozon_match_judgement_invalid");
 
   const next = queuedOzonImageMatchRecord(judged, { captureId: "OMJ-next", source: target.source, query: "другие слова", queryOrigin: "owner",
-    requiredExtensionVersion: "1.4.0", authorizedBy: "owner", authorizedAt: "2026-10-10T09:00:00.000Z", candidateRevision: 9 });
+    requiredExtensionVersion: "1.4.1", authorizedBy: "owner", authorizedAt: "2026-10-10T09:00:00.000Z", candidateRevision: 9 });
   assert.deepEqual(next.history[0].results, [{ productId: "9000000100", sourceUrl: "https://www.ozon.ru/product/9000000100/",
     title: "Синтетический жилет 0", priceRub: 1299 }]);
 });

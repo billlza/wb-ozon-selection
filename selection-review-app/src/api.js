@@ -73,6 +73,9 @@ export const api = {
   declineProductDiscovery: payload => request('/api/product-discovery/decline',{method:'POST',body:JSON.stringify(payload)}),
   translateProductDiscovery: payload => request('/api/product-discovery/translate',{method:'POST',body:JSON.stringify(payload)}),
   estimateProductDiscovery: payload => request('/api/product-discovery/estimate',{method:'POST',body:JSON.stringify(payload)}),
+  getSeerfarSelection: signal => request('/api/seerfar-selection',{signal}),
+  startSeerfarRound: payload => request('/api/seerfar-selection/rounds',{method:'POST',body:JSON.stringify(payload)}),
+  readStoreSales: payload => request('/api/seerfar-selection/store-sales',{method:'POST',body:JSON.stringify(payload)}),
   recalculateBWithExactCommission: (candidateId, payload) => request(`/api/candidates/${encodeURIComponent(candidateId)}/lifecycle/b/exact-commission/recalculate`, {
     method: "POST", body: JSON.stringify(payload)
   }),

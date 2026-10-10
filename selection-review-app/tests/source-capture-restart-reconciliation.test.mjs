@@ -46,7 +46,7 @@ function orphanCandidate(id, kind) {
     attempt: kind === "claimed" ? 1 : 0,
     sourceUrl: candidate.sourceUrl,
     originalSourceUrl: candidate.sourceUrl,
-    requiredExtensionVersion: "1.4.0",
+    requiredExtensionVersion: "1.4.1",
     token: "must-not-survive-restart",
     extensionRequest: { token: "must-not-survive-restart" },
     writeOccurred: false,
@@ -153,7 +153,7 @@ test("重启把等不到结果的采集一次性收口为失败，不领取旧�
   assert.equal(await readFile(residualFile, "utf8"), reconciledText, "只读接口不得再写盘");
   const claim = await fetch(`${baseUrl}/api/extension/capture-jobs/SCJ-A-QUEUED/claim`, {
     method: "POST", headers: { "Content-Type": "application/json", Origin: "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-    body: JSON.stringify({ version: "1.4.0" })
+    body: JSON.stringify({ version: "1.4.1" })
   });
   assert.equal(claim.status, 409);
   assert.equal((await claim.json()).code, "capture_job_not_current");
@@ -163,7 +163,7 @@ test("重启把等不到结果的采集一次性收口为失败，不领取旧�
       "Content-Type": "application/json",
       Origin: "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     },
-    body: JSON.stringify({ version: "1.4.0", backgroundReady: true, observedAt: new Date().toISOString() })
+    body: JSON.stringify({ version: "1.4.1", backgroundReady: true, observedAt: new Date().toISOString() })
   });
   assert.equal(heartbeat.status, 200);
   assert.equal((await heartbeat.json()).captureJob, null, "重启后不得重建、恢复或重新领取旧作业");

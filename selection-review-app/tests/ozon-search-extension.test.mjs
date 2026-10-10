@@ -22,7 +22,7 @@ const SEARCH = ozonSearchUrl(QUERY);
 const CATEGORY = `https://www.ozon.ru/category/odezhda-dlya-koshek-12345/?category_was_predicted=true&from_global=true&text=${encodeURIComponent(QUERY)}`;
 const ozonJob = (extra = {}) => ({
   ...ozonImageMatchJobPayload({ captureId: "OMJ-synthetic", candidateId: "candidate:synthetic", dataRevision: 5, query: QUERY,
-    searchUrl: SEARCH, requiredExtensionVersion: "1.4.0", attempt: 1, token: "synthetic-fixture-token" }),
+    searchUrl: SEARCH, requiredExtensionVersion: "1.4.1", attempt: 1, token: "synthetic-fixture-token" }),
   ...extra
 });
 
@@ -48,10 +48,10 @@ test("an Ozon search tab is read on the search page or the category page Ozon mo
 test("an Ozon search job is told apart from the other jobs and validated on its own fields", () => {
   const job = ozonJob();
   assert.deepEqual([isOzonImageMatchJob(job), isImageMatchJob(job), isOzonCaptureJob(job)], [true, false, false]);
-  assert.equal(validateImageMatchRequest({ payload: job, manifestVersion: "1.4.0" }).ok, false);
-  assert.deepEqual(validateOzonImageMatchRequest({ payload: job, manifestVersion: "1.4.0" }), { ok: true, searchBy: "text", query: QUERY, searchUrl: SEARCH });
+  assert.equal(validateImageMatchRequest({ payload: job, manifestVersion: "1.4.1" }).ok, false);
+  assert.deepEqual(validateOzonImageMatchRequest({ payload: job, manifestVersion: "1.4.1" }), { ok: true, searchBy: "text", query: QUERY, searchUrl: SEARCH });
   assert.equal(isOzonImageSearchJob(job), false);
-  const code = (extra, version = "1.4.0") => validateOzonImageMatchRequest({ payload: ozonJob(extra), manifestVersion: version }).code;
+  const code = (extra, version = "1.4.1") => validateOzonImageMatchRequest({ payload: ozonJob(extra), manifestVersion: version }).code;
   assert.equal(code({}, "1.3.0"), "extension_version_mismatch");
   assert.equal(code({ attempt: 0 }), "attempt_invalid");
   assert.equal(code({ maxResults: 20 }), "request_payload_missing");
@@ -232,7 +232,7 @@ test("the saved-page checker reads a saved search page and reports only structur
 const RESULTS = `https://www.ozon.ru/search-by-image?image_id=${IMAGE_ID}`;
 const imageJob = (extra = {}) => ({
   ...ozonImageMatchJobPayload({ captureId: "OMJ-image", candidateId: "candidate:synthetic", dataRevision: 6, searchBy: "image",
-    searchUrl: OZON_IMAGE_SEARCH_ENTRY_URL, requiredExtensionVersion: "1.4.0", attempt: 1, token: "synthetic-fixture-token" }),
+    searchUrl: OZON_IMAGE_SEARCH_ENTRY_URL, requiredExtensionVersion: "1.4.1", attempt: 1, token: "synthetic-fixture-token" }),
   ...extra
 });
 
@@ -260,9 +260,9 @@ test("an image-search tab starts on Ozon's home page and is read only on the sea
 test("an image-search job carries no words and only the home page, and is told apart from a word search", () => {
   const job = imageJob();
   assert.deepEqual([isOzonImageMatchJob(job), isOzonImageSearchJob(job), Object.hasOwn(job, "query"), job.searchBy], [true, true, false, "image"]);
-  assert.deepEqual(validateOzonImageMatchRequest({ payload: job, manifestVersion: "1.4.0" }),
+  assert.deepEqual(validateOzonImageMatchRequest({ payload: job, manifestVersion: "1.4.1" }),
     { ok: true, searchBy: "image", searchUrl: OZON_IMAGE_SEARCH_ENTRY_URL });
-  const code = extra => validateOzonImageMatchRequest({ payload: imageJob(extra), manifestVersion: "1.4.0" }).code;
+  const code = extra => validateOzonImageMatchRequest({ payload: imageJob(extra), manifestVersion: "1.4.1" }).code;
   assert.equal(code({ query: QUERY }), "search_query_invalid");
   assert.equal(code({ searchUrl: SEARCH }), "search_query_invalid");
   assert.equal(code({ imageUrl: "https://ir.ozone.ru/s3/a.jpg" }), "capture_mode_invalid");
