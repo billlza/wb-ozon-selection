@@ -212,6 +212,8 @@ export const api = {
     }),
   getState: (signal) => request("/api/state", { signal }),
   getThreeStoreMap: () => request("/api/three-store-map"),
+  // 平台和店铺登记表：{ registryVersion, platforms: [{ platform, label, storeIds }], stores: [{ storeId, platform, label, labelConfirmed, identityConfigured }] }
+  getStores: () => request("/api/stores"),
   dispatchCandidate: (candidateId, payload) =>
     request(`/api/candidates/${encodeURIComponent(candidateId)}/dispatch`, {
       method: "POST",

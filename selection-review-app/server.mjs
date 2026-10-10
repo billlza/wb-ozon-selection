@@ -278,6 +278,7 @@ import { buildThreeStoreMapView } from "./lib/three-store-map.mjs";
 import { assembleProductCoreForFamily, buildFamilyListingDrafts, ProductCoreFamilyError } from "./lib/product-core-family.mjs";
 import { ProductCoreError } from "./lib/product-core.mjs";
 import { loadPlatformMapping, loadPlatformProfile, PlatformProjectionError } from "./lib/platform-projection.mjs";
+import { listStores } from "./lib/store-registry.mjs";
 import { buildDESoftwareIntegrationView } from "./lib/d-e-software-integration.mjs";
 import { assertCurrentProductionExecutionBinding } from "./lib/platform-write-preflight.mjs";
 import { assertCurrentC2UploadDraft, reserveC2Upload, settleC2Upload, saveC2UploadSelection, selectedC2DraftAssets, resolveRegisteredC2FinalAsset, LOCAL_UPLOAD_MAX_BYTES } from "./lib/c2-upload-draft.mjs";
@@ -4954,6 +4955,11 @@ async function handleApi(req, res, pathname) {
       return pack;
     });
     return json(res, 201, { evidencePack: result });
+  }
+
+  // 平台和店铺：录入页和上架关口的「平台 → 店铺」选择用。只读，只说身份配没配，不带卖家号等身份字段。
+  if (req.method === "GET" && pathname === "/api/stores") {
+    return json(res, 200, listStores({ storeBindings: runtimeConfiguration.storeBindings }));
   }
 
   // 商品中立核心：一款商品（原商品＋各颜色候选）的事实、变体组和素材集，以及按它算出的 Ozon / WB 上架缺口。只读，不写任何状态。

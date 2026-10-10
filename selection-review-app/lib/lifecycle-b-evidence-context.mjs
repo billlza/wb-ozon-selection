@@ -1,4 +1,5 @@
 import { isCompleteStoreRef, sameStoreRef } from "./store-binding.mjs";
+import { platformOfStore, storesOfPlatform } from "./store-registry.mjs";
 import { DEFAULT_GUOO_TARIFF_PATH, guooTariffRuleVersionFromPath } from "./guoo-tariff-reader.mjs";
 import { validateSalesSnapshot } from "./sales-snapshot.mjs";
 
@@ -73,12 +74,12 @@ export function applyLifecycleBEvidenceContext(candidate, {
     throw new Error("B_EVIDENCE_CONTEXT_INVALID_CANDIDATE: 候选身份或修订号无效");
   }
   const before = JSON.stringify(candidate);
-  const platform = candidate.targetStore === "wb" ? "wb" : "ozon";
+  const platform = platformOfStore(candidate.targetStore) ?? "ozon";
   if (platform !== "ozon") {
     throw new Error("B_EVIDENCE_CONTEXT_PLATFORM_UNSUPPORTED: 当前阶段尚未接入WB系统证据范围");
   }
   const store = normalized(candidate.targetStore);
-  if (!store || !["dandanshu", "miska"].includes(store)) {
+  if (!store || !storesOfPlatform("ozon").includes(store)) {
     throw new Error("B_EVIDENCE_CONTEXT_STORE_UNSUPPORTED: 目标Ozon店铺未配置");
   }
   const categorySnapshot = newestCategorySnapshot(candidate);

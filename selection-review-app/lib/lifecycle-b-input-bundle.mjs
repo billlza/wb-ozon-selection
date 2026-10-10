@@ -4,6 +4,7 @@ import { GUOO_MAIN_QUOTE_CALCULATION_RULE_STATUS } from "./guoo-tariff-reader.mj
 import { isDeepStrictEqual } from "node:util";
 import { buildExpectedEvidenceScope, evidenceScopeMatches, normalizeEvidenceScope } from "./lifecycle-evidence-scope.mjs";
 import { isCompleteStoreRef, sameStoreRef } from "./store-binding.mjs";
+import { platformOfStore } from "./store-registry.mjs";
 import { validateSalesSnapshot } from "./sales-snapshot.mjs";
 
 export const LIFECYCLE_B_INPUT_BUNDLE_VERSION = "lifecycle-b-input-bundle-v1.2-cost-policy";
@@ -250,7 +251,7 @@ export function resolveLifecycleEvidenceContext(candidate) {
   const context = isObject(candidate?.lifecycleEvidenceContextV11)
     ? candidate.lifecycleEvidenceContextV11
     : {};
-  const platform = candidate.targetStore === "wb" ? "wb" : "ozon";
+  const platform = platformOfStore(candidate.targetStore) ?? "ozon";
   const explicitPlatform = nonEmptyString(context.platform) ? normalizedText(context.platform) : null;
   const explicitStore = nonEmptyString(context.store) ? normalizedText(context.store) : null;
   const targetStore = nonEmptyString(candidate.targetStore) ? normalizedText(candidate.targetStore) : null;

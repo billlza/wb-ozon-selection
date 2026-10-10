@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { buildBExactCommissionInput } from "../bExactCommissionInput.js";
 import FormRevisionNotice, { useCandidateForm, useSubmit } from "./FormRevisionNotice.jsx";
+import { platformOfStore } from "../../lib/store-registry.mjs";
 import { optionalNumber, candidatePlatform, safeWebUrl } from "../formState.js";
 import { finiteDisplayNumber, formatMoney, formatPercent } from "../finiteDisplay.js";
 import { buildCandidateCommentInput, shouldClearSubmittedComment } from "../commentInput.js";
@@ -830,7 +831,7 @@ function ReadyPanel({ candidate, rules, onMarkListed }) {
   const [showListedForm, setShowListedForm] = useState(false);
   const { saving, error, run } = useSubmit();
   const emptyForm = () => ({
-    platform: candidate.targetStore === "wb" ? "wb" : ["dandanshu", "miska"].includes(candidate.targetStore) ? "ozon" : "",
+    platform: platformOfStore(candidate.targetStore) ?? "",
     productId: "",
     merchantSku: "",
     productUrl: "",

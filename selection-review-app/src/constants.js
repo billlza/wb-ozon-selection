@@ -1,8 +1,7 @@
-export const STORE_LABELS = {
-  dandanshu: "蛋蛋鼠",
-  miska: "Miska",
-  wb: "WB"
-};
+import { storeLabelMap } from "../lib/store-registry.mjs";
+
+// 店铺显示名统一从店铺登记表取，顺序也跟它走。
+export const STORE_LABELS = storeLabelMap();
 
 export const QUEUE_LABELS = {
   awaiting_user_direction: "待你确认",
