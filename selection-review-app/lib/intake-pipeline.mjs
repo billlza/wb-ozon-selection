@@ -202,6 +202,8 @@ export function intakeProgress(candidate, { login1688Expired = false } = {}) {
   if (!isObject(intake)) return null;
   const idle = (stage, extra = {}) => ({ stage, blocker: null, step: null, next: null, waiting: false, ...extra });
   if (candidate.workflowStatus === "eliminated") return idle(intake.stage, { blocker: intake.blocker ?? null, closed: true });
+  // 主人在「做这件」卡上做过决定（candidate.gate1），这件就不归录入流水线管了：不再排作业、不再改它的记录。
+  if (isObject(candidate.gate1)) return idle(intake.stage, { blocker: intake.blocker ?? null, closed: true });
   if (intake.stage === "ready") return idle("ready");
   if (intake.stage === "blocked" && isObject(intake.blocker)) return idle("blocked", { blocker: intake.blocker, step: intake.blocker.step ?? null });
   const jobs = isObject(intake.jobs) ? intake.jobs : {};
@@ -275,7 +277,7 @@ export function intakeQueue(candidates) {
   const active = (Array.isArray(candidates) ? candidates : [])
     .filter((candidate) => isObject(candidate?.intake) && candidate.workflowStatus !== "eliminated")
     .map((candidate) => ({ candidate, progress: intakeProgress(candidate, { login1688Expired }) }))
-    .filter(({ progress }) => progress && progress.stage !== "ready");
+    .filter(({ progress }) => progress && progress.stage !== "ready" && !progress.closed);
   active.sort((left, right) => time(left.candidate.intake.submittedAt) - time(right.candidate.intake.submittedAt) ||
     (left.candidate.intake.batch?.index ?? 0) - (right.candidate.intake.batch?.index ?? 0));
   const waiting = active.filter(({ progress }) => progress.stage === "queued");
