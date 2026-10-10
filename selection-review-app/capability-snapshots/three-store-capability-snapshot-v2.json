@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T05:23:49.745Z",
+  "frozenAt": "2026-10-10T05:25:22.631Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 941,
-      "sha256": "5c926db1f57af6c33f5f5eefe4f803ba925a9e7a358090655ab1fc5079f1d0ed",
+      "sha256": "1b7d0f608a5086680d74491dd2a3e27952b99d34c555cbbdfd8061bfecd06630",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -1632,7 +1632,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "01d637e98fa3a870a5b3680b2e22873f5b9e158844138988d1e8a80a4aba27a7"
+        "sha256": "200e6a678d4397f49d2e955577d7f26e0b564598976c13e30f9b0d40b762ea58"
       },
       {
         "path": "src/App.jsx",
