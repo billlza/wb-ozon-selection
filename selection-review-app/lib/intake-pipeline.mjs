@@ -343,6 +343,43 @@ export function intakeRetryPlan(candidate, { requestedAt, requestedBy } = {}) {
   };
 }
 
+/** 货源这一步停下、而且只拦这一件的（下架、没货、没价、分享链接没打开、预售太晚、没首图、读不出来）；结果未知的要先由主人重跑或核实。 */
+function sourceUnusable(candidate, progress) {
+  if (progress) {
+    return progress.stage === "blocked" && progress.blocker?.step === "capture_source" && progress.blocker.scope === "item" &&
+      progress.blocker.code !== "unknown_outcome";
+  }
+  const source = candidate.sourceCapture;
+  if (source?.status !== "captured_waiting_owner_selection") return true;
+  return source.offerStatus === "off_sale" ||
+    !(Array.isArray(source.skuChoices) ? source.skuChoices : []).some((sku) => sku?.inStock !== false && Number(sku?.priceCny) > 0);
+}
+
+/**
+ * 「贴货源链接」：把一条拼多多 / 1688 链接接到一件还没有能用货源的商品上（Seerfar 挑来的、货源下架 / 没货 / 没价的），
+ * 这件从读货源页重新走一遍，不另建一件。只在「做这件」之前、没有作业在跑、主人没确认过供货时可以接；别的商品已经有这个货源时不接。
+ * 返回 { ok: false, code, duplicate? } 或 { ok: true, intake, previous }；previous 是换下来的旧链接和旧记录，原样留存，不覆盖历史。
+ */
+export function intakeAttachPlan(candidate, link, { candidates = [], requestedAt, requestedBy, batchId, busy = false, stillOpen = () => true } = {}) {
+  if (!isObject(candidate)) return { ok: false, code: "intake_attach_target_missing" };
+  if (candidate.workflowStatus === "eliminated") return { ok: false, code: "intake_attach_target_eliminated" };
+  if (isObject(candidate.gate1) || !stillOpen(candidate)) return { ok: false, code: "intake_attach_past_gate1" };
+  if (candidate.sourceCapture?.ownerSupplyConfirmed === true) return { ok: false, code: "intake_attach_supply_confirmed" };
+  const progress = isObject(candidate.intake) ? intakeProgress(candidate) : null;
+  if (busy || progress?.waiting || SOURCE_IN_FLIGHT.has(candidate.sourceCapture?.status)) return { ok: false, code: "intake_attach_busy" };
+  if (!sourceUnusable(candidate, progress)) return { ok: false, code: "intake_attach_has_source" };
+  const wanted = link?.identity || intakeSourceIdentity(link?.sourceUrl);
+  const duplicate = (Array.isArray(candidates) ? candidates : [])
+    .find((other) => other?.id !== candidate.id && wanted && candidateSourceIdentities(other).has(wanted)) || null;
+  if (duplicate) return { ok: false, code: "intake_attach_duplicate", duplicate };
+  return {
+    ok: true,
+    intake: newIntakeRecord({ link, submittedAt: requestedAt, submittedBy: requestedBy, batchId, batchIndex: 0, batchSize: 1 }),
+    previous: { sourceUrl: candidate.sourceUrl || candidate.intake?.sourceUrl || candidate.sourceCapture?.sourceUrl || null, intake: candidate.intake ?? null, sourceCapture: candidate.sourceCapture ?? null,
+      replacedAt: requestedAt, replacedBy: requestedBy }
+  };
+}
+
 /**
  * 整页提示上的「接着找」：停在整页那类事上的每一件都重跑那一步；因为 1688 没登录而跳过 1688 的，还没过「做这件」的也补搜一次。
  * 返回要改的 [{ candidateId, intake, acknowledgeSourceUnknown }]，空数组表示没有可以接着的。
