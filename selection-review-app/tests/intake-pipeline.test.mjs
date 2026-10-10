@@ -212,3 +212,16 @@ function pickBlocker(blocker) {
 function pickWork(work) {
   return work ? [work.candidate.id, work.step] : null;
 }
+
+test("「做这件」卡上做过决定的（candidate.gate1）不再归流水线管：不排队、不排作业、不算整页停下", () => {
+  const marker = { schemaVersion: "gate1-marker-v1", decision: "accepted", decidedAt: "2026-10-10T06:00:00.000Z", roundIndex: 0 };
+  const searching = withJobs(intakeCandidate("DECIDED"), { sourceCaptureId: "SCJ-1" }, { sourceCapture: captured("SCJ-1"), gate1: marker });
+  const progress = intakeProgress(searching);
+  assert.deepEqual([progress.closed, progress.next], [true, null]);
+  const slider = withJobs(intakeCandidate("SKIPPED"), { sourceCaptureId: "SCJ-2" }, { gate1: { ...marker, decision: "skipped" },
+    sourceCapture: { captureId: "SCJ-2", status: "failed", jobStatus: "failed", failureCode: "site_verification_required", mode: "a_supplier_capture" } });
+  const waiting = intakeCandidate("WAITING", { submittedAt: "2026-10-10T06:00:00.000Z" });
+  assert.deepEqual(intakeQueue([searching, slider, waiting]).map(({ candidate }) => candidate.id), ["WAITING"]);
+  assert.equal(intakePause([searching, slider, waiting]), null);
+  assert.equal(nextIntakeWork([searching, slider]), null);
+});

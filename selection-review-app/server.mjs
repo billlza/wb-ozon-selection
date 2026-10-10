@@ -1895,7 +1895,7 @@ function intakeExtensionState(timestamp = Date.now()) {
 function intakePendingStart(candidates, timestamp = Date.now()) {
   for (const candidate of candidates) {
     const jobs = candidate.intake?.jobs;
-    if (!jobs || candidate.workflowStatus === "eliminated") continue;
+    if (!jobs || candidate.workflowStatus === "eliminated" || candidate.gate1) continue;
     for (const [kind, captureId, sessions] of [["supplier_capture", jobs.sourceCaptureId, sourceCaptureSessions],
       ["supplier_image_match", jobs.supplierMatchId, imageMatchSessions], ["ozon_image_match", jobs.ozonMatchId, imageMatchSessions]]) {
       const session = captureId ? sessions.get(captureId) : null;
@@ -1955,7 +1955,7 @@ async function intakePumpStep() {
     const login1688Expired = intakeLogin1688State(data.candidates) === "expired";
     let changed = false;
     for (const current of data.candidates) {
-      if (!current.intake || current.workflowStatus === "eliminated") continue;
+      if (!current.intake || current.workflowStatus === "eliminated" || current.gate1) continue;
       const timestamp = now();
       let touched = false;
       const update = intakeStageUpdate(current, { login1688Expired });
