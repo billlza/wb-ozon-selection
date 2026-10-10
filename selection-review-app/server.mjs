@@ -1930,6 +1930,8 @@ let intakePumpTimer = null;
 let intakePumpRunning = false;
 let intakePumpRequested = false;
 let intakeHasOpenWork = false;
+// 启动时不为录入多读一遍整份数据（数据大时会拖慢启动自检）；工作台页面第一次来看队列时，有排着的才叫醒泵。
+let intakePumpPrimed = false;
 let intakeBridgeSeenAt = 0;
 let intakeLastStart = null;
 
@@ -5449,12 +5451,17 @@ async function handleApi(req, res, pathname) {
 
   if (req.method === "GET" && pathname === "/api/intake/queue") {
     // 工作台页面的开始信号桥每隔几秒来看一眼；它来过，排着的才有人把作业编号递给插件。
-    if (new URL(req.url, "http://127.0.0.1").searchParams.get("bridge") === "1") {
+    if (new URL(req.url, runtimeConfiguration.publicOrigin).searchParams.get("bridge") === "1") {
       intakeBridgeSeenAt = Date.now();
       if (intakeHasOpenWork) scheduleIntakePump(0);
     }
     const data = await readData();
     const entries = intakeQueue(data.candidates);
+    // 重启前排着、还没开始的商品接着往下走；停下的照旧停着，等主人点「重跑」。
+    if (!intakePumpPrimed && entries.length > 0) {
+      intakePumpPrimed = true;
+      scheduleIntakePump(0);
+    }
     // 同一次贴的里面已经找完的也列出来（「第 2 / 8 条 · 找完了」），整批都找完以后就只在「需要你处理」里了。
     const openBatches = new Set(entries.map(({ candidate }) => candidate.intake.batch?.id).filter(Boolean));
     const finished = data.candidates.filter((candidate) => candidate.intake?.stage === "ready" && candidate.workflowStatus !== "eliminated" &&
@@ -10499,8 +10506,6 @@ server.listen(port, host, () => {
   if (runtimeConfiguration.keywordEvidenceServiceBindings.length > 0) keywordEvidenceRuntimeServices.start();
   if (runtimeConfiguration.aDiscoveryServiceBindings.length > 0) aDiscoveryRuntime.start();
   if (runtimeConfiguration.aProductDetailServiceBindings.length > 0) aProductDetailRuntime.start();
-  // 录入流水线：重启前排着、还没开始的商品接着往下走；停下的照旧停着，等主人点「重跑」。
-  scheduleIntakePump(0);
   runtimeHealth.markListening();
   console.log(`全店经营工作台${apiOnly ? " API" : ""}：http://${host}:${port}`);
 });

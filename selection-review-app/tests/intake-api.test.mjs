@@ -267,7 +267,11 @@ test("停下：整页的事（滑块）整条队停着；主人点「重跑」�
   const byId = Object.fromEntries(paused.items.map(item => [item.candidateId, item]));
   assert.deepEqual([byId.DELISTED.blocker.code, byId.DELISTED.blocker.retryable, byId.UNKNOWN.blocker.code, byId.WAITING.stage],
     ["source_delisted", false, "unknown_outcome", "queued"]);
-  const stuck = await api.record("SLIDER");
+  // The first queue read after a restart wakes the pump, which writes the stage back onto the product.
+  const stuck = await api.until("滑块那一件记成停下", async () => {
+    const current = await api.record("SLIDER");
+    return current.intake.stage === "blocked" ? current : null;
+  });
   assert.deepEqual([stuck.intake.stage, stuck.intake.blocker.code], ["blocked", "slider_required"]);
   assert.ok(stuck.history.some(entry => entry.action === "intakeBlocked"));
 
