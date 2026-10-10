@@ -155,7 +155,7 @@ test('a failed read is saved with its reason and not retried; a restart closes a
     mutateDataWhenChanged: async mutator => { const draft = structuredClone(leftover.document()); const outcome = await mutator(draft); return outcome?.result; },
     now: () => '2026-10-10T04:00:00.000Z', businessDate: () => '2026-10-10', reader: null, config: { profiles: {} },
     estimateInputs: { resolveExchangeRate: async () => null } });
-  assert.equal((await restarted.reconcileAfterRestart()).length, 1);
+  assert.equal((await restarted.reconcileReadsAfterRestart()).length, 1);
 });
 
 test('home to-dos: one blocker notice for a Seerfar logout, a rerun for other failed rounds, nothing once a later round worked', async () => {

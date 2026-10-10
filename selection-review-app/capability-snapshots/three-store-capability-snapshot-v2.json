@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T04:58:05.358Z",
+  "frozenAt": "2026-10-10T05:39:30.470Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 932,
-      "sha256": "531d459cdf2eac791e2b6d157302110ab8422d2e0f284a832f4a6aaf6ec35532",
+      "sha256": "789a42def2e5d2f2133f6ef07bc0461cd74d3a0b07be81df38b6097c3daf63e6",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -1120,7 +1120,7 @@
       },
       {
         "path": "lib/seerfar-web-round-service.mjs",
-        "sha256": "eb3479131e47c897af3482a9eb2354100cf7aad9fbfb7e760e890d73bddda5ba"
+        "sha256": "5c3d4d78862305accec44df23c00c6c80a9d77307e33d09e25212ffdce8aee26"
       },
       {
         "path": "lib/seerfar-web-round.mjs",
@@ -1204,7 +1204,7 @@
       },
       {
         "path": "lib/store-sales-seed-service.mjs",
-        "sha256": "550a718cdb80a54d0281e492d760aa21b54f129707cb54478acde81a4a01bef1"
+        "sha256": "e873540589c0af3991143056d99172f285d68f0030ed444371cc72bcd9f6d011"
       },
       {
         "path": "lib/store-sales-seeds.mjs",
@@ -1620,7 +1620,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "43f9ec33727edbce337b492f299f06b1105b24bf04a1011dc49e28e1c3f14929"
+        "sha256": "4aaf2aa000a01ac4ebed926e478b7e551c7fa347e6c6db48689029f5a0a2372b"
       },
       {
         "path": "src/App.jsx",
@@ -3548,7 +3548,7 @@
       },
       {
         "path": "tests/seerfar-web-round-service.test.mjs",
-        "sha256": "17981f5b9789f7922ae1783d658e28a60d270e7eb0926be1067b333e9e7c4b86"
+        "sha256": "e552764be4f3cb966408fc30e138f69efcc1a7d7b3891cc54fc34e6deea0b42e"
       },
       {
         "path": "tests/seerfar-web-round.test.mjs",
@@ -3684,7 +3684,7 @@
       },
       {
         "path": "tests/store-sales-seeds.test.mjs",
-        "sha256": "9efe9a1d5d0b20f7a501bf0cdaea5fae7b0069ee458820087137cb849bb80d8c"
+        "sha256": "18c0db49eac70886d95485dc10773221307fca666c2c3fd74937db729890da3b"
       },
       {
         "path": "tests/structured-dispatch-integration.test.mjs",
