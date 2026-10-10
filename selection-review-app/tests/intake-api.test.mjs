@@ -19,6 +19,8 @@ const PDD_B = "https://mobile.yangkeduo.com/goods.html?goods_id=600000000002";
 const PDD_C = "https://mobile.yangkeduo.com/goods.html?goods_id=600000000003";
 const OFFER = "https://detail.1688.com/offer/712345678901.html";
 const IMAGE = (id) => `https://img.pddpic.com/garner-api-new/synthetic-${id}.jpeg`;
+// The extension version the service requires is the one the extension ships with.
+const EXTENSION_VERSION = JSON.parse(await readFile(path.join(appDir, "extension/1688-capture/manifest.json"), "utf8")).version;
 
 const document = candidates => ({
   meta: { version: 2, title: "test", updatedAt: "2026-10-10T00:00:00.000Z", automationStarted: false },
@@ -110,8 +112,8 @@ async function startApi(t, candidates) {
       cookie = response.cookie.split(";")[0];
     },
     queue: ({ bridge = true } = {}) => call("GET", `/api/intake/queue${bridge ? "?bridge=1" : ""}`),
-    heartbeat: () => extension("/api/extension/heartbeat", { version: "1.4.0", backgroundReady: true, observedAt: new Date().toISOString() }),
-    claim: jobId => extension(`/api/extension/capture-jobs/${jobId}/claim`, { version: "1.4.0" }),
+    heartbeat: () => extension("/api/extension/heartbeat", { version: EXTENSION_VERSION, backgroundReady: true, observedAt: new Date().toISOString() }),
+    claim: jobId => extension(`/api/extension/capture-jobs/${jobId}/claim`, { version: EXTENSION_VERSION }),
     async until(label, check) {
       for (let attempt = 0; attempt < 100; attempt += 1) {
         const queue = (await api.queue()).body;
