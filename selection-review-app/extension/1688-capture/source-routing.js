@@ -425,3 +425,38 @@ export function ozonSearchResultPage(value, query) {
   const url = new URL(value);
   return `https://www.ozon.ru${url.pathname.replace(/\/+$/, "")}/?text=${encodeURIComponent(foldOzonQuery(query))}`;
 }
+
+/** Mirrors OZON_IMAGE_SEARCH_ENTRY_URL in lib/ozon-search-query.mjs: an image search starts from Ozon's home page search bar. */
+export const OZON_IMAGE_SEARCH_ENTRY_URL = "https://www.ozon.ru/";
+
+/** Mirrors ozonImageSearchId in lib/ozon-search-query.mjs: the image_id Ozon gives one upload, hex with one x between. */
+export function ozonImageSearchId(value) {
+  return typeof value === "string" && /^[0-9a-f]{8,64}(?:x[0-9a-f]{8,64})?$/i.test(value) ? value : null;
+}
+
+/**
+ * Where an Ozon image-search tab has got to, as one fixed word: the home page it starts on ("entry"), the result page Ozon
+ * moves it to after the upload ("results", with a well-formed image_id), a verification page, or anywhere else.
+ */
+export function classifyOzonImageSearchNavigation(value) {
+  try {
+    if (typeof value !== "string") return "invalid";
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return "invalid";
+    const host = url.hostname.toLowerCase();
+    if (host !== "www.ozon.ru" && host !== "ozon.ru") return "non_whitelisted_destination";
+    if (/(?:captcha|challenge|antibot|\/abt\/)/i.test(url.pathname)) return "verification_required";
+    if (host !== "www.ozon.ru") return "non_whitelisted_destination";
+    if (url.pathname === "/") return "entry";
+    if (/^\/search-by-image\/?$/.test(url.pathname)) return ozonImageSearchId(url.searchParams.get("image_id")) ? "results" : "other_search";
+    return "non_whitelisted_destination";
+  } catch {
+    return "invalid";
+  }
+}
+
+/** The image-search result page as a fixed marker (path and Ozon's upload id only), so it can be compared after extraction. */
+export function ozonImageSearchResultPage(value) {
+  if (classifyOzonImageSearchNavigation(value) !== "results") return null;
+  return `https://www.ozon.ru/search-by-image?image_id=${new URL(value).searchParams.get("image_id")}`;
+}

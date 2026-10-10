@@ -42,3 +42,41 @@ export const SYNTHETIC_OZON_SEARCH_HTML = [
   "<a href=\"/product/sinteticheskiy-zhilet-90000101/\">Синтетический жилет 90000101</a></div>",
   "</body></html>"
 ].join("\n");
+
+// A synthetic image-search page (www.ozon.ru/search-by-image?image_id=…), shaped like the grid state Ozon writes there
+// (data-state on a state-tileGridDesktop-… element): numeric ids, textDS atoms, prices with thin spaces, a stock bar.
+export const SYNTHETIC_OZON_IMAGE_ID = "0123456789abcdef0123456789abcdefx0123456789abcdef0123456789abcdef";
+
+const imageTile = (id, { price, original = null }) => ({
+  id: Number(`90000${id}`),
+  action: { behavior: "BEHAVIOR_TYPE_REDIRECT", link: `/product/sinteticheskiy-tovar-90000${id}/`, target: "_blank" },
+  tileImage: { items: [{ type: "image", image: { link: `https://ir.ozone.ru/s3/multimedia-1-x/90000${id}.jpg` } }],
+    leftBottomBadgeV2: { text: "Распродажа" } },
+  mainState: [
+    { type: "priceV2", id: "atom", priceV2: { price: [{ text: price, textStyle: "PRICE" },
+      ...(original ? [{ text: original, textStyle: "ORIGINAL_PRICE" }] : [])], discount: "−61%" } },
+    { type: "textDS", id: "name", textDS: { text: `Синтетический товар ${id}` } },
+    { type: "textDS", id: "stock", textDS: { text: "20 ед осталось", testInfo: { automatizationId: "tile-blackFridayStockbar" } } }
+  ],
+  multiButton: { title: "20 октября" },
+  isAdult: false,
+  trackingInfo: { click: { actionType: "click", key: "synthetic-tracking-key" } }
+});
+
+export const SYNTHETIC_OZON_IMAGE_SEARCH_STATE = {
+  abMap: {}, options: {}, sharedData: {},
+  items: [
+    imageTile(301, { price: "425\u2009₽", original: "1\u2009093\u2009₽" }),
+    imageTile(302, { price: "690\u2009₽" }),
+    imageTile(303, { price: "1\u2009290\u2009₽", original: "1\u2009990\u2009₽" })
+  ],
+  templates: [], cols: 4, imageHeight: 300, columnsCount: 4, page: 1
+};
+
+export const SYNTHETIC_OZON_IMAGE_SEARCH_HTML = [
+  `<!-- saved from url=(0110)https://www.ozon.ru/search-by-image?image_id=${SYNTHETIC_OZON_IMAGE_ID} -->`,
+  "<html><head><title>Поиск по фото — OZON</title></head><body>",
+  `<div data-widget="infiniteVirtualPaginator"><div data-widget="tileGridDesktop"><div id="state-tileGridDesktop-000002-default-1" data-state="${
+    JSON.stringify(SYNTHETIC_OZON_IMAGE_SEARCH_STATE).replace(/&/g, "&amp;").replace(/"/g, "&quot;")}"></div></div></div>`,
+  "</body></html>"
+].join("\n");

@@ -81,10 +81,10 @@ async function readBoundedBody(response) {
 }
 
 /**
- * Fetch one public product image from a platform image host and fingerprint it. No cookie, credential or referer is
- * sent, redirects are refused (a redirect could leave the allowed hosts), and the body is read to a fixed limit.
+ * Fetch one public product image from a platform image host. No cookie, credential or referer is sent, redirects are
+ * refused (a redirect could leave the allowed hosts), and the body is read to a fixed limit.
  */
-export async function fetchImageFingerprint(url, { fetchImpl = fetch, timeoutMs = 15000 } = {}) {
+export async function fetchPublicProductImage(url, { fetchImpl = fetch, timeoutMs = 15000 } = {}) {
   if (!imageFingerprintUrlAllowed(url)) throw new ImageFingerprintError("URL_NOT_ALLOWED");
   if (typeof fetchImpl !== "function" || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60000) {
     throw new TypeError("IMAGE_FINGERPRINT_DEPENDENCY_INVALID");
@@ -97,5 +97,28 @@ export async function fetchImageFingerprint(url, { fetchImpl = fetch, timeoutMs 
   if (!response?.ok) throw new ImageFingerprintError("FETCH_FAILED");
   const type = String(response.headers?.get?.("content-type") || "").toLowerCase();
   if (!type.startsWith("image/")) throw new ImageFingerprintError("IMAGE_INVALID");
-  return imageFingerprintFromBuffer(await readBoundedBody(response));
+  return readBoundedBody(response);
+}
+
+/** Fetch one public product image (as fetchPublicProductImage) and fingerprint it. */
+export async function fetchImageFingerprint(url, options = {}) {
+  return imageFingerprintFromBuffer(await fetchPublicProductImage(url, options));
+}
+
+// 交给 Ozon 以图搜上传的图：只要一张普通的 JPEG。长边最多 1600 像素，去掉图片里带的拍摄信息，大小远在 Ozon 的上传限制以内。
+const SEARCH_UPLOAD_MAX_EDGE = 1600;
+const SEARCH_UPLOAD_MAX_BYTES = 3 * 1024 * 1024;
+
+/** The picture a search uploads: the same image re-encoded as a plain JPEG, metadata dropped, at most 1600 px a side. */
+export async function searchUploadImageFromBuffer(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0 || buffer.length > MAX_IMAGE_BYTES) throw new ImageFingerprintError("IMAGE_INVALID");
+  let output;
+  try {
+    output = await sharp(buffer, { failOn: "error", limitInputPixels: MAX_IMAGE_PIXELS }).timeout({ seconds: 10 }).rotate()
+      .flatten({ background: "#ffffff" })
+      .resize({ width: SEARCH_UPLOAD_MAX_EDGE, height: SEARCH_UPLOAD_MAX_EDGE, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 90 }).toBuffer();
+  } catch { throw new ImageFingerprintError("IMAGE_INVALID"); }
+  if (output.length === 0 || output.length > SEARCH_UPLOAD_MAX_BYTES) throw new ImageFingerprintError("IMAGE_TOO_LARGE");
+  return { contentType: "image/jpeg", buffer: output };
 }

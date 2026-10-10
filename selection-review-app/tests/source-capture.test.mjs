@@ -510,7 +510,7 @@ test("1688 collector accepts a real top-level SKU ID on a single-specification o
   }
 });
 
-test("extension manifest stays limited to the 1688 short-link/detail allowlist, the 1688 image-search pages, Pinduoduo goods pages, Ozon product and search pages and the local review app", async () => {
+test("extension manifest stays limited to the 1688 short-link/detail allowlist, the 1688 image-search pages, Pinduoduo goods pages, Ozon product, search and image-search pages and the local review app", async () => {
   const manifest = JSON.parse(await readFile(path.join(appDir, "extension", "1688-capture", "manifest.json"), "utf8"));
   assert.equal(manifest.version, "1.4.0");
   assert.equal(manifest.name, "全店经营工作台 · 商品只读采集器");
@@ -527,8 +527,11 @@ test("extension manifest stays limited to the 1688 short-link/detail allowlist, 
     "https://p.pinduoduo.com/*",
     "https://qr.1688.com/s/*",
     "https://s.1688.com/youyuan/*",
+    "https://www.ozon.ru/",
+    "https://www.ozon.ru/?*",
     "https://www.ozon.ru/category/*",
     "https://www.ozon.ru/product/*",
+    "https://www.ozon.ru/search-by-image*",
     "https://www.ozon.ru/search/*"
   ]);
   assert.equal(manifest.permissions.includes("cookies"), false);

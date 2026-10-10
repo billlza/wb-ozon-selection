@@ -1414,3 +1414,6 @@ label em { color: var(--red); font-style: normal; font-size: 9px; }
 .image-match-facts { color: var(--muted); }
 .image-match-judge { display: flex; gap: 6px; flex-wrap: wrap; }
 .image-match-judge .button { padding: 2px 10px; font-size: 12px; }
+/* 在 Ozon 找同款：俄文词搜是以图搜的后备，排在主按钮下面 */
+.image-match-fallback { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; padding-top: 8px; border-top: 1px dashed var(--line); }
+.image-match-fallback .product-field { flex: 1 1 280px; min-width: 0; }

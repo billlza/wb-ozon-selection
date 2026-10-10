@@ -288,15 +288,21 @@ test("the Ozon start receipt sends the Ozon start signal, never the 1688 one", (
   assert.match(captureStartMessage({ accepted: true }, OZON_IMAGE_MATCH_CHANNEL), /Ozon/);
 });
 
-test("the product page shows the Ozon words box, the search button, rouble results and the three judgement buttons", async () => {
+test("the product page offers the image search first, keeps the words box as the fallback, and shows rouble results with judgements", async () => {
   const fresh = ozonMatchSection(await render(ozonProps({ candidate: candidate({ productName: "Жилет для кошки, синтетический" }) })));
   assert.match(fresh, /aria-label="在 Ozon 找同款"/);
+  assert.match(fresh, /<button type="button" class="button primary">用首图在 Ozon 搜</);
+  assert.match(fresh, /先用这张拼多多首图在 Ozon 以图搜一次/);
+  assert.ok(fresh.indexOf("用首图在 Ozon 搜") < fresh.indexOf('id="ozon-match-query"'), "the image search comes before the words");
   assert.match(fresh, /id="ozon-match-query"[^>]*value="Жилет для кошки"|value="Жилет для кошки"[^>]*id="ozon-match-query"/);
+  assert.match(fresh, /以图搜只找到近似款时，用俄文词再搜（后备）/);
   assert.match(fresh, /取自这件商品在 Ozon 上的标题/);
-  assert.match(fresh, />在 Ozon 搜一次</);
-  assert.match(fresh, /Ozon 不能拿图搜/);
+  assert.match(fresh, /<button type="button" class="button secondary">用俄文词搜</);
+  assert.doesNotMatch(fresh, /Ozon 不能拿图搜/);
+  // No words yet: the image search still works, only the word search waits for words.
   const blank = ozonMatchSection(await render(ozonProps({ candidate: candidate() })));
-  assert.match(blank, /<button type="button" class="button primary" disabled="">在 Ozon 搜一次</);
+  assert.match(blank, /<button type="button" class="button primary">用首图在 Ozon 搜</);
+  assert.match(blank, /<button type="button" class="button secondary" disabled="">用俄文词搜</);
   const html = ozonMatchSection(await render(ozonProps({ candidate: candidate({ ozonImageMatch: ozonCompared() }) })));
   assert.match(html, /首图一致/);
   assert.match(html, /1 290 ₽/);
@@ -308,17 +314,34 @@ test("the product page shows the Ozon words box, the search button, rouble resul
   assert.match(html, /价格没读到/);
   assert.match(html, /aria-pressed="true"[^>]*>是同款</);
   assert.match(html, /href="https:\/\/www\.ozon\.ru\/product\/9100000001\/"/);
-  assert.match(html, />用这几个词再搜一次</);
+  assert.match(html, />用首图再搜一次</);
   assert.match(html, /重新比对首图/);
   assert.match(html, /没搜到也不说明 Ozon 上没有同款/);
   assert.doesNotMatch(html, /¥|1688/);
   const unknown = ozonMatchSection(await render(ozonProps({ candidate: candidate({ ozonImageMatch: { captureId: "OMJ-c", status: "failed",
     jobStatus: "unknown_outcome", query: OZON_QUERY, reason: "插件领取了这次在 Ozon 找同款，但在执行期限内没有回传可验证结果，这次的结果未知", results: [] } }) })));
-  assert.match(unknown, /我知道上次结果未知，重新搜一次/);
+  assert.match(unknown, /我知道上次结果未知，用首图再搜一次/);
+  assert.match(unknown, /我知道上次结果未知，用俄文词搜/);
+  // An image search's results say so, point to the words when nothing matched, and flag pictures shared by several products.
+  const shared = "https://ir.ozone.ru/s3/multimedia-1-x/9100000099.jpg";
+  const byImage = ozonCompared({ searchBy: "image", query: null, results: [
+    ozonRow(0, { similarity: "similar", imageUrl: shared }), ozonRow(1, { similarity: "different", imageUrl: shared, isSourceProduct: false }),
+    ozonRow(2, { similarity: "different", isSourceProduct: false })], judgements: {} });
+  const imageView = ozonImageMatchView(candidate({ ozonImageMatch: byImage }));
+  assert.equal(imageView.searchBy, "image");
+  assert.match(imageView.statusLine, /^Ozon 以图搜到 36 条，读回前 3 条/);
+  assert.match(imageView.statusLine, /只找到近似款很常见，可以在下面用俄文词再搜一次/);
+  assert.deepEqual(imageView.rows.map(row => row.samePictureOthers), [1, 1, 0]);
+  const imageHtml = ozonMatchSection(await render(ozonProps({ candidate: candidate({ ozonImageMatch: byImage }) })));
+  assert.match(imageHtml, /同一张图还有 1 个商品，可能是别的规格/);
+  assert.match(imageHtml, /以图搜按样子找，不保证有一模一样的/);
+  const searching = ozonImageMatchView(candidate({ ozonImageMatch: { captureId: "OMJ-d", status: "searching", jobStatus: "claimed", searchBy: "image",
+    query: null, results: [] } }));
+  assert.equal(searching.statusLine, "插件正在 Ozon 上用首图搜……");
   // Both blocks sit on the page side by side; the 1688 block keeps its own wording.
   const both = await render(ozonProps({ candidate: candidate() }));
   assert.match(imageMatchSection(both), /在 1688 找同款/);
-  assert.doesNotMatch(imageMatchSection(both), /Ozon 搜一次/);
+  assert.doesNotMatch(imageMatchSection(both), /Ozon/);
   const withoutHandlers = await render(pageProps({ candidate: candidate() }));
   assert.doesNotMatch(withoutHandlers, /在 Ozon 找同款/);
 });

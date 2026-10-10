@@ -3,14 +3,17 @@ import { collectOzonPage } from "./collector-ozon.js";
 import { collectPinduoduoPage } from "./collector-pinduoduo.js";
 import { collect1688ImageSearchPage } from "./collector-1688-image-search.js";
 import { collectOzonSearchPage } from "./collector-ozon-search.js";
+import { uploadOzonSearchImage } from "./uploader-ozon-image-search.js";
 import {
   classify1688ImageSearchNavigation,
   classify1688NavigationOutcome,
+  classifyOzonImageSearchNavigation,
   classifyOzonSearchNavigation,
   classifyPinduoduoNavigation,
   classifySupplierSource,
   imageSearchResultPage,
   observed1688TabAddress,
+  ozonImageSearchResultPage,
   ozonSearchResultPage,
   shouldWaitFor1688Destination,
   validateResolved1688Source,
@@ -23,6 +26,7 @@ import {
   isReviewSender,
   isOzonCaptureJob,
   isOzonImageMatchJob,
+  isOzonImageSearchJob,
   OZON_IMAGE_MATCH_REQUEST_TYPE,
   validateCaptureStartSignal,
   validateImageMatchRequest,
@@ -40,7 +44,7 @@ const FAILURE_CODES = new Set([
   "wrong_offer", "wrong_product", "structured_data_unavailable", "site_login_required",
   "site_verification_required", "short_link_resolution_failed", "timeout", "sku_limit_exceeded",
   "precise_price_missing", "exact_price_unavailable", "invalid_capture", "system_error",
-  "results_unverifiable", "results_empty", "wrong_query", "navigation_rejected"
+  "results_unverifiable", "results_empty", "wrong_query", "navigation_rejected", "image_upload_unavailable", "search_image_unavailable"
 ]);
 const safeFailureCode = (code) => FAILURE_CODES.has(code) ? code : "system_error";
 const failure = (code) => Object.assign(new Error(code), { code });
@@ -68,8 +72,25 @@ function inspectOzonSearchTab(tab, payload) {
   throw failure("navigation_rejected");
 }
 
+// An Ozon image search starts on the home page ("entry": wait there until the document has committed, then upload) and is
+// read only on the search-by-image page Ozon moves the tab to; the home page is still "waiting" while the upload runs.
+function inspectOzonImageSearchTab(tab, stage) {
+  const address = observed1688TabAddress(tab).value;
+  if (!address) return null;
+  const outcome = classifyOzonImageSearchNavigation(address);
+  if (outcome === "verification_required") throw failure("site_verification_required");
+  if (outcome === "entry") return stage === "entry" ? (tab.pendingUrl ? null : { entryUrl: address }) : null;
+  if (outcome === "results" && stage === "results") {
+    if (tab.pendingUrl) return null;
+    const sourceUrl = ozonImageSearchResultPage(address);
+    return { sourceUrl, imageId: new URL(sourceUrl).searchParams.get("image_id") };
+  }
+  throw failure("navigation_rejected");
+}
+
 function inspectCaptureTab(tab, payload) {
   if (isImageMatchJob(payload)) return inspectImageSearchTab(tab);
+  if (isOzonImageSearchJob(payload)) return inspectOzonImageSearchTab(tab, "results");
   if (isOzonImageMatchJob(payload)) return inspectOzonSearchTab(tab, payload);
   if (isOzonCaptureJob(payload)) {
     const address = observed1688TabAddress(tab).value;
@@ -115,7 +136,8 @@ function inspectPinduoduoTab(tab, address, payload) {
 }
 
 // Listen before reading the tab: a completion event between those steps must not be lost.
-export function waitForCaptureTab(chromeApi, tabId, payload, { timeoutMs = 25000, setTimer = setTimeout, clearTimer = clearTimeout, signal } = {}) {
+export function waitForCaptureTab(chromeApi, tabId, payload, { timeoutMs = 25000, setTimer = setTimeout, clearTimer = clearTimeout, signal,
+  inspectTab = (tab) => inspectCaptureTab(tab, payload) } = {}) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer;
@@ -131,7 +153,7 @@ export function waitForCaptureTab(chromeApi, tabId, payload, { timeoutMs = 25000
     const inspect = (tab) => {
       if (settled) return;
       try {
-        const result = inspectCaptureTab(tab, payload);
+        const result = inspectTab(tab);
         if (result) finish(null, result);
       } catch (error) {
         finish(error);
@@ -155,6 +177,11 @@ function validatedCollectedResult(collected, resolved, payload) {
   if (isImageMatchJob(payload)) {
     // The page must have searched the one picture this job was created for; the service checks the same again.
     if (evidence?.searchImageUrl !== payload.imageUrl) throw failure("wrong_query");
+    return { status: "captured", evidence };
+  }
+  if (isOzonImageSearchJob(payload)) {
+    // The page read must be the one this upload landed on; the service checks the shape again.
+    if (evidence?.searchBy !== "image" || evidence?.imageId !== resolved.imageId || evidence?.query !== undefined) throw failure("wrong_query");
     return { status: "captured", evidence };
   }
   if (isOzonImageMatchJob(payload)) {
@@ -224,6 +251,24 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
     if (!response.ok) throw failure([401, 403].includes(response.status) ? "extension_identity_rejected" : "result_rejected");
   }
 
+  // The one picture an Ozon image search uploads, handed out by the review app for this claimed job only.
+  async function fetchSearchImage(payload) {
+    let response;
+    try {
+      response = await fetchImpl(`${API_ORIGIN}/api/extension/capture-jobs/${encodeURIComponent(payload.captureId)}/search-image`, {
+        method: "POST",
+        signal: AbortSignal.timeout(15000),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: payload.token, dataRevision: payload.dataRevision })
+      });
+    } catch { throw failure("search_image_unavailable"); }
+    if (!response?.ok) throw failure("search_image_unavailable");
+    const body = await response.json().catch(() => null);
+    if (body?.contentType !== "image/jpeg" || typeof body.base64 !== "string" || !body.base64 || body.base64.length > 6 * 1024 * 1024 ||
+        !/^[A-Za-z0-9+/]+={0,2}$/.test(body.base64)) throw failure("search_image_unavailable");
+    return { contentType: body.contentType, base64: body.base64 };
+  }
+
   async function executeCapture(payload) {
     let tabId = null;
     let result;
@@ -256,6 +301,10 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
     const capture = async () => {
       const imageMatch = isImageMatchJob(payload);
       const ozonMatch = isOzonImageMatchJob(payload);
+      const ozonImage = isOzonImageSearchJob(payload);
+      // The picture is fetched before any tab opens: without it there is nothing to search with.
+      const picture = ozonImage ? await fetchSearchImage(payload) : null;
+      assertNotCancelled();
       const url = imageMatch ? validateImageMatchRequest({ payload, manifestVersion: version }).searchUrl
         : ozonMatch ? validateOzonImageMatchRequest({ payload, manifestVersion: version }).searchUrl
         : isOzonCaptureJob(payload) ? canonicalOzonCaptureSource(payload.productUrl, payload.expectedProductId)
@@ -269,6 +318,16 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
         throw failure("timeout");
       }
       tabId = tab.id;
+      if (ozonImage) {
+        // Home page first; the upload is the only thing done there. The tab then has to arrive at the result page itself.
+        await waitForCaptureTab(chromeApi, tabId, payload, { ...waitOptions, signal, inspectTab: (current) => inspectOzonImageSearchTab(current, "entry") });
+        assertNotCancelled();
+        const upload = await chromeApi.scripting.executeScript({ target: { tabId }, world: "ISOLATED", func: uploadOzonSearchImage,
+          args: [picture.base64, picture.contentType] });
+        assertNotCancelled();
+        const uploaded = upload?.[0]?.result;
+        if (uploaded?.status !== "uploaded") throw failure(safeFailureCode(uploaded?.failureCode ?? "image_upload_unavailable"));
+      }
       const resolved = await waitForCaptureTab(chromeApi, tabId, payload, { ...waitOptions, signal });
       assertNotCancelled();
       const isOzon = isOzonCaptureJob(payload);
@@ -277,7 +336,8 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
         target: { tabId }, world: "ISOLATED",
         func: imageMatch ? collect1688ImageSearchPage : ozonMatch ? collectOzonSearchPage : isOzon ? collectOzonPage
           : pinduoduo ? collectPinduoduoPage : collect1688Page,
-        args: imageMatch ? [payload.imageUrl, payload.maxResults] : ozonMatch ? [payload.query, payload.maxResults]
+        args: imageMatch ? [payload.imageUrl, payload.maxResults]
+          : ozonImage ? [{ imageId: resolved.imageId }, payload.maxResults] : ozonMatch ? [payload.query, payload.maxResults]
           : [isOzon ? payload.expectedProductId : resolved.offerId]
       });
       assertNotCancelled();

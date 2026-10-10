@@ -58,6 +58,10 @@ export function harness(options = {}) {
       if (options.claim) return options.claim();
       return { ok: true, json: async () => ({ accepted: true, captureJob: options.job || null }) };
     }
+    if (url.endsWith("/search-image")) {
+      if (options.searchImage) return options.searchImage();
+      return { ok: true, json: async () => ({ contentType: "image/jpeg", byteLength: 3, base64: "AAEC" }) };
+    }
     if (options.reportFails) throw new Error("https://secret.example/?token=fixture-secret");
     if (options.reportStatus) return { ok: false, status: options.reportStatus };
     return { ok: true };

@@ -6,9 +6,11 @@ import {
   ImageFingerprintError,
   classifyImageSimilarity,
   fetchImageFingerprint,
+  fetchPublicProductImage,
   imageFingerprintDistance,
   imageFingerprintFromBuffer,
-  imageFingerprintUrlAllowed
+  imageFingerprintUrlAllowed,
+  searchUploadImageFromBuffer
 } from "../lib/image-fingerprint.mjs";
 
 // Every picture here is drawn in memory from synthetic pixels; no product image or network is used.
@@ -95,4 +97,27 @@ test("only platform image hosts are fetched, without cookies, referer or redirec
   await assert.rejects(fetchImageFingerprint(url, { fetchImpl: async () => { throw new TypeError("redirect"); } }), /FETCH_FAILED/);
   await assert.rejects(fetchImageFingerprint(url, { fetchImpl: respond(jpeg, "image/jpeg", true, 9 * 1024 * 1024) }), /IMAGE_TOO_LARGE/);
   await assert.rejects(fetchImageFingerprint(url, { fetchImpl: respond(Buffer.alloc(9 * 1024 * 1024)) }), /IMAGE_TOO_LARGE/);
+});
+
+test("the picture an Ozon image search uploads is the same image as a plain JPEG, at most 1600 px a side, fetched by the same rules", async () => {
+  const large = await drawn(2400, 1200, product).png().toBuffer();
+  const upload = await searchUploadImageFromBuffer(large);
+  assert.equal(upload.contentType, "image/jpeg");
+  const meta = await sharp(upload.buffer).metadata();
+  assert.deepEqual([meta.format, meta.width, meta.height, meta.exif], ["jpeg", 1600, 800, undefined]);
+  // Still the same picture for the fingerprint comparison afterwards.
+  assert.ok(imageFingerprintDistance(await imageFingerprintFromBuffer(upload.buffer), await imageFingerprintFromBuffer(large)) <= 2);
+  const small = await searchUploadImageFromBuffer(await drawn(300, 200, product).webp().toBuffer());
+  assert.deepEqual([(await sharp(small.buffer).metadata()).width, (await sharp(small.buffer).metadata()).height], [300, 200], "never enlarged");
+  await assert.rejects(searchUploadImageFromBuffer(Buffer.from("not an image")), /IMAGE_INVALID/);
+  await assert.rejects(searchUploadImageFromBuffer(Buffer.alloc(0)), /IMAGE_INVALID/);
+
+  const jpeg = await drawn(300, 300, product).jpeg().toBuffer();
+  const url = "https://ir.ozone.ru/s3/multimedia-1-d/wc1000/9000000001.jpg";
+  const body = await fetchPublicProductImage(url, { fetchImpl: async (_url, init) => {
+    assert.deepEqual([init.redirect, init.credentials, init.referrerPolicy], ["error", "omit", "no-referrer"]);
+    return new Response(jpeg, { status: 200, headers: { "content-type": "image/jpeg" } });
+  } });
+  assert.deepEqual(body, jpeg);
+  await assert.rejects(fetchPublicProductImage("https://example.com/a.jpg", { fetchImpl: () => assert.fail("must not fetch") }), /URL_NOT_ALLOWED/);
 });

@@ -111,7 +111,7 @@ export function parseHttpRequestTarget(rawTarget, hostHeader, { fallbackHost = "
 
 function isExtensionEndpoint(pathname) {
   return pathname === "/api/extension/heartbeat" ||
-    /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/claim$/.test(String(pathname || "")) ||
+    /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/(?:claim|search-image)$/.test(String(pathname || "")) ||
     /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(String(pathname || ""));
 }
 

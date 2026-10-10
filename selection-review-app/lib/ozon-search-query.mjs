@@ -20,6 +20,20 @@ export function ozonSearchUrl(query) {
   return `https://www.ozon.ru/search/?${new URLSearchParams({ text: normalized, from_global: "true" })}`;
 }
 
+/**
+ * Ozon 以图搜（2025 年 9 月起网页版就有，主人 2026-10-10 在自己的 Chrome 里试过）：在 Ozon 首页的搜索栏上传一张图，
+ * Ozon 把它跳到 /search-by-image?image_id=…。image_id 是 Ozon 给这次上传编的号，看不出是哪张原图。
+ * 插件从这个首页开始；搜索栏在每一页都有，首页是固定、最短的那个地址。
+ */
+export const OZON_IMAGE_SEARCH_ENTRY_URL = "https://www.ozon.ru/";
+export const OZON_SEARCH_BY = Object.freeze(["image", "text"]);
+const OZON_IMAGE_SEARCH_ID = /^[0-9a-f]{8,64}(?:x[0-9a-f]{8,64})?$/i;
+
+/** 与插件里的 ozonImageSearchId 逐字一致：Ozon 结果页地址里的 image_id，只认十六进制和中间那个 x。 */
+export function ozonImageSearchId(value) {
+  return typeof value === "string" && OZON_IMAGE_SEARCH_ID.test(value) ? value : null;
+}
+
 const OZON_PRODUCT_PATH = /^\/product\/(?:[^/]*-)?(\d{5,20})\/?$/;
 export function ozonProductId(value) {
   try {

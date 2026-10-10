@@ -60,6 +60,26 @@ test("the picture follows the same rule as the 1688 search, and the words must b
   assert.equal(ozonImageMatchTarget(candidate({ sourceCapture: pddCapture({ mainImageUrl: null }) }), QUERY).code, "main_image_missing");
 });
 
+test("an image search needs only the picture: no words, Ozon's home page as the start, and its own authorization", () => {
+  const target = ozonImageMatchTarget(candidate(), "ignored words", { searchBy: "image" });
+  assert.deepEqual([target.ok, target.searchBy, target.imageUrl, target.query, target.queryOrigin, target.searchUrl],
+    [true, "image", supplierImageMatchSource(candidate()).imageUrl, null, null, "https://www.ozon.ru/"]);
+  assert.equal(ozonImageMatchTarget(candidate(), "", { searchBy: "image" }).ok, true, "an empty word box does not stop an image search");
+  assert.equal(ozonImageMatchTarget(candidate({ sourceCapture: null }), null, { searchBy: "image" }).code, "source_image_missing");
+  assert.equal(ozonImageMatchTarget(candidate(), QUERY, { searchBy: "photo" }).code, "ozon_search_by_invalid");
+  assert.equal(ozonImageMatchTarget(candidate(), QUERY).searchBy, "text");
+
+  const queued = queuedOzonImageMatchRecord(null, { captureId: "OMJ-image", source: target.source, searchBy: "image", query: "ignored",
+    queryOrigin: "owner", requiredExtensionVersion: "1.4.0", authorizedBy: "owner", authorizedAt: "2026-10-10T08:00:00.000Z", candidateRevision: 3 });
+  assert.deepEqual([queued.searchBy, queued.query, queued.queryOrigin, queued.searchUrl], ["image", null, null, "https://www.ozon.ru/"]);
+  assert.deepEqual(queued.authorization, { action: "ozon_image_search", site: "ozon", loginStateRead: false, ownerBrowser: true,
+    maxSearches: 1, imageUploads: 1, maxResults: 36, publicImageReads: 37, authorizedBy: "owner", authorizedAt: "2026-10-10T08:00:00.000Z",
+    candidateRevision: 3 });
+  // The next word search does not prefill from an image search, which had no words.
+  assert.deepEqual(suggestedOzonSearchQuery(candidate({ ozonImageMatch: queued })), { query: "", origin: null });
+  assert.match(ozonImageMatchFailed({}, "image_upload_unavailable", { timestamp: "2026-10-10T08:00:00.000Z" }).reason, /可以先用俄文词搜/);
+});
+
 const item = (index, extra = {}) => ({ productId: String(9000000100 + index), title: `Синтетический жилет ${index}`,
   imageUrl: `https://ir.ozone.ru/s3/multimedia-1-z/wc500/${9000000100 + index}.jpg?w=1`, priceRub: 1299, originalPriceRub: 2599,
   rating: 4.84, reviewCount: 1234, isAd: false, rank: index, trackingInfo: { key: "secret-tracking" },

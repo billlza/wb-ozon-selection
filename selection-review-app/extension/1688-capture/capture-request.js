@@ -1,4 +1,5 @@
-import { canonicalImageSearchSourceUrl, classifySupplierSource, imageSearchUrl, normalizeOzonSearchQuery, ozonSearchUrl } from "./source-routing.js";
+import { canonicalImageSearchSourceUrl, classifySupplierSource, imageSearchUrl, normalizeOzonSearchQuery, OZON_IMAGE_SEARCH_ENTRY_URL,
+  ozonSearchUrl } from "./source-routing.js";
 
 export const SUPPLIER_CAPTURE_REQUEST_TYPE = "SELECTION_REVIEW_1688_CAPTURE_REQUEST";
 export const SUPPLIER_CAPTURE_MODE = "a_supplier_capture";
@@ -87,8 +88,9 @@ export function validateImageMatchRequest({ payload, manifestVersion = "" } = {}
 }
 
 /**
- * 在 Ozon 找同款作业：只在 Ozon 站内搜服务端锁定的那几个词，搜索地址必须就是由这几个词拼出来的那一个。
- * 不带 sourceUrl、productUrl、expectedProductId、imageUrl，所以不会被当成别的作业。
+ * 在 Ozon 找同款作业，两种搜法。词搜：只在 Ozon 站内搜服务端锁定的那几个词，搜索地址必须就是由这几个词拼出来的那一个。
+ * 以图搜：只从 Ozon 首页开始、不带任何词，要上传的图由插件凭这次作业的令牌向评审台取。
+ * 都不带 sourceUrl、productUrl、expectedProductId、imageUrl，所以不会被当成别的作业。
  */
 export function validateOzonImageMatchRequest({ payload, manifestVersion = "" } = {}) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload) || !validJobIdentity(payload)) return { ok: false, code: "request_payload_missing" };
@@ -98,10 +100,19 @@ export function validateOzonImageMatchRequest({ payload, manifestVersion = "" } 
   if (payload.attempt !== 1) return { ok: false, code: "attempt_invalid" };
   if (payload.requiredExtensionVersion !== manifestVersion || !manifestVersion) return { ok: false, code: "extension_version_mismatch" };
   if (payload.maxResults !== OZON_IMAGE_MATCH_MAX_RESULTS) return { ok: false, code: "request_payload_missing" };
+  if (payload.searchBy === "image") {
+    if (payload.query !== undefined || payload.searchUrl !== OZON_IMAGE_SEARCH_ENTRY_URL) return { ok: false, code: "search_query_invalid" };
+    return { ok: true, searchBy: "image", searchUrl: OZON_IMAGE_SEARCH_ENTRY_URL };
+  }
+  if (payload.searchBy !== "text") return { ok: false, code: "capture_mode_invalid" };
   const query = normalizeOzonSearchQuery(payload.query);
   const searchUrl = ozonSearchUrl(payload.query);
   if (!query || query !== payload.query || !searchUrl || searchUrl !== payload.searchUrl) return { ok: false, code: "search_query_invalid" };
-  return { ok: true, query, searchUrl };
+  return { ok: true, searchBy: "text", query, searchUrl };
+}
+
+export function isOzonImageSearchJob(payload) {
+  return isOzonImageMatchJob(payload) && payload.searchBy === "image";
 }
 
 const ERROR_MESSAGES = Object.freeze({

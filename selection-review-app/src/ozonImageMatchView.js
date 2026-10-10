@@ -5,7 +5,8 @@ import { IMAGE_MATCH_JUDGEMENT_LABELS, IMAGE_MATCH_SIMILARITY_LABELS } from "./s
 /**
  * 商品页「在 Ozon 找同款」那一块要显示的东西，全部从服务端保存的 candidate.ozonImageMatch、这件商品的首图和它自己的
  * Ozon 标题里读出来。比对用哪张图、搜索词怎么认，和服务端读的是同一份规则（lib/supplier-image-match-source.mjs、
- * lib/ozon-search-query.mjs）。页面不判断是不是同款，只把首图像不像排出来，是不是同款由主人逐条点。
+ * lib/ozon-search-query.mjs）。先用首图以图搜，俄文词搜是后备。页面不判断是不是同款，只把首图像不像排出来，是不是同款、
+ * 是哪个规格由主人逐条点。
  */
 const SIMILARITY_ORDER = Object.freeze(["identical", "similar", "unknown", "different"]);
 const QUERY_ORIGIN_NOTES = Object.freeze({
@@ -16,13 +17,15 @@ const isObject = value => value !== null && typeof value === "object" && !Array.
 const finite = value => (typeof value === "number" && Number.isFinite(value) ? value : null);
 
 function statusLine(record, counts) {
+  const byImage = record.searchBy === "image";
   switch (record.status) {
     case "waiting_extension": return "已经排队，等插件领取……";
-    case "searching": return `插件正在 Ozon 上搜「${record.query}」……`;
+    case "searching": return byImage ? "插件正在 Ozon 上用首图搜……" : `插件正在 Ozon 上搜「${record.query}」……`;
     case "comparing": return `已读回 ${record.results.length} 条，正在比对首图……`;
-    case "compared": return `Ozon 用「${record.query}」搜到 ${record.cardCount ?? "?"} 条，读回前 ${record.results.length} 条：首图一致 ` +
-      `${counts.identical} 条、很像 ${counts.similar} 条、不像 ${counts.different} 条${counts.unknown ? `、无法比对 ${counts.unknown} 条` : ""}。` +
-      "是不是同款请你逐条判断。";
+    case "compared": return `${byImage ? "Ozon 以图搜到" : `Ozon 用「${record.query}」搜到`} ${record.cardCount ?? "?"} 条，读回前 ` +
+      `${record.results.length} 条：首图一致 ${counts.identical} 条、很像 ${counts.similar} 条、不像 ${counts.different} 条` +
+      `${counts.unknown ? `、无法比对 ${counts.unknown} 条` : ""}。是不是同款请你逐条判断。` +
+      (byImage && counts.identical === 0 ? "只找到近似款很常见，可以在下面用俄文词再搜一次。" : "");
     case "failed": return typeof record.reason === "string" && record.reason ? record.reason : "这次在 Ozon 找同款已经停下。";
     default: return "";
   }
@@ -38,6 +41,9 @@ export function ozonImageMatchView(candidate) {
   const judgements = isObject(record?.judgements) ? record.judgements : {};
   const counts = { identical: 0, similar: 0, different: 0, unknown: 0 };
   for (const item of results) counts[SIMILARITY_ORDER.includes(item?.similarity) ? item.similarity : "unknown"] += 1;
+  // Ozon 上同一张图常常挂着好几个商品（同一件的不同尺码、规格）；标出来，主人点「是同款」时认准是哪一个。
+  const pictureUses = new Map();
+  for (const item of results) if (typeof item?.imageUrl === "string") pictureUses.set(item.imageUrl, (pictureUses.get(item.imageUrl) ?? 0) + 1);
   const inFlight = record !== null && (["waiting_extension", "searching"].includes(record.status) || ["queued", "claimed"].includes(record.jobStatus));
   const rows = results.map((item, index) => {
     const similarity = SIMILARITY_ORDER.includes(item.similarity) ? item.similarity : "unknown";
@@ -55,6 +61,7 @@ export function ozonImageMatchView(candidate) {
       reviewCount: finite(item.reviewCount),
       isAd: item.isAd === true,
       isSourceProduct: item.isSourceProduct === true,
+      samePictureOthers: typeof item.imageUrl === "string" ? pictureUses.get(item.imageUrl) - 1 : 0,
       judgement: IMAGE_MATCH_JUDGEMENT_LABELS[judgements[item.productId]?.judgement] ? judgements[item.productId].judgement : null,
       order: index
     };
@@ -69,6 +76,7 @@ export function ozonImageMatchView(candidate) {
     suggestedQuery: suggestion.query,
     suggestionNote: QUERY_ORIGIN_NOTES[suggestion.origin] ?? "填几个俄文词，比如这件商品在俄语里叫什么、是什么材质。",
     captureId: record?.captureId ?? null,
+    searchBy: record === null ? null : record.searchBy === "image" ? "image" : "text",
     query: record?.query ?? null,
     status: record?.status ?? null,
     statusLine: record === null ? "" : statusLine({ ...record, results }, counts),

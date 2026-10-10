@@ -130,7 +130,7 @@ import {
   ozonImageMatchJobPayload, ozonImageMatchJobPublic, ozonImageMatchRules, ozonImageMatchTarget, queuedOzonImageMatchRecord,
   sanitizeOzonImageMatchEvidence
 } from "./lib/ozon-same-product-match.mjs";
-import { fetchImageFingerprint } from "./lib/image-fingerprint.mjs";
+import { fetchImageFingerprint, fetchPublicProductImage, searchUploadImageFromBuffer } from "./lib/image-fingerprint.mjs";
 import { buildOzonCategoryReadStep } from "./lib/ozon-category-read-step.mjs";
 import { buildCommissionEstimateSignal, buildCommissionEstimateStep, buildEstimatedCommissionNoticeStep,
   ExactCommissionRequiredForProductionError } from "./lib/commission-estimate-authorization.mjs";
@@ -1651,7 +1651,8 @@ function claimCaptureJob(captureId, extensionVersion, extensionOrigin) {
 /**
  * 找同款 —— 主人点一次，插件在这台电脑的 Chrome 里搜一次，读回结果；服务端再拿首图和每条结果的主图比一次。两种目标：
  *   · 在 1688 找同款：用首图在主人登录的 1688 上搜图，读回最像的 20 条，结果落在 candidate.supplierImageMatch；
- *   · 在 Ozon 找同款：Ozon 不能拿图搜，用俄文关键词在 Ozon 站内搜一次，读回第一屏，结果落在 candidate.ozonImageMatch。
+ *   · 在 Ozon 找同款：默认在 Ozon 首页的搜索栏上传首图以图搜一次；以图搜只找到近似款时，主人可以改用俄文关键词在 Ozon 站内
+ *     搜一次。都读回第一屏，结果落在 candidate.ozonImageMatch。
  * 首图来自采到的拼多多或 1688 货源首图，没有货源采集时用这件商品的 Ozon 主图（见 supplierImageMatchSource）。
  *
  * 链路和上面两种作业是同一套：同一把全局采集控制锁、排队与执行租约、一次性令牌、插件明确领取、过期收口、重启对账。
@@ -1679,15 +1680,22 @@ const IMAGE_MATCH_KINDS = Object.freeze({
     key: "ozon", field: "ozonImageMatch", rules: ozonImageMatchRules, captureKind: OZON_IMAGE_MATCH_CAPTURE_KIND,
     idPrefix: "OMJ", historyPrefix: "ozonImageMatch", logLabel: "Ozon找同款", site: "Ozon", idField: "productId",
     jobPayload: ozonImageMatchJobPayload, jobPublic: ozonImageMatchJobPublic,
-    target: (candidate, input) => ozonImageMatchTarget(candidate, input.query),
+    target: (candidate, input) => ozonImageMatchTarget(candidate, input.query, { searchBy: input.searchBy === "image" ? "image" : "text" }),
     queuedRecord: (previous, target, fields) => queuedOzonImageMatchRecord(previous, { ...fields, source: target.source,
-      query: target.query, queryOrigin: target.queryOrigin }),
-    queuedHistory: (target) => `主人要求用「${target.query}」在 Ozon 搜一次，再拿${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[target.source.platform]}` +
-      "和结果的主图比，找同款；系统已建立一个受控只读作业（在这台电脑的 Chrome 里打开一次 Ozon 搜索页，最多读回 36 条），等待插件后台领取。" +
+      searchBy: target.searchBy, query: target.query, queryOrigin: target.queryOrigin }),
+    queuedHistory: (target) => (target.searchBy === "image"
+      ? `主人要求拿${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[target.source.platform]}在 Ozon 以图搜一次，再和结果的主图比，找同款；` +
+        "系统已建立一个受控作业（在这台电脑的 Chrome 里打开 Ozon 首页，点一次搜索栏的拍照按钮上传这张图，最多读回 36 条），等待插件后台领取。"
+      : `主人要求用「${target.query}」在 Ozon 搜一次，再拿${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[target.source.platform]}` +
+        "和结果的主图比，找同款；系统已建立一个受控只读作业（在这台电脑的 Chrome 里打开一次 Ozon 搜索页，最多读回 36 条），等待插件后台领取。") +
       "不加购、不收藏、不联系任何人，也不推进业务阶段",
-    sameTarget: (record, session) => record.source?.imageUrl === session.imageUrl && record.query === session.query,
-    sanitize: (input, session) => sanitizeOzonImageMatchEvidence(input, session.query, { ownProductId: session.ownProductId }),
-    resultsHistory: (record, evidence) => `插件在 Ozon 用「${record.query}」搜到 ${evidence.cardCount} 条，已保存前 ${evidence.items.length} 条，` +
+    sameTarget: (record, session) => record.source?.imageUrl === session.imageUrl && (record.searchBy ?? "text") === session.searchBy &&
+      record.query === session.query,
+    sanitize: (input, session) => sanitizeOzonImageMatchEvidence(input, session.query,
+      { ownProductId: session.ownProductId, searchBy: session.searchBy }),
+    resultsHistory: (record, evidence) => (evidence.searchBy === "image"
+      ? `插件在 Ozon 以图搜到 ${evidence.cardCount} 条（Ozon 给这次上传编的号 ${evidence.imageId}），已保存前 ${evidence.items.length} 条，`
+      : `插件在 Ozon 用「${record.query}」搜到 ${evidence.cardCount} 条，已保存前 ${evidence.items.length} 条，`) +
       `正在和${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[record.source?.platform] || "首图"}比对；业务状态没有改变`,
     itemLabel: (id) => `Ozon 商品 ${id}`
   })
@@ -1784,6 +1792,8 @@ async function enqueueImageMatchJob(kind, { candidateId, requestRevision, acknow
     imageUrl: target.imageUrl,
     searchUrl: target.searchUrl,
     query: target.query ?? null,
+    searchBy: target.searchBy ?? null,
+    searchImageServedAt: null,
     ownProductId: target.ownProductId ?? "",
     createdAt: Date.now(),
     expiresAt: Date.now() + SOURCE_CAPTURE_JOB_QUEUE_TTL_MS,
@@ -3977,13 +3987,13 @@ async function handleApi(req, res, pathname) {
     return json(res, 200, access, { "Set-Cookie": result.setCookie });
   }
   const extensionCallback = pathname === "/api/extension/heartbeat" ||
-    /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/claim$/.test(pathname) ||
+    /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/(?:claim|search-image)$/.test(pathname) ||
     /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(pathname);
   if (runtimeIdentityProvider.providerType === "local_owner_password" && ["POST", "PUT", "PATCH", "DELETE"].includes(req.method) &&
       !extensionCallback && !isTrustedInternalApiRequest(req.headers, internalApiRequestToken)) {
     runtimeIdentityProvider.resolveActor({ request: req, touch: true });
   }
-  if (req.method === "OPTIONS" && (pathname === "/api/extension/heartbeat" || /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/claim$/.test(pathname) || /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(pathname))) {
+  if (req.method === "OPTIONS" && (pathname === "/api/extension/heartbeat" || /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/(?:claim|search-image)$/.test(pathname) || /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(pathname))) {
     const headers = chromeExtensionCors(req);
     if (!headers["Access-Control-Allow-Origin"]) throw httpError(403, "只接受本机Chrome扩展回传");
     res.writeHead(204, headers);
@@ -4006,6 +4016,40 @@ async function handleApi(req, res, pathname) {
     }
     const claim = await claimCaptureJob(captureClaimRoute[1], input.version, String(req.headers.origin));
     return json(res, 200, { accepted: true, ...claim }, headers);
+  }
+  /**
+   * Ozon 以图搜要上传的那张图。插件领取作业以后，凭这次作业的令牌来取一次：服务端自己去图床取这张首图（与首图比对同一条
+   * 只取公开图片的规则），转成普通 JPEG 交出去。只交给领取了这次作业的那个插件，只交一次，只交给以图搜那一种作业。
+   */
+  const searchImageRoute = pathname.match(/^\/api\/extension\/capture-jobs\/([A-Za-z0-9_-]{1,160})\/search-image$/);
+  if (req.method === "POST" && searchImageRoute) {
+    const headers = chromeExtensionCors(req);
+    if (!headers["Access-Control-Allow-Origin"]) throw httpError(403, "只接受已配置的Chrome扩展取图");
+    const input = await requestBody(req);
+    if (Object.keys(input).sort().join(",") !== "dataRevision,token" || typeof input.token !== "string" || !Number.isInteger(input.dataRevision)) {
+      throw httpError(400, "取图请求必须只包含令牌和修订号", { code: "search_image_request_invalid" });
+    }
+    const session = imageMatchSessions.get(searchImageRoute[1]);
+    if (!session || session.matchKind !== "ozon" || session.searchBy !== "image") {
+      throw httpError(409, "这次作业不是 Ozon 以图搜，没有要上传的图", { code: "search_image_not_applicable" });
+    }
+    assertClaimedCaptureResultOrigin(session, req, IMAGE_MATCH_KINDS.ozon.logLabel);
+    if (!validCaptureToken(session.token, input.token)) throw httpError(403, "找同款令牌无效", { code: "capture_token_invalid" });
+    if (session.jobStatus !== "claimed" || session.attempt !== 1 || input.dataRevision !== session.dataRevision) {
+      throw httpError(409, "找同款作业尚未由插件原子领取，不能取图", { code: "capture_job_not_claimed" });
+    }
+    if (session.searchImageServedAt) throw httpError(409, "这次以图搜的图已经交给插件，不再重复交出", { code: "search_image_already_served" });
+    session.searchImageServedAt = Date.now();
+    // Not a server fault: the picture host did not give the image (or this deployment fetches none). The job then stops as such.
+    if (!IMAGE_FINGERPRINT_FETCH_ENABLED) throw httpError(422, "这台评审台不取外部图片，没有图可以上传", { code: "search_image_unavailable" });
+    let picture;
+    try {
+      picture = await searchUploadImageFromBuffer(await fetchPublicProductImage(session.imageUrl, { timeoutMs: 10000 }));
+    } catch {
+      throw httpError(422, "没能取到这张首图", { code: "search_image_unavailable" });
+    }
+    return json(res, 200, { contentType: picture.contentType, byteLength: picture.buffer.length,
+      base64: picture.buffer.toString("base64") }, headers);
   }
   if (req.method === 'GET' && pathname === '/api/live') {
     return json(res, runtimeHealth.live ? 200 : 503, {
@@ -4947,13 +4991,15 @@ async function handleApi(req, res, pathname) {
     const [, candidateId, routeName, action] = imageMatchRoute;
     const kind = routeName === "ozon-match" ? IMAGE_MATCH_KINDS.ozon : IMAGE_MATCH_KINDS.supplier;
     const prefix = kind.key === "ozon" ? "ozon_match" : "image_match";
-    const fields = { start: ["dataRevision", "acknowledgeUnknownOutcome", ...(kind.key === "ozon" ? ["query"] : [])],
+    const fields = { start: ["dataRevision", "acknowledgeUnknownOutcome", ...(kind.key === "ozon" ? ["query", "searchBy"] : [])],
       compare: ["dataRevision", "captureId"], judgement: ["dataRevision", "captureId", kind.idField, "judgement"] }[action];
     const input = await readJsonRequestBody(req, { maxBytes: 4096, requireJsonContentType: true });
     if (!input || typeof input !== "object" || Array.isArray(input) || !Number.isInteger(input.dataRevision) ||
         Object.keys(input).some((field) => !fields.includes(field)) ||
         (Object.hasOwn(input, "acknowledgeUnknownOutcome") && typeof input.acknowledgeUnknownOutcome !== "boolean") ||
-        (action === "start" && kind.key === "ozon" && (typeof input.query !== "string" || input.query.length > 400)) ||
+        // 在 Ozon 找同款：以图搜不带词；词搜（不写 searchBy 时也是词搜）必须带词。
+        (action === "start" && kind.key === "ozon" && (Object.hasOwn(input, "searchBy") && !["image", "text"].includes(input.searchBy) ||
+          (input.searchBy === "image" ? Object.hasOwn(input, "query") : typeof input.query !== "string" || input.query.length > 400))) ||
         (action !== "start" && (typeof input.captureId !== "string" || !new RegExp(`^${kind.idPrefix}-[A-Za-z0-9-]{1,80}$`).test(input.captureId))) ||
         (action === "judgement" && (typeof input[kind.idField] !== "string" || typeof input.judgement !== "string"))) {
       throw httpError(400, "找同款请求的字段无效", { code: `${prefix}_input_invalid` });

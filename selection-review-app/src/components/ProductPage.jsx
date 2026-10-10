@@ -1898,9 +1898,12 @@ function OzonMatchSection({ candidate, saving, noticeAt, error, notice, onStart,
   }
   if (view === null) return null;
   const ready = ozonSearchQueryReady(query);
-  const start = acknowledgeUnknownOutcome => onStart({ dataRevision: candidate.dataRevision, query: query.trim(),
-    ...(acknowledgeUnknownOutcome ? { acknowledgeUnknownOutcome: true } : {}) });
+  // 以图搜不带词；词搜带上框里的词。上次结果未知时，两种都要主人先说一声知道了。
+  const start = searchBy => onStart({ dataRevision: candidate.dataRevision, searchBy,
+    ...(searchBy === "text" ? { query: query.trim() } : {}), ...(view.unknownOutcome ? { acknowledgeUnknownOutcome: true } : {}) });
   const judge = (productId, judgement) => onJudge({ dataRevision: candidate.dataRevision, captureId: view.captureId, productId, judgement });
+  const requesting = saving && noticeAt === "ozon-match";
+  const known = view.unknownOutcome ? "我知道上次结果未知，" : "";
   return <section className="product-section product-image-match product-ozon-match" aria-label="在 Ozon 找同款">
     <h3>在 Ozon 找同款</h3>
     <div className="image-match-source">
@@ -1908,28 +1911,29 @@ function OzonMatchSection({ candidate, saving, noticeAt, error, notice, onStart,
         ? <img className="image-match-thumb" src={view.sourceImageUrl} alt={view.sourceLabel} width="96" height="96" loading="lazy" referrerPolicy="no-referrer" />
         : <span className="image-match-thumb product-thumb-empty">首图</span>}
       <div>
-        <p className="product-section-hint">Ozon 不能拿图搜。先用下面这几个俄文词在 Ozon 搜一次，再拿这张{view.sourceLabel}和搜到的每件商品的主图比，
-          最像的排在前面。是不是同款由你逐条判断，判断只记在这里，不会改这件商品的任何东西。</p>
-        <label className="product-field" htmlFor="ozon-match-query">
-          <span className="product-field-label">在 Ozon 上搜的词（俄文）</span>
-          <input id="ozon-match-query" type="text" name="ozon-match-query" value={query} maxLength={100}
-            placeholder="например: жилет для кошки" onChange={event => setQuery(event.target.value)} />
-          <span className="product-actions-note">{query === view.suggestedQuery && query ? view.suggestionNote
-            : query ? "用你填的词搜。" : view.suggestionNote}</span>
-        </label>
+        <p className="product-section-hint">先用这张{view.sourceLabel}在 Ozon 以图搜一次，再拿它和搜到的每件商品的主图比，最像的排在前面。
+          是不是同款由你逐条判断，判断只记在这里，不会改这件商品的任何东西。</p>
         {view.sourceReason ? <p className="product-capture-hint">{view.sourceReason}</p> : null}
       </div>
     </div>
     {view.statusLine ? <p className={view.failed ? "product-capture-blocked" : "product-capture-status"} role={view.failed ? "alert" : "status"}>
       {view.statusLine}</p> : null}
     <div className="product-actions">
-      {view.unknownOutcome
-        ? <button type="button" className="button primary" disabled={saving || !view.canStart || !ready}
-          onClick={() => start(true)}>我知道上次结果未知，重新搜一次</button>
-        : <button type="button" className={`button ${view.status === null ? "primary" : "secondary"}`} disabled={saving || !view.canStart || !ready}
-          onClick={() => start(false)}>{saving && noticeAt === "ozon-match" ? "正在申请…" : view.status === null ? "在 Ozon 搜一次" : "用这几个词再搜一次"}</button>}
+      <button type="button" className="button primary" disabled={saving || !view.canStart}
+        onClick={() => start("image")}>{requesting ? "正在申请…" : `${known}${view.status === null ? "用首图在 Ozon 搜" : "用首图再搜一次"}`}</button>
       {view.canCompare ? <button type="button" className="button secondary" disabled={saving}
         onClick={() => onCompare({ dataRevision: candidate.dataRevision, captureId: view.captureId })}>重新比对首图</button> : null}
+    </div>
+    <div className="image-match-fallback">
+      <label className="product-field" htmlFor="ozon-match-query">
+        <span className="product-field-label">以图搜只找到近似款时，用俄文词再搜（后备）</span>
+        <input id="ozon-match-query" type="text" name="ozon-match-query" value={query} maxLength={100}
+          placeholder="например: жилет для кошки" onChange={event => setQuery(event.target.value)} />
+        <span className="product-actions-note">{query === view.suggestedQuery && query ? view.suggestionNote
+          : query ? "用你填的词搜。" : view.suggestionNote}</span>
+      </label>
+      <button type="button" className="button secondary" disabled={saving || !view.canStart || !ready}
+        onClick={() => start("text")}>{`${known}用俄文词搜`}</button>
     </div>
     <StepResult at="ozon-match" noticeAt={noticeAt} error={error} notice={notice} />
     {view.rows.length ? <ol className="image-match-results">
@@ -1943,6 +1947,7 @@ function OzonMatchSection({ candidate, saving, noticeAt, error, notice, onStart,
               title={row.distance === null ? undefined : `首图指纹相差 ${row.distance} / 64`}>{row.similarityLabel}</span>
             {row.isAd ? <span className="image-match-tag">广告</span> : null}
             {row.isSourceProduct ? <span className="image-match-tag">就是这件商品自己</span> : null}
+            {row.samePictureOthers > 0 ? <span className="image-match-tag">同一张图还有 {row.samePictureOthers} 个商品，可能是别的规格</span> : null}
             <a href={row.sourceUrl} target="_blank" rel="noreferrer noopener">{row.title}</a>
           </p>
           <p className="image-match-facts">
@@ -1960,8 +1965,9 @@ function OzonMatchSection({ candidate, saving, noticeAt, error, notice, onStart,
         </div>
       </li>)}
     </ol> : null}
-    {view.rows.length ? <p className="product-actions-note">搜到的是这几个词的结果，首图不像的也可能是换了图的同款，没搜到也不说明 Ozon 上没有同款；
-      换几个词可以再搜一次。</p> : null}
+    {view.rows.length ? <p className="product-actions-note">{view.searchBy === "image"
+      ? "以图搜按样子找，不保证有一模一样的；首图不像的也可能是换了图的同款，没搜到也不说明 Ozon 上没有同款。可以用俄文词再搜一次。"
+      : "搜到的是这几个词的结果，首图不像的也可能是换了图的同款，没搜到也不说明 Ozon 上没有同款；换几个词可以再搜一次。"}</p> : null}
   </section>;
 }
 

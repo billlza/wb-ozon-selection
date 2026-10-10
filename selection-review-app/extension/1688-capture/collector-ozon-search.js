@@ -1,6 +1,8 @@
 /**
- * Reads one Ozon search result page (www.ozon.ru/search/?text=…, or the category page Ozon may redirect that search to,
- * which keeps the same text parameter) for 在 Ozon 找同款.
+ * Reads one Ozon search result page for 在 Ozon 找同款: a word search (www.ozon.ru/search/?text=…, or the category page Ozon
+ * may redirect that search to, which keeps the same text parameter), or an image search (www.ozon.ru/search-by-image?image_id=…,
+ * the page Ozon moves to after the extension uploaded the picture). `expected` is the words for a word search, or
+ * { imageId } — the image_id of the result page the background saw this upload land on — for an image search.
  *
  * Runs in the ISOLATED world and must stay self-contained: chrome.scripting serializes this function alone. Ozon renders
  * the result grid from a widget state that it also writes into the page as JSON (data-state on a "state-searchResultsV2-…"
@@ -8,9 +10,12 @@
  * product facts named below are copied out — the tile's tracking and click parameters are never read, and the service
  * rebuilds each product address from its id.
  *
- * Zero cards is never "no same product on Ozon": it only says these words found nothing.
+ * An image search shows its first page with that widget state and the pages loaded further down as rendered tiles only,
+ * so there both are read and joined, the state's products first.
+ *
+ * Zero cards is never "no same product on Ozon": it only says this search found nothing.
  */
-export async function collectOzonSearchPage(expectedQuery, maxResults = 36) {
+export async function collectOzonSearchPage(expected, maxResults = 36) {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const failed = (failureCode) => ({ status: "failed", failureCode });
   const plain = (value, limit) => (typeof value === "string" ? value : typeof value === "number" && Number.isFinite(value) ? String(value) : "")
@@ -62,6 +67,9 @@ export async function collectOzonSearchPage(expectedQuery, maxResults = 36) {
     return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
   };
 
+  const byImage = expected !== null && typeof expected === "object";
+  const expectedImageId = byImage && typeof expected.imageId === "string" &&
+    /^[0-9a-f]{8,64}(?:x[0-9a-f]{8,64})?$/i.test(expected.imageId) ? expected.imageId : null;
   const pageQuery = () => {
     try {
       const url = new URL(window.location.href);
@@ -69,6 +77,15 @@ export async function collectOzonSearchPage(expectedQuery, maxResults = 36) {
       return url.searchParams.get("text");
     } catch { return null; }
   };
+  const pageImageId = () => {
+    try {
+      const url = new URL(window.location.href);
+      return url.hostname === "www.ozon.ru" && /^\/search-by-image\/?$/.test(url.pathname) ? url.searchParams.get("image_id") : null;
+    } catch { return null; }
+  };
+  // The page must still be this very search: the same words, or the same upload.
+  const samePage = () => (byImage ? expectedImageId !== null && pageImageId() === expectedImageId
+    : fold(pageQuery()) !== null && fold(pageQuery()) === fold(expected));
   const pageBlocker = () => {
     if (document.querySelector?.('[id="captcha"], [data-widget="captcha"], iframe[src*="captcha"], #challenge-form, .challenge-form')) {
       return "site_verification_required";
@@ -87,7 +104,9 @@ export async function collectOzonSearchPage(expectedQuery, maxResults = 36) {
     const linkId = productIdFrom(entry?.action?.link ?? entry?.link);
     const skuId = /^\d{5,20}$/.test(String(entry?.skuId ?? entry?.sku ?? "")) ? String(entry.skuId ?? entry.sku) : null;
     if (linkId && skuId && linkId !== skuId) return null;
-    const productId = linkId || skuId;
+    // The image-search grid names the product only by its link and a bare numeric id.
+    const bareId = /^\d{5,20}$/.test(String(entry?.id ?? "")) ? String(entry.id) : null;
+    const productId = linkId || skuId || bareId;
     if (!productId) return null;
     let named = "";
     let fallbackTitle = "";
@@ -98,10 +117,12 @@ export async function collectOzonSearchPage(expectedQuery, maxResults = 36) {
     let isAd = entry?.isAdv === true || entry?.isAd === true;
     for (const atom of atomsOf(entry)) {
       const body = atom[atom.type] ?? {};
-      if (atom.type === "textAtom") {
+      // The word-search grid writes text as textAtom, the image-search grid as textDS; a stock bar ("20 ед осталось") is no title.
+      if (atom.type === "textAtom" || atom.type === "textDS") {
         const value = plain(body.text, 300);
+        const marker = String(body.testInfo?.automatizationId ?? atom.testInfo?.automatizationId ?? "");
         if (atom.id === "name") named = value;
-        else if (!fallbackTitle && value.length > 12) fallbackTitle = value;
+        else if (!fallbackTitle && value.length > 12 && !/stock/i.test(marker)) fallbackTitle = value;
         if (value === "Реклама") isAd = true;
       } else if (atom.type === "priceV2" || atom.type === "price") {
         const prices = Array.isArray(body.price) ? body.price : [];
@@ -173,7 +194,17 @@ export async function collectOzonSearchPage(expectedQuery, maxResults = 36) {
     return products;
   };
 
-  if (fold(pageQuery()) === null || fold(pageQuery()) !== fold(expectedQuery)) return failed("wrong_query");
+  // An image search shows its first page in the widget state and the pages below only as tiles: both, the state's first.
+  const readImageResults = () => {
+    const fromState = readState();
+    const fromTiles = readTiles();
+    const products = new Map(fromState);
+    for (const [productId, item] of fromTiles) if (!products.has(productId)) products.set(productId, { ...item, rank: products.size });
+    const source = !fromState.size ? "dom" : products.size > fromState.size ? "mixed" : "state";
+    return { products, source };
+  };
+
+  if (!samePage()) return failed("wrong_query");
   // The grid fills in after the page script runs; wait until the count holds still, within the job's own deadline.
   const startedAt = Date.now();
   let products = new Map();
@@ -182,9 +213,14 @@ export async function collectOzonSearchPage(expectedQuery, maxResults = 36) {
   while (true) {
     const blocker = pageBlocker();
     if (blocker) return failed(blocker);
-    let next = readState();
-    let source = "state";
-    if (!next.size) { next = readTiles(); source = "dom"; }
+    let next;
+    let source;
+    if (byImage) ({ products: next, source } = readImageResults());
+    else {
+      next = readState();
+      source = "state";
+      if (!next.size) { next = readTiles(); source = "dom"; }
+    }
     if (next.size > 0 && next.size === products.size && source === readFrom) {
       if (Date.now() - stableSince >= 1500) break;
     } else {
@@ -198,13 +234,13 @@ export async function collectOzonSearchPage(expectedQuery, maxResults = 36) {
   }
   if (products.size === 0) return failed(emptyStateShown() ? "results_empty" : "results_unverifiable");
   // The address is read once more after the wait: a page that moved to another search in the meantime is not this one.
-  if (fold(pageQuery()) !== fold(expectedQuery)) return failed("wrong_query");
+  if (!samePage()) return failed("wrong_query");
   const items = [...products.values()].filter((item) => item.title || item.imageUrl);
   if (!items.length) return failed("structured_data_unavailable");
   return {
     status: "captured",
     evidence: {
-      query: expectedQuery,
+      ...(byImage ? { searchBy: "image", imageId: expectedImageId } : { query: expected }),
       observedAt: new Date().toISOString(),
       cardCount: products.size,
       readFrom,

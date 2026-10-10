@@ -376,7 +376,8 @@ test("在 Ozon 找同款：主人填俄文词，插件在 Ozon 搜一次、回�
   assert.equal(claim.status, 200, JSON.stringify(claim.body));
   const payload = claim.body.captureJob;
   assert.deepEqual([isOzonImageMatchJob(payload), isImageMatchJob(payload)], [true, false]);
-  assert.deepEqual(validateOzonImageMatchRequest({ payload, manifestVersion: "1.4.0" }), { ok: true, query: QUERY, searchUrl: ozonSearchUrl(QUERY) });
+  assert.deepEqual(validateOzonImageMatchRequest({ payload, manifestVersion: "1.4.0" }),
+    { ok: true, searchBy: "text", query: QUERY, searchUrl: ozonSearchUrl(QUERY) });
   const item = (index, extra = {}) => ({ productId: String(9000000100 + index), title: `Синтетический жилет ${index}`,
     imageUrl: `https://ir.ozone.ru/s3/multimedia-1-z/wc500/${9000000100 + index}.jpg`, priceRub: 1299, originalPriceRub: 2599, rating: 4.8,
     reviewCount: 12, isAd: false, rank: index, trackingInfo: { key: "secret-tracking" }, ...extra });
@@ -431,4 +432,73 @@ test("在 Ozon 找同款：主人填俄文词，插件在 Ozon 搜一次、回�
   assert.equal(empty.body.candidate.ozonImageMatch.failureCode, "results_empty");
   assert.match(empty.body.candidate.ozonImageMatch.reason, /不能说明 Ozon 上没有同款/);
   assert.deepEqual(empty.body.candidate.ozonImageMatch.history[0].results.map(entry => entry.productId), ["9000000101"]);
+});
+
+test("在 Ozon 以图搜：不带词，插件凭令牌取一次要上传的图，结果页的上传编号记进历史；词搜仍然照旧", async t => {
+  const api = await startApi(t, [candidate("OZ-IMG")]);
+  await api.login();
+  const extension = { authenticated: false, headers: { Origin: extensionOrigin } };
+  assert.equal((await api.ozon("OZ-IMG", "start", { dataRevision: 1, searchBy: "image", query: "жилет" })).body.code, "ozon_match_input_invalid",
+    "an image search carries no words");
+  assert.equal((await api.ozon("OZ-IMG", "start", { dataRevision: 1, searchBy: "photo" })).body.code, "ozon_match_input_invalid");
+  assert.equal((await api.ozon("OZ-IMG", "start", { dataRevision: 1, searchBy: "text" })).body.code, "ozon_match_input_invalid");
+
+  const queued = await api.ozon("OZ-IMG", "start", { dataRevision: 1, searchBy: "image" });
+  assert.equal(queued.status, 202, JSON.stringify(queued.body));
+  const record = queued.body.candidate.ozonImageMatch;
+  assert.deepEqual([record.searchBy, record.query, record.queryOrigin, record.searchUrl, record.authorization.action, record.authorization.imageUploads],
+    ["image", null, null, "https://www.ozon.ru/", "ozon_image_search", 1]);
+  assert.deepEqual([queued.body.captureJob.searchBy, queued.body.captureJob.query], ["image", null]);
+  assert.match((await api.record("OZ-IMG")).history.at(-1).detail, /以图搜一次.*拍照按钮上传这张图/);
+
+  const jobId = queued.body.captureJob.jobId;
+  // Nothing is handed out before the extension has claimed the job.
+  const early = await api.post(`/api/extension/capture-jobs/${jobId}/search-image`, { token: "x", dataRevision: 1 }, extension);
+  assert.equal(early.body.code, "capture_job_not_claimed");
+  const payload = (await api.claim(jobId)).body.captureJob;
+  assert.deepEqual([payload.searchBy, Object.hasOwn(payload, "query"), payload.searchUrl], ["image", false, "https://www.ozon.ru/"]);
+  assert.deepEqual(validateOzonImageMatchRequest({ payload, manifestVersion: "1.4.0" }), { ok: true, searchBy: "image", searchUrl: "https://www.ozon.ru/" });
+
+  const picture = body => api.post(`/api/extension/capture-jobs/${jobId}/search-image`, body, extension);
+  assert.equal((await picture({ token: payload.token })).body.code, "search_image_request_invalid");
+  assert.equal((await picture({ token: "wrong", dataRevision: payload.dataRevision })).body.code, "capture_token_invalid");
+  assert.equal((await api.post(`/api/extension/capture-jobs/${jobId}/search-image`, { token: payload.token, dataRevision: payload.dataRevision },
+    { authenticated: false, headers: { Origin: "chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } })).status, 403);
+  // This test service never fetches outside pictures, so the one hand-out ends as unavailable, and it is not handed out twice.
+  const unavailable = await picture({ token: payload.token, dataRevision: payload.dataRevision });
+  assert.deepEqual([unavailable.status, unavailable.body.code], [422, "search_image_unavailable"]);
+  assert.equal((await picture({ token: payload.token, dataRevision: payload.dataRevision })).body.code, "search_image_already_served");
+
+  const IMAGE_ID = "0123456789abcdef0123456789abcdefx0123456789abcdef0123456789abcdef";
+  const items = [0, 1].map(index => ({ productId: String(9000000200 + index), title: `Синтетический товар ${index}`,
+    imageUrl: `https://ir.ozone.ru/s3/multimedia-1-x/${9000000200 + index}.jpg`, priceRub: 425, originalPriceRub: 1093, rating: null,
+    reviewCount: null, isAd: false, rank: index }));
+  const result = body => api.ozon("OZ-IMG", "result", { captureId: jobId, token: payload.token, dataRevision: payload.dataRevision, ...body }, extension);
+  const saved = await result({ status: "captured", evidence: { searchBy: "image", imageId: IMAGE_ID, observedAt: "2026-10-10T08:00:00.000Z",
+    cardCount: 12, readFrom: "state", items } });
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.deepEqual(saved.body.candidate.ozonImageMatch.results.map(entry => entry.productId), ["9000000200", "9000000201"]);
+  const history = (await api.record("OZ-IMG")).history.find(entry => entry.action === "ozonImageMatchResultsSaved").detail;
+  assert.match(history, new RegExp(`以图搜到 12 条（Ozon 给这次上传编的号 ${IMAGE_ID}）`));
+
+  // An image search that comes back as a word search is not this search.
+  let latest = await api.record("OZ-IMG");
+  for (let attempt = 0; attempt < 100 && latest.ozonImageMatch.status !== "compared"; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    latest = await api.record("OZ-IMG");
+  }
+  const next = await api.ozon("OZ-IMG", "start", { dataRevision: latest.dataRevision, searchBy: "image" });
+  assert.equal(next.status, 202, JSON.stringify(next.body));
+  const nextClaim = (await api.claim(next.body.captureJob.jobId)).body.captureJob;
+  const echoed = await api.ozon("OZ-IMG", "result", { captureId: nextClaim.captureId, token: nextClaim.token, dataRevision: nextClaim.dataRevision,
+    status: "captured", evidence: { query: "жилет", observedAt: "2026-10-10T08:00:00.000Z", cardCount: 2, readFrom: "state", items } }, extension);
+  assert.equal(echoed.body.candidate.ozonImageMatch.failureCode, "wrong_query");
+
+  // The word search keeps working as the fallback, with or without saying searchBy.
+  const words = await api.ozon("OZ-IMG", "start", { dataRevision: echoed.body.candidate.dataRevision, searchBy: "text", query: "Синтетический жилет" });
+  assert.equal(words.status, 202, JSON.stringify(words.body));
+  assert.deepEqual([words.body.candidate.ozonImageMatch.searchBy, words.body.candidate.ozonImageMatch.query], ["text", "Синтетический жилет"]);
+  const wordsClaim = (await api.claim(words.body.captureJob.jobId)).body.captureJob;
+  assert.equal((await api.post(`/api/extension/capture-jobs/${wordsClaim.captureId}/search-image`,
+    { token: wordsClaim.token, dataRevision: wordsClaim.dataRevision }, extension)).body.code, "search_image_not_applicable");
 });

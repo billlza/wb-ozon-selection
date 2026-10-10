@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T00:52:19.537Z",
+  "frozenAt": "2026-10-10T01:49:00.215Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 906,
-      "sha256": "a07640722b09b715b781be8b959ba6049999b99c1f49f0375ddfd2fe1f2d0793",
+      "artifactCount": 907,
+      "sha256": "ab9aad3050627ce6a6f8e878d169bdad2f44396f75b2fd1501fc2914cce063d2",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -40,7 +40,7 @@
       },
       {
         "path": "extension/1688-capture/background.js",
-        "sha256": "93dda2701c25073225f2914aabcd68d882d76930aa1574b778d7cb0ad645d735"
+        "sha256": "65d6a0b5e7b3d3a4c0f8cbbe7a5177a3788811778a328f35a460cc92047c0c11"
       },
       {
         "path": "extension/1688-capture/bridge.js",
@@ -48,7 +48,7 @@
       },
       {
         "path": "extension/1688-capture/capture-request.js",
-        "sha256": "8f33f12da87058ca607ce720ef5a83caf7ab8596cc8d8afa844ab4f1936643f5"
+        "sha256": "14aded7da49394c3976ee683f7020af28b28a1bb8ac67da958ddde4b06ae392a"
       },
       {
         "path": "extension/1688-capture/collector-1688-image-search.js",
@@ -56,7 +56,7 @@
       },
       {
         "path": "extension/1688-capture/collector-ozon-search.js",
-        "sha256": "e3ca0b4623d87ee8f81f980f0f74890b3a41716cfd3f9a65c513943eaeb5b072"
+        "sha256": "b9c73088b4e846ffc09a734c69111c0952b4cc0fc5e0d2fd51af527ee226cfb6"
       },
       {
         "path": "extension/1688-capture/collector-ozon.js",
@@ -72,11 +72,15 @@
       },
       {
         "path": "extension/1688-capture/manifest.json",
-        "sha256": "db421707d9586d747b3f7a525b40dd1dfb2f8ca28713fc3db21412bffd333280"
+        "sha256": "012548da68f379c2ec6577e0fe093a6ca933a6b907c848adc955ae115b331a91"
       },
       {
         "path": "extension/1688-capture/source-routing.js",
-        "sha256": "e15f44f154710cc772f5a0ce379b550bf3aaf56913a9d1cc59db488a4bb89c18"
+        "sha256": "cd687a12815066b5ffb4c1cdb66f53fd39aa14a20abbb253d479cb3028f58d55"
+      },
+      {
+        "path": "extension/1688-capture/uploader-ozon-image-search.js",
+        "sha256": "61f4c32ff169bd8356979f217cef0a8a49dc7eaac74b00ced76cca5bd0b29fad"
       },
       {
         "path": "index.html",
@@ -432,7 +436,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "57b4035073056108359296fdc9beb0e4e1fe9fb11c911a4a166b6fe383ffdc24"
+        "sha256": "309e05203499b0cf096d48efc176fe143d886d7050fcb12b4944827b75f7ac8c"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -624,11 +628,11 @@
       },
       {
         "path": "lib/http-api-boundary.mjs",
-        "sha256": "d518afdb70e05e7014dcf1964f9c938f8b5d001212d598fd650ab80d588f99f4"
+        "sha256": "edff1bd9cb44d87a2d4f73a816a48be48b94ad797338e0ef758903db122cf88b"
       },
       {
         "path": "lib/image-fingerprint.mjs",
-        "sha256": "524f38f81adc2f8e8c0ed899b52b64fce54997a58272bb7cde6ef52a8f36e62a"
+        "sha256": "dc278bd5f3b1218f3020329bc3b9e7573059d4719c6ee91c795d5f093f3f91ad"
       },
       {
         "path": "lib/image-match-record.mjs",
@@ -868,11 +872,11 @@
       },
       {
         "path": "lib/ozon-same-product-match.mjs",
-        "sha256": "847634772b4a29977f465a468bebacf6f66d75c61eb798d24649d17fd0a73116"
+        "sha256": "bde4521cddb8bc97347cbe74027f6cc5623c34a2857daefca9aa0a456b71c72e"
       },
       {
         "path": "lib/ozon-search-query.mjs",
-        "sha256": "cff8abd27ff19b6b185fcb2cb54f5ff15b4b46618cd7846ed555afaf9320451f"
+        "sha256": "695968cca3cda98742b4bf00682b7a116bb070b2232398eaae3462fc5014575c"
       },
       {
         "path": "lib/ozon-seller-api-de-adapter.mjs",
@@ -1480,7 +1484,7 @@
       },
       {
         "path": "scripts/check-ozon-search-saved-page.mjs",
-        "sha256": "56fc8ae943330885c01b30d639e23e46a76b4c073a7e3fd27780a045b3f4c8ce"
+        "sha256": "d8ded9241720a2a6e6e55394174fdfc1f9682b76912374c0de2e0e2ffc8b944a"
       },
       {
         "path": "scripts/check-pinduoduo-saved-page.mjs",
@@ -1556,7 +1560,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "9d9e5c3fe9b7309cdfb2bef1447294722602398d603428495a4ffff3b8335a47"
+        "sha256": "c68e2102eebe2a7e3219a56c71cb33e2c26a4f4097389c270dd695243d635532"
       },
       {
         "path": "src/App.jsx",
@@ -1736,7 +1740,7 @@
       },
       {
         "path": "src/components/ProductPage.jsx",
-        "sha256": "17124a471270748d30318c6859ebee09d2cd98b899f3c61408a6242088d785b0"
+        "sha256": "4f053be13d8e496fb4873060cb0ba6d9dd75ab99f7d29129e6ea5c6b67619442"
       },
       {
         "path": "src/components/ProductionOwnerDecisionForm.jsx",
@@ -1836,7 +1840,7 @@
       },
       {
         "path": "src/ozonImageMatchView.js",
-        "sha256": "89ca259c9e1e6a42eb42f78aebc5077a12df3ce7b76a5e7e8c4b40be7aa560fd"
+        "sha256": "2f6ece9762baa84edf1cdb42ed472f1757a01139a176a56a44880fd659d173bf"
       },
       {
         "path": "src/productionAuthorizationInput.js",
@@ -1868,7 +1872,7 @@
       },
       {
         "path": "src/styles.css",
-        "sha256": "918218310355735cb6bd416302e97d48128d771606691ccef3ea0b20ad2e5e9e"
+        "sha256": "4d81fd7e7ccdeddcc4f4748c22abe480e8941861eb76505034a71200b118065a"
       },
       {
         "path": "src/supplierImageMatchView.js",
@@ -2788,7 +2792,7 @@
       },
       {
         "path": "tests/fixtures/ozon-search-state-fixture.mjs",
-        "sha256": "b5ad38ae6b620ac6205ab3770f1cc54ce398c4c3d66709cfe40ef62c6f564553"
+        "sha256": "c5fba305b46c9530c5ca34339ace7ab99af23bf0a41979e0ed2953c544c8443a"
       },
       {
         "path": "tests/fixtures/prepare-sibling-batch-browser.mjs",
@@ -2932,7 +2936,7 @@
       },
       {
         "path": "tests/helpers/extension-runtime-fixture.mjs",
-        "sha256": "23ee922f83895bda0ac3eb454174aaba1bdea51a8a2290d5bf5233a43a08ff3a"
+        "sha256": "cfb986f3bdc33ad8e14bc0bfbd097ce132c263243ba0924e29d2b153d26bdadd"
       },
       {
         "path": "tests/helpers/legacy-candidate-fixture.mjs",
@@ -2956,7 +2960,7 @@
       },
       {
         "path": "tests/image-fingerprint.test.mjs",
-        "sha256": "9d9e36356373222960dd956664286d1965f93b52bf9e69fcc94f7f37a3ad555a"
+        "sha256": "c5b1cc53dc78ed2d9a0883d05779bede3b4bddba5fc0a45325f3e3b6de5c8d52"
       },
       {
         "path": "tests/keyword-evidence-orchestrator.test.mjs",
@@ -3216,11 +3220,11 @@
       },
       {
         "path": "tests/ozon-same-product-match.test.mjs",
-        "sha256": "e743ab64317b0ef5e28fd0db2f9db6034ce517c395bca67ac48e2c9e28215636"
+        "sha256": "40c5084b7d4b3281942f9d014973ca686c270a39719fef0f6ef3c5bb40422726"
       },
       {
         "path": "tests/ozon-search-extension.test.mjs",
-        "sha256": "e3d2889e64ffd52f1b85dab1fb7f9bad85b0b9ed9d9378ae24a65fdc1298cc06"
+        "sha256": "8a97ff9ab5f235607794cc787d591c052d2c2c05e3b2d166c165dcd85ee9b830"
       },
       {
         "path": "tests/ozon-seller-api-de-adapter.test.mjs",
@@ -3300,7 +3304,7 @@
       },
       {
         "path": "tests/product-page-ui.test.mjs",
-        "sha256": "a69fc2ddff38b69417db28152a62352ade6e029c87172f2a8b9c655f3f9f01b4"
+        "sha256": "925243ac0f9e71516728d8dfb5e193c45afbf8f90a595b8167601c0ffde0eaf0"
       },
       {
         "path": "tests/production-authorization-rollback-acceptance.test.mjs",
@@ -3572,7 +3576,7 @@
       },
       {
         "path": "tests/source-capture.test.mjs",
-        "sha256": "18a844bc0684469b4ab440d60299d764f8072004bb2998cd71fb3c0bdc4f6f4b"
+        "sha256": "18c19999abf087bdab8c3422f79d91d6886f3546c53f706076394e0520146bec"
       },
       {
         "path": "tests/store-binding-api.test.mjs",
@@ -3596,7 +3600,7 @@
       },
       {
         "path": "tests/supplier-image-match-api.test.mjs",
-        "sha256": "bd619efbcec98aa20d05a88afc8e3569bfd16cf663d6fb1746211540ca40c367"
+        "sha256": "a366189d07ef0b411e0ffeea247309c7beaf1c6808a57e66b4f4e8d036c1f3af"
       },
       {
         "path": "tests/supplier-image-match-extension.test.mjs",
@@ -3604,7 +3608,7 @@
       },
       {
         "path": "tests/supplier-image-match-ui.test.mjs",
-        "sha256": "25cb2ce90723d9d18021edaefb175e3ab688569a41b6788db1d89404dd826b16"
+        "sha256": "665bdf862e6c0b587b1bb7da4f5d612db087625acaa0bc88c03029b70f545391"
       },
       {
         "path": "tests/supplier-image-match.test.mjs",
@@ -4028,6 +4032,10 @@
         },
         {
           "path": "extension/1688-capture/source-routing.js",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "extension/1688-capture/uploader-ozon-image-search.js",
           "status": "present_in_integration_source"
         },
         {
