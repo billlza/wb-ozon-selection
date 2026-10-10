@@ -602,10 +602,16 @@ export default function App() {
       throw error;
     }finally{await load(true);}
   }
-  /** 贴货源链接 (piece D): one request to the intake pipeline, then the shared state is read again. */
+  /**
+   * 贴货源链接 (piece D): one request to the intake pipeline, then the shared state is read again. A link pasted on a
+   * product attaches to that product; one pasted on a market row that never became a product is a new product.
+   */
   async function submitSourceLink(payload){
-    try{return await api.submitIntakeLinks(payload.links,["miska","dandanshu"].includes(deskStore)?deskStore:null);}
-    finally{await load(true);}
+    try{
+      return payload.attachTo
+        ? await api.attachIntakeSourceLink(payload.links[0],payload.attachTo)
+        : await api.submitIntakeLinks(payload.links,["miska","dandanshu"].includes(deskStore)?deskStore:null);
+    }finally{await load(true);}
   }
 
 

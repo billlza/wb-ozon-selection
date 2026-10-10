@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T07:09:18.431Z",
+  "frozenAt": "2026-10-10T07:38:12.122Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 967,
-      "sha256": "41e6c780dc4bc532d38817f306ca59413f9d4116755ec285e3234a6a402c0338",
+      "sha256": "edea0db51faee283135d69a317c5c79bfc1e4ba06a11a7ee41a400ce45855314",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -1664,7 +1664,7 @@
       },
       {
         "path": "src/App.jsx",
-        "sha256": "8f65e1c43a9f86f59a297f224ae6c8d8e06249b868f8bfdb252453dfda019d9c"
+        "sha256": "60d79ac136c219ea0d0e0b010ecb5df8e0cfbabd8de07c2ec7f2487e9da6ca3f"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1676,7 +1676,7 @@
       },
       {
         "path": "src/api.js",
-        "sha256": "cafdde07556e0251e16c71b50d4f324ea0e7df66232ef7a18928ea18ec4e095e"
+        "sha256": "2ab84411d1229ceb8a48170b94d1098be30a2a5c75db1aae89e69cd7339a3422"
       },
       {
         "path": "src/bExactCommissionInput.js",
@@ -1888,7 +1888,7 @@
       },
       {
         "path": "src/components/SourceLinkControl.jsx",
-        "sha256": "9dddbd6c9608dbc5957f447bee328f1d0edb28e9371527ec1dedbd8177d32bb7"
+        "sha256": "8118a60881e72a6897f6282c240694b774ce471d19feb59ff4299899576d7643"
       },
       {
         "path": "src/components/StatusBadge.jsx",
@@ -1988,7 +1988,7 @@
       },
       {
         "path": "src/selectionDeskView.js",
-        "sha256": "490648a9e0d67b1c381d1f92124a3deefe1fedbd9a8545950b722ce44835cabe"
+        "sha256": "46e7146a498dcad024199b253af096dc7c3843a701f5de5e733fefc0d74c36a3"
       },
       {
         "path": "src/siblingBatchAuthorizationInput.js",
@@ -3140,7 +3140,7 @@
       },
       {
         "path": "tests/inbox-notices-ui.test.mjs",
-        "sha256": "5aa096bff649889693ba4cbe2a72625eda6e0c0b16a2c428b64e71d334b45a09"
+        "sha256": "d950b9fa55a586400be30864d9231d6761ffc1c3d8a06625bc322f3df39965b0"
       },
       {
         "path": "tests/intake-api.test.mjs",

@@ -504,28 +504,43 @@ export function unsourcedRows(candidates, store, discoveryView = null) {
 }
 
 /**
- * What the owner reads after 贴货源链接 came back from piece A's POST /api/intake/links. A link pasted before is never
- * a second card: the answer names the card it already belongs to. A new link becomes its own product — the pipeline
- * does not fold it into the card it was pasted on — so the answer says that too, and the old card waits for 淘汰.
+ * The body 贴货源链接 sends. On a saved product it carries attachTo, so the intake pipeline puts the link on that very
+ * card (bound to the revision the owner saw) instead of opening a second one; a market row is not a product yet.
  */
-export function sourceLinkResult(response, target = null) {
+export function sourceLinkPayload(link, target) {
+  return isObject(target) && text(target.candidateId) !== null
+    ? { links: [link], attachTo: { candidateId: target.candidateId, dataRevision: target.dataRevision ?? null } }
+    : { links: [link] };
+}
+
+/** What the owner reads after 贴货源链接 came back from piece A's POST /api/intake/links. */
+export function sourceLinkResult(response) {
   const item = list(response?.items)[0] ?? null;
   if (!isObject(item)) {
     return list(response?.rejected).length
       ? { message: "这条没认出是拼多多或 1688 的商品链接，没有收下。", candidateId: null }
       : { message: "服务没有返回结果，链接是否收下未确认；刷新后再看。", candidateId: null };
   }
-  if (item.created === false && text(item.duplicateOfCandidateId) !== null) {
-    if (item.duplicateEliminated === true) {
-      return { message: "这个货源之前贴过，那件已经淘汰了；要重新做，去「已淘汰」里恢复它。", candidateId: item.duplicateOfCandidateId };
-    }
-    return { message: item.duplicateOfCandidateId === target?.candidateId ? "这就是这件商品自己的货源链接，没有多建一张卡。"
-      : "这个货源之前贴过，已经在原来那件商品上，没有多建一张卡。", candidateId: item.duplicateOfCandidateId };
+  if (item.attached === true) {
+    return { message: "已换上这个货源，这件会从读货源页重新开始，找完回到需要你处理。", candidateId: null };
   }
-  return { message: text(target?.candidateId) === null
-    ? "已收下，软件会去读这个货源、找同款、粗算，读完回到需要你处理。"
-    : "已按这个货源新建一件，软件会去读它、找同款、粗算；原来这件不会自动合并，确认新的那件后可以把这件淘汰。",
-  candidateId: text(item.candidateId) };
+  if (item.created === false && text(item.duplicateOfCandidateId) !== null) {
+    return duplicateAnswer(item.duplicateOfCandidateId, item.duplicateEliminated === true);
+  }
+  return { message: "已收下，软件会去读这个货源、找同款、粗算，读完回到需要你处理。", candidateId: text(item.candidateId) };
+}
+
+function duplicateAnswer(candidateId, eliminated) {
+  return eliminated
+    ? { message: "这个货源之前贴过，那件已经淘汰了；要重新做，去「已淘汰」里恢复它。", candidateId }
+    : { message: "这个货源之前贴过，已经在另一件商品上，没有多建一张卡。", candidateId };
+}
+
+/** A refusal that is really an answer (the link already belongs to another card), or null for a real failure. */
+export function sourceLinkRefusal(cause) {
+  const body = isObject(cause?.body) ? cause.body : null;
+  if (body?.code !== "intake_attach_duplicate" || text(body.duplicateOfCandidateId) === null) return null;
+  return duplicateAnswer(body.duplicateOfCandidateId, body.duplicateEliminated === true);
 }
 
 /**

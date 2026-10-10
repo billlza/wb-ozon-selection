@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { sourceLinkCheck } from "../../lib/global-notices.mjs";
 import { errorMessage } from "../formState.js";
-import { sourceLinkResult } from "../selectionDeskView.js";
+import { sourceLinkPayload, sourceLinkRefusal, sourceLinkResult } from "../selectionDeskView.js";
 
 /**
  * 贴货源链接 on one product (item 9 of the 2026-10-10 list). One click opens a single field; the link is checked to be
- * a 1688 or 拼多多 page and sent once to the intake pipeline, which reads it. A link pasted before is never a second
- * card: the answer names the card it already belongs to, with a way to open it. `target` only shapes that answer.
+ * a 1688 or 拼多多 page and sent once to the intake pipeline, which reads it. Pasted on a product, the link attaches to
+ * that product and its reading starts over; pasted on a market row, it becomes a product of its own. A link pasted
+ * before is never a second card: the answer names the card it already belongs to, with a way to open it.
  * Nothing runs until the owner submits.
  */
 export default function SourceLinkControl({ target, disabled = false, onSubmit, onOpenCandidate }) {
@@ -22,9 +23,14 @@ export default function SourceLinkControl({ target, disabled = false, onSubmit, 
     if (!check.ok) { setError(check.reason); return; }
     setBusy(true); setError(null);
     try {
-      setResult(sourceLinkResult(await onSubmit({ links: [check.link] }), target));
+      setResult(sourceLinkResult(await onSubmit(sourceLinkPayload(check.link, target))));
       setOpen(false); setValue("");
-    } catch (cause) { setError(errorMessage(cause)); }
+    } catch (cause) {
+      // A link that already belongs to another card is an answer, not a failure: it says which card.
+      const refusal = sourceLinkRefusal(cause);
+      if (refusal !== null) { setResult(refusal); setOpen(false); setValue(""); }
+      else setError(errorMessage(cause));
+    }
     finally { setBusy(false); }
   }
   if (result !== null) {
