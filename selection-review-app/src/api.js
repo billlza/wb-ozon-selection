@@ -416,6 +416,9 @@ export const api = {
   // 录入页：贴链接、看「找货中」、对一件点「重跑」、整页提示上点「接着找」，以及开始信号桥的回执。
   submitIntakeLinks: (links, targetStore) => request("/api/intake/links", { method: "POST",
     body: JSON.stringify(targetStore ? { links, targetStore } : { links }) }),
+  // 需要你处理的「贴货源链接」：一条链接接到那件没有货源的商品上，不另建一件（attachTo，见 流程改造-分工与接口.md）。
+  attachIntakeSourceLink: (link, { candidateId, dataRevision }) => request("/api/intake/links", { method: "POST",
+    body: JSON.stringify({ links: [link], attachTo: { candidateId, dataRevision } }) }),
   getIntakeQueue: ({ bridge = false } = {}) => request(`/api/intake/queue${bridge ? "?bridge=1" : ""}`),
   retryIntake: (candidateId, dataRevision) =>
     request(`/api/intake/${encodeURIComponent(candidateId)}/retry`, { method: "POST", body: JSON.stringify({ dataRevision }) }),

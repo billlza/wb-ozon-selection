@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import react from '@vitejs/plugin-react';
-import { inboxItems, roundStartPayload, sourceLinkResult, unsourcedReason,
+import { inboxItems, roundStartPayload, sourceLinkPayload, sourceLinkRefusal, sourceLinkResult, unsourcedReason,
   unsourcedRows } from '../src/selectionDeskView.js';
 
 // 需要你处理, the desk and the page-wide notices render synthetic display data only: no saved records, no services.
@@ -62,17 +62,33 @@ test('a blocked-without-source product is a 需要你处理 row whose action is 
   assert.deepEqual(unsourcedRows(candidates, 'miska').map(row => [row.id, row.reason]), [['legacy', '还没有货源']]);
 });
 
-test('a duplicate answer points at the original card, and a new link says it is a product of its own', () => {
-  assert.deepEqual(sourceLinkResult({ items: [{ candidateId: 'old', created: false, duplicateOfCandidateId: 'old',
-    duplicateEliminated: false, sourceKind: '1688' }], rejected: [] }, { candidateId: 'c1' }),
-  { message: '这个货源之前贴过，已经在原来那件商品上，没有多建一张卡。', candidateId: 'old' });
-  assert.match(sourceLinkResult({ items: [{ candidateId: 'old', created: false, duplicateOfCandidateId: 'old', duplicateEliminated: true }] }).message,
-    /已经淘汰了/u);
-  const fresh = sourceLinkResult({ items: [{ candidateId: 'new', created: true, duplicateOfCandidateId: null }], rejected: [] }, { candidateId: 'c1' });
+test('a link pasted on a product attaches to that product; on a market row it is a product of its own', () => {
+  assert.deepEqual(sourceLinkPayload('https://detail.1688.com/offer/1.html', { candidateId: 'c1', dataRevision: 7 }),
+    { links: ['https://detail.1688.com/offer/1.html'], attachTo: { candidateId: 'c1', dataRevision: 7 } });
+  assert.deepEqual(sourceLinkPayload('https://detail.1688.com/offer/1.html', { batchId: 'b', marketProductId: 'm' }),
+    { links: ['https://detail.1688.com/offer/1.html'] });
+  const attached = sourceLinkResult({ items: [{ candidateId: 'c1', created: false, attached: true }], rejected: [] });
+  assert.deepEqual(attached, { message: '已换上这个货源，这件会从读货源页重新开始，找完回到需要你处理。', candidateId: null });
+  const fresh = sourceLinkResult({ items: [{ candidateId: 'new', created: true, duplicateOfCandidateId: null }], rejected: [] });
   assert.equal(fresh.candidateId, 'new');
-  assert.match(fresh.message, /原来这件不会自动合并/u);
+  for (const result of [attached, fresh]) assert.doesNotMatch(result.message, /原来这件不会自动合并/u);
   assert.match(sourceLinkResult({ items: [], rejected: [{ raw: 'x', code: 'link_unrecognized' }] }).message, /没认出/u);
   assert.match(sourceLinkResult({}).message, /未确认/u);
+});
+
+test('a link that already belongs to another card is an answer naming that card, not an error', () => {
+  assert.deepEqual(sourceLinkResult({ items: [{ candidateId: 'old', created: false, duplicateOfCandidateId: 'old',
+    duplicateEliminated: false, sourceKind: '1688' }], rejected: [] }),
+  { message: '这个货源之前贴过，已经在另一件商品上，没有多建一张卡。', candidateId: 'old' });
+  assert.match(sourceLinkResult({ items: [{ candidateId: 'old', created: false, duplicateOfCandidateId: 'old', duplicateEliminated: true }] }).message,
+    /已经淘汰了/u);
+  const refused = Object.assign(new Error('x'), { status: 409, body: { code: 'intake_attach_duplicate',
+    duplicateOfCandidateId: 'old', duplicateEliminated: false } });
+  assert.deepEqual(sourceLinkRefusal(refused), { message: '这个货源之前贴过，已经在另一件商品上，没有多建一张卡。', candidateId: 'old' });
+  for (const code of ['revision_conflict', 'intake_attach_busy', 'intake_attach_has_source']) {
+    assert.equal(sourceLinkRefusal(Object.assign(new Error('x'), { status: 409, body: { code } })), null, code);
+  }
+  assert.equal(sourceLinkRefusal(new Error('network')), null);
 });
 
 test('重跑 of a round is the same priced start as 找一轮新品, with a fresh key', () => {
