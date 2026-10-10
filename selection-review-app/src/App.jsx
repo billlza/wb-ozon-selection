@@ -1515,7 +1515,9 @@ export default function App() {
           titleZh={productTitleZh}
           extensionStatus={effectiveExtensionStatus}
           loadingLabel={productDraftError ? `读取这件商品的找货资料失败：${productDraftError}` : "正在读取这件商品的找货资料…"}
-          onSaveDraft={payload => runProductStep(api.saveSupplierDraft, payload)}
+          onAcceptGate1={payload => runProductStep(api.acceptGate1, payload)}
+          onSkipGate1={payload => runProductStep(api.skipGate1, payload)}
+          onResolveGate1Shortfall={payload => runProductStep(api.resolveGate1Shortfall, payload)}
           onChooseSkus={payload => runProductStep(api.chooseSourceSkus, payload)}
           onCreateSiblingSku={createSiblingSkuBatch}
           onConfirmSiblingBatchA={confirmSiblingBatchA}

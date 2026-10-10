@@ -223,22 +223,15 @@ test('商品页显示中文标题、店铺和六步导航，当前停在找货',
   assert.doesNotMatch(html, /保存A卡并等待插件自动采集/);
 });
 
-test('找货表单先按已保存的逐项资料预填，有找货方案后按方案预填', async () => {
-  const prefilledFromFields = await render(props());
-  assert.match(prefilledFromFields, /1688 \/ 拼多多 商品链接/);
-  assert.match(prefilledFromFields, /id="supply-source-url"[^>]*value=""/);
-  // The all-in purchase price minus the saved domestic shipping is the goods price the owner had declared.
-  assert.match(prefilledFromFields, /id="supply-goods-price"[^>]*value="15\.9"/);
-  assert.match(prefilledFromFields, /id="supply-domestic-shipping"[^>]*value="2\.96"/);
-  assert.match(prefilledFromFields, /id="supply-weight"[^>]*value="1\.3"/);
-  assert.match(prefilledFromFields, /id="supply-length"[^>]*value="75"/);
-  assert.match(prefilledFromFields, /id="supply-width"[^>]*value="21"/);
-  assert.match(prefilledFromFields, /id="supply-height"[^>]*value="4"/);
-  assert.match(prefilledFromFields, /请粘贴1688或拼多多的商品链接或分享短链/);
+test('找货不再有手填表：没有方案时这一节让位给「做这件」卡，有方案后只显示方案算出来的数', async () => {
+  const fresh = await render(props({ view: { supplierDraftV1: null, supplierDraftEstimateV1: null, marketSnapshot,
+    gate1V1: { open: true, preselection: {}, ozonOptions: [], supplierOptions: [] } } }));
+  assert.doesNotMatch(fresh, /id="supply-source-url"|id="supply-goods-price"|1688 \/ 拼多多 商品链接/u, '找货手填表已经拿掉');
+  assert.doesNotMatch(fresh, /<section class="product-section" aria-label="找货">/u, '「做这件」卡开着时找货这一节不出现');
+  assert.match(fresh, /aria-label="做这件"/u);
   const saved = await render(props({ view: { supplierDraftV1: draft, supplierDraftEstimateV1: okEstimate, marketSnapshot } }));
-  assert.match(saved, /id="supply-source-url"[^>]*value="https:\/\/detail\.1688\.com\/offer\/876240928352\.html"/);
-  assert.match(saved, /id="supply-target-price"[^>]*value="1850"/);
-  assert.doesNotMatch(saved, /请粘贴1688或拼多多的商品链接或分享短链/);
+  assert.doesNotMatch(saved, /id="supply-source-url"|id="supply-target-price"/u);
+  assert.match(saved, /这是你在「做这件」卡上认下的方案/u);
   assert.match(saved, /市场快照：Seerfar 2026-09-10 · 售价 1850 卢布 · 30 天销量 330 · 评价 371/);
   assert.match(saved, /按你填的到手总价 ¥18\.86：单件利润 ¥41\.26 · 利润率 28% · 达到本店利润门槛/);
   assert.match(saved, /采购上限 ¥60\.12 · GUOO Economy Small · 计费 1\.3 公斤 · 运费 ¥54\.50 · 佣金 14%/);
@@ -269,11 +262,10 @@ test('插件没连上时给一句安装提示，连上后不再显示', async ()
 test('没有找货方案时不能申请采集，也不显示假的市场快照或利润', async () => {
   const html = await render(props());
   assert.match(html, /市场快照：还没有本商品的查询结果快照。/);
-  assert.match(html, /填好上面的资料并保存后，这里显示采购上限和利润。/);
-  assert.match(html, /先保存上面的找货方案，才能申请采集。/);
-  assert.match(html, /申请插件采集<\/button>/);
+  assert.match(html, /找货方案由上面的「做这件」卡存下/u);
+  assert.match(html, /先在上面「做这件」卡上点「做这件」，才能申请采集。/);
   assert.match(html, /<button[^>]*disabled[^>]*>申请插件采集<\/button>/);
-  assert.match(html, /保存只记录你填的方案，不会确认供货，也不会开始采购。/);
+  assert.doesNotMatch(html, /保存只记录你填的方案/u);
 });
 
 test('商品页顶上写明自己在哪一层，选品台和我选的商品都能点回去，返回按钮还在', async () => {
@@ -291,23 +283,20 @@ test('商品页顶上写明自己在哪一层，选品台和我选的商品都�
   assert.doesNotMatch(noBack, />返回<\/button>/u);
 });
 
-test('保存之后留在本页，并且只强调下一步：过线强调申请采集，没过线或缺资料强调表单', async () => {
+test('有了方案之后下一步总是申请采集；粗算缺资料或没过线时照实说，不再让主人回去改表', async () => {
   const passing = await render(props({ view: { supplierDraftV1: draft, supplierDraftEstimateV1: okEstimate, marketSnapshot } }));
   assert.match(passing, /<div class="product-capture product-next" aria-label="插件采集">/u);
   assert.match(passing, /下一步：点下面的「申请插件采集」，让插件去读这个1688页面。/u);
   assert.match(passing, /<button[^>]*class="button primary"[^>]*>申请插件采集<\/button>/u);
-  assert.doesNotMatch(passing, /<div class="product-form product-next">/u);
   const blocked = await render(props({ view: { supplierDraftV1: draft, supplierDraftEstimateV1: blockedEstimate, marketSnapshot } }));
-  assert.match(blocked, /<div class="product-form product-next">/u);
-  assert.match(blocked, /下一步：把上面缺的资料补齐，再保存一次。/u);
-  assert.doesNotMatch(blocked, /product-capture product-next/u);
+  assert.match(blocked, /product-capture product-next/u);
+  assert.match(blocked, /粗算还缺的几项，采回来或正式算利润时再补/u);
   const thin = await render(props({ view: { supplierDraftV1: draft, marketSnapshot,
     supplierDraftEstimateV1: { ...okEstimate, profitAtDeclaredPurchase: { ...okEstimate.profitAtDeclaredPurchase, passes: false } } } }));
-  assert.match(thin, /<div class="product-form product-next">/u);
-  assert.match(thin, /下一步：这件没到本店利润门槛，改上面的货价或目标成交价再保存一次。/u);
-  // Before anything is saved there is no "next step" to shout about, only the form itself.
+  assert.match(thin, /粗算没到本店利润门槛，仍可以采回真实规格价再看；正式利润没过线时会回到「需要你处理」/u);
+  for (const html of [passing, blocked, thin]) assert.doesNotMatch(html, /product-form product-next|再保存一次/u);
+  // Before anything is saved there is no "next step" to shout about; the 做这件 card is the next thing.
   const fresh = await render(props());
-  assert.match(fresh, /<div class="product-form product-next">/u);
   assert.doesNotMatch(fresh, /下一步：/u);
 });
 
@@ -373,12 +362,8 @@ test('保存找货资料后，商品页自己把保本价、达标价、市场�
   assert.match(html, /超过档位分界线会换一档费率/u);
   assert.match(html, /1 元 ≈ 12\.5637 卢布/u);
   assert.match(html, /你填的到手总价 ¥45\.00/u);
-  // 目标成交价 starts at the market price and says so; the owner no longer types a number out of thin air.
-  assert.match(html, /id="supply-target-price"[^>]*value="1850"/u, '已经填过找货方案时按方案里的价预填');
   const fresh = await render(props({ view: { supplierDraftV1: null, marketSnapshot, supplierDraftEstimateV1: null } }));
-  assert.match(fresh, /id="supply-target-price"[^>]*value="1850"/u, '还没填过时默认就是同款市场价');
-  assert.match(fresh, /默认就是同款现在的市场价；它也是以后上架时的起价/u);
-  assert.doesNotMatch(fresh, /定价指引/u, '还没保存找货方案时不显示定价指引');
+  assert.doesNotMatch(fresh, /定价指引/u, '还没有找货方案时不显示定价指引');
 });
 
 test('算不出定价指引时直说缺什么，不给一个猜出来的价', async () => {
@@ -533,7 +518,6 @@ test('插件采回来之后，商品页停在「选定」，这一步展开成�
   assert.match(html, /货源 1688 \/ 943009939489 · 目标售价 1600 卢布 · 2026-09-13 采到/u);
   // 找货 folds away below it, complete, because those inputs still drive every row.
   assert.match(html, /<details class="product-folded" aria-label="找货"><summary>找货<span class="product-folded-state">已保存<\/span><\/summary>/u);
-  assert.match(html, /id="supply-target-price"[^>]*value="1850"/u);
   // 选定 is no longer one of the folded "未开始" steps.
   assert.doesNotMatch(html, /<summary>选定/u);
   assert.equal((html.match(/未开始/gu) ?? []).length, 4);
@@ -673,14 +657,14 @@ test('还没保存找货资料就采回来了：直说算不出来该先做什�
     view: { supplierDraftV1: null, supplierDraftEstimateV1: null, marketSnapshot, skuChoiceTableV1: null } }));
   assert.match(html, /<h3>选哪个规格上架<\/h3>/u);
   assert.match(html, /但现在还算不出每个规格的运费和利润：/u);
-  assert.match(html, /先把下面「找货」里的资料填好保存一次，这里就会按每个规格自己的重量算给你看。/u);
+  assert.match(html, /先在上面「做这件」卡上点「做这件」，这里就会按每个规格自己的重量算给你看。/u);
   assert.doesNotMatch(html, /按单件利润从高到低/u);
   assert.doesNotMatch(html, /选定这些规格/u);
   // 找货已经填过、但官方输入还缺一样：说的是缺哪一类，不是让主人再填一次表。
   const saved = await render(props({ candidate: candidate({ sourceCapture: waitingCapture() }),
     view: { supplierDraftV1: draft, supplierDraftEstimateV1: okEstimate, marketSnapshot, skuChoiceTableV1: null } }));
   assert.match(saved, /汇率、佣金、资费表或本店成本规则里还缺东西/u);
-  assert.doesNotMatch(saved, /先把下面「找货」里的资料填好保存一次/u);
+  assert.doesNotMatch(saved, /先在上面「做这件」卡上点「做这件」/u);
 });
 
 test('采集刚刚回来时商品页会自己重读这一步，不停在「还没有规格」上', async () => {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { errorMessage } from "../formState.js";
 import { storeLabel } from "../selectionDeskView.js";
 import { toggleLocalSupplierSkuSelection } from "../aSupplierCaptureSelection.js";
@@ -16,8 +16,7 @@ import C1OzonAttributePanel from "./C1OzonAttributePanel.jsx";
 import C2FinalAssetsPanel from "./C2FinalAssetsPanel.jsx";
 import FinalProductPlanCard from "./FinalProductPlanCard.jsx";
 import SiblingBatchPreparation from './SiblingBatchPreparation.jsx';
-import { IMAGE_MATCH_JUDGEMENT_LABELS, supplierImageMatchView } from "../supplierImageMatchView.js";
-import { ozonImageMatchView, ozonSearchQueryReady } from "../ozonImageMatchView.js";
+import Gate1Card from "./Gate1Card.jsx";
 
 /**
  * One product page for the owner: the six steps of a product, with only the step that is actually open expanded.
@@ -307,49 +306,18 @@ function estimateLines(estimateRecord) {
  * saved estimate alone, whether the next move is 申请插件采集 or the form itself.
  */
 export function nextProductAction(view) {
-  if (!isObject(view?.supplierDraftV1)) return { key: "form", hint: null };
+  // 没有找货方案时，下一步是上面的「做这件」卡；方案只由那张卡存下（2026-10-10 拿掉了手填表）。
+  if (!isObject(view?.supplierDraftV1)) return { key: "gate1", hint: null };
   const record = view.supplierDraftEstimateV1 ?? null;
   if (!isObject(record) || record.estimate?.status !== "ok") {
-    return { key: "form", hint: "下一步：把上面缺的资料补齐，再保存一次。" };
+    return { key: "capture", hint: "下一步：点下面的「申请插件采集」，让插件去读这家货源的规格；粗算还缺的几项，采回来或正式算利润时再补。" };
   }
   return record.profitAtDeclaredPurchase?.passes === true
     ? { key: "capture", hint: "下一步：点下面的「申请插件采集」，让插件去读这个1688页面。" }
-    : { key: "form", hint: "下一步：这件没到本店利润门槛，改上面的货价或目标成交价再保存一次。" };
+    : { key: "capture", hint: "下一步：粗算没到本店利润门槛，仍可以采回真实规格价再看；正式利润没过线时会回到「需要你处理」，给你换货源、改售价或不做。" };
 }
 
-function draftFormState({ draft, candidate, marketSnapshot }) {
-  if (isObject(draft)) {
-    return {
-      sourceUrl: draft.sourceUrl ?? "",
-      goodsPriceRmb: numberField(draft.goodsPriceRmb),
-      domesticShippingRmb: numberField(draft.domesticShippingRmb),
-      packedWeightKg: numberField(draft.packedWeightKg),
-      length: numberField(draft.dimensionsCm?.length),
-      width: numberField(draft.dimensionsCm?.width),
-      height: numberField(draft.dimensionsCm?.height),
-      targetSalePriceRub: numberField(draft.targetSalePriceRub),
-      note: draft.note ?? ""
-    };
-  }
-  // No draft yet: prefill from whatever the owner already saved through the older per-field form.
-  const shipping = finite(candidate?.domesticShippingRmb);
-  const allIn = finite(candidate?.purchasePriceRmb);
-  const goods = allIn === null ? null : shipping === null ? allIn : Math.round((allIn - shipping) * 100) / 100;
-  return {
-    sourceUrl: textOf(candidate?.sourceUrl),
-    goodsPriceRmb: numberField(goods === null || goods < 0 ? null : goods),
-    domesticShippingRmb: numberField(shipping),
-    packedWeightKg: numberField(candidate?.packedWeightKg),
-    length: numberField(candidate?.dimensionsCm?.length),
-    width: numberField(candidate?.dimensionsCm?.width),
-    height: numberField(candidate?.dimensionsCm?.height),
-    // Owner question 2026-09-11: the target price should not be typed out of thin air, so it starts at what the same
-    // product sells for today; the saved per-field figure only fills in when this round has no snapshot price.
-    targetSalePriceRub: numberField(finite(marketSnapshot?.currentPrice) ?? finite(candidate?.expectedPriceRub)),
-    note: ""
-  };
-}
-
+const NUMBER_PATTERN = /^\d+(?:\.\d+)?$/;
 const RUB = value => (finite(value) === null ? "未取得" : `${value} 卢布`);
 
 /** Which of the store's two thresholds this price reached first, in the store rule's own numbers. */
@@ -1637,38 +1605,6 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
   </section>;
 }
 
-const NUMBER_PATTERN = /^\d+(?:\.\d+)?$/;
-const positiveInput = value => NUMBER_PATTERN.test(String(value).trim()) && Number(value) > 0;
-const nonNegativeInput = value => NUMBER_PATTERN.test(String(value).trim()) && Number(value) >= 0;
-const supplyUrlInput = value => /^https:\/\/(?:detail\.1688\.com\/offer\/\d+\.html(?:[?#].*)?|qr\.1688\.com\/s\/[A-Za-z0-9_-]{1,160}\/?)$/i.test(String(value).trim()) ||
-  /^https:\/\/(?:(?:mobile\.yangkeduo\.com|mobile\.pinduoduo\.com)\/goods[12]?\.html\?.*\b(?:goods_id=\d{1,40}|ps=[A-Za-z0-9_-]{1,160})|p\.pinduoduo\.com\/[A-Za-z0-9_-]{1,160}\/?$)/i.test(String(value).trim());
-
-export function supplierDraftFormErrors(form) {
-  const errors = {};
-  if (!supplyUrlInput(form.sourceUrl)) errors.sourceUrl = "请粘贴1688或拼多多的商品链接或分享短链";
-  if (!positiveInput(form.goodsPriceRmb)) errors.goodsPriceRmb = "请填写大于0的货价";
-  if (!nonNegativeInput(form.domesticShippingRmb)) errors.domesticShippingRmb = "请填写国内运费，包邮填0";
-  if (!positiveInput(form.packedWeightKg)) errors.packedWeightKg = "请填写大于0的打包重量";
-  for (const key of ["length", "width", "height"]) {
-    if (!positiveInput(form[key])) errors[key] = "请填写大于0的厘米数";
-  }
-  if (!positiveInput(form.targetSalePriceRub)) errors.targetSalePriceRub = "请填写大于0的卢布成交价";
-  return errors;
-}
-
-export function supplierDraftPayload(form, dataRevision) {
-  return {
-    dataRevision,
-    sourceUrl: String(form.sourceUrl).trim(),
-    goodsPriceRmb: Number(form.goodsPriceRmb),
-    domesticShippingRmb: Number(form.domesticShippingRmb),
-    packedWeightKg: Number(form.packedWeightKg),
-    dimensionsCm: { length: Number(form.length), width: Number(form.width), height: Number(form.height) },
-    targetSalePriceRub: Number(form.targetSalePriceRub),
-    ...(textOf(form.note) === "" ? {} : { note: textOf(form.note) })
-  };
-}
-
 /**
  * A step that has something specific to report — which extension rejection was observed, and what the owner can do
  * next — returns that sentence, and it becomes this page's notice. Anything else keeps the step's generic sentence.
@@ -1707,15 +1643,6 @@ function RecaptureControl({ candidate, disabled = false, onRecapture }) {
       <button type="button" className="button secondary" disabled={busy} onClick={() => setArmed(false)}>取消</button>
     </span>
   </span>;
-}
-
-function Field({ id, label, hint, value, error, onChange, type = "text", placeholder = "" }) {
-  return <label className="product-field" htmlFor={id}>
-    <span className="product-field-label">{label}</span>
-    <input id={id} name={id} type={type} value={value} placeholder={placeholder} inputMode={type === "text" ? undefined : "decimal"}
-      onChange={event => onChange(event.target.value)} />
-    {error ? <span className="product-field-error" role="alert">{error}</span> : hint ? <span className="product-field-hint">{hint}</span> : null}
-  </label>;
 }
 
 /**
@@ -1805,176 +1732,10 @@ function SavedC2Assets({ skuPackage }) {
   </section>;
 }
 
-/**
- * 在 1688 找同款：拿拼多多或 1688 货源首图（没有就用 Ozon 主图），用主人自己 Chrome 里登录的 1688 搜一次，列出最像的结果。
- * 软件只标首图像不像，是不是同款由主人逐条点；点了也只是记下判断，不改货源链接、不确认供货（AGENTS.md §4.3）。
- */
-function ImageMatchSection({ candidate, saving, noticeAt, error, notice, onStart, onCompare, onJudge }) {
-  const view = supplierImageMatchView(candidate);
-  if (view === null) return null;
-  const start = acknowledgeUnknownOutcome => onStart({ dataRevision: candidate.dataRevision,
-    ...(acknowledgeUnknownOutcome ? { acknowledgeUnknownOutcome: true } : {}) });
-  const judge = (offerId, judgement) => onJudge({ dataRevision: candidate.dataRevision, captureId: view.captureId, offerId, judgement });
-  return <section className="product-section product-image-match" aria-label="在 1688 找同款">
-    <h3>在 1688 找同款</h3>
-    <div className="image-match-source">
-      {view.sourceImageUrl
-        ? <img className="image-match-thumb" src={view.sourceImageUrl} alt={view.sourceLabel} width="96" height="96" loading="lazy" referrerPolicy="no-referrer" />
-        : <span className="image-match-thumb product-thumb-empty">首图</span>}
-      <div>
-        <p className="product-section-hint">用这张{view.sourceLabel}，在你 Chrome 里登录的 1688 上搜一次图，读回最像的 20 条。软件只比两张首图像不像；
-          是不是同款由你逐条判断，判断只记在这里，不会改货源链接，也不会确认供货。</p>
-        {view.lowestPriceCny !== null ? <p className="image-match-price">
-          {view.sourcePlatform === "1688" ? "你给的这家 1688 最低价" : "拼多多最低拼单价"}：{money(view.lowestPriceCny)}</p> : null}
-        {view.sourceReason ? <p className="product-capture-hint">{view.sourceReason}</p> : null}
-      </div>
-    </div>
-    {view.statusLine ? <p className={view.failed ? "product-capture-blocked" : "product-capture-status"} role={view.failed ? "alert" : "status"}>
-      {view.statusLine}</p> : null}
-    <div className="product-actions">
-      {view.unknownOutcome
-        ? <button type="button" className="button primary" disabled={saving || !view.canStart}
-          onClick={() => start(true)}>我知道上次结果未知，重新找一次</button>
-        : <button type="button" className={`button ${view.status === null ? "primary" : "secondary"}`} disabled={saving || !view.canStart}
-          onClick={() => start(false)}>{saving && noticeAt === "image-match" ? "正在申请…" : view.status === null ? "用首图在 1688 找同款" : "再找一次"}</button>}
-      {view.canCompare ? <button type="button" className="button secondary" disabled={saving}
-        onClick={() => onCompare({ dataRevision: candidate.dataRevision, captureId: view.captureId })}>重新比对首图</button> : null}
-    </div>
-    <StepResult at="image-match" noticeAt={noticeAt} error={error} notice={notice} />
-    {view.rows.length ? <ol className="image-match-results">
-      {view.rows.map(row => <li key={row.offerId} className={`image-match-row image-match-${row.similarity}`}>
-        {row.imageUrl
-          ? <img className="image-match-thumb" src={row.imageUrl} alt="" width="72" height="72" loading="lazy" referrerPolicy="no-referrer" />
-          : <span className="image-match-thumb product-thumb-empty">无图</span>}
-        <div className="image-match-body">
-          <p className="image-match-head">
-            <span className={`image-match-badge image-match-badge-${row.similarity}`}
-              title={row.distance === null ? undefined : `首图指纹相差 ${row.distance} / 64`}>{row.similarityLabel}</span>
-            {row.isAd ? <span className="image-match-tag">广告</span> : null}
-            {row.superFactory ? <span className="image-match-tag">超级工厂</span> : null}
-            {row.isSourceOffer ? <span className="image-match-tag">就是你给的这家</span> : null}
-            <a href={row.sourceUrl} target="_blank" rel="noreferrer noopener">{row.title}</a>
-          </p>
-          <p className="image-match-facts">
-            {row.priceCny === null ? "价格没读到" : money(row.priceCny)}
-            {row.priceNote ? ` · ${row.priceNote}` : ""}
-            {row.priceDifferenceCny === null || row.isSourceOffer ? "" : row.priceDifferenceCny === 0 ? ` · 和${view.priceBaseLabel}一样`
-              : ` · 比${view.priceBaseLabel}${row.priceDifferenceCny < 0 ? "低" : "高"} ${money(Math.abs(row.priceDifferenceCny))}`}
-          </p>
-          <p className={`image-match-facts${row.quantity.ok === false ? " product-capture-blocked" : ""}`}>
-            {row.quantity.text}
-            {row.saleQuantity === null ? "" : ` · 已售 ${row.saleQuantity}`}
-            {row.shopName ? ` · ${row.shopName}` : ""}{row.location ? ` · ${row.location}` : ""}
-            {row.vendorSimilarity === null ? "" : ` · 1688 相似度 ${percent(row.vendorSimilarity)}`}
-          </p>
-          {view.judgeable ? <div className="image-match-judge" role="group" aria-label={`判断 ${row.title}`}>
-            {Object.entries(IMAGE_MATCH_JUDGEMENT_LABELS).map(([judgement, label]) =>
-              <button key={judgement} type="button" aria-pressed={row.judgement === judgement}
-                className={`button ${row.judgement === judgement ? "primary" : "secondary"}`} disabled={saving}
-                onClick={() => judge(row.offerId, row.judgement === judgement ? "clear" : judgement)}>{label}</button>)}
-          </div> : null}
-        </div>
-      </li>)}
-    </ol> : null}
-    {view.rows.length ? <p className="product-actions-note">近似款只能当价格参考，不能当供货方案。要用其中一个 1688 货源，打开它核对规格、一件起订和运费后，
-      把它的链接填进上面「找货」里再采集一次。</p> : null}
-  </section>;
-}
-
-const rubles = value => (finite(value) === null ? null : `${String(Math.round(value * 100) / 100).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} ₽`);
-
-/**
- * 在 Ozon 找同款：Ozon 不能拿图搜，所以先用主人填的（或预先填好的）俄文词在 Ozon 站内搜一次，再拿首图和每件结果的主图比，
- * 最像的排前面。软件只标首图像不像，是不是同款由主人逐条点；点了也只是记下判断，不改这件商品的任何东西（AGENTS.md §4.3）。
- */
-function OzonMatchSection({ candidate, saving, noticeAt, error, notice, onStart, onCompare, onJudge }) {
-  const view = ozonImageMatchView(candidate);
-  const [query, setQuery] = useState(view?.suggestedQuery ?? "");
-  const [seeded, setSeeded] = useState(view?.suggestedQuery ?? "");
-  // A newer suggestion (the last search's words, once it is saved) replaces the box only while the owner has not typed.
-  if (view && view.suggestedQuery !== seeded) {
-    setSeeded(view.suggestedQuery);
-    if (query === seeded) setQuery(view.suggestedQuery);
-  }
-  if (view === null) return null;
-  const ready = ozonSearchQueryReady(query);
-  // 以图搜不带词；词搜带上框里的词。上次结果未知时，两种都要主人先说一声知道了。
-  const start = searchBy => onStart({ dataRevision: candidate.dataRevision, searchBy,
-    ...(searchBy === "text" ? { query: query.trim() } : {}), ...(view.unknownOutcome ? { acknowledgeUnknownOutcome: true } : {}) });
-  const judge = (productId, judgement) => onJudge({ dataRevision: candidate.dataRevision, captureId: view.captureId, productId, judgement });
-  const requesting = saving && noticeAt === "ozon-match";
-  const known = view.unknownOutcome ? "我知道上次结果未知，" : "";
-  return <section className="product-section product-image-match product-ozon-match" aria-label="在 Ozon 找同款">
-    <h3>在 Ozon 找同款</h3>
-    <div className="image-match-source">
-      {view.sourceImageUrl
-        ? <img className="image-match-thumb" src={view.sourceImageUrl} alt={view.sourceLabel} width="96" height="96" loading="lazy" referrerPolicy="no-referrer" />
-        : <span className="image-match-thumb product-thumb-empty">首图</span>}
-      <div>
-        <p className="product-section-hint">先用这张{view.sourceLabel}在 Ozon 以图搜一次，再拿它和搜到的每件商品的主图比，最像的排在前面。
-          是不是同款由你逐条判断，判断只记在这里，不会改这件商品的任何东西。</p>
-        {view.sourceReason ? <p className="product-capture-hint">{view.sourceReason}</p> : null}
-      </div>
-    </div>
-    {view.statusLine ? <p className={view.failed ? "product-capture-blocked" : "product-capture-status"} role={view.failed ? "alert" : "status"}>
-      {view.statusLine}</p> : null}
-    <div className="product-actions">
-      <button type="button" className="button primary" disabled={saving || !view.canStart}
-        onClick={() => start("image")}>{requesting ? "正在申请…" : `${known}${view.status === null ? "用首图在 Ozon 搜" : "用首图再搜一次"}`}</button>
-      {view.canCompare ? <button type="button" className="button secondary" disabled={saving}
-        onClick={() => onCompare({ dataRevision: candidate.dataRevision, captureId: view.captureId })}>重新比对首图</button> : null}
-    </div>
-    <div className="image-match-fallback">
-      <label className="product-field" htmlFor="ozon-match-query">
-        <span className="product-field-label">以图搜只找到近似款时，用俄文词再搜（后备）</span>
-        <input id="ozon-match-query" type="text" name="ozon-match-query" value={query} maxLength={100}
-          placeholder="например: жилет для кошки" onChange={event => setQuery(event.target.value)} />
-        <span className="product-actions-note">{query === view.suggestedQuery && query ? view.suggestionNote
-          : query ? "用你填的词搜。" : view.suggestionNote}</span>
-      </label>
-      <button type="button" className="button secondary" disabled={saving || !view.canStart || !ready}
-        onClick={() => start("text")}>{`${known}用俄文词搜`}</button>
-    </div>
-    <StepResult at="ozon-match" noticeAt={noticeAt} error={error} notice={notice} />
-    {view.rows.length ? <ol className="image-match-results">
-      {view.rows.map(row => <li key={row.productId} className={`image-match-row image-match-${row.similarity}`}>
-        {row.imageUrl
-          ? <img className="image-match-thumb" src={row.imageUrl} alt="" width="72" height="72" loading="lazy" referrerPolicy="no-referrer" />
-          : <span className="image-match-thumb product-thumb-empty">无图</span>}
-        <div className="image-match-body">
-          <p className="image-match-head">
-            <span className={`image-match-badge image-match-badge-${row.similarity}`}
-              title={row.distance === null ? undefined : `首图指纹相差 ${row.distance} / 64`}>{row.similarityLabel}</span>
-            {row.isAd ? <span className="image-match-tag">广告</span> : null}
-            {row.isSourceProduct ? <span className="image-match-tag">就是这件商品自己</span> : null}
-            {row.samePictureOthers > 0 ? <span className="image-match-tag">同一张图还有 {row.samePictureOthers} 个商品，可能是别的规格</span> : null}
-            <a href={row.sourceUrl} target="_blank" rel="noreferrer noopener">{row.title}</a>
-          </p>
-          <p className="image-match-facts">
-            {row.priceRub === null ? "价格没读到" : rubles(row.priceRub)}
-            {row.originalPriceRub === null ? "" : ` · 原价 ${rubles(row.originalPriceRub)}`}
-            {row.rating === null ? "" : ` · ${row.rating} 分`}
-            {row.reviewCount === null ? "" : ` · ${row.reviewCount} 条评价`}
-          </p>
-          {view.judgeable ? <div className="image-match-judge" role="group" aria-label={`判断 ${row.title}`}>
-            {Object.entries(IMAGE_MATCH_JUDGEMENT_LABELS).map(([judgement, label]) =>
-              <button key={judgement} type="button" aria-pressed={row.judgement === judgement}
-                className={`button ${row.judgement === judgement ? "primary" : "secondary"}`} disabled={saving}
-                onClick={() => judge(row.productId, row.judgement === judgement ? "clear" : judgement)}>{label}</button>)}
-          </div> : null}
-        </div>
-      </li>)}
-    </ol> : null}
-    {view.rows.length ? <p className="product-actions-note">{view.searchBy === "image"
-      ? "以图搜按样子找，不保证有一模一样的；首图不像的也可能是换了图的同款，没搜到也不说明 Ozon 上没有同款。可以用俄文词再搜一次。"
-      : "搜到的是这几个词的结果，首图不像的也可能是换了图的同款，没搜到也不说明 Ozon 上没有同款；换几个词可以再搜一次。"}</p> : null}
-  </section>;
-}
-
 export default function ProductPage({
   preparationSaveState,
   candidate, view = null, titleZh = null, extensionStatus = null,
-  onSaveDraft, onChooseSkus, onCreateSiblingSku = null, onConfirmSiblingBatchA = null, onConfirmSiblingBatchC1 = null,
+  onAcceptGate1 = null, onSkipGate1 = null, onResolveGate1Shortfall = null, onChooseSkus, onCreateSiblingSku = null, onConfirmSiblingBatchA = null, onConfirmSiblingBatchC1 = null,
   onPreviewSiblingBatchC1 = null,
   onReadSiblingBatchColorDictionary = null,
   onAuthorizeSiblingProductionBatch = null, onUploadSiblingC2Asset = null, onLinkSiblingC2Asset = null,
@@ -2012,15 +1773,12 @@ export default function ProductPage({
   // 「精确佣金读不到」是服务端在上一次确认里真的这么停过一次才知道的事。页面不记它，也不在加载时去探测——
   // 探测会对主人的 Ozon 账户产生一次真实读取。服务端把那一次停在哪存成了记录，这里读的就是那份记录。
   const commissionStep = view?.commissionEstimateStepV1 ?? null;
-  // The form follows the saved draft: when the server returns a newer declaration, the fields show that declaration.
+  // The ticks follow the saved choice: a newer revision shows what the server actually holds.
   const prefillKey = `${candidate?.id ?? ""}:${candidate?.dataRevision ?? ""}:${draft?.declaredAt ?? "none"}`;
-  const [form, setForm] = useState(() => draftFormState({ draft, candidate, marketSnapshot }));
-  // The ticks follow the saved choice the same way: a newer revision shows what the server actually holds.
   const [chosen, setChosen] = useState(() => (skuTable?.selectedSkuIds ?? []).map(String));
   const [prefilled, setPrefilled] = useState(prefillKey);
   if (prefilled !== prefillKey) {
     setPrefilled(prefillKey);
-    setForm(draftFormState({ draft, candidate, marketSnapshot }));
     setChosen((skuTable?.selectedSkuIds ?? []).map(String));
   }
   const [saving, setSaving] = useState(false);
@@ -2028,8 +1786,6 @@ export default function ProductPage({
   const [notice, setNotice] = useState(null);
   // 结果显示在主人刚点的那个按钮旁边。找货和采集都在长页面的中段，结果只出现在顶部时，主人以为点了没反应（2026-10-09）。
   const [noticeAt, setNoticeAt] = useState(null);
-  const errors = useMemo(() => supplierDraftFormErrors(form), [form]);
-  const invalid = Object.keys(errors).length > 0;
   const step = currentProductStep(candidate);
   const next = nextProductAction(view);
   const choosing = showsSkuChoice(candidate);
@@ -2050,7 +1806,6 @@ export default function ProductPage({
       ? "下一步：先确认下面那条「结果未知」的采集记录，才能重新申请采集。"
       : next.hint;
   const snapshotLine = marketSnapshotLine(marketSnapshot);
-  const change = key => value => { setForm(current => ({ ...current, [key]: value })); setNotice(null); };
 
   async function run(action, payload, successNotice, at = null) {
     if (saving || typeof action !== "function") return;
@@ -2059,6 +1814,24 @@ export default function ProductPage({
     catch (cause) { setError(errorMessage(cause)); }
     finally { setSaving(false); }
   }
+  /**
+   * 做这件：服务端存下方案后连同找货视图一起回，这里紧接着用同一条「申请插件采集」去采这家货源的规格。
+   * 采集申请失败不抹掉已经存下的方案，只照实说没申请成，按钮还在下面「找货」里。
+   */
+  const acceptGate1 = typeof onAcceptGate1 !== "function" ? null : async payload => {
+    const next = await onAcceptGate1(payload);
+    const capture = isObject(next?.candidate) && isObject(next?.supplierDraftV1)
+      ? captureSubmissionFromDraft({ candidate: next.candidate, draft: next.supplierDraftV1, marketSnapshot: next.marketSnapshot ?? null }) : null;
+    if (capture === null || typeof onRequestCapture !== "function") {
+      return "已做这件，方案存下了。下面「找货」里点「申请插件采集」去采这家货源的规格。";
+    }
+    try {
+      const said = await onRequestCapture(capture);
+      return `已做这件，方案存下了。${typeof said === "string" && said.trim() ? said : "已申请插件采集这家货源的规格。"}`;
+    } catch (cause) {
+      return `已做这件，方案存下了；但这次没能申请采集：${errorMessage(cause)}。可以在下面「找货」里再点「申请插件采集」。`;
+    }
+  };
   /** 同一次重读，无论从规格表旁边点还是从「1688 采集」块里点，走的都是这一条路。 */
   const recapture = reason => run(onRecaptureSource, captureRecapturePayload(candidate, reason),
     `已经让软件重新去读一次这个${supplySiteName(candidate.sourceCapture?.sourceUrl)}页面，读完这里会显示结果。`, "capture");
@@ -2112,28 +1885,9 @@ export default function ProductPage({
    * below 选规格, still complete, because changing the target price or the packing size changes every row of that table.
    */
   const findBody = <>
-    <p className="product-section-hint">把1688或拼多多上找到的这件货填进来。下面每个数字都算你自己填的，软件只按它们算钱，不会替你猜。</p>
-    <div className={`product-form${highlight === "form" ? " product-next" : ""}`}>
-      <Field id="supply-source-url" label="1688 / 拼多多 商品链接" value={form.sourceUrl} error={errors.sourceUrl}
-        hint="1688 或拼多多的商品链接、分享短链都可以" placeholder="https://detail.1688.com/offer/… 或 https://mobile.yangkeduo.com/goods.html?goods_id=…" onChange={change("sourceUrl")} />
-      <Field id="supply-goods-price" label="货价（元）" value={form.goodsPriceRmb} error={errors.goodsPriceRmb} type="number" onChange={change("goodsPriceRmb")} />
-      <Field id="supply-domestic-shipping" label="国内运费（元）" value={form.domesticShippingRmb} error={errors.domesticShippingRmb}
-        hint="包邮填 0" type="number" onChange={change("domesticShippingRmb")} />
-      <Field id="supply-weight" label="打包重量（公斤）" value={form.packedWeightKg} error={errors.packedWeightKg} type="number" onChange={change("packedWeightKg")} />
-      <Field id="supply-length" label="包装长（厘米）" value={form.length} error={errors.length} type="number" onChange={change("length")} />
-      <Field id="supply-width" label="包装宽（厘米）" value={form.width} error={errors.width} type="number" onChange={change("width")} />
-      <Field id="supply-height" label="包装高（厘米）" value={form.height} error={errors.height} type="number" onChange={change("height")} />
-      <Field id="supply-target-price" label="目标成交价（卢布）" value={form.targetSalePriceRub} error={errors.targetSalePriceRub}
-        hint="默认就是同款现在的市场价；它也是以后上架时的起价，保存后下面会给出保本价和达标价"
-        type="number" onChange={change("targetSalePriceRub")} />
-      <Field id="supply-note" label="备注（可不填）" value={form.note} onChange={change("note")} />
-    </div>
-    <div className="product-actions">
-      <button type="button" className="button primary" disabled={saving || invalid}
-        onClick={() => run(onSaveDraft, supplierDraftPayload(form, candidate.dataRevision), "已保存你填的找货方案，下面的数字按它重新算过了。", "find")}>
-        {saving && noticeAt === "find" ? "正在保存…" : "保存"}</button>
-      <span className="product-actions-note">保存只记录你填的方案，不会确认供货，也不会开始采购。</span>
-    </div>
+    <p className="product-section-hint">{draft === null
+      ? "找货方案由上面的「做这件」卡存下：软件先选好同款和货源，你在卡上点「做这件」。"
+      : "这是你在「做这件」卡上认下的方案。下面的数字按它算；要换货源或改售价，等正式利润算完，没过线时卡会回来。"}</p>
     <StepResult at="find" noticeAt={noticeAt} error={error} notice={notice} />
 
     <div className="product-result" aria-label="找货结果">
@@ -2150,7 +1904,7 @@ export default function ProductPage({
     {draft === null ? null : <PricingGuidance guidance={view?.supplierDraftEstimateV1?.pricingGuidance ?? null} />}
 
     <div className={`product-capture${highlight === "capture" ? " product-next" : ""}`} aria-label="插件采集">
-      <h4>{supplySiteName(candidate.sourceCapture?.sourceUrl || form.sourceUrl)} 采集</h4>
+      <h4>{supplySiteName(candidate.sourceCapture?.sourceUrl || draft?.sourceUrl)} 采集</h4>
       <p className="product-capture-extension">插件状态：{extensionStatus?.label ?? "插件未安装或未连接"}</p>
       {extensionConnected ? null : <p className="product-capture-hint">还没连上插件：打开 Chrome 的 chrome://extensions，开启开发者模式，点「加载已解压的扩展程序」，选择本项目的 extension/1688-capture 目录。</p>}
       <p className="product-capture-status">{captureStatusLine(candidate)}</p>
@@ -2169,7 +1923,7 @@ export default function ProductPage({
       {/* 采到了之后「申请插件采集」不会再建新的采集，所以重读这个页面必须自己有一个入口，否则这件商品就钉死在那一次读到的内容上。
           规格表在场时那个入口在规格表旁边（那里才是主人看着这些规格的地方），这里就不再重复一个同名按钮。 */}
       {recapturable && !recaptureInChoice ? <RecaptureControl candidate={candidate} disabled={saving} onRecapture={recapture} /> : null}
-      {draft === null ? <span className="product-actions-note">先保存上面的找货方案，才能申请采集。</span> : null}
+      {draft === null ? <span className="product-actions-note">先在上面「做这件」卡上点「做这件」，才能申请采集。</span> : null}
       {recapturable && !recaptureInChoice ? <span className="product-actions-note">
         上面这些规格是上一次读到的。页面改了、规格不对，或者这次没采到重量，就点「重新采集」让软件把这个1688页面再读一遍。
       </span> : null}
@@ -2224,6 +1978,13 @@ export default function ProductPage({
     {error && noticeAt === null ? <p role="alert" className="product-page-alert">{error}</p> : null}
     {notice && noticeAt === null ? <p role="status" className="product-notice">{notice}</p> : null}
 
+    {/* 关口 1「做这件」：软件先选好同款和货源，主人只改不对的；两个找同款区块在卡里面。正式利润没过线时卡回来。 */}
+    <Gate1Card key={`${candidate.id}:gate1`} candidate={candidate} gate1={view?.gate1V1 ?? null} storeName={storeLabel(candidate.targetStore)}
+      saving={saving} noticeAt={noticeAt} error={error} notice={notice} run={run}
+      onAccept={acceptGate1} onSkip={onSkipGate1} onShortfall={onResolveGate1Shortfall}
+      onStartImageMatch={onStartImageMatch} onCompareImageMatch={onCompareImageMatch} onJudgeImageMatch={onJudgeImageMatch}
+      onStartOzonMatch={onStartOzonMatch} onCompareOzonMatch={onCompareOzonMatch} onJudgeOzonMatch={onJudgeOzonMatch} />
+
     {typeof onCreateSiblingSku === 'function' &&
       candidate.sourceCapture?.mode === 'a_supplier_capture' &&
       candidate.sourceCapture?.status === 'captured_waiting_owner_selection' &&
@@ -2252,7 +2013,7 @@ export default function ProductPage({
         <h3>选哪个规格上架</h3>
         <p className="product-section-hint">{`插件已经把这件1688货源的 ${candidate.sourceCapture.skuChoices.length} 个规格采回来了，但现在还算不出每个规格的运费和利润：${
           draft === null
-            ? "先把下面「找货」里的资料填好保存一次，这里就会按每个规格自己的重量算给你看。"
+            ? "先在上面「做这件」卡上点「做这件」，这里就会按每个规格自己的重量算给你看。"
             : "汇率、佣金、资费表或本店成本规则里还缺东西，补齐之后这里就会按每个规格自己的重量算给你看。"}`}</p>
         {recapturable ? <div className="product-sku-recapture">
           <span>如果是这一次采集本身采得不对，就重新读一遍这个1688页面。</span>
@@ -2267,22 +2028,6 @@ export default function ProductPage({
         onSubmit={() => run(onChooseSkus, skuChoicePayload(skuTable, chosen, candidate.dataRevision),
           `已选定 ${chosen.length} 个规格，它们已经锁进这件商品的供货方案；没有下单、没有联系供应商、也没有向 Ozon 写任何东西。`)} />)
       : null}
-
-    {typeof onStartImageMatch === "function" ? <ImageMatchSection candidate={candidate} saving={saving} noticeAt={noticeAt}
-      error={error} notice={notice}
-      onStart={payload => run(onStartImageMatch, payload, "已经让插件去 1688 用首图搜一次，读完这里会列出最像的结果。", "image-match")}
-      onCompare={payload => run(onCompareImageMatch, payload, "正在重新比对首图，比完这里会更新。", "image-match")}
-      onJudge={payload => run(onJudgeImageMatch, payload, payload.judgement === "clear"
-        ? "已撤回这条判断。" : `已记下：这条${IMAGE_MATCH_JUDGEMENT_LABELS[payload.judgement]}。这只是同款判断，没有改货源、也没有确认供货。`,
-      "image-match")} /> : null}
-
-    {typeof onStartOzonMatch === "function" ? <OzonMatchSection candidate={candidate} saving={saving} noticeAt={noticeAt}
-      error={error} notice={notice}
-      onStart={payload => run(onStartOzonMatch, payload, `已经让插件去 Ozon 搜「${payload.query}」，读完这里会按首图像不像列出结果。`, "ozon-match")}
-      onCompare={payload => run(onCompareOzonMatch, payload, "正在重新比对首图，比完这里会更新。", "ozon-match")}
-      onJudge={payload => run(onJudgeOzonMatch, payload, payload.judgement === "clear"
-        ? "已撤回这条判断。" : `已记下：这条${IMAGE_MATCH_JUDGEMENT_LABELS[payload.judgement]}。这只是同款判断，没有改这件商品的任何东西。`,
-      "ozon-match")} /> : null}
 
     {/* 算利润：整套一起核线、指定先上的那一个、其余排队，这件货运输上是什么，最后那两个只有主人能做的判断。 */}
     {profitOpen ? <ProfitStepSection key={`${candidate.id}:${candidate.dataRevision}`}
@@ -2328,7 +2073,8 @@ export default function ProductPage({
             "已经重新读了一次费用证据；已经定下来的规格、成本、线路和运费都没有动，利润结论也没有变。");
         }} /> : null}
 
-    {step === "find" ? <section className="product-section" aria-label="找货">
+    {/* 「做这件」卡还开着时，找货方案还没有，这一节没东西可看。 */}
+    {step === "find" && (draft !== null || view?.gate1V1?.open !== true) ? <section className="product-section" aria-label="找货">
       <h3>找货</h3>
       {findBody}
     </section> : null}

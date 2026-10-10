@@ -420,5 +420,12 @@ export const api = {
   retryIntake: (candidateId, dataRevision) =>
     request(`/api/intake/${encodeURIComponent(candidateId)}/retry`, { method: "POST", body: JSON.stringify({ dataRevision }) }),
   resumeIntake: () => request("/api/intake/resume", { method: "POST", body: "{}" }),
-  reportIntakeStart: (ack) => request("/api/intake/start-ack", { method: "POST", body: JSON.stringify(ack) })
+  reportIntakeStart: (ack) => request("/api/intake/start-ack", { method: "POST", body: JSON.stringify(ack) }),
+  // 「做这件」确认卡：做 / 不做 / 正式利润没过线之后选换货源、改售价或不做。都只写本地记录，不派任务、不碰平台。
+  acceptGate1: (candidateId, payload) =>
+    request(`/api/candidates/${encodeURIComponent(candidateId)}/gate1/accept`, { method: "POST", body: JSON.stringify(payload) }),
+  skipGate1: (candidateId, payload) =>
+    request(`/api/candidates/${encodeURIComponent(candidateId)}/gate1/skip`, { method: "POST", body: JSON.stringify(payload) }),
+  resolveGate1Shortfall: (candidateId, payload) =>
+    request(`/api/candidates/${encodeURIComponent(candidateId)}/gate1/shortfall`, { method: "POST", body: JSON.stringify(payload) })
 };
