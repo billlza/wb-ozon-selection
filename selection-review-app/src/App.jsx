@@ -4,7 +4,7 @@ import { createPreparationSaveState } from './siblingPreparationState.js';
 import { createLatestRead, createSelectionGuard, openSavedCandidate, runMutation, shouldContinuePolling, errorMessage, candidatePlatform } from "./formState.js";
 import { validateCandidateCommentReceipt } from "./commentInput.js";
 import { c2ReferenceFailureMessage } from "./c2UploadInput.js";
-import { IMAGE_MATCH_CHANNEL, OZON_PAGE_READ_CHANNEL, startQueuedSupplierCapture } from "./captureStart.js";
+import { IMAGE_MATCH_CHANNEL, OZON_IMAGE_MATCH_CHANNEL, OZON_PAGE_READ_CHANNEL, startQueuedSupplierCapture } from "./captureStart.js";
 import { firstInQueue, matchesQueue } from "./candidateViews";
 import AddCandidateModal from "./components/AddCandidateModal";
 import CandidateDetail, { CandidateReview } from "./components/CandidateDetail";
@@ -274,6 +274,17 @@ export default function App() {
       const start=await startQueuedSupplierCapture(result,{channel:IMAGE_MATCH_CHANNEL});
       if(start)return start.message;
       return "这件商品已经有一次找同款还在等插件，这次没有重新开始；等它结束后再试，软件不会自动重试";
+    }finally{await load(true);}
+  }
+  /** 在 Ozon 找同款：和上面同样的两步，只是带上这次搜的词、换成 Ozon 找同款那一条开始信号。 */
+  async function startOzonImageMatch(payload){
+    const ownerId=accountOwnerId,candidateId=selectedId;
+    const current=()=>accountContext.current.ownerId===ownerId&&accountContext.current.view==='product';
+    try{
+      const result=await runMutation(()=>api.startOzonImageMatch(candidateId,payload),{reads:productDraftReads.current,isCurrent:current});
+      const start=await startQueuedSupplierCapture(result,{channel:OZON_IMAGE_MATCH_CHANNEL});
+      if(start)return start.message;
+      return "这件商品已经有一次在 Ozon 找同款还在等插件，这次没有重新开始；等它结束后再试，软件不会自动重试";
     }finally{await load(true);}
   }
   async function writeSupplierImageMatch(action,payload){
@@ -1475,6 +1486,9 @@ export default function App() {
           onStartImageMatch={payload => startSupplierImageMatch(payload)}
           onCompareImageMatch={payload => writeSupplierImageMatch(api.compareSupplierImageMatch, payload)}
           onJudgeImageMatch={payload => writeSupplierImageMatch(api.judgeSupplierImageMatch, payload)}
+          onStartOzonMatch={payload => startOzonImageMatch(payload)}
+          onCompareOzonMatch={payload => writeSupplierImageMatch(api.compareOzonImageMatch, payload)}
+          onJudgeOzonMatch={payload => writeSupplierImageMatch(api.judgeOzonImageMatch, payload)}
           onConfirmProfitStep={payload => confirmProductProfitStep(payload)}
           onRecalculateBWithExactCommission={recalculateBWithExactCommission}
           onRefreshBFeeEvidence={refreshBFeeEvidence}

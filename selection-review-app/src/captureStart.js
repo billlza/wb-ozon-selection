@@ -28,6 +28,13 @@ export const IMAGE_MATCH_CHANNEL = Object.freeze({
   acceptedMessage: "插件已领取这次找同款，正在用你 Chrome 里登录的 1688 搜这张首图；读完这里会列出最像的结果"
 });
 
+export const OZON_IMAGE_MATCH_CHANNEL = Object.freeze({
+  queuedStatus: "ozon_image_match_job_queued",
+  request: "SELECTION_REVIEW_OZON_IMAGE_MATCH_REQUEST",
+  ack: "SELECTION_REVIEW_OZON_IMAGE_MATCH_ACK",
+  acceptedMessage: "插件已领取这次在 Ozon 找同款，正在这台电脑的 Chrome 里打开 Ozon 搜这几个词；读完这里会按首图像不像列出结果"
+});
+
 export const CAPTURE_START_TIMEOUT_MS = 12000;
 
 // Called only after this page receives the receipt for a newly created, explicit job.

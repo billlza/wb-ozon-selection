@@ -379,3 +379,49 @@ export function imageSearchResultPage(value) {
   const url = new URL(value);
   return `https://${url.hostname.toLowerCase()}${url.pathname.toLowerCase().replace(/\/+$/, "")}`;
 }
+
+/** Mirrors normalizeOzonSearchQuery in lib/ozon-same-product-match.mjs, character for character. */
+export function normalizeOzonSearchQuery(value) {
+  if (typeof value !== "string") return null;
+  const query = value.normalize("NFC").replace(/[\u0000-\u001f\u007f\u00a0\u2000-\u200b\u2028\u2029\u202f\u3000]/g, " ")
+    .replace(/\s+/g, " ").trim();
+  if (query.length < 2 || query.length > 100 || !/\p{L}/u.test(query) || /[<>{}]|:\/\//.test(query)) return null;
+  return query;
+}
+
+/** Mirrors ozonSearchUrl in lib/ozon-same-product-match.mjs: Ozon's own site search, the words in its own text parameter. */
+export function ozonSearchUrl(query) {
+  const normalized = normalizeOzonSearchQuery(query);
+  if (!normalized || normalized !== query) return null;
+  return `https://www.ozon.ru/search/?${new URLSearchParams({ text: normalized, from_global: "true" })}`;
+}
+
+const foldOzonQuery = (value) => normalizeOzonSearchQuery(value)?.toLowerCase() ?? null;
+
+/**
+ * Where an Ozon search tab has got to, as one fixed word. Ozon answers a search on /search/ or moves it to a category
+ * page that keeps the same words in its text parameter; both are this search. A verification page stops the job with its
+ * own reason; another search or any other page is not this one.
+ */
+export function classifyOzonSearchNavigation(value, query) {
+  try {
+    if (typeof value !== "string") return "invalid";
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return "invalid";
+    const host = url.hostname.toLowerCase();
+    if (host !== "www.ozon.ru" && host !== "ozon.ru") return "non_whitelisted_destination";
+    if (/(?:captcha|challenge|antibot|\/abt\/)/i.test(url.pathname)) return "verification_required";
+    if (!/^\/(?:search|category\/[^/]+)\/?$/.test(url.pathname) || host !== "www.ozon.ru") return "non_whitelisted_destination";
+    const words = foldOzonQuery(url.searchParams.get("text"));
+    return words !== null && words === foldOzonQuery(query) ? "results" : "other_search";
+  } catch {
+    return "invalid";
+  }
+}
+
+/** The result page as a fixed marker (path and words only), so the address read after extraction can be compared. */
+export function ozonSearchResultPage(value, query) {
+  if (classifyOzonSearchNavigation(value, query) !== "results") return null;
+  const url = new URL(value);
+  return `https://www.ozon.ru${url.pathname.replace(/\/+$/, "")}/?text=${encodeURIComponent(foldOzonQuery(query))}`;
+}

@@ -6,8 +6,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { allocatedTestPorts, stopApiProcess } from "./helpers/api-process-lifecycle.mjs";
-import { isImageMatchJob, validateImageMatchRequest } from "../extension/1688-capture/capture-request.js";
+import { isImageMatchJob, isOzonImageMatchJob, validateImageMatchRequest, validateOzonImageMatchRequest } from "../extension/1688-capture/capture-request.js";
 import { supplierImageMatchSearchUrl } from "../lib/supplier-image-match.mjs";
+import { ozonSearchUrl } from "../lib/ozon-same-product-match.mjs";
 
 // Every candidate, offer, title and picture address below is synthetic. The service is told not to fetch any picture.
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -30,7 +31,7 @@ function candidate(id, { mainImageUrl = IMAGE, ...extra } = {}) {
       captureId: `SCJ-synthetic-${id}`, status: "captured_waiting_owner_selection", mode: "a_supplier_capture",
       jobId: `SCJ-synthetic-${id}`, jobStatus: "completed", attempt: 1, offerId: "600000000001",
       sourceUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=600000000001", title: "合成背心",
-      originalSourceUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=600000000001", requiredExtensionVersion: "1.3.0",
+      originalSourceUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=600000000001", requiredExtensionVersion: "1.4.0",
       offerStatus: "on_sale", observedAt: "2026-10-09T07:00:00.000Z", collectionMethod: "chrome_extension_structured_page_v1",
       titleSource: "rawData.goods.goodsName", offerIdSource: "rawData.goods.goodsID", pageSelectedSkuId: null, priceRanges: [],
       pageFields: { unitProductPriceCny: null, unitProductPriceSource: null, unitDomesticFreightCny: null, unitDomesticFreightSource: null },
@@ -122,12 +123,13 @@ async function startApi(t, candidates, { ttlMs = 2000, executionTtlMs = 500 } = 
       cookie = response.cookie.split(";")[0];
     },
     start: (id, body) => post(`/api/candidates/${encodeURIComponent(id)}/image-match/start`, body),
-    claim: (jobId, version = "1.3.0") =>
+    claim: (jobId, version = "1.4.0") =>
       post(`/api/extension/capture-jobs/${jobId}/claim`, { version }, { authenticated: false, headers: { Origin: extensionOrigin } }),
     result: (id, body) => post(`/api/candidates/${encodeURIComponent(id)}/image-match/result`, body,
       { authenticated: false, headers: { Origin: extensionOrigin } }),
     compare: (id, body) => post(`/api/candidates/${encodeURIComponent(id)}/image-match/compare`, body),
     judge: (id, body) => post(`/api/candidates/${encodeURIComponent(id)}/image-match/judgement`, body),
+    ozon: (id, action, body, options) => post(`/api/candidates/${encodeURIComponent(id)}/ozon-match/${action}`, body, options),
     async settled(id, status) {
       for (let attempt = 0; attempt < 100; attempt += 1) {
         const current = await record(id);
@@ -173,7 +175,7 @@ test("找同款：只有主人能发起，插件领取一次、回传核验过�
   assert.equal(claim.status, 200, JSON.stringify(claim.body));
   const payload = claim.body.captureJob;
   assert.equal(isImageMatchJob(payload), true);
-  assert.deepEqual(validateImageMatchRequest({ payload, manifestVersion: "1.3.0" }), { ok: true, imageUrl: IMAGE, searchUrl: supplierImageMatchSearchUrl(IMAGE) });
+  assert.deepEqual(validateImageMatchRequest({ payload, manifestVersion: "1.4.0" }), { ok: true, imageUrl: IMAGE, searchUrl: supplierImageMatchSearchUrl(IMAGE) });
   assert.equal((await api.claim(jobId)).status, 409, "同一个作业不能被领取第二次");
   assert.equal((await api.record("IMG-1")).supplierImageMatch.status, "searching");
 
@@ -317,7 +319,7 @@ test("找同款三个入口共用一条作业链：1688 货源用它自己的首
     const claim = await api.claim(queued.body.captureJob.jobId);
     assert.equal(claim.status, 200, JSON.stringify(claim.body));
     const payload = claim.body.captureJob;
-    assert.deepEqual(validateImageMatchRequest({ payload, manifestVersion: "1.3.0" }),
+    assert.deepEqual(validateImageMatchRequest({ payload, manifestVersion: "1.4.0" }),
       { ok: true, imageUrl, searchUrl: supplierImageMatchSearchUrl(imageUrl) });
     const saved = await api.result(id, { captureId: payload.captureId, token: payload.token, dataRevision: payload.dataRevision,
       status: "captured", evidence: evidence({ searchImageUrl: imageUrl }) });
@@ -338,4 +340,95 @@ test("找同款三个入口共用一条作业链：1688 货源用它自己的首
   assert.ok(fromOzon.supplierImageMatch.results.every(entry => entry.isSourceOffer === false));
   assert.match(fromOzon.history.find(entry => entry.action === "supplierImageMatchResultsSaved").detail, /用Ozon 主图搜到 60 条/);
   assert.deepEqual([fromOzon.sourceCapture, fromOzon.workflowStatus], [null, "needs_user_data"]);
+});
+
+test("在 Ozon 找同款：主人填俄文词，插件在 Ozon 搜一次、回传核验过的结果，服务端比首图，主人逐条判断，业务状态不动", async t => {
+  const QUERY = "синтетический жилет для кошки";
+  const OZON_IMAGE = "https://ir.ozone.ru/s3/multimedia-1-d/wc1000/9000000001.jpg";
+  const fromOzon = { ...candidate("OZ-OWN"), productName: "Синтетический жилет для кошки, тёплый", sourceUrl: "", sourceCapture: null,
+    productUrl: "https://www.ozon.ru/product/sinteticheskiy-zhilet-9000000101/", imageUrl: OZON_IMAGE };
+  const api = await startApi(t, [candidate("OZ-PDD"), fromOzon]);
+  const before = await readFile(api.dataFile, "utf8");
+  assert.equal((await api.ozon("OZ-PDD", "start", { dataRevision: 1, query: QUERY }, { authenticated: false })).status, 401);
+  assert.match(await readFile(path.join(appDir, "server.mjs"), "utf8"), /code: "ozon_match_owner_required"/u);
+  await api.login();
+  assert.equal((await api.ozon("OZ-PDD", "start", { dataRevision: 1 })).body.code, "ozon_match_input_invalid");
+  assert.equal((await api.ozon("OZ-PDD", "start", { dataRevision: 1, query: QUERY, imageUrl: OZON_IMAGE })).body.code, "ozon_match_input_invalid");
+  const noWords = await api.ozon("OZ-PDD", "start", { dataRevision: 1, query: " 1 " });
+  assert.deepEqual([noWords.status, noWords.body.code], [422, "ozon_search_query_invalid"]);
+  assert.equal(await readFile(api.dataFile, "utf8"), before, "被拒绝的发起不得写入任何东西");
+
+  const queued = await api.ozon("OZ-PDD", "start", { dataRevision: 1, query: QUERY });
+  assert.equal(queued.status, 202, JSON.stringify(queued.body));
+  assert.equal(queued.body.status, "ozon_image_match_job_queued");
+  const jobId = queued.body.captureJob.jobId;
+  assert.match(jobId, /^OMJ-/);
+  assert.equal(queued.body.captureJob.token, undefined);
+  const record = queued.body.candidate.ozonImageMatch;
+  assert.deepEqual([record.status, record.query, record.queryOrigin, record.source.platform, record.searchUrl],
+    ["waiting_extension", QUERY, "owner", "pinduoduo", ozonSearchUrl(QUERY)]);
+  assert.equal(queued.body.candidate.supplierImageMatch ?? null, null, "Ozon 找同款不碰 1688 找同款的记录");
+  const health = await api.health();
+  assert.deepEqual([health.captureControl.status, health.captureControl.captureKind, health.captureControl.platform], ["busy", "ozon_image_match", "ozon"]);
+  assert.equal((await api.start("OZ-PDD", { dataRevision: queued.body.candidate.dataRevision })).status, 409, "全局采集控制被占用时不建第二个作业");
+
+  const claim = await api.claim(jobId);
+  assert.equal(claim.status, 200, JSON.stringify(claim.body));
+  const payload = claim.body.captureJob;
+  assert.deepEqual([isOzonImageMatchJob(payload), isImageMatchJob(payload)], [true, false]);
+  assert.deepEqual(validateOzonImageMatchRequest({ payload, manifestVersion: "1.4.0" }), { ok: true, query: QUERY, searchUrl: ozonSearchUrl(QUERY) });
+  const item = (index, extra = {}) => ({ productId: String(9000000100 + index), title: `Синтетический жилет ${index}`,
+    imageUrl: `https://ir.ozone.ru/s3/multimedia-1-z/wc500/${9000000100 + index}.jpg`, priceRub: 1299, originalPriceRub: 2599, rating: 4.8,
+    reviewCount: 12, isAd: false, rank: index, trackingInfo: { key: "secret-tracking" }, ...extra });
+  const result = body => api.ozon("OZ-PDD", "result", { captureId: jobId, token: payload.token, dataRevision: payload.dataRevision, ...body },
+    { authenticated: false, headers: { Origin: extensionOrigin } });
+  const saved = await result({ status: "captured", evidence: { query: QUERY, observedAt: "2026-10-10T08:00:00.000Z", cardCount: 36,
+    readFrom: "state", items: [item(0), item(1, { isAd: true })] } });
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  const compared = await (async () => {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const current = await api.record("OZ-PDD");
+      if (current.ozonImageMatch?.status === "compared") return current;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error("Ozon 找同款没有比完");
+  })();
+  const match = compared.ozonImageMatch;
+  assert.deepEqual(match.results.map(entry => [entry.productId, entry.sourceUrl, entry.similarity, entry.isAd]),
+    [["9000000100", "https://www.ozon.ru/product/9000000100/", "unknown", false], ["9000000101", "https://www.ozon.ru/product/9000000101/", "unknown", true]]);
+  assert.equal((await readFile(api.dataFile, "utf8")).includes("secret-tracking"), false);
+  assert.match(compared.history.find(entry => entry.action === "ozonImageMatchResultsSaved").detail, /用「синтетический жилет для кошки」搜到 36 条/);
+  assert.equal(compared.sourceCapture.status, "captured_waiting_owner_selection");
+  assert.equal(compared.workflowStatus, "needs_user_data");
+
+  const judged = await api.ozon("OZ-PDD", "judgement", { dataRevision: compared.dataRevision, captureId: jobId, productId: "9000000101", judgement: "exact" });
+  assert.equal(judged.status, 200, JSON.stringify(judged.body));
+  assert.equal(judged.body.candidate.ozonImageMatch.judgements["9000000101"].judgement, "exact");
+  assert.equal((await api.ozon("OZ-PDD", "judgement", { dataRevision: judged.body.candidate.dataRevision, captureId: jobId, offerId: "9000000101",
+    judgement: "exact" })).body.code, "ozon_match_input_invalid");
+  assert.equal((await api.ozon("OZ-PDD", "judgement", { dataRevision: judged.body.candidate.dataRevision, captureId: jobId, productId: "9999999999",
+    judgement: "exact" })).body.code, "ozon_match_product_unknown");
+  assert.match(judged.body.candidate.history.at(-1).detail, /主人把 Ozon 商品 9000000101 判断为「是同款」/);
+
+  // A product that came from Ozon searches with its own Ozon picture, and finds itself marked as itself.
+  const own = await api.ozon("OZ-OWN", "start", { dataRevision: 1, query: "Синтетический жилет для кошки" });
+  assert.equal(own.status, 202, JSON.stringify(own.body));
+  assert.deepEqual([own.body.candidate.ozonImageMatch.source.platform, own.body.candidate.ozonImageMatch.queryOrigin], ["ozon", "ozon_title"]);
+  const ownClaim = (await api.claim(own.body.captureJob.jobId)).body.captureJob;
+  const ownSaved = await api.ozon("OZ-OWN", "result", { captureId: ownClaim.captureId, token: ownClaim.token, dataRevision: ownClaim.dataRevision,
+    status: "captured", evidence: { query: "Синтетический жилет для кошки", observedAt: "2026-10-10T08:00:00.000Z", cardCount: 2, readFrom: "dom",
+      items: [item(0), item(1)] } }, { authenticated: false, headers: { Origin: extensionOrigin } });
+  assert.deepEqual(ownSaved.body.candidate.ozonImageMatch.results.map(entry => entry.isSourceProduct), [false, true]);
+
+  // A search that found nothing says these words found nothing, never that there is no same product.
+  await new Promise(resolve => setTimeout(resolve, 100));
+  const latest = await api.record("OZ-PDD");
+  const again = await api.ozon("OZ-PDD", "start", { dataRevision: latest.dataRevision, query: "другие слова" });
+  assert.equal(again.status, 202, JSON.stringify(again.body));
+  const againClaim = (await api.claim(again.body.captureJob.jobId)).body.captureJob;
+  const empty = await api.ozon("OZ-PDD", "result", { captureId: againClaim.captureId, token: againClaim.token, dataRevision: againClaim.dataRevision,
+    status: "failed", failureCode: "results_empty" }, { authenticated: false, headers: { Origin: extensionOrigin } });
+  assert.equal(empty.body.candidate.ozonImageMatch.failureCode, "results_empty");
+  assert.match(empty.body.candidate.ozonImageMatch.reason, /不能说明 Ozon 上没有同款/);
+  assert.deepEqual(empty.body.candidate.ozonImageMatch.history[0].results.map(entry => entry.productId), ["9000000101"]);
 });

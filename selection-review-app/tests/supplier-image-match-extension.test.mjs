@@ -22,7 +22,7 @@ const RESULTS = "https://air.1688.com/kapp/1688-search/pc-image-search/?tab=imag
 
 const imageJob = (extra = {}) => ({
   ...supplierImageMatchJobPayload({ captureId: "IMJ-synthetic", candidateId: "candidate:synthetic", dataRevision: 5,
-    imageUrl: IMAGE, searchUrl: SEARCH, requiredExtensionVersion: "1.3.0", attempt: 1, token: "synthetic-fixture-token" }),
+    imageUrl: IMAGE, searchUrl: SEARCH, requiredExtensionVersion: "1.4.0", attempt: 1, token: "synthetic-fixture-token" }),
   ...extra
 });
 
@@ -65,9 +65,9 @@ test("an image-match job is told apart from the other two jobs and validated on 
   const job = imageJob();
   assert.equal(isImageMatchJob(job), true);
   assert.equal(isOzonCaptureJob(job), false);
-  assert.equal(validateSupplierCaptureRequest({ payload: job, manifestVersion: "1.3.0" }).ok, false);
-  assert.deepEqual(validateImageMatchRequest({ payload: job, manifestVersion: "1.3.0" }), { ok: true, imageUrl: IMAGE, searchUrl: SEARCH });
-  const code = (extra, version = "1.3.0") => validateImageMatchRequest({ payload: imageJob(extra), manifestVersion: version }).code;
+  assert.equal(validateSupplierCaptureRequest({ payload: job, manifestVersion: "1.4.0" }).ok, false);
+  assert.deepEqual(validateImageMatchRequest({ payload: job, manifestVersion: "1.4.0" }), { ok: true, imageUrl: IMAGE, searchUrl: SEARCH });
+  const code = (extra, version = "1.4.0") => validateImageMatchRequest({ payload: imageJob(extra), manifestVersion: version }).code;
   assert.equal(code({}, "1.2.8"), "extension_version_mismatch");
   assert.equal(code({ attempt: 0 }), "attempt_invalid");
   assert.equal(code({ dataRevision: "5" }), "revision_invalid");
@@ -81,7 +81,7 @@ test("an image-match job is told apart from the other two jobs and validated on 
   assert.equal(validateCaptureStartSignal({ type: IMAGE_MATCH_REQUEST_TYPE, captureId: "IMJ-synthetic" }).ok, true);
   for (const picture of [ALI_IMAGE, OZON_IMAGE]) {
     const search = supplierImageMatchSearchUrl(picture);
-    assert.deepEqual(validateImageMatchRequest({ payload: imageJob({ imageUrl: picture, searchUrl: search }), manifestVersion: "1.3.0" }),
+    assert.deepEqual(validateImageMatchRequest({ payload: imageJob({ imageUrl: picture, searchUrl: search }), manifestVersion: "1.4.0" }),
       { ok: true, imageUrl: picture, searchUrl: search });
   }
   assert.equal(code({ imageUrl: "https://example.com/a.jpg", searchUrl: supplierImageMatchSearchUrl("https://example.com/a.jpg") }), "image_url_invalid");

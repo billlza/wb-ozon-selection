@@ -306,6 +306,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  // 在 Ozon 找同款：带上这次搜的俄文词。回执与申请采集同形，接着走 captureStart.js 里同一条开始信号（换成 Ozon 找同款那一条）。
+  startOzonImageMatch: (candidateId, payload) =>
+    request(`/api/candidates/${encodeURIComponent(candidateId)}/ozon-match/start`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  compareOzonImageMatch: (candidateId, payload) =>
+    request(`/api/candidates/${encodeURIComponent(candidateId)}/ozon-match/compare`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  judgeOzonImageMatch: (candidateId, payload) =>
+    request(`/api/candidates/${encodeURIComponent(candidateId)}/ozon-match/judgement`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
   startOzonSalesCapture: (candidateId, payload) =>
     request(`/api/candidates/${encodeURIComponent(candidateId)}/sales-capture/start`, {
       method: "POST",

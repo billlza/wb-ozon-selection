@@ -4,7 +4,9 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { build } from "vite";
 import react from "@vitejs/plugin-react";
-import { IMAGE_MATCH_CHANNEL, captureStartMessage, needsCaptureStartSignal } from "../src/captureStart.js";
+import { IMAGE_MATCH_CHANNEL, OZON_IMAGE_MATCH_CHANNEL, captureStartMessage, needsCaptureStartSignal } from "../src/captureStart.js";
+import { ozonImageMatchView, ozonSearchQueryReady } from "../src/ozonImageMatchView.js";
+import { normalizeOzonSearchQuery, ozonImageMatchRules } from "../lib/ozon-same-product-match.mjs";
 import { IMAGE_MATCH_JUDGEMENT_LABELS, IMAGE_MATCH_SIMILARITY_LABELS, imageMatchSourceState, supplierImageMatchView } from "../src/supplierImageMatchView.js";
 import { IMAGE_SIMILARITY_LABELS } from "../lib/image-fingerprint.mjs";
 import { SUPPLIER_IMAGE_MATCH_JUDGEMENT_LABELS, supplierImageMatchSource } from "../lib/supplier-image-match.mjs";
@@ -207,4 +209,126 @@ test("the app wires the three image-match actions and sends the image-match star
   assert.match(app, /onStartImageMatch=\{payload => startSupplierImageMatch\(payload\)\}/);
   assert.match(app, /startQueuedSupplierCapture\(result,\{channel:IMAGE_MATCH_CHANNEL\}\)/);
   assert.match(app, /onJudgeImageMatch=\{payload => writeSupplierImageMatch\(api\.judgeSupplierImageMatch, payload\)\}/);
+});
+
+// ---- 在 Ozon 找同款 ----
+const OZON_QUERY = "жилет для кошки";
+const ozonRow = (index, extra = {}) => ({ productId: String(9100000000 + index), sourceUrl: `https://www.ozon.ru/product/${9100000000 + index}/`,
+  title: `Синтетический жилет ${index}`, imageUrl: `https://ir.ozone.ru/s3/multimedia-1-a/wc1000/91000000${index}.jpg`, priceRub: 1290,
+  originalPriceRub: null, rating: null, reviewCount: null, isAd: false, rank: index, isSourceProduct: false,
+  fingerprint: null, distance: null, similarity: "unknown", compareError: null, ...extra });
+const ozonCompared = (extra = {}) => ({ captureId: "OMJ-synthetic", status: "compared", jobStatus: "completed", cardCount: 36,
+  query: OZON_QUERY, queryOrigin: "owner", source: { platform: "pinduoduo", imageUrl: IMAGE }, results: [
+    ozonRow(0, { similarity: "different", distance: 31 }),
+    ozonRow(1, { similarity: "identical", distance: 1, priceRub: 1290, originalPriceRub: 1590, rating: 4.8, reviewCount: 312, isAd: true }),
+    ozonRow(2, { similarity: "similar", distance: 9, isSourceProduct: true }),
+    ozonRow(3, { similarity: "unknown", compareError: "fetch_failed", priceRub: null })
+  ], judgements: { "9100000001": { judgement: "exact" } }, ...extra });
+const ozonProps = extra => pageProps({ onStartOzonMatch: forbidden, onCompareOzonMatch: forbidden, onJudgeOzonMatch: forbidden, ...extra });
+const ozonMatchSection = html => html.match(/<section class="product-section product-image-match product-ozon-match"[\s\S]*?<\/section>/)?.[0] ?? "";
+
+test("the Ozon block prefills the last search's words, else the product's own Russian Ozon title, and checks words like the service", () => {
+  assert.equal(ozonImageMatchView(candidate({ sourceCapture: null })), null);
+  const fresh = ozonImageMatchView(candidate());
+  assert.deepEqual([fresh.sourceReady, fresh.canStart, fresh.sourceImageUrl, fresh.sourceLabel, fresh.status, fresh.suggestedQuery],
+    [true, true, IMAGE, "拼多多首图", null, ""]);
+  assert.match(fresh.suggestionNote, /填几个俄文词/);
+  const titled = ozonImageMatchView(candidate({ productName: "Жилет для кошки утеплённый, синтетический (S)" }));
+  assert.equal(titled.suggestedQuery, "Жилет для кошки утеплённый");
+  assert.match(titled.suggestionNote, /取自这件商品在 Ozon 上的标题/);
+  const snapshot = ozonImageMatchView(candidate({ productName: "合成背心", salesSnapshotsV11: [{ title: "Старое название" }, { title: "Жилет зимний; новый" }] }));
+  assert.equal(snapshot.suggestedQuery, "Жилет зимний");
+  const last = ozonImageMatchView(candidate({ productName: "Жилет для кошки", ozonImageMatch: ozonCompared({ query: "попона для собаки" }) }));
+  assert.deepEqual([last.suggestedQuery, last.query], ["попона для собаки", "попона для собаки"]);
+  assert.match(last.suggestionNote, /上次在 Ozon 搜用的词/);
+  for (const value of ["жилет", " жилет  для\u00a0кошки ", "a", "12", "<b>жилет</b>", "https://www.ozon.ru/", "ж".repeat(101), null]) {
+    assert.equal(ozonSearchQueryReady(value), normalizeOzonSearchQuery(value) !== null);
+  }
+  assert.equal(ozonImageMatchView(candidate({ workflowStatus: "eliminated" })).canStart, false);
+  const old = ozonImageMatchView(candidate({ sourceCapture: capture({ mainImageUrl: null }) }));
+  assert.deepEqual([old.sourceReady, old.canStart], [false, false]);
+  assert.match(old.sourceReason, /重新采一次/);
+});
+
+test("Ozon results are ordered by first-picture similarity, carry rouble price, rating and judgement, and never call anything a match", () => {
+  const view = ozonImageMatchView(candidate({ ozonImageMatch: ozonCompared() }));
+  assert.deepEqual(view.rows.map(item => item.similarity), ["identical", "similar", "unknown", "different"]);
+  assert.deepEqual(view.counts, { identical: 1, similar: 1, different: 1, unknown: 1 });
+  assert.deepEqual([view.rows[0].priceRub, view.rows[0].originalPriceRub, view.rows[0].rating, view.rows[0].reviewCount, view.rows[0].isAd],
+    [1290, 1590, 4.8, 312, true]);
+  assert.equal(view.rows[1].isSourceProduct, true);
+  assert.equal(view.rows[2].priceRub, null);
+  assert.deepEqual(view.rows.map(item => item.judgement), ["exact", null, null, null]);
+  assert.equal(view.exactCount, 1);
+  assert.deepEqual([view.judgeable, view.canCompare, view.canStart], [true, true, true]);
+  assert.match(view.statusLine, /用「жилет для кошки」搜到 36 条，读回前 4 条/);
+  assert.match(view.statusLine, /是不是同款请你逐条判断/);
+  assert.doesNotMatch(view.statusLine, /找到同款|就是同款/);
+});
+
+test("a running, empty, failed or unknown Ozon search says so and blocks or asks before another search", () => {
+  const running = ozonImageMatchView(candidate({ ozonImageMatch: { captureId: "OMJ-a", status: "searching", jobStatus: "claimed", query: OZON_QUERY, results: [] } }));
+  assert.deepEqual([running.inFlight, running.canStart, running.judgeable], [true, false, false]);
+  assert.match(running.statusLine, /正在 Ozon 上搜「жилет для кошки」/);
+  const empty = ozonImageMatchView(candidate({ ozonImageMatch: { captureId: "OMJ-b", status: "failed", jobStatus: "failed", query: OZON_QUERY,
+    failureCode: "results_empty", reason: ozonImageMatchRules.stopMessage("results_empty"), results: [] } }));
+  assert.deepEqual([empty.failed, empty.canStart, empty.unknownOutcome], [true, true, false]);
+  assert.match(empty.statusLine, /不能说明 Ozon 上没有同款/);
+  const unknown = ozonImageMatchView(candidate({ ozonImageMatch: { captureId: "OMJ-c", status: "failed", jobStatus: "unknown_outcome",
+    query: OZON_QUERY, reason: "结果未知", results: [] } }));
+  assert.deepEqual([unknown.unknownOutcome, unknown.canStart], [true, true]);
+});
+
+test("the Ozon start receipt sends the Ozon start signal, never the 1688 one", () => {
+  assert.equal(needsCaptureStartSignal({ status: "ozon_image_match_job_queued", duplicate: false }, OZON_IMAGE_MATCH_CHANNEL), true);
+  assert.equal(needsCaptureStartSignal({ status: "ozon_image_match_job_queued", duplicate: true }, OZON_IMAGE_MATCH_CHANNEL), false);
+  assert.equal(needsCaptureStartSignal({ status: "supplier_image_match_job_queued" }, OZON_IMAGE_MATCH_CHANNEL), false);
+  assert.equal(needsCaptureStartSignal({ status: "ozon_image_match_job_queued" }, IMAGE_MATCH_CHANNEL), false);
+  assert.equal(OZON_IMAGE_MATCH_CHANNEL.request, "SELECTION_REVIEW_OZON_IMAGE_MATCH_REQUEST");
+  assert.match(captureStartMessage({ accepted: true }, OZON_IMAGE_MATCH_CHANNEL), /Ozon/);
+});
+
+test("the product page shows the Ozon words box, the search button, rouble results and the three judgement buttons", async () => {
+  const fresh = ozonMatchSection(await render(ozonProps({ candidate: candidate({ productName: "Жилет для кошки, синтетический" }) })));
+  assert.match(fresh, /aria-label="在 Ozon 找同款"/);
+  assert.match(fresh, /id="ozon-match-query"[^>]*value="Жилет для кошки"|value="Жилет для кошки"[^>]*id="ozon-match-query"/);
+  assert.match(fresh, /取自这件商品在 Ozon 上的标题/);
+  assert.match(fresh, />在 Ozon 搜一次</);
+  assert.match(fresh, /Ozon 不能拿图搜/);
+  const blank = ozonMatchSection(await render(ozonProps({ candidate: candidate() })));
+  assert.match(blank, /<button type="button" class="button primary" disabled="">在 Ozon 搜一次</);
+  const html = ozonMatchSection(await render(ozonProps({ candidate: candidate({ ozonImageMatch: ozonCompared() }) })));
+  assert.match(html, /首图一致/);
+  assert.match(html, /1 290 ₽/);
+  assert.match(html, /原价 1 590 ₽/);
+  assert.match(html, /4\.8 分/);
+  assert.match(html, /312 条评价/);
+  assert.match(html, />广告</);
+  assert.match(html, /就是这件商品自己/);
+  assert.match(html, /价格没读到/);
+  assert.match(html, /aria-pressed="true"[^>]*>是同款</);
+  assert.match(html, /href="https:\/\/www\.ozon\.ru\/product\/9100000001\/"/);
+  assert.match(html, />用这几个词再搜一次</);
+  assert.match(html, /重新比对首图/);
+  assert.match(html, /没搜到也不说明 Ozon 上没有同款/);
+  assert.doesNotMatch(html, /¥|1688/);
+  const unknown = ozonMatchSection(await render(ozonProps({ candidate: candidate({ ozonImageMatch: { captureId: "OMJ-c", status: "failed",
+    jobStatus: "unknown_outcome", query: OZON_QUERY, reason: "插件领取了这次在 Ozon 找同款，但在执行期限内没有回传可验证结果，这次的结果未知", results: [] } }) })));
+  assert.match(unknown, /我知道上次结果未知，重新搜一次/);
+  // Both blocks sit on the page side by side; the 1688 block keeps its own wording.
+  const both = await render(ozonProps({ candidate: candidate() }));
+  assert.match(imageMatchSection(both), /在 1688 找同款/);
+  assert.doesNotMatch(imageMatchSection(both), /Ozon 搜一次/);
+  const withoutHandlers = await render(pageProps({ candidate: candidate() }));
+  assert.doesNotMatch(withoutHandlers, /在 Ozon 找同款/);
+});
+
+test("the app wires the three Ozon match actions to their own routes and sends the Ozon start signal after a new job", async () => {
+  const app = await readFile(fileURLToPath(new URL("../src/App.jsx", import.meta.url)), "utf8");
+  assert.match(app, /onStartOzonMatch=\{payload => startOzonImageMatch\(payload\)\}/);
+  assert.match(app, /startQueuedSupplierCapture\(result,\{channel:OZON_IMAGE_MATCH_CHANNEL\}\)/);
+  assert.match(app, /onCompareOzonMatch=\{payload => writeSupplierImageMatch\(api\.compareOzonImageMatch, payload\)\}/);
+  assert.match(app, /onJudgeOzonMatch=\{payload => writeSupplierImageMatch\(api\.judgeOzonImageMatch, payload\)\}/);
+  const client = await readFile(fileURLToPath(new URL("../src/api.js", import.meta.url)), "utf8");
+  for (const action of ["start", "compare", "judgement"]) assert.match(client, new RegExp(`/ozon-match/${action}`));
 });

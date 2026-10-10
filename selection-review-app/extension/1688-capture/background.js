@@ -2,13 +2,16 @@ import { collect1688Page } from "./collector.js";
 import { collectOzonPage } from "./collector-ozon.js";
 import { collectPinduoduoPage } from "./collector-pinduoduo.js";
 import { collect1688ImageSearchPage } from "./collector-1688-image-search.js";
+import { collectOzonSearchPage } from "./collector-ozon-search.js";
 import {
   classify1688ImageSearchNavigation,
   classify1688NavigationOutcome,
+  classifyOzonSearchNavigation,
   classifyPinduoduoNavigation,
   classifySupplierSource,
   imageSearchResultPage,
   observed1688TabAddress,
+  ozonSearchResultPage,
   shouldWaitFor1688Destination,
   validateResolved1688Source,
   validateResolvedPinduoduoSource
@@ -19,8 +22,11 @@ import {
   isImageMatchJob,
   isReviewSender,
   isOzonCaptureJob,
+  isOzonImageMatchJob,
+  OZON_IMAGE_MATCH_REQUEST_TYPE,
   validateCaptureStartSignal,
   validateImageMatchRequest,
+  validateOzonImageMatchRequest,
   validateOzonCaptureRequest,
   validateSupplierCaptureRequest
 } from "./capture-request.js";
@@ -28,12 +34,13 @@ import {
 export const HEARTBEAT_ALARM = "selection-review-extension-heartbeat";
 const API_ORIGIN = "http://127.0.0.1:4317"; // Explicit local-development adapter, not central identity.
 const BACKGROUND_PING = "SELECTION_REVIEW_EXTENSION_BACKGROUND_PING";
-const START_TYPES = new Set(["SELECTION_REVIEW_1688_CAPTURE_REQUEST", "SELECTION_REVIEW_OZON_CAPTURE_REQUEST", IMAGE_MATCH_REQUEST_TYPE]);
+const START_TYPES = new Set(["SELECTION_REVIEW_1688_CAPTURE_REQUEST", "SELECTION_REVIEW_OZON_CAPTURE_REQUEST", IMAGE_MATCH_REQUEST_TYPE,
+  OZON_IMAGE_MATCH_REQUEST_TYPE]);
 const FAILURE_CODES = new Set([
   "wrong_offer", "wrong_product", "structured_data_unavailable", "site_login_required",
   "site_verification_required", "short_link_resolution_failed", "timeout", "sku_limit_exceeded",
   "precise_price_missing", "exact_price_unavailable", "invalid_capture", "system_error",
-  "results_unverifiable", "wrong_query", "navigation_rejected"
+  "results_unverifiable", "results_empty", "wrong_query", "navigation_rejected"
 ]);
 const safeFailureCode = (code) => FAILURE_CODES.has(code) ? code : "system_error";
 const failure = (code) => Object.assign(new Error(code), { code });
@@ -50,8 +57,20 @@ function inspectImageSearchTab(tab) {
   throw failure("navigation_rejected");
 }
 
+// An Ozon search is read on the search page, or on the category page Ozon may move it to, while the words stay the same.
+function inspectOzonSearchTab(tab, payload) {
+  const address = observed1688TabAddress(tab).value;
+  if (!address) return null;
+  const outcome = classifyOzonSearchNavigation(address, payload.query);
+  if (outcome === "results") return tab.pendingUrl ? null : { sourceUrl: ozonSearchResultPage(address, payload.query) };
+  if (outcome === "verification_required") throw failure("site_verification_required");
+  if (outcome === "other_search") throw failure("wrong_query");
+  throw failure("navigation_rejected");
+}
+
 function inspectCaptureTab(tab, payload) {
   if (isImageMatchJob(payload)) return inspectImageSearchTab(tab);
+  if (isOzonImageMatchJob(payload)) return inspectOzonSearchTab(tab, payload);
   if (isOzonCaptureJob(payload)) {
     const address = observed1688TabAddress(tab).value;
     if (!address) return null;
@@ -138,6 +157,11 @@ function validatedCollectedResult(collected, resolved, payload) {
     if (evidence?.searchImageUrl !== payload.imageUrl) throw failure("wrong_query");
     return { status: "captured", evidence };
   }
+  if (isOzonImageMatchJob(payload)) {
+    // The page must have searched the very words this job was created for; the service checks the same again.
+    if (evidence?.query !== payload.query) throw failure("wrong_query");
+    return { status: "captured", evidence };
+  }
   if (isOzonCaptureJob(payload)) {
     if (evidence?.productId !== payload.expectedProductId ||
         canonicalOzonCaptureSource(evidence?.productUrl, payload.expectedProductId) !== resolved.sourceUrl) {
@@ -189,7 +213,8 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
   };
 
   async function sendResult(payload, result) {
-    const route = isImageMatchJob(payload) ? "image-match" : isOzonCaptureJob(payload) ? "sales-capture" : "source-capture";
+    const route = isImageMatchJob(payload) ? "image-match" : isOzonImageMatchJob(payload) ? "ozon-match"
+      : isOzonCaptureJob(payload) ? "sales-capture" : "source-capture";
     const response = await fetchImpl(`${API_ORIGIN}/api/candidates/${encodeURIComponent(payload.candidateId)}/${route}/result`, {
       method: "POST",
       signal: AbortSignal.timeout(10000),
@@ -230,7 +255,9 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
     });
     const capture = async () => {
       const imageMatch = isImageMatchJob(payload);
+      const ozonMatch = isOzonImageMatchJob(payload);
       const url = imageMatch ? validateImageMatchRequest({ payload, manifestVersion: version }).searchUrl
+        : ozonMatch ? validateOzonImageMatchRequest({ payload, manifestVersion: version }).searchUrl
         : isOzonCaptureJob(payload) ? canonicalOzonCaptureSource(payload.productUrl, payload.expectedProductId)
         : classifySupplierSource(payload.sourceUrl).sourceUrl;
       if (!url) throw failure("system_error");
@@ -245,18 +272,20 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       const resolved = await waitForCaptureTab(chromeApi, tabId, payload, { ...waitOptions, signal });
       assertNotCancelled();
       const isOzon = isOzonCaptureJob(payload);
-      const pinduoduo = !imageMatch && !isOzon && classifySupplierSource(payload.sourceUrl)?.platform === "pinduoduo";
+      const pinduoduo = !imageMatch && !ozonMatch && !isOzon && classifySupplierSource(payload.sourceUrl)?.platform === "pinduoduo";
       const execution = await chromeApi.scripting.executeScript({
         target: { tabId }, world: "ISOLATED",
-        func: imageMatch ? collect1688ImageSearchPage : isOzon ? collectOzonPage : pinduoduo ? collectPinduoduoPage : collect1688Page,
-        args: imageMatch ? [payload.imageUrl, payload.maxResults] : [isOzon ? payload.expectedProductId : resolved.offerId]
+        func: imageMatch ? collect1688ImageSearchPage : ozonMatch ? collectOzonSearchPage : isOzon ? collectOzonPage
+          : pinduoduo ? collectPinduoduoPage : collect1688Page,
+        args: imageMatch ? [payload.imageUrl, payload.maxResults] : ozonMatch ? [payload.query, payload.maxResults]
+          : [isOzon ? payload.expectedProductId : resolved.offerId]
       });
       assertNotCancelled();
       // Re-read the browser identity after extraction, not the page's self-reported location.
       const current = inspectCaptureTab(await chromeApi.tabs.get(tabId), payload);
       assertNotCancelled();
       if (!current || current.sourceUrl !== resolved.sourceUrl) {
-        throw failure(imageMatch ? "navigation_rejected" : isOzon ? "wrong_product" : "wrong_offer");
+        throw failure(imageMatch || ozonMatch ? "navigation_rejected" : isOzon ? "wrong_product" : "wrong_offer");
       }
       return validatedCollectedResult(execution?.[0]?.result, resolved, payload);
     };
@@ -317,13 +346,16 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       const body = await response.json();
       const payload = body?.captureJob;
       const validation = isImageMatchJob(payload) ? validateImageMatchRequest({ payload, manifestVersion: version })
+        : isOzonImageMatchJob(payload) ? validateOzonImageMatchRequest({ payload, manifestVersion: version })
         : isOzonCaptureJob(payload) ? validateOzonCaptureRequest({ payload, manifestVersion: version })
         : validateSupplierCaptureRequest({ payload, manifestVersion: version });
       const expectedOzon = message.type === "SELECTION_REVIEW_OZON_CAPTURE_REQUEST";
       const expectedImageMatch = message.type === IMAGE_MATCH_REQUEST_TYPE;
+      const expectedOzonMatch = message.type === OZON_IMAGE_MATCH_REQUEST_TYPE;
       // Each start signal may only start its own kind of job: a page asking for a supplier capture never gets a search.
       if (body?.accepted !== true || !validation.ok || payload.captureId !== message.captureId ||
-          isOzonCaptureJob(payload) !== expectedOzon || isImageMatchJob(payload) !== expectedImageMatch) throw failure("capture_job_invalid");
+          isOzonCaptureJob(payload) !== expectedOzon || isImageMatchJob(payload) !== expectedImageMatch ||
+          isOzonImageMatchJob(payload) !== expectedOzonMatch) throw failure("capture_job_invalid");
       void executeCapture(payload);
       return { accepted: true, claimedCaptureId: message.captureId };
     } catch (error) {

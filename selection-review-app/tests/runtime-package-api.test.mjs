@@ -133,7 +133,7 @@ test("the prepared package serves built UI and preserves both historical runtime
     assert.equal(state.summary.dispatch.processingCounts.actualRunning, 0);
     const heartbeat = await fetch(`${base}/api/extension/heartbeat`, { method: "POST",
       headers: { Origin: extensionOrigin, "Content-Type": "application/json" },
-      body: JSON.stringify({ version: "1.3.0", backgroundReady: true, observedAt: new Date().toISOString() }) });
+      body: JSON.stringify({ version: "1.4.0", backgroundReady: true, observedAt: new Date().toISOString() }) });
     assert.equal(heartbeat.status, 200);
     assert.equal((await heartbeat.json()).captureJob, null);
     assert.deepEqual(await fs.readFile(dataFile), bytes);

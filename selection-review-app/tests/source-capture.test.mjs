@@ -512,7 +512,7 @@ test("1688 collector accepts a real top-level SKU ID on a single-specification o
 
 test("extension manifest stays limited to the 1688 short-link/detail allowlist, the 1688 image-search pages, Pinduoduo goods pages, Ozon product pages and the local review app", async () => {
   const manifest = JSON.parse(await readFile(path.join(appDir, "extension", "1688-capture", "manifest.json"), "utf8"));
-  assert.equal(manifest.version, "1.3.0");
+  assert.equal(manifest.version, "1.4.0");
   assert.equal(manifest.name, "全店经营工作台 · 商品只读采集器");
   assert.equal(manifest.action.default_title, "全店经营工作台 · 商品只读采集器");
   assert.match(manifest.description, /本机全店经营工作台/);
@@ -587,7 +587,7 @@ test("explicit capture claims only the requested ID and rejects mismatched or re
   assert.equal((await startCapture(mismatch.runtime, "job-1")).code, "capture_job_invalid");
   assert.equal(mismatch.calls.created.length, 0);
   assert.match(mismatch.calls.requests[0].url, /capture-jobs\/job-1\/claim$/);
-  assert.deepEqual(mismatch.calls.requests[0].body, { version: "1.3.0" });
+  assert.deepEqual(mismatch.calls.requests[0].body, { version: "1.4.0" });
   assert.equal((await startCapture(mismatch.runtime, "job-1")).code, "capture_replay_rejected");
   assert.equal(mismatch.calls.requests.length, 1);
 

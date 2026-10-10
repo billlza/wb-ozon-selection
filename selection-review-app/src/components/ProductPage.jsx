@@ -17,6 +17,7 @@ import C2FinalAssetsPanel from "./C2FinalAssetsPanel.jsx";
 import FinalProductPlanCard from "./FinalProductPlanCard.jsx";
 import SiblingBatchPreparation from './SiblingBatchPreparation.jsx';
 import { IMAGE_MATCH_JUDGEMENT_LABELS, supplierImageMatchView } from "../supplierImageMatchView.js";
+import { ozonImageMatchView, ozonSearchQueryReady } from "../ozonImageMatchView.js";
 
 /**
  * One product page for the owner: the six steps of a product, with only the step that is actually open expanded.
@@ -1880,6 +1881,90 @@ function ImageMatchSection({ candidate, saving, noticeAt, error, notice, onStart
   </section>;
 }
 
+const rubles = value => (finite(value) === null ? null : `${String(Math.round(value * 100) / 100).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} ₽`);
+
+/**
+ * 在 Ozon 找同款：Ozon 不能拿图搜，所以先用主人填的（或预先填好的）俄文词在 Ozon 站内搜一次，再拿首图和每件结果的主图比，
+ * 最像的排前面。软件只标首图像不像，是不是同款由主人逐条点；点了也只是记下判断，不改这件商品的任何东西（AGENTS.md §4.3）。
+ */
+function OzonMatchSection({ candidate, saving, noticeAt, error, notice, onStart, onCompare, onJudge }) {
+  const view = ozonImageMatchView(candidate);
+  const [query, setQuery] = useState(view?.suggestedQuery ?? "");
+  const [seeded, setSeeded] = useState(view?.suggestedQuery ?? "");
+  // A newer suggestion (the last search's words, once it is saved) replaces the box only while the owner has not typed.
+  if (view && view.suggestedQuery !== seeded) {
+    setSeeded(view.suggestedQuery);
+    if (query === seeded) setQuery(view.suggestedQuery);
+  }
+  if (view === null) return null;
+  const ready = ozonSearchQueryReady(query);
+  const start = acknowledgeUnknownOutcome => onStart({ dataRevision: candidate.dataRevision, query: query.trim(),
+    ...(acknowledgeUnknownOutcome ? { acknowledgeUnknownOutcome: true } : {}) });
+  const judge = (productId, judgement) => onJudge({ dataRevision: candidate.dataRevision, captureId: view.captureId, productId, judgement });
+  return <section className="product-section product-image-match product-ozon-match" aria-label="在 Ozon 找同款">
+    <h3>在 Ozon 找同款</h3>
+    <div className="image-match-source">
+      {view.sourceImageUrl
+        ? <img className="image-match-thumb" src={view.sourceImageUrl} alt={view.sourceLabel} width="96" height="96" loading="lazy" referrerPolicy="no-referrer" />
+        : <span className="image-match-thumb product-thumb-empty">首图</span>}
+      <div>
+        <p className="product-section-hint">Ozon 不能拿图搜。先用下面这几个俄文词在 Ozon 搜一次，再拿这张{view.sourceLabel}和搜到的每件商品的主图比，
+          最像的排在前面。是不是同款由你逐条判断，判断只记在这里，不会改这件商品的任何东西。</p>
+        <label className="product-field" htmlFor="ozon-match-query">
+          <span className="product-field-label">在 Ozon 上搜的词（俄文）</span>
+          <input id="ozon-match-query" type="text" name="ozon-match-query" value={query} maxLength={100}
+            placeholder="например: жилет для кошки" onChange={event => setQuery(event.target.value)} />
+          <span className="product-actions-note">{query === view.suggestedQuery && query ? view.suggestionNote
+            : query ? "用你填的词搜。" : view.suggestionNote}</span>
+        </label>
+        {view.sourceReason ? <p className="product-capture-hint">{view.sourceReason}</p> : null}
+      </div>
+    </div>
+    {view.statusLine ? <p className={view.failed ? "product-capture-blocked" : "product-capture-status"} role={view.failed ? "alert" : "status"}>
+      {view.statusLine}</p> : null}
+    <div className="product-actions">
+      {view.unknownOutcome
+        ? <button type="button" className="button primary" disabled={saving || !view.canStart || !ready}
+          onClick={() => start(true)}>我知道上次结果未知，重新搜一次</button>
+        : <button type="button" className={`button ${view.status === null ? "primary" : "secondary"}`} disabled={saving || !view.canStart || !ready}
+          onClick={() => start(false)}>{saving && noticeAt === "ozon-match" ? "正在申请…" : view.status === null ? "在 Ozon 搜一次" : "用这几个词再搜一次"}</button>}
+      {view.canCompare ? <button type="button" className="button secondary" disabled={saving}
+        onClick={() => onCompare({ dataRevision: candidate.dataRevision, captureId: view.captureId })}>重新比对首图</button> : null}
+    </div>
+    <StepResult at="ozon-match" noticeAt={noticeAt} error={error} notice={notice} />
+    {view.rows.length ? <ol className="image-match-results">
+      {view.rows.map(row => <li key={row.productId} className={`image-match-row image-match-${row.similarity}`}>
+        {row.imageUrl
+          ? <img className="image-match-thumb" src={row.imageUrl} alt="" width="72" height="72" loading="lazy" referrerPolicy="no-referrer" />
+          : <span className="image-match-thumb product-thumb-empty">无图</span>}
+        <div className="image-match-body">
+          <p className="image-match-head">
+            <span className={`image-match-badge image-match-badge-${row.similarity}`}
+              title={row.distance === null ? undefined : `首图指纹相差 ${row.distance} / 64`}>{row.similarityLabel}</span>
+            {row.isAd ? <span className="image-match-tag">广告</span> : null}
+            {row.isSourceProduct ? <span className="image-match-tag">就是这件商品自己</span> : null}
+            <a href={row.sourceUrl} target="_blank" rel="noreferrer noopener">{row.title}</a>
+          </p>
+          <p className="image-match-facts">
+            {row.priceRub === null ? "价格没读到" : rubles(row.priceRub)}
+            {row.originalPriceRub === null ? "" : ` · 原价 ${rubles(row.originalPriceRub)}`}
+            {row.rating === null ? "" : ` · ${row.rating} 分`}
+            {row.reviewCount === null ? "" : ` · ${row.reviewCount} 条评价`}
+          </p>
+          {view.judgeable ? <div className="image-match-judge" role="group" aria-label={`判断 ${row.title}`}>
+            {Object.entries(IMAGE_MATCH_JUDGEMENT_LABELS).map(([judgement, label]) =>
+              <button key={judgement} type="button" aria-pressed={row.judgement === judgement}
+                className={`button ${row.judgement === judgement ? "primary" : "secondary"}`} disabled={saving}
+                onClick={() => judge(row.productId, row.judgement === judgement ? "clear" : judgement)}>{label}</button>)}
+          </div> : null}
+        </div>
+      </li>)}
+    </ol> : null}
+    {view.rows.length ? <p className="product-actions-note">搜到的是这几个词的结果，首图不像的也可能是换了图的同款，没搜到也不说明 Ozon 上没有同款；
+      换几个词可以再搜一次。</p> : null}
+  </section>;
+}
+
 export default function ProductPage({
   preparationSaveState,
   candidate, view = null, titleZh = null, extensionStatus = null,
@@ -1894,6 +1979,7 @@ export default function ProductPage({
   siblingSkuIds = [], siblingCandidates = [], onRequestCapture, onReviewCaptureAndRequest, onRecaptureSource,
   onConfirmProfitStep, onDeclareCargoFacts, onDeclareExtraHandlingFees, onDeclareUniformSupply, onReadOzonPage, onOpenLegacyCard,
   onStartImageMatch = null, onCompareImageMatch = null, onJudgeImageMatch = null,
+  onStartOzonMatch = null, onCompareOzonMatch = null, onJudgeOzonMatch = null,
   onBack, onEliminateCandidate,
   productionIdentity = null, onPrepareC1Local = null,
   onAuthorizeC1PaidDraft = null, onContinueSavedC1Draft = null, onReadOriginalC1DraftResult = null, onConfirmC1Content = null,
@@ -2183,6 +2269,14 @@ export default function ProductPage({
       onJudge={payload => run(onJudgeImageMatch, payload, payload.judgement === "clear"
         ? "已撤回这条判断。" : `已记下：这条${IMAGE_MATCH_JUDGEMENT_LABELS[payload.judgement]}。这只是同款判断，没有改货源、也没有确认供货。`,
       "image-match")} /> : null}
+
+    {typeof onStartOzonMatch === "function" ? <OzonMatchSection candidate={candidate} saving={saving} noticeAt={noticeAt}
+      error={error} notice={notice}
+      onStart={payload => run(onStartOzonMatch, payload, `已经让插件去 Ozon 搜「${payload.query}」，读完这里会按首图像不像列出结果。`, "ozon-match")}
+      onCompare={payload => run(onCompareOzonMatch, payload, "正在重新比对首图，比完这里会更新。", "ozon-match")}
+      onJudge={payload => run(onJudgeOzonMatch, payload, payload.judgement === "clear"
+        ? "已撤回这条判断。" : `已记下：这条${IMAGE_MATCH_JUDGEMENT_LABELS[payload.judgement]}。这只是同款判断，没有改这件商品的任何东西。`,
+      "ozon-match")} /> : null}
 
     {/* 算利润：整套一起核线、指定先上的那一个、其余排队，这件货运输上是什么，最后那两个只有主人能做的判断。 */}
     {profitOpen ? <ProfitStepSection key={`${candidate.id}:${candidate.dataRevision}`}
