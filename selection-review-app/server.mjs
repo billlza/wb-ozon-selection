@@ -123,7 +123,8 @@ import {
 } from "./lib/ozon-page-capture-job.mjs";
 import {
   SUPPLIER_IMAGE_MATCH_JUDGEMENT_LABELS, computeSupplierImageMatchComparison, queuedSupplierImageMatchRecord,
-  sanitizeSupplierImageMatchEvidence, supplierImageMatchComparisonApplied, supplierImageMatchComparisonRequested,
+  SUPPLIER_IMAGE_MATCH_SOURCE_LABELS, sanitizeSupplierImageMatchEvidence, supplierImageMatchComparisonApplied,
+  supplierImageMatchComparisonRequested,
   supplierImageMatchFailed, supplierImageMatchFailureCode, supplierImageMatchInFlight, supplierImageMatchJobPayload,
   supplierImageMatchJobPublic, supplierImageMatchJudged, supplierImageMatchResultsRecorded, supplierImageMatchSource,
   supplierImageMatchStartBlocker
@@ -695,7 +696,7 @@ function activeDispatchForCandidate(data, candidateId) {
 const SOURCE_CAPTURE_TTL_MS = 3 * 60 * 1000;
 const SOURCE_CAPTURE_JOB_QUEUE_TTL_MS = Math.max(50, Number(process.env.SELECTION_REVIEW_SOURCE_JOB_QUEUE_TTL_MS || 2 * 60 * 1000));
 const SOURCE_CAPTURE_JOB_EXECUTION_TTL_MS = Math.max(50, Number(process.env.SELECTION_REVIEW_SOURCE_JOB_EXECUTION_TTL_MS || 60 * 1000));
-const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.2.9";
+const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.3.0";
 /** Marks a sales-capture session that is a leased, claimable page-read job rather than a bare legacy session. */
 const OZON_PAGE_READ_CAPTURE_KIND = "ozon_page_read";
 /** Marks a 1688 image search started from a captured Pinduoduo first picture. */
@@ -1644,7 +1645,8 @@ function claimCaptureJob(captureId, extensionVersion, extensionOrigin) {
 }
 
 /**
- * 用拼多多首图在 1688 找同款 —— 主人点一次，插件用主人自己 Chrome 里登录的 1688 搜一次图，读回最像的 20 条。
+ * 用首图在 1688 找同款 —— 主人点一次，插件用主人自己 Chrome 里登录的 1688 搜一次图，读回最像的 20 条。图来自采到的
+ * 拼多多或 1688 货源首图，没有货源采集时用这件商品的 Ozon 主图（见 supplierImageMatchSource）。
  *
  * 链路和上面两种作业是同一套：同一把全局采集控制锁、排队与执行租约、一次性令牌、插件明确领取、过期收口、重启对账。
  * 不同的只有目标和落点：读的是 1688 搜图结果页，结果落在 candidate.supplierImageMatch，不碰 sourceCapture、
@@ -1777,7 +1779,7 @@ async function enqueueSupplierImageMatchJob({ candidateId, requestRevision, ackn
       current.updatedAt = timestamp;
       current.lastModifiedBy = "user";
       addHistory(current, "user", "supplierImageMatchQueued",
-        "主人要求用拼多多首图在 1688 找一次同款；系统已建立一个受控只读作业（登录态只读搜索一次，最多读回 20 条），等待插件后台领取。" +
+        `主人要求用${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[source.source.platform]}在 1688 找一次同款；系统已建立一个受控只读作业（登录态只读搜索一次，最多读回 20 条），等待插件后台领取。` +
         "不下单、不联系任何人、不确认供货，也不推进业务阶段", timestamp);
       return publicCandidate(current, data.rules);
     });
@@ -4891,7 +4893,7 @@ async function handleApi(req, res, pathname) {
   }
 
   /**
-   * 用拼多多首图在 1688 找同款：开始、插件回传、重新比对首图、主人逐条判断。前三步之外的任何事（选 SKU、确认供货、
+   * 用首图在 1688 找同款：开始、插件回传、重新比对首图、主人逐条判断。前三步之外的任何事（选 SKU、确认供货、
    * 改货源链接）都不在这里发生。开始只接受当前修订号，以及上次结果未知时主人「已知道」的那一声确认。
    */
   const imageMatchRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/image-match\/(start|result|compare|judgement)$/);
@@ -4989,7 +4991,9 @@ async function handleApi(req, res, pathname) {
       }
       let evidence;
       try {
-        evidence = sanitizeSupplierImageMatchEvidence(input.evidence, session.imageUrl);
+        const queuedSource = current.supplierImageMatch.source;
+        evidence = sanitizeSupplierImageMatchEvidence(input.evidence, session.imageUrl,
+          { sourceOfferId: queuedSource?.platform === "1688" ? String(queuedSource.offerId || "") : "" });
       } catch (error) {
         markSupplierImageMatchFailure(current, supplierImageMatchFailureCode(error?.message), { observedAt, timestamp });
         return publicCandidate(current, data.rules);
@@ -4999,7 +5003,8 @@ async function handleApi(req, res, pathname) {
       current.updatedAt = timestamp;
       current.lastModifiedBy = "system";
       addHistory(current, "system", "supplierImageMatchResultsSaved",
-        `插件在 1688 用拼多多首图搜到 ${evidence.cardCount} 条，已保存相似度最高的 ${evidence.items.length} 条，正在比对首图；` +
+        `插件在 1688 用${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[current.supplierImageMatch.source?.platform] || "首图"}搜到 ${evidence.cardCount} 条，` +
+        `已保存相似度最高的 ${evidence.items.length} 条，正在比对首图；` +
         "没有选择 SKU、没有确认供货，业务状态没有改变", timestamp);
       return publicCandidate(current, data.rules);
     });

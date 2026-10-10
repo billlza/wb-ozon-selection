@@ -30,7 +30,7 @@ function candidate(id, { mainImageUrl = IMAGE, ...extra } = {}) {
       captureId: `SCJ-synthetic-${id}`, status: "captured_waiting_owner_selection", mode: "a_supplier_capture",
       jobId: `SCJ-synthetic-${id}`, jobStatus: "completed", attempt: 1, offerId: "600000000001",
       sourceUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=600000000001", title: "合成背心",
-      originalSourceUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=600000000001", requiredExtensionVersion: "1.2.9",
+      originalSourceUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=600000000001", requiredExtensionVersion: "1.3.0",
       offerStatus: "on_sale", observedAt: "2026-10-09T07:00:00.000Z", collectionMethod: "chrome_extension_structured_page_v1",
       titleSource: "rawData.goods.goodsName", offerIdSource: "rawData.goods.goodsID", pageSelectedSkuId: null, priceRanges: [],
       pageFields: { unitProductPriceCny: null, unitProductPriceSource: null, unitDomesticFreightCny: null, unitDomesticFreightSource: null },
@@ -122,7 +122,7 @@ async function startApi(t, candidates, { ttlMs = 2000, executionTtlMs = 500 } = 
       cookie = response.cookie.split(";")[0];
     },
     start: (id, body) => post(`/api/candidates/${encodeURIComponent(id)}/image-match/start`, body),
-    claim: (jobId, version = "1.2.9") =>
+    claim: (jobId, version = "1.3.0") =>
       post(`/api/extension/capture-jobs/${jobId}/claim`, { version }, { authenticated: false, headers: { Origin: extensionOrigin } }),
     result: (id, body) => post(`/api/candidates/${encodeURIComponent(id)}/image-match/result`, body,
       { authenticated: false, headers: { Origin: extensionOrigin } }),
@@ -173,7 +173,7 @@ test("找同款：只有主人能发起，插件领取一次、回传核验过�
   assert.equal(claim.status, 200, JSON.stringify(claim.body));
   const payload = claim.body.captureJob;
   assert.equal(isImageMatchJob(payload), true);
-  assert.deepEqual(validateImageMatchRequest({ payload, manifestVersion: "1.2.9" }), { ok: true, imageUrl: IMAGE, searchUrl: supplierImageMatchSearchUrl(IMAGE) });
+  assert.deepEqual(validateImageMatchRequest({ payload, manifestVersion: "1.3.0" }), { ok: true, imageUrl: IMAGE, searchUrl: supplierImageMatchSearchUrl(IMAGE) });
   assert.equal((await api.claim(jobId)).status, 409, "同一个作业不能被领取第二次");
   assert.equal((await api.record("IMG-1")).supplierImageMatch.status, "searching");
 
@@ -296,4 +296,46 @@ test("找同款失败如实停下：没登录、空页面、别的图、没领�
   const lost = await api.record("IMG-2");
   assert.deepEqual([lost.supplierImageMatch.status, lost.supplierImageMatch.failureCode], ["failed", "capture_job_lost"]);
   assert.equal(lost.sourceCapture.status, "captured_waiting_owner_selection");
+});
+
+test("找同款三个入口共用一条作业链：1688 货源用它自己的首图搜，结果里标出就是这一家；没有货源采集的 Ozon 商品用 Ozon 主图搜", async t => {
+  const ALI_SOURCE = "https://detail.1688.com/offer/700000000001.html";
+  const ALI_IMAGE = "https://cbu01.alicdn.com/img/ibank/O1CN01syntheticmain.jpg";
+  const OZON_IMAGE = "https://ir.ozone.ru/s3/multimedia-1-d/wc1000/9000000001.jpg";
+  const base = candidate("IMG-1688");
+  const supplier = { ...base, productName: "合成1688货源", sourceUrl: ALI_SOURCE, sourceCapture: { ...base.sourceCapture,
+    offerId: "700000000001", sourceUrl: ALI_SOURCE, originalSourceUrl: ALI_SOURCE, mainImageUrl: ALI_IMAGE,
+    mainImageSource: "offerDetail.imageList[0]", titleSource: "offerDetail.subject", offerIdSource: "offerBaseInfo.offerId" } };
+  const ozon = { ...candidate("IMG-OZON"), productName: "合成 Ozon 商品", sourceUrl: "", sourceCapture: null,
+    productUrl: "https://www.ozon.ru/product/sinteticheskiy-zhilet-9000000001/", imageUrl: OZON_IMAGE };
+  const api = await startApi(t, [supplier, ozon]);
+  await api.login();
+
+  async function searchOnce(id, imageUrl) {
+    const queued = await api.start(id, { dataRevision: 1 });
+    assert.equal(queued.status, 202, JSON.stringify(queued.body));
+    const claim = await api.claim(queued.body.captureJob.jobId);
+    assert.equal(claim.status, 200, JSON.stringify(claim.body));
+    const payload = claim.body.captureJob;
+    assert.deepEqual(validateImageMatchRequest({ payload, manifestVersion: "1.3.0" }),
+      { ok: true, imageUrl, searchUrl: supplierImageMatchSearchUrl(imageUrl) });
+    const saved = await api.result(id, { captureId: payload.captureId, token: payload.token, dataRevision: payload.dataRevision,
+      status: "captured", evidence: evidence({ searchImageUrl: imageUrl }) });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    return api.settled(id, "compared");
+  }
+
+  const fromSupplier = await searchOnce("IMG-1688", ALI_IMAGE);
+  assert.deepEqual([fromSupplier.supplierImageMatch.source.platform, fromSupplier.supplierImageMatch.source.offerId], ["1688", "700000000001"]);
+  assert.deepEqual(fromSupplier.supplierImageMatch.results.map(entry => [entry.offerId, entry.isSourceOffer]),
+    [["700000000000", false], ["700000000001", true], ["700000000002", false]]);
+  assert.match(fromSupplier.history.find(entry => entry.action === "supplierImageMatchQueued").detail, /用1688 首图在 1688 找一次同款/);
+  assert.equal(fromSupplier.sourceCapture.ownerSupplyConfirmed, false);
+
+  const fromOzon = await searchOnce("IMG-OZON", OZON_IMAGE);
+  assert.deepEqual([fromOzon.supplierImageMatch.source.platform, fromOzon.supplierImageMatch.source.offerId, fromOzon.supplierImageMatch.source.lowestPriceCny],
+    ["ozon", "9000000001", null]);
+  assert.ok(fromOzon.supplierImageMatch.results.every(entry => entry.isSourceOffer === false));
+  assert.match(fromOzon.history.find(entry => entry.action === "supplierImageMatchResultsSaved").detail, /用Ozon 主图搜到 60 条/);
+  assert.deepEqual([fromOzon.sourceCapture, fromOzon.workflowStatus], [null, "needs_user_data"]);
 });

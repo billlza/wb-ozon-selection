@@ -1805,8 +1805,8 @@ function SavedC2Assets({ skuPackage }) {
 }
 
 /**
- * 在 1688 找同款：拿拼多多首图，用主人自己 Chrome 里登录的 1688 搜一次，列出最像的结果。软件只标首图像不像，
- * 是不是同款由主人逐条点；点了也只是记下判断，不改货源链接、不确认供货（AGENTS.md §4.3）。
+ * 在 1688 找同款：拿拼多多或 1688 货源首图（没有就用 Ozon 主图），用主人自己 Chrome 里登录的 1688 搜一次，列出最像的结果。
+ * 软件只标首图像不像，是不是同款由主人逐条点；点了也只是记下判断，不改货源链接、不确认供货（AGENTS.md §4.3）。
  */
 function ImageMatchSection({ candidate, saving, noticeAt, error, notice, onStart, onCompare, onJudge }) {
   const view = supplierImageMatchView(candidate);
@@ -1818,12 +1818,13 @@ function ImageMatchSection({ candidate, saving, noticeAt, error, notice, onStart
     <h3>在 1688 找同款</h3>
     <div className="image-match-source">
       {view.sourceImageUrl
-        ? <img className="image-match-thumb" src={view.sourceImageUrl} alt="拼多多首图" width="96" height="96" loading="lazy" referrerPolicy="no-referrer" />
+        ? <img className="image-match-thumb" src={view.sourceImageUrl} alt={view.sourceLabel} width="96" height="96" loading="lazy" referrerPolicy="no-referrer" />
         : <span className="image-match-thumb product-thumb-empty">首图</span>}
       <div>
-        <p className="product-section-hint">用这张拼多多首图，在你 Chrome 里登录的 1688 上搜一次图，读回最像的 20 条。软件只比两张首图像不像；
+        <p className="product-section-hint">用这张{view.sourceLabel}，在你 Chrome 里登录的 1688 上搜一次图，读回最像的 20 条。软件只比两张首图像不像；
           是不是同款由你逐条判断，判断只记在这里，不会改货源链接，也不会确认供货。</p>
-        {view.lowestPriceCny !== null ? <p className="image-match-price">拼多多最低拼单价：{money(view.lowestPriceCny)}</p> : null}
+        {view.lowestPriceCny !== null ? <p className="image-match-price">
+          {view.sourcePlatform === "1688" ? "你给的这家 1688 最低价" : "拼多多最低拼单价"}：{money(view.lowestPriceCny)}</p> : null}
         {view.sourceReason ? <p className="product-capture-hint">{view.sourceReason}</p> : null}
       </div>
     </div>
@@ -1850,13 +1851,14 @@ function ImageMatchSection({ candidate, saving, noticeAt, error, notice, onStart
               title={row.distance === null ? undefined : `首图指纹相差 ${row.distance} / 64`}>{row.similarityLabel}</span>
             {row.isAd ? <span className="image-match-tag">广告</span> : null}
             {row.superFactory ? <span className="image-match-tag">超级工厂</span> : null}
+            {row.isSourceOffer ? <span className="image-match-tag">就是你给的这家</span> : null}
             <a href={row.sourceUrl} target="_blank" rel="noreferrer noopener">{row.title}</a>
           </p>
           <p className="image-match-facts">
             {row.priceCny === null ? "价格没读到" : money(row.priceCny)}
             {row.priceNote ? ` · ${row.priceNote}` : ""}
-            {row.priceDifferenceCny === null ? "" : row.priceDifferenceCny === 0 ? " · 和拼多多一样"
-              : ` · 比拼多多${row.priceDifferenceCny < 0 ? "低" : "高"} ${money(Math.abs(row.priceDifferenceCny))}`}
+            {row.priceDifferenceCny === null || row.isSourceOffer ? "" : row.priceDifferenceCny === 0 ? ` · 和${view.priceBaseLabel}一样`
+              : ` · 比${view.priceBaseLabel}${row.priceDifferenceCny < 0 ? "低" : "高"} ${money(Math.abs(row.priceDifferenceCny))}`}
           </p>
           <p className={`image-match-facts${row.quantity.ok === false ? " product-capture-blocked" : ""}`}>
             {row.quantity.text}

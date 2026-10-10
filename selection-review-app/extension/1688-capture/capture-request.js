@@ -1,4 +1,4 @@
-import { canonicalPinduoduoImageUrl, classifySupplierSource, imageSearchUrl } from "./source-routing.js";
+import { canonicalImageSearchSourceUrl, classifySupplierSource, imageSearchUrl } from "./source-routing.js";
 
 export const SUPPLIER_CAPTURE_REQUEST_TYPE = "SELECTION_REVIEW_1688_CAPTURE_REQUEST";
 export const SUPPLIER_CAPTURE_MODE = "a_supplier_capture";
@@ -62,7 +62,7 @@ export function validateOzonCaptureRequest({ payload, manifestVersion = "" } = {
 }
 
 /**
- * 1688 找同款作业：只搜服务端锁定的那一张拼多多首图，搜索地址必须就是由这张图拼出来的那一个。
+ * 1688 找同款作业：只搜服务端锁定的那一张首图（拼多多、1688 或 Ozon 图床），搜索地址必须就是由这张图拼出来的那一个。
  * 不带 sourceUrl、productUrl、expectedProductId，所以既不会被当成供应采集，也不会被当成 Ozon 读页面。
  */
 export function validateImageMatchRequest({ payload, manifestVersion = "" } = {}) {
@@ -73,7 +73,7 @@ export function validateImageMatchRequest({ payload, manifestVersion = "" } = {}
   if (payload.attempt !== 1) return { ok: false, code: "attempt_invalid" };
   if (payload.requiredExtensionVersion !== manifestVersion || !manifestVersion) return { ok: false, code: "extension_version_mismatch" };
   if (payload.maxResults !== IMAGE_MATCH_MAX_RESULTS) return { ok: false, code: "request_payload_missing" };
-  const imageUrl = canonicalPinduoduoImageUrl(payload.imageUrl);
+  const imageUrl = canonicalImageSearchSourceUrl(payload.imageUrl);
   const searchUrl = imageSearchUrl(payload.imageUrl);
   if (!imageUrl || imageUrl !== payload.imageUrl || !searchUrl || searchUrl !== payload.searchUrl) return { ok: false, code: "image_url_invalid" };
   return { ok: true, imageUrl, searchUrl };

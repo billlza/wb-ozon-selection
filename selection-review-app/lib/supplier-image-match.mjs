@@ -1,14 +1,16 @@
-import { canonicalPinduoduoImageUrl, canonicalSupplierImageUrl, captureNumber, captureText } from "./capture-evidence-sanitization.mjs";
-import { supplierCapturePlatform } from "./source-capture.mjs";
+import { canonicalImageSearchSourceUrl, canonicalSupplierImageUrl, captureNumber, captureText } from "./capture-evidence-sanitization.mjs";
+import { SUPPLIER_IMAGE_MATCH_SOURCE_LABELS, SUPPLIER_IMAGE_MATCH_SOURCE_PLATFORMS, supplierImageMatchSearchUrl,
+  supplierImageMatchSource } from "./supplier-image-match-source.mjs";
 import { IMAGE_FINGERPRINT_VERSION, classifyImageSimilarity, imageFingerprintDistance, isImageFingerprint } from "./image-fingerprint.mjs";
 
 /**
- * 用货源的首图在 1688 找同款 —— 一次由主人点出来的、只读的登录态搜索。
+ * 用首图在 1688 找同款 —— 一次由主人点出来的、只读的登录态搜索。
  *
- * 主人给了一条拼多多链接、插件采到了那件货的首图之后，主人可以让插件在他自己登录的 1688 里用这张图搜一次。
+ * 三种入口共用这一套：主人给的拼多多链接、主人给的 1688 链接（采到的那家货的首图），或者从 Seerfar / Ozon 来的商品
+ * （它在 Ozon 上的主图）。拿到图以后，主人可以让插件在他自己登录的 1688 里用这张图搜一次。
  * 这里只放不碰网络、不碰业务状态的规则：
- *   1. 哪件商品、哪张图可以拿去搜（只认已经采到、来自拼多多图床的首图）；
- *   2. 搜索地址怎么拼（插件那边有逐字一致的一份，测试逐条比对）；
+ *   1. 哪件商品、哪张图可以拿去搜，搜索地址怎么拼（在 supplier-image-match-source.mjs，商品页也用同一份）；
+ *   2. 搜索作业何时能开、何时算还在进行；
  *   3. 插件读回来的结果怎么核验（只留商品事实，账号、会话、广告跳转这些一律不进来）；
  *   4. 首图指纹比对之后怎么分档，以及主人对每一条的判断怎么记。
  *
@@ -25,40 +27,10 @@ export const SUPPLIER_IMAGE_MATCH_JUDGEMENT_LABELS = Object.freeze({ exact: "是
 const HISTORY_LIMIT = 5;
 const IN_FLIGHT = Object.freeze(["waiting_extension", "searching"]);
 
-/** 与插件 extension/1688-capture/source-routing.js 里的 imageSearchUrl 逐字一致。 */
-export function supplierImageMatchSearchUrl(imageUrl) {
-  const canonical = canonicalPinduoduoImageUrl(imageUrl);
-  if (!canonical || canonical !== imageUrl) return null;
-  return `https://s.1688.com/youyuan/index.htm?tab=imageSearch&imageAddress=${encodeURIComponent(canonical)}`;
-}
+export { SUPPLIER_IMAGE_MATCH_SOURCE_LABELS, SUPPLIER_IMAGE_MATCH_SOURCE_PLATFORMS, supplierImageMatchSearchUrl, supplierImageMatchSource };
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-/** 这件商品能拿哪张图去搜。拿不出来就如实说为什么，不换一张图凑数。 */
-export function supplierImageMatchSource(candidate) {
-  const capture = candidate?.sourceCapture;
-  if (!isObject(capture) || capture.mode !== "a_supplier_capture" || capture.status !== "captured_waiting_owner_selection") {
-    return Object.freeze({ ok: false, code: "source_capture_missing", reason: "先用插件采到货源页面，才有首图可以拿去 1688 搜。" });
-  }
-  if (supplierCapturePlatform(capture.sourceUrl) !== "pinduoduo") {
-    return Object.freeze({ ok: false, code: "source_platform_unsupported", reason: "目前只支持用拼多多货源的首图去 1688 找同款。" });
-  }
-  const imageUrl = canonicalPinduoduoImageUrl(capture.mainImageUrl);
-  if (!imageUrl || imageUrl !== capture.mainImageUrl) {
-    return Object.freeze({ ok: false, code: "main_image_missing",
-      reason: "这次采集没有读到拼多多首图（插件升级前采的没有这一项），请先重新采一次这个拼多多页面。" });
-  }
-  const prices = (Array.isArray(capture.skuChoices) ? capture.skuChoices : [])
-    .map(sku => sku?.priceCny).filter(value => typeof value === "number" && Number.isFinite(value) && value > 0);
-  return Object.freeze({
-    ok: true,
-    imageUrl,
-    searchUrl: supplierImageMatchSearchUrl(imageUrl),
-    source: Object.freeze({ platform: "pinduoduo", offerId: String(capture.offerId || ""), captureId: String(capture.captureId || ""),
-      imageUrl, lowestPriceCny: prices.length ? Math.min(...prices) : null })
-  });
 }
 
 export function supplierImageMatchInFlight(record) {
@@ -92,9 +64,9 @@ function nonNegativeInteger(value) {
  * 核验插件读回来的搜图结果。页面回显的搜索图必须就是这次要搜的那张，否则是别的搜索，整份拒绝。
  * 每一条只留商品事实；商品页地址由服务端按商品编号自己拼，广告的跳转地址不进来。
  */
-export function sanitizeSupplierImageMatchEvidence(input, expectedImageUrl) {
+export function sanitizeSupplierImageMatchEvidence(input, expectedImageUrl, { sourceOfferId = "" } = {}) {
   if (!isObject(input)) throw new Error("invalid_capture");
-  if (canonicalPinduoduoImageUrl(input.searchImageUrl) !== expectedImageUrl || input.searchImageUrl !== expectedImageUrl) {
+  if (canonicalImageSearchSourceUrl(input.searchImageUrl) !== expectedImageUrl || input.searchImageUrl !== expectedImageUrl) {
     throw new Error("wrong_query");
   }
   const observedAt = text(input.observedAt, 80);
@@ -128,7 +100,9 @@ export function sanitizeSupplierImageMatchEvidence(input, expectedImageUrl) {
       isAd: item.isAd === true,
       superFactory: item.superFactory === true,
       vendorSimilarity,
-      rank: rank !== null && rank < cardCount ? rank : null
+      rank: rank !== null && rank < cardCount ? rank : null,
+      // 用 1688 首图去搜时，主人给的那家货自己也会出现在结果里；标出来，免得把它当成另一家。
+      isSourceOffer: sourceOfferId !== "" && offerId === sourceOfferId
     };
   });
   return { searchImageUrl: expectedImageUrl, observedAt: new Date(observedAt).toISOString(), cardCount, items };

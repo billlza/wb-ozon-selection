@@ -288,7 +288,7 @@ export const api = {
     }),
   // 读一次这个 Ozon 商品页。只送当前数据修订号：要读哪个页面由服务端从这件商品自己已经保存的地址里取，
   // 页面不传目标。回执与 1688 申请采集一模一样，所以接着走 captureStart.js 里同一条开始信号。
-  // 用拼多多首图在 1688 找一次同款。回执与申请采集同形，接着走 captureStart.js 里同一条开始信号（换成找同款那一条）。
+  // 用首图在 1688 找一次同款（拼多多、1688 货源首图或 Ozon 主图）。回执与申请采集同形，接着走 captureStart.js 里同一条开始信号（换成找同款那一条）。
   startSupplierImageMatch: (candidateId, payload) =>
     request(`/api/candidates/${encodeURIComponent(candidateId)}/image-match/start`, {
       method: "POST",

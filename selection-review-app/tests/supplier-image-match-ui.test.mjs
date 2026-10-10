@@ -7,10 +7,13 @@ import react from "@vitejs/plugin-react";
 import { IMAGE_MATCH_CHANNEL, captureStartMessage, needsCaptureStartSignal } from "../src/captureStart.js";
 import { IMAGE_MATCH_JUDGEMENT_LABELS, IMAGE_MATCH_SIMILARITY_LABELS, imageMatchSourceState, supplierImageMatchView } from "../src/supplierImageMatchView.js";
 import { IMAGE_SIMILARITY_LABELS } from "../lib/image-fingerprint.mjs";
-import { SUPPLIER_IMAGE_MATCH_JUDGEMENT_LABELS } from "../lib/supplier-image-match.mjs";
+import { SUPPLIER_IMAGE_MATCH_JUDGEMENT_LABELS, supplierImageMatchSource } from "../lib/supplier-image-match.mjs";
 
 // Synthetic display data only: no saved record, no service, no request, no picture download.
 const IMAGE = "https://img.pddpic.com/garner-api-new/synthetic-main.jpeg";
+const ALI_IMAGE = "https://cbu01.alicdn.com/img/ibank/O1CN01syntheticmain.jpg";
+const OZON_IMAGE = "https://ir.ozone.ru/s3/multimedia-1-d/wc1000/9000000001.jpg";
+const OZON_URL = "https://www.ozon.ru/product/sinteticheskiy-zhilet-9000000001/";
 const capture = (extra = {}) => ({ mode: "a_supplier_capture", status: "captured_waiting_owner_selection",
   sourceUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=600000000001", mainImageUrl: IMAGE,
   skuChoices: [{ sourceSkuId: "1", priceCny: 18.9, attributes: { 颜色: "卡其色" } }, { sourceSkuId: "2", priceCny: 16.5, attributes: { 颜色: "黑色" } }],
@@ -34,16 +37,71 @@ test("the page labels match the service's own labels word for word", () => {
   assert.deepEqual({ ...IMAGE_MATCH_JUDGEMENT_LABELS }, { ...SUPPLIER_IMAGE_MATCH_JUDGEMENT_LABELS });
 });
 
-test("the block appears only for a Pinduoduo capture or an earlier search, and says why a search cannot start", () => {
-  assert.equal(supplierImageMatchView(candidate({ sourceCapture: capture({ sourceUrl: "https://detail.1688.com/offer/123456789.html" }) })), null);
+test("the block appears when there is a picture to search, a capture to redo or an earlier search, and says why a search cannot start", () => {
   assert.equal(supplierImageMatchView(candidate({ sourceCapture: null })), null);
   const ready = supplierImageMatchView(candidate());
   assert.deepEqual([ready.sourceReady, ready.canStart, ready.sourceImageUrl, ready.lowestPriceCny, ready.status], [true, true, IMAGE, 16.5, null]);
+  assert.deepEqual([ready.sourcePlatform, ready.sourceLabel, ready.priceBaseLabel], ["pinduoduo", "拼多多首图", "拼多多"]);
   const old = supplierImageMatchView(candidate({ sourceCapture: capture({ mainImageUrl: null }) }));
   assert.deepEqual([old.sourceReady, old.canStart], [false, false]);
   assert.match(old.sourceReason, /重新采一次/);
+  assert.doesNotMatch(old.sourceReason, /1\.2\.9/);
+  // A 1688 capture whose stored picture is not on 1688's own image host has nothing to search with until it is captured again.
+  const foreign = supplierImageMatchView(candidate({ sourceCapture: capture({ sourceUrl: "https://detail.1688.com/offer/123456789.html" }) }));
+  assert.deepEqual([foreign.sourceReady, foreign.canStart], [false, false]);
+  assert.match(foreign.sourceReason, /重新采一次/);
   assert.equal(imageMatchSourceState(candidate({ sourceCapture: capture({ status: "needs_sku_selection" }) })).ready, false);
   assert.equal(supplierImageMatchView(candidate({ workflowStatus: "eliminated" })).canStart, false);
+});
+
+test("the page picks the same picture the service will search with, for every entry", () => {
+  const cases = [
+    candidate(),
+    candidate({ sourceCapture: capture({ sourceUrl: "https://detail.1688.com/offer/123456789.html", offerId: "123456789", mainImageUrl: ALI_IMAGE }) }),
+    candidate({ sourceCapture: null, productUrl: OZON_URL, imageUrl: OZON_IMAGE }),
+    candidate({ sourceCapture: null, productUrl: OZON_URL, imageUrl: null, salesSnapshotsV11: [{ imageRefs: [OZON_IMAGE] }] }),
+    candidate({ sourceCapture: capture({ mainImageUrl: null }), productUrl: OZON_URL, imageUrl: OZON_IMAGE }),
+    candidate({ sourceCapture: null, productUrl: "https://www.wildberries.ru/catalog/1/detail.aspx", imageUrl: OZON_IMAGE }),
+    candidate({ sourceCapture: null, productUrl: OZON_URL, imageUrl: "https://img.example.com/a.jpg" })
+  ];
+  for (const item of cases) {
+    const service = supplierImageMatchSource(item);
+    const page = imageMatchSourceState(item);
+    assert.equal(page.ready, service.ok);
+    assert.equal(page.imageUrl, service.ok ? service.imageUrl : null);
+    assert.equal(page.platform, service.ok ? service.source.platform : null);
+    assert.equal(page.reason, service.ok ? null : service.reason);
+  }
+
+  const supplier = supplierImageMatchView(cases[1]);
+  assert.deepEqual([supplier.sourcePlatform, supplier.sourceLabel, supplier.priceBaseLabel, supplier.lowestPriceCny], ["1688", "1688 首图", "你给的这家", 16.5]);
+  const ozon = supplierImageMatchView(cases[2]);
+  assert.deepEqual([ozon.sourceReady, ozon.sourcePlatform, ozon.sourceLabel, ozon.sourceImageUrl, ozon.lowestPriceCny, ozon.priceBaseLabel],
+    [true, "ozon", "Ozon 主图", OZON_IMAGE, null, null]);
+  assert.equal(supplierImageMatchView(cases[5]), null);
+  assert.equal(supplierImageMatchView(cases[6]), null);
+});
+
+test("results are compared with the picture and price that search used, and the 1688 offer you gave is marked as itself", () => {
+  const supplierCapture = capture({ sourceUrl: "https://detail.1688.com/offer/700000000001.html", offerId: "700000000001", mainImageUrl: ALI_IMAGE });
+  const fromSupplier = supplierImageMatchView(candidate({ sourceCapture: supplierCapture, supplierImageMatch: compared({
+    source: { platform: "1688", offerId: "700000000001", imageUrl: ALI_IMAGE, lowestPriceCny: 14 },
+    results: [row(1, { similarity: "identical", distance: 0, priceCny: 14, isSourceOffer: true }), row(2, { similarity: "similar", distance: 8, priceCny: 12.5 })]
+  }) }));
+  assert.deepEqual(fromSupplier.rows.map(item => [item.offerId, item.isSourceOffer, item.priceDifferenceCny]),
+    [["700000000001", true, 0], ["700000000002", false, -1.5]]);
+  assert.equal(fromSupplier.priceBaseLabel, "你给的这家");
+
+  const fromOzon = supplierImageMatchView(candidate({ sourceCapture: null, productUrl: OZON_URL, imageUrl: OZON_IMAGE, supplierImageMatch: compared({
+    source: { platform: "ozon", offerId: "9000000001", imageUrl: OZON_IMAGE, lowestPriceCny: null } }) }));
+  assert.equal(fromOzon.priceBaseLabel, null);
+  assert.ok(fromOzon.rows.every(item => item.priceDifferenceCny === null && item.isSourceOffer === false));
+
+  // A Pinduoduo capture made after an Ozon-picture search does not lend its price to that search's results.
+  const later = supplierImageMatchView(candidate({ productUrl: OZON_URL, supplierImageMatch: compared({
+    source: { platform: "ozon", offerId: "9000000001", imageUrl: OZON_IMAGE, lowestPriceCny: null } }) }));
+  assert.deepEqual([later.sourcePlatform, later.sourceImageUrl, later.priceBaseLabel], ["pinduoduo", IMAGE, null]);
+  assert.ok(later.rows.every(item => item.priceDifferenceCny === null));
 });
 
 test("results are ordered by first-picture similarity, carry price, MOQ and judgement, and never call anything a match by themselves", () => {
@@ -102,6 +160,7 @@ async function render(props) {
   return renderer.render(props);
 }
 const forbidden = () => { throw new Error("RENDER_MUST_NOT_START_WORK"); };
+const imageMatchSection = html => html.match(/<section class="product-section product-image-match"[\s\S]*?<\/section>/)?.[0] ?? "";
 const pageProps = extra => ({ view: null, extensionStatus: { code: "connected", label: "插件已连接" }, onSaveDraft: forbidden,
   onRequestCapture: forbidden, onBack: forbidden, onStartImageMatch: forbidden, onCompareImageMatch: forbidden, onJudgeImageMatch: forbidden, ...extra });
 
@@ -125,6 +184,20 @@ test("the product page shows the first picture, the search button, the labelled 
   const unknown = await render(pageProps({ candidate: candidate({ supplierImageMatch: { captureId: "IMJ-c", status: "failed",
     jobStatus: "unknown_outcome", reason: "插件领取了这次找同款，但在执行期限内没有回传可验证结果，这次的结果未知", results: [] } }) }));
   assert.match(unknown, /我知道上次结果未知，重新找一次/);
+  const supplier = await render(pageProps({ candidate: candidate({
+    sourceCapture: capture({ sourceUrl: "https://detail.1688.com/offer/700000000001.html", offerId: "700000000001", mainImageUrl: ALI_IMAGE }),
+    supplierImageMatch: compared({ source: { platform: "1688", offerId: "700000000001", imageUrl: ALI_IMAGE, lowestPriceCny: 16.5 },
+      results: [row(1, { similarity: "identical", distance: 0, priceCny: 16.5, isSourceOffer: true }), row(2, { similarity: "similar", distance: 8, priceCny: 15 })] }) }) }));
+  assert.match(supplier, /用这张1688 首图/);
+  assert.match(supplier, /你给的这家 1688 最低价：¥16\.50/);
+  assert.match(supplier, /就是你给的这家/);
+  assert.match(supplier, /比你给的这家低 ¥1\.50/);
+  assert.doesNotMatch(imageMatchSection(supplier), /拼多多/);
+  const ozon = await render(pageProps({ candidate: candidate({ sourceCapture: null, productUrl: OZON_URL, imageUrl: OZON_IMAGE,
+    supplierImageMatch: compared({ source: { platform: "ozon", offerId: "9000000001", imageUrl: OZON_IMAGE, lowestPriceCny: null } }) }) }));
+  assert.match(ozon, /用这张Ozon 主图/);
+  assert.match(ozon, /alt="Ozon 主图"/);
+  assert.doesNotMatch(imageMatchSection(ozon), /拼多多|最低价：/);
   const withoutHandlers = await render(pageProps({ candidate: candidate(), onStartImageMatch: null }));
   assert.doesNotMatch(withoutHandlers, /在 1688 找同款/);
 });

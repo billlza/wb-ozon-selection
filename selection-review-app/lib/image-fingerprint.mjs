@@ -11,8 +11,8 @@ const IDENTICAL_MAX_DISTANCE = 5;
 const SIMILAR_MAX_DISTANCE = 12;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_IMAGE_PIXELS = 40_000_000;
-// 只去平台自己的图片服务器取图：拼多多和 1688 的商品图都在这几个域名下，别的地址一律不取。
-const IMAGE_HOSTS = [/(^|\.)pddpic\.com$/, /(^|\.)yangkeduo\.com$/, /(^|\.)alicdn\.com$/];
+// 只去平台自己的图片服务器取图：拼多多、1688 和 Ozon 的商品图都在这几个域名下，别的地址一律不取。
+const IMAGE_HOSTS = [/(^|\.)pddpic\.com$/, /(^|\.)yangkeduo\.com$/, /(^|\.)alicdn\.com$/, /^ir\.ozone\.ru$/];
 
 export class ImageFingerprintError extends Error {
   constructor(code) { super(`IMAGE_FINGERPRINT_${code}`); this.name = "ImageFingerprintError"; this.code = code; }

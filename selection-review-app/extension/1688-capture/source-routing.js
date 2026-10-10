@@ -313,25 +313,37 @@ export function classifySupplierSource(value) {
   return pinduoduo ? { platform: "pinduoduo", ...pinduoduo } : null;
 }
 
-// ---- 1688 找同款：用拼多多首图在 1688 搜一次图 ----
+// ---- 1688 找同款：用首图在 1688 搜一次图 ----
 
-/** Mirrors canonicalPinduoduoImageUrl in lib/capture-evidence-sanitization.mjs: https, a Pinduoduo image host, no query. */
-export function canonicalPinduoduoImageUrl(value) {
+function canonicalPlatformImageUrl(value, allowedHost) {
   if (typeof value !== "string") return null;
   try {
     const url = new URL(value);
-    const host = url.hostname;
-    if (url.protocol !== "https:" || url.username || url.password || url.port ||
-        !(host === "pddpic.com" || host.endsWith(".pddpic.com") || host.endsWith(".yangkeduo.com"))) return null;
+    if (url.protocol !== "https:" || url.username || url.password || url.port || !allowedHost(url.hostname)) return null;
     return `${url.origin}${url.pathname}`;
   } catch {
     return null;
   }
 }
 
+/** Mirrors canonicalPinduoduoImageUrl in lib/capture-evidence-sanitization.mjs: https, a Pinduoduo image host, no query. */
+export function canonicalPinduoduoImageUrl(value) {
+  return canonicalPlatformImageUrl(value, host => host === "pddpic.com" || host.endsWith(".pddpic.com") || host.endsWith(".yangkeduo.com"));
+}
+
+/**
+ * Mirrors canonicalImageSearchSourceUrl in lib/capture-evidence-sanitization.mjs: a product picture from Pinduoduo, 1688
+ * (alicdn) or Ozon (ir.ozone.ru) image hosts, https, no query. These are the only pictures a search may be run with.
+ */
+export function canonicalImageSearchSourceUrl(value) {
+  return canonicalPinduoduoImageUrl(value) ??
+    canonicalPlatformImageUrl(value, host => host === "alicdn.com" || host.endsWith(".alicdn.com")) ??
+    canonicalPlatformImageUrl(value, host => host === "ir.ozone.ru");
+}
+
 /** Mirrors supplierImageMatchSearchUrl in lib/supplier-image-match.mjs, character for character. */
 export function imageSearchUrl(imageUrl) {
-  const canonical = canonicalPinduoduoImageUrl(imageUrl);
+  const canonical = canonicalImageSearchSourceUrl(imageUrl);
   if (!canonical || canonical !== imageUrl) return null;
   return `https://s.1688.com/youyuan/index.htm?tab=imageSearch&imageAddress=${encodeURIComponent(canonical)}`;
 }

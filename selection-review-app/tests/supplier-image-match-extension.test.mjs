@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 import { collect1688ImageSearchPage } from "../extension/1688-capture/collector-1688-image-search.js";
 import { IMAGE_MATCH_REQUEST_TYPE, isImageMatchJob, isOzonCaptureJob, validateCaptureStartSignal, validateImageMatchRequest,
   validateSupplierCaptureRequest } from "../extension/1688-capture/capture-request.js";
-import { canonicalPinduoduoImageUrl as extensionImageUrl, classify1688ImageSearchNavigation, imageSearchResultPage,
-  imageSearchUrl } from "../extension/1688-capture/source-routing.js";
-import { canonicalPinduoduoImageUrl as serviceImageUrl } from "../lib/capture-evidence-sanitization.mjs";
+import { canonicalImageSearchSourceUrl as extensionSearchImageUrl, canonicalPinduoduoImageUrl as extensionImageUrl,
+  classify1688ImageSearchNavigation, imageSearchResultPage, imageSearchUrl } from "../extension/1688-capture/source-routing.js";
+import { canonicalImageSearchSourceUrl as serviceSearchImageUrl, canonicalPinduoduoImageUrl as serviceImageUrl } from "../lib/capture-evidence-sanitization.mjs";
 import { sanitizeSupplierImageMatchEvidence, supplierImageMatchJobPayload, supplierImageMatchSearchUrl } from "../lib/supplier-image-match.mjs";
 import { SENDER, harness, idle, startCapture, supplierJob } from "./helpers/extension-runtime-fixture.mjs";
 
@@ -16,22 +16,28 @@ import { SENDER, harness, idle, startCapture, supplierJob } from "./helpers/exte
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const IMAGE = "https://img.pddpic.com/garner-api-new/synthetic-main.jpeg";
 const SEARCH = supplierImageMatchSearchUrl(IMAGE);
+const ALI_IMAGE = "https://cbu01.alicdn.com/img/ibank/O1CN01syntheticmain.jpg";
+const OZON_IMAGE = "https://ir.ozone.ru/s3/multimedia-1-d/wc1000/9000000001.jpg";
 const RESULTS = "https://air.1688.com/kapp/1688-search/pc-image-search/?tab=imageSearch&searchSession=synthetic";
 
 const imageJob = (extra = {}) => ({
   ...supplierImageMatchJobPayload({ captureId: "IMJ-synthetic", candidateId: "candidate:synthetic", dataRevision: 5,
-    imageUrl: IMAGE, searchUrl: SEARCH, requiredExtensionVersion: "1.2.9", attempt: 1, token: "synthetic-fixture-token" }),
+    imageUrl: IMAGE, searchUrl: SEARCH, requiredExtensionVersion: "1.3.0", attempt: 1, token: "synthetic-fixture-token" }),
   ...extra
 });
 
 test("the extension builds the same search address and accepts the same first pictures as the service", () => {
   const inputs = [IMAGE, `${IMAGE}?imageMogr2/thumbnail/750`, "https://t00img.yangkeduo.com/goods/a.jpeg", "https://pddpic.com/a.png",
     "http://img.pddpic.com/a.jpeg", "https://img.pddpic.com:444/a.jpeg", "https://user@img.pddpic.com/a.jpeg",
-    "https://img.pddpic.com.evil.example/a.jpeg", "https://cbu01.alicdn.com/img/ibank/a.jpg", "", null, 7];
+    "https://img.pddpic.com.evil.example/a.jpeg", "https://cbu01.alicdn.com/img/ibank/a.jpg", ALI_IMAGE, `${ALI_IMAGE}?x=1`,
+    "https://alicdn.com/a.jpg", "https://cbu01.alicdn.com.evil.example/a.jpg", OZON_IMAGE, `${OZON_IMAGE}?w=1`,
+    "https://cdn1.ozone.ru/s3/a.jpg", "https://evil-ir.ozone.ru/a.jpg", "http://ir.ozone.ru/a.jpg", "", null, 7];
   for (const input of inputs) {
     assert.equal(extensionImageUrl(input), serviceImageUrl(input), String(input));
+    assert.equal(extensionSearchImageUrl(input), serviceSearchImageUrl(input), String(input));
     assert.equal(imageSearchUrl(input), supplierImageMatchSearchUrl(input), String(input));
   }
+  for (const accepted of [ALI_IMAGE, OZON_IMAGE]) assert.ok(imageSearchUrl(accepted), accepted);
   assert.equal(SEARCH, "https://s.1688.com/youyuan/index.htm?tab=imageSearch&imageAddress=https%3A%2F%2Fimg.pddpic.com%2Fgarner-api-new%2Fsynthetic-main.jpeg");
 });
 
@@ -59,9 +65,9 @@ test("an image-match job is told apart from the other two jobs and validated on 
   const job = imageJob();
   assert.equal(isImageMatchJob(job), true);
   assert.equal(isOzonCaptureJob(job), false);
-  assert.equal(validateSupplierCaptureRequest({ payload: job, manifestVersion: "1.2.9" }).ok, false);
-  assert.deepEqual(validateImageMatchRequest({ payload: job, manifestVersion: "1.2.9" }), { ok: true, imageUrl: IMAGE, searchUrl: SEARCH });
-  const code = (extra, version = "1.2.9") => validateImageMatchRequest({ payload: imageJob(extra), manifestVersion: version }).code;
+  assert.equal(validateSupplierCaptureRequest({ payload: job, manifestVersion: "1.3.0" }).ok, false);
+  assert.deepEqual(validateImageMatchRequest({ payload: job, manifestVersion: "1.3.0" }), { ok: true, imageUrl: IMAGE, searchUrl: SEARCH });
+  const code = (extra, version = "1.3.0") => validateImageMatchRequest({ payload: imageJob(extra), manifestVersion: version }).code;
   assert.equal(code({}, "1.2.8"), "extension_version_mismatch");
   assert.equal(code({ attempt: 0 }), "attempt_invalid");
   assert.equal(code({ dataRevision: "5" }), "revision_invalid");
@@ -73,6 +79,12 @@ test("an image-match job is told apart from the other two jobs and validated on 
   assert.equal(code({ searchUrl: `${SEARCH}&extra=1` }), "image_url_invalid");
   assert.equal(code({ searchUrl: "https://s.1688.com/youyuan/index.htm?tab=imageSearch&imageAddress=https%3A%2F%2Fimg.pddpic.com%2Fother.jpeg" }), "image_url_invalid");
   assert.equal(validateCaptureStartSignal({ type: IMAGE_MATCH_REQUEST_TYPE, captureId: "IMJ-synthetic" }).ok, true);
+  for (const picture of [ALI_IMAGE, OZON_IMAGE]) {
+    const search = supplierImageMatchSearchUrl(picture);
+    assert.deepEqual(validateImageMatchRequest({ payload: imageJob({ imageUrl: picture, searchUrl: search }), manifestVersion: "1.3.0" }),
+      { ok: true, imageUrl: picture, searchUrl: search });
+  }
+  assert.equal(code({ imageUrl: "https://example.com/a.jpg", searchUrl: supplierImageMatchSearchUrl("https://example.com/a.jpg") }), "image_url_invalid");
 });
 
 test("the page bridge forwards the image-match start signal and answers on its own receipt channel", async () => {
@@ -160,7 +172,7 @@ function card(index, offerId, fields = {}, { cos = null, query = IMAGE, member =
   return { getAttribute: name => attributes[name] ?? null, hasAttribute: name => Object.hasOwn(attributes, name), querySelector: () => null };
 }
 
-async function onPage(cards, { bodyText = "", blocker = null, href = RESULTS } = {}) {
+async function onPage(cards, { bodyText = "", blocker = null, href = RESULTS, expected = IMAGE } = {}) {
   const previous = { window: globalThis.window, document: globalThis.document, now: Date.now };
   let reading = previous.now();
   Date.now = () => (reading += 30_000); // Each wait in the collector ends at once instead of after seconds.
@@ -170,7 +182,7 @@ async function onPage(cards, { bodyText = "", blocker = null, href = RESULTS } =
     querySelector: selector => (blocker && selector.includes(blocker) ? {} : null),
     querySelectorAll: selector => (selector === "[data-renderkey]" ? cards : [])
   };
-  try { return await collect1688ImageSearchPage(IMAGE, 20); }
+  try { return await collect1688ImageSearchPage(expected, 20); }
   finally { globalThis.window = previous.window; globalThis.document = previous.document; Date.now = previous.now; }
 }
 
@@ -215,6 +227,23 @@ test("on the saved-page report shape the searched picture ends at the next ; and
   assert.equal(JSON.stringify(result.evidence).includes("secret"), false);
   assert.deepEqual(await onPage([card(0, "700000000000", {}, { ...sp, query: "https://img.pddpic.com/garner-api-new/other.jpeg" })]),
     { status: "failed", failureCode: "wrong_query" });
+});
+
+test("a search run with a 1688 or an Ozon picture is read the same way, and the echoed picture must still be that one", async () => {
+  for (const picture of [ALI_IMAGE, OZON_IMAGE]) {
+    const sp = { shape: "sp_expo", query: picture };
+    const result = await onPage([card(0, "700000000000", {}, { ...sp, cos: 0.97 }), card(1, "700000000001", {}, { ...sp, cos: 0.41 })],
+      { expected: picture });
+    assert.equal(result.status, "captured", JSON.stringify(result));
+    assert.equal(result.evidence.searchImageUrl, picture);
+    assert.equal(sanitizeSupplierImageMatchEvidence(result.evidence, picture).items.length, 2);
+    const plain = await onPage([card(0, "700000000000", {}, { query: picture })], { expected: picture });
+    assert.equal(plain.evidence.searchImageUrl, picture);
+  }
+  assert.deepEqual(await onPage([card(0, "700000000000", {}, { shape: "sp_expo", query: OZON_IMAGE })], { expected: ALI_IMAGE }),
+    { status: "failed", failureCode: "wrong_query" });
+  assert.deepEqual(await onPage([card(0, "700000000000", {}, { query: "https://example.com/a.jpg" })], { expected: OZON_IMAGE }),
+    { status: "failed", failureCode: "structured_data_unavailable" });
 });
 
 test("the collector refuses another picture, an unreadable page and an empty page, and never calls an empty page no match", async () => {

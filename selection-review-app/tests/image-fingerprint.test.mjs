@@ -70,11 +70,13 @@ test("transparent areas count as white, and anything that is not an image is ref
 });
 
 test("only platform image hosts are fetched, without cookies, referer or redirects, and within a size limit", async () => {
-  for (const allowed of ["https://img.pddpic.com/garner-api-new/a.jpeg", "https://cbu01.alicdn.com/img/ibank/a.jpg", "https://t00img.yangkeduo.com/a.jpeg"]) {
+  for (const allowed of ["https://img.pddpic.com/garner-api-new/a.jpeg", "https://cbu01.alicdn.com/img/ibank/a.jpg", "https://t00img.yangkeduo.com/a.jpeg",
+    "https://ir.ozone.ru/s3/multimedia-1-d/wc300/10133108869.jpg"]) {
     assert.equal(imageFingerprintUrlAllowed(allowed), true, allowed);
   }
   for (const refused of ["http://img.pddpic.com/a.jpeg", "https://img.pddpic.com.evil.example/a.jpeg", "https://user:pw@img.pddpic.com/a.jpeg",
-    "https://img.pddpic.com:8443/a.jpeg", "https://example.com/a.jpeg", "file:///etc/passwd", 42]) {
+    "https://img.pddpic.com:8443/a.jpeg", "https://example.com/a.jpeg", "https://cdn.ir.ozone.ru.evil.example/a.jpg",
+    "https://evil-ir.ozone.ru/a.jpg", "file:///etc/passwd", 42]) {
     assert.equal(imageFingerprintUrlAllowed(refused), false, String(refused));
     await assert.rejects(fetchImageFingerprint(refused, { fetchImpl: () => assert.fail("must not fetch") }), /URL_NOT_ALLOWED/);
   }
