@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T01:06:32.866Z",
+  "frozenAt": "2026-10-10T01:37:40.022Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 901,
-      "sha256": "8531b12363f1fa27737318f5459829d5d4725853121547621a58af4f9015b86a",
+      "sha256": "9d991e625bfd3191d64e54094e31d64be6bde6c53d618cb04ecd70afde01745d",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -904,7 +904,7 @@
       },
       {
         "path": "lib/platform-projection.mjs",
-        "sha256": "99e77c2aa4aeae882ad5009c88234cbf9711ec1eb669c2a26f064eaaf1d2216e"
+        "sha256": "c1890edd3588c34eace9eaf1f0beafc409a9827af1b1aaaaa2fb5d88a78a3f2f"
       },
       {
         "path": "lib/platform-write-bindings.mjs",
@@ -924,11 +924,11 @@
       },
       {
         "path": "lib/product-core-family.mjs",
-        "sha256": "3cae0f33ecbd9a4697684df4d2606534d2dddc9286c787b0835a654730a09695"
+        "sha256": "11757c837a2f5d24cc88fb0cbe0ffe38352417333fd553abaa00eca21e44378b"
       },
       {
         "path": "lib/product-core.mjs",
-        "sha256": "50612985a944d62c320bbd6403e2a71262fae4c7e469fc43288cfb6bab3e9611"
+        "sha256": "fbfbccdbc7b07b0cd111c64a093e42d21353e8abe887858e161e826c93553fec"
       },
       {
         "path": "lib/product-lifecycle-schema.mjs",
@@ -1544,7 +1544,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "ecdcdb8797c818042aace7c2de57a0fd8395125c68e263d3b4a791babd51054c"
+        "sha256": "002a05498eb1c3e1dd54963f6264ff68d5df19f4be8c85ad3f2c625448405e55"
       },
       {
         "path": "src/App.jsx",
@@ -3268,11 +3268,11 @@
       },
       {
         "path": "tests/product-core-family.test.mjs",
-        "sha256": "0214fdf6d738a178632f305ca06a46a11a323556f392a8b38e80f2cbebbdba06"
+        "sha256": "8c6890573570a51d71052c836cfb44e4b1c00d2e105fe7711c783e20d83934bf"
       },
       {
         "path": "tests/product-core.test.mjs",
-        "sha256": "97a4c4e28f073f96f4e9d66e17a5e0ec2db0f587725bb911382792bec7de3a6c"
+        "sha256": "f113b6eded42e00c6a7d9cde48644860b4d6251eee45903f3914edfe422af633"
       },
       {
         "path": "tests/product-lifecycle-schema.test.mjs",

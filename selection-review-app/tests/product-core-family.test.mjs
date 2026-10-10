@@ -94,3 +94,17 @@ test("a candidate without a supplier capture is reported, not crashed on", () =>
   assert.throws(() => assembleProductCoreForFamily({ document: vestDocument(), candidateId: "CX-20261001-099", builtAt }), /PRODUCT_CORE/);
   assert.throws(() => assembleProductCoreForFamily({ document: vestDocument(), candidateId: "nope", builtAt }), /PRODUCT_CORE_FAMILY_CANDIDATE_MISSING/);
 });
+
+test("with the WB pet-vest mapping, the same product lists WB's own attribute gaps", async () => {
+  const { loadPlatformMapping } = await import("../lib/platform-projection.mjs");
+  const document = vestDocument();
+  const assembled = assembleProductCoreForFamily({ document, candidateId: "CX-20261001-001", builtAt });
+  const { wb } = buildFamilyListingDrafts({ assembled, document, wbMapping: await loadPlatformMapping("wb", "734"),
+    profiles: { ozon: await loadPlatformProfile("ozon"), wb: await loadPlatformProfile("wb") } });
+  assert.deepEqual(wb.category.subjectId, 734);
+  const shared = Object.fromEntries(wb.attributes.shared.map(item => [item.platformAttributeId, item.value]));
+  assert.deepEqual(shared, { 14177450: "полиэстер", 88952: 120, 90849: 20, 90745: 15, 90846: 3 });
+  assert.deepEqual(wb.attributes.perVariant.map(item => item.values[0].value), ["светлый хаки", "черный CP"]);
+  assert.deepEqual(wb.gaps.filter(gap => gap.area === "attributes").map(gap => gap.platformAttributeId), [14177451]);
+  assert.equal(wb.gaps.some(gap => gap.area === "category"), false);
+});

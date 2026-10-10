@@ -25,7 +25,8 @@ export const PRODUCT_FACT_LABELS = Object.freeze({
   intendedUses: "适用对象",
   closureType: "闭合方式",
   adjustable: "是否可调",
-  detachable: "是否可拆"
+  detachable: "是否可拆",
+  countryOfOrigin: "产地国"
 });
 const FACT_KEYS = Object.keys(PRODUCT_FACT_LABELS);
 const FACT_STATUSES = Object.freeze(["confirmed", "proposed", "unknown"]);

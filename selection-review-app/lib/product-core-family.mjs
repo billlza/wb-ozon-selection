@@ -166,8 +166,11 @@ export function assembleProductCoreForFamily({ document, candidateId, builtAt })
   };
 }
 
-/** 用同一份核心分别给出 Ozon 和 WB 的上架草稿。Ozon 沿用原商品已有的类目、文案和授权价格；WB 还没有映射，缺口照实列出。 */
-export function buildFamilyListingDrafts({ assembled, document, profiles }) {
+/**
+ * 用同一份核心分别给出 Ozon 和 WB 的上架草稿。Ozon 沿用原商品已有的类目、文案和授权价格；
+ * WB 给了类目映射（loadPlatformMapping 读出的配置）就按它取属性，没给就只列出缺类目。
+ */
+export function buildFamilyListingDrafts({ assembled, document, profiles, wbMapping = null }) {
   const root = document.candidates.find(item => item.id === assembled.members[0].candidateId);
   const sku = root.lifecycleV11?.skuPackage, plan = sku?.c1ProductPlan;
   const content = text(plan?.seoTitleDraft?.text) || text(plan?.descriptionDraft?.text)
@@ -184,7 +187,9 @@ export function buildFamilyListingDrafts({ assembled, document, profiles }) {
   }
   if (profiles.wb) {
     drafts.wb = buildPlatformListingDraft({ core: assembled.core, profile: profiles.wb, storeRef: { stableStoreId: "wb" },
-      category: null, attributeMappings: [{ platformAttributeId: "颜色", from: "color", use: "ru" }], content, price: null });
+      category: wbMapping ? structuredClone(wbMapping.category) : null,
+      attributeMappings: wbMapping ? structuredClone(wbMapping.attributes) : [{ platformAttributeId: "颜色", from: "color", use: "ru" }],
+      content, price: null });
   }
   return drafts;
 }

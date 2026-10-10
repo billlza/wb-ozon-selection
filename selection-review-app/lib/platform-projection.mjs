@@ -16,6 +16,7 @@ import { mediaForColor, UNKNOWN } from "./product-core.mjs";
 export const PLATFORM_LISTING_DRAFT_VERSION = "platform-listing-draft-v1";
 const VARIANT_MODELS = Object.freeze(["offer_per_variant_grouped_by_model", "card_per_color_sizes_inside"]);
 const DEFAULT_PROFILE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data", "platform-profiles");
+const DEFAULT_MAPPING_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data", "platform-mappings");
 
 const isObject = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const text = value => typeof value === "string" && value.trim().length > 0;
@@ -105,9 +106,14 @@ function readSource(core, from, variant) {
   const [kind, ...rest] = String(from).split(":");
   const key = rest.join(":");
   if (kind === "fact") {
-    const item = core.facts[key];
+    // fact:packageDimensionsCm.width 这种写法取对象事实里的一项。
+    const [factKey, ...part] = key.split(".");
+    const item = core.facts[factKey];
     if (!item) fail("PLATFORM_MAPPING_SOURCE_INVALID", `${from} 不是登记过的中立事实`);
-    return item.status === "unknown" ? null : { value: item.value, ru: item.ru, sourcePath: `facts.${key}` };
+    if (item.status === "unknown") return null;
+    const value = part.reduce((node, name) => (isObject(node) ? node[name] : undefined), item.value);
+    if (value === undefined) fail("PLATFORM_MAPPING_SOURCE_INVALID", `${from} 在事实里不存在`);
+    return { value, ru: part.length === 0 ? item.ru : null, sourcePath: `facts.${key}` };
   }
   if (kind === "supplierAttribute") {
     const item = core.supplierAttributes[key];
@@ -123,8 +129,8 @@ function readSource(core, from, variant) {
 
 /**
  * 把「平台属性 ← 中立字段」映射解析成取值。
- * 映射项：{ platformAttributeId, from: "fact:material" | "supplierAttribute:面料" | "color" | "size",
- *          use: "value" | "ru", valueMap?: { 中立取值: 平台取值 }, required?: boolean }
+ * 映射项：{ platformAttributeId, from: "fact:material" | "fact:packageDimensionsCm.width" | "supplierAttribute:面料" | "color" | "size",
+ *          use: "value" | "ru", valueMap?: { 中立取值: 平台取值 }, scale?: 单位换算倍数, required?: boolean }
  * 每个取值都带 sourcePath，能追回中立核心里的哪一项。缺的进 gaps，不编造。
  */
 export function resolveAttributeMappings(core, mappings, { variantId = null } = {}) {
@@ -139,8 +145,13 @@ export function resolveAttributeMappings(core, mappings, { variantId = null } = 
     }
     const source = readSource(core, mapping.from, variant);
     const raw = source === null ? null : (mapping.use === "ru" ? source.ru : source.value);
-    const mapped = raw === null || raw === UNKNOWN ? null
+    let mapped = raw === null || raw === UNKNOWN ? null
       : isObject(mapping.valueMap) ? (Object.hasOwn(mapping.valueMap, String(raw)) ? mapping.valueMap[String(raw)] : null) : raw;
+    // 只做单位换算（例如千克→克），不做别的推算。
+    if (mapped !== null && mapping.scale !== undefined) {
+      if (!Number.isFinite(mapping.scale) || mapping.scale <= 0 || !Number.isFinite(mapped)) fail("PLATFORM_MAPPING_INVALID", `${mapping.from} 不能按 ${mapping.scale} 换算`);
+      mapped = Math.round(mapped * mapping.scale * 1000) / 1000;
+    }
     if (mapped === null) {
       const reason = source === null ? "中立核心里还没有这项" : raw === null ? "还没有俄文" : "没有对应的平台取值";
       if (mapping.required !== false) gaps.push({ platformAttributeId: mapping.platformAttributeId, from: mapping.from, reason });
@@ -149,6 +160,27 @@ export function resolveAttributeMappings(core, mappings, { variantId = null } = 
     values.push({ platformAttributeId: mapping.platformAttributeId, value: structuredClone(mapped), sourcePath: source.sourcePath });
   }
   return { values, gaps };
+}
+
+/**
+ * 某个平台类目的属性映射配置（data/platform-mappings/<platform>-<category>.json）。
+ * 配置里记着类目、属性来自哪次只读查询，以及每个平台属性取核心里的哪一项。
+ */
+export async function loadPlatformMapping(platform, categoryKey, { directory = DEFAULT_MAPPING_DIR } = {}) {
+  if (!/^[a-z][a-z0-9-]{0,31}$/.test(platform) || !/^[a-z0-9-]{1,64}$/.test(String(categoryKey))) {
+    fail("PLATFORM_MAPPING_NAME_INVALID", "平台或类目名无效");
+  }
+  let mapping;
+  try { mapping = JSON.parse(await readFile(path.join(directory, `${platform}-${categoryKey}.json`), "utf8")); }
+  catch (error) {
+    if (error.code === "ENOENT") fail("PLATFORM_MAPPING_MISSING", `还没有 ${platform} 类目 ${categoryKey} 的属性映射`);
+    throw error;
+  }
+  if (!isObject(mapping) || mapping.platform !== platform || !text(mapping.mappingVersion) || !isObject(mapping.category) ||
+      !isObject(mapping.evidence) || !text(mapping.evidence.source) || !Array.isArray(mapping.attributes)) {
+    fail("PLATFORM_MAPPING_INVALID", `${platform}-${categoryKey}.json 结构无效`);
+  }
+  return Object.freeze(structuredClone(mapping));
 }
 
 export function checkContentForPlatform(content, profile) {

@@ -269,7 +269,7 @@ import {
 import { buildThreeStoreMapView } from "./lib/three-store-map.mjs";
 import { assembleProductCoreForFamily, buildFamilyListingDrafts, ProductCoreFamilyError } from "./lib/product-core-family.mjs";
 import { ProductCoreError } from "./lib/product-core.mjs";
-import { loadPlatformProfile } from "./lib/platform-projection.mjs";
+import { loadPlatformMapping, loadPlatformProfile, PlatformProjectionError } from "./lib/platform-projection.mjs";
 import { buildDESoftwareIntegrationView } from "./lib/d-e-software-integration.mjs";
 import { assertCurrentProductionExecutionBinding } from "./lib/platform-write-preflight.mjs";
 import { assertCurrentC2UploadDraft, reserveC2Upload, settleC2Upload, saveC2UploadSelection, selectedC2DraftAssets, resolveRegisteredC2FinalAsset, LOCAL_UPLOAD_MAX_BYTES } from "./lib/c2-upload-draft.mjs";
@@ -4476,9 +4476,12 @@ async function handleApi(req, res, pathname) {
     try {
       const assembled = assembleProductCoreForFamily({ document: snapshot, candidateId: decodeURIComponent(productCoreRoute[1]), builtAt: now() });
       const profiles = { ozon: await loadPlatformProfile("ozon"), wb: await loadPlatformProfile("wb") };
-      return json(res, 200, { ...assembled, listings: buildFamilyListingDrafts({ assembled, document: snapshot, profiles }), externalRequests: 0, platformWrites: 0 });
+      // ?wbSubject=734 按已保存的 WB 类目映射取属性；类目由人选定，这里不猜。
+      const wbSubject = new URL(req.url, `http://${host}:${port}`).searchParams.get("wbSubject");
+      const wbMapping = wbSubject ? await loadPlatformMapping("wb", wbSubject) : null;
+      return json(res, 200, { ...assembled, listings: buildFamilyListingDrafts({ assembled, document: snapshot, profiles, wbMapping }), externalRequests: 0, platformWrites: 0 });
     } catch (error) {
-      if (!(error instanceof ProductCoreFamilyError || error instanceof ProductCoreError)) throw error;
+      if (!(error instanceof ProductCoreFamilyError || error instanceof ProductCoreError || error instanceof PlatformProjectionError)) throw error;
       return json(res, /_MISSING$/.test(error.code) ? 404 : 409, { code: error.code, message: error.message, externalRequests: 0, platformWrites: 0 });
     }
   }

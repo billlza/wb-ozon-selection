@@ -184,3 +184,27 @@ test("validation rejects a core that smuggles in an unregistered fact", () => {
   core.facts.ozonTypeId = { value: 1, status: "confirmed", sourceRef: "x", ru: null, ruSourceRef: null };
   assert.equal(validateProductCore(core).valid, false);
 });
+
+test("object facts can be read part by part and converted to the platform's unit", () => {
+  const core = vestCore();
+  const { values, gaps } = resolveAttributeMappings(core, [
+    { platformAttributeId: 88952, from: "fact:packedWeightKg", scale: 1000 },
+    { platformAttributeId: 90849, from: "fact:packageDimensionsCm.length" },
+    { platformAttributeId: 90745, from: "fact:packageDimensionsCm.width" },
+    { platformAttributeId: 14177451, from: "fact:countryOfOrigin", use: "ru" }
+  ]);
+  assert.deepEqual(values.map(item => item.value), [120, 20, 15]);
+  assert.equal(values[1].sourcePath, "facts.packageDimensionsCm.length");
+  assert.deepEqual(gaps.map(item => item.platformAttributeId), [14177451]);
+  assert.throws(() => resolveAttributeMappings(core, [{ platformAttributeId: 1, from: "fact:packageDimensionsCm.depth" }]), /在事实里不存在/);
+});
+
+test("the saved WB pet-vest mapping loads and names its read-only evidence", async () => {
+  const { loadPlatformMapping } = await import("../lib/platform-projection.mjs");
+  const mapping = await loadPlatformMapping("wb", "734");
+  assert.equal(mapping.category.subjectId, 734);
+  assert.match(mapping.evidence.source, /object\/charcs\/734/);
+  assert.ok(mapping.attributes.some(item => item.platformAttributeId === 14177449 && item.from === "color"));
+  await assert.rejects(loadPlatformMapping("wb", "99999"), /PLATFORM_MAPPING_MISSING/);
+  await assert.rejects(loadPlatformMapping("wb", "../x"), /PLATFORM_MAPPING_NAME_INVALID/);
+});
