@@ -299,3 +299,43 @@ test("停下：整页的事（滑块）整条队停着；主人点「重跑」�
   assert.equal((await api.queue()).body.pause, null);
   assert.equal(api.stderr.join(""), "");
 });
+
+test("贴货源链接：接到还没有货源的那一件上，从读货源页重新走；一次一条、核对修订号、别的商品有这个货源时不接", async t => {
+  const api = await startApi(t, [
+    existing("SEERFAR-2", { source: "software", productName: "合成 Ozon 商品", workflowStatus: "awaiting_user_direction" }),
+    existing("HOLDER", { sourceUrl: OFFER }),
+    seededIntake("DELISTED", PDD_C, { jobs: { sourceCaptureId: "SCJ-seeded-off" }, sourceCapture: { captureId: "SCJ-seeded-off",
+      status: "captured_waiting_owner_selection", mode: "a_supplier_capture", sourceUrl: PDD_C, offerStatus: "off_sale", mainImageUrl: IMAGE("off"),
+      skuChoices: [{ sourceSkuId: "a", priceCny: 9, inStock: true }], priceRanges: [] } })
+  ]);
+  await api.login();
+  const attach = (links, attachTo) => api.post("/api/intake/links", { links, attachTo });
+  const seerfar = await api.record("SEERFAR-2");
+  assert.equal((await attach([PDD_A], { candidateId: "SEERFAR-2" })).body.code, "intake_input_invalid");
+  assert.equal((await attach([PDD_A, PDD_B], { candidateId: "SEERFAR-2", dataRevision: seerfar.dataRevision })).body.code, "intake_attach_one_link");
+  assert.equal((await attach([PDD_A], { candidateId: "NOPE", dataRevision: 1 })).status, 404);
+  assert.equal((await attach([PDD_A], { candidateId: "SEERFAR-2", dataRevision: seerfar.dataRevision + 5 })).body.code, "revision_conflict");
+  const taken = await attach([OFFER], { candidateId: "SEERFAR-2", dataRevision: seerfar.dataRevision });
+  assert.deepEqual([taken.status, taken.body.code, taken.body.duplicateOfCandidateId], [409, "intake_attach_duplicate", "HOLDER"]);
+
+  const done = await attach([`【拼多多】合成货源 ${PDD_A}`], { candidateId: "SEERFAR-2", dataRevision: seerfar.dataRevision });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.deepEqual(done.body.items, [{ candidateId: "SEERFAR-2", created: false, attached: true, duplicateOfCandidateId: null,
+    duplicateEliminated: false, sourceKind: "pinduoduo" }]);
+  const after = await api.record("SEERFAR-2");
+  assert.deepEqual([after.sourceUrl, after.intake.stage, after.productName, after.intakeSourceHistory.length, after.dataRevision],
+    [PDD_A, "queued", "合成 Ozon 商品", 1, seerfar.dataRevision + 1]);
+  assert.equal(after.history.at(-1).action, "intakeSourceAttached");
+  assert.equal((await attach([PDD_B], { candidateId: "SEERFAR-2", dataRevision: after.dataRevision })).body.code, "intake_attach_has_source");
+
+  const delisted = await api.record("DELISTED");
+  const swapped = await attach([PDD_B], { candidateId: "DELISTED", dataRevision: delisted.dataRevision });
+  assert.equal(swapped.status, 200, JSON.stringify(swapped.body));
+  const kept = (await api.record("DELISTED")).intakeSourceHistory[0];
+  assert.deepEqual([kept.sourceUrl, kept.intake.jobs.sourceCaptureId, kept.sourceCapture.offerStatus], [PDD_C, "SCJ-seeded-off", "off_sale"]);
+
+  await api.heartbeat();
+  const pending = await api.pending("supplier_capture");
+  assert.ok(["SEERFAR-2", "DELISTED"].includes(pending.candidateId));
+  assert.equal(api.stderr.join(""), "");
+});

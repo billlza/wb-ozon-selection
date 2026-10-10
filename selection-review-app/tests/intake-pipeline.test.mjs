@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  INTAKE_MAX_LINKS_PER_PASTE, intakeBlocker, intakeDuplicateOf, intakeLogin1688State, intakePause, intakeProgress, intakeQueue,
+  INTAKE_MAX_LINKS_PER_PASTE, intakeAttachPlan, intakeBlocker, intakeDuplicateOf, intakeLogin1688State, intakePause, intakeProgress, intakeQueue,
   intakeResumePlan, intakeRetryPlan, intakeStageUpdate, newIntakeRecord, nextIntakeWork, parseIntakeLinks
 } from "../lib/intake-pipeline.mjs";
 
@@ -224,4 +224,37 @@ test("「做这件」卡上做过决定的（candidate.gate1）不再归流水�
   assert.deepEqual(intakeQueue([searching, slider, waiting]).map(({ candidate }) => candidate.id), ["WAITING"]);
   assert.equal(intakePause([searching, slider, waiting]), null);
   assert.equal(nextIntakeWork([searching, slider]), null);
+});
+
+test("贴货源链接：只接到还没有能用货源、还没过「做这件」、没在跑的那一件；旧链接和旧记录原样留着", () => {
+  const [link] = parseIntakeLinks([OFFER]).links;
+  const at = { requestedAt: "2026-10-10T07:00:00.000Z", requestedBy: "owner-1", batchId: "INB-attach" };
+  const seerfar = { id: "SEERFAR-1", workflowStatus: "awaiting_user_direction", dataRevision: 3, productName: "合成 Ozon 商品",
+    productUrl: "https://www.ozon.ru/product/synthetic-900000001/", sourceUrl: "" };
+  const attached = intakeAttachPlan(seerfar, link, { ...at, candidates: [seerfar] });
+  assert.equal(attached.ok, true);
+  assert.deepEqual([attached.intake.stage, attached.intake.sourceUrl, attached.intake.sourceKind, attached.intake.batch],
+    ["queued", link.sourceUrl, "1688", { id: "INB-attach", index: 0, size: 1 }]);
+  assert.deepEqual(attached.previous, { sourceUrl: null, intake: null, sourceCapture: null, replacedAt: at.requestedAt, replacedBy: "owner-1" });
+
+  const delisted = withJobs(intakeCandidate("DELISTED"), { sourceCaptureId: "SCJ-1" }, { sourceCapture: captured("SCJ-1", { offerStatus: "off_sale" }) });
+  const replaced = intakeAttachPlan(delisted, link, { ...at, candidates: [delisted] });
+  assert.equal(replaced.ok, true);
+  assert.deepEqual([replaced.previous.sourceUrl, replaced.previous.intake.jobs.sourceCaptureId, replaced.previous.sourceCapture.offerStatus],
+    [PDD, "SCJ-1", "off_sale"], "旧的那一轮不丢");
+
+  const refuse = (candidate, options = {}) => intakeAttachPlan(candidate, link, { ...at, candidates: [candidate], ...options }).code;
+  assert.equal(refuse({ ...seerfar, workflowStatus: "eliminated" }), "intake_attach_target_eliminated");
+  assert.equal(refuse({ ...seerfar, gate1: { decision: "accepted" } }), "intake_attach_past_gate1");
+  assert.equal(refuse(seerfar, { stillOpen: () => false }), "intake_attach_past_gate1");
+  assert.equal(refuse(seerfar, { busy: true }), "intake_attach_busy");
+  assert.equal(refuse(withJobs(intakeCandidate("SEARCHING"), { sourceCaptureId: "SCJ-2" }, { sourceCapture: captured("SCJ-2") })), "intake_attach_has_source");
+  assert.equal(refuse(intakeCandidate("QUEUED")), "intake_attach_has_source", "还在排队的就用它自己的链接");
+  assert.equal(refuse({ ...seerfar, sourceCapture: captured("SCJ-3", { ownerSupplyConfirmed: true }) }), "intake_attach_supply_confirmed");
+  const unknown = withJobs(intakeCandidate("UNKNOWN"), { sourceCaptureId: "SCJ-4" }, { sourceCapture: { captureId: "SCJ-4", status: "failed",
+    jobStatus: "unknown_outcome", failureCode: "unknown_outcome", mode: "a_supplier_capture" } });
+  assert.equal(refuse(unknown), "intake_attach_has_source", "结果未知的先由主人重跑");
+  const holder = { ...seerfar, id: "HOLDER", sourceUrl: `${OFFER}?spm=x` };
+  const duplicate = intakeAttachPlan(seerfar, link, { ...at, candidates: [seerfar, holder] });
+  assert.deepEqual([duplicate.ok, duplicate.code, duplicate.duplicate.id], [false, "intake_attach_duplicate", "HOLDER"]);
 });
