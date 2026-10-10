@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T04:51:30.602Z",
+  "frozenAt": "2026-10-10T05:25:09.124Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 914,
-      "sha256": "0077e59aa008d37b7e4b21981da716e11ba73ea7d833377a286f861abb77a534",
+      "artifactCount": 917,
+      "sha256": "2c3bc2dadb13e7858ed5bbaec12f27578f8daf6f05d20e8e97c57f8ed2680f7f",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -436,7 +436,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "972ab2ac1469bf11c93e9540a8228aa554ea36bbdd1035aed25e78637410e97b"
+        "sha256": "4ce87809511c9682047bab78f89ec97bd5b8069ae874e4f3b0edb8392d518df1"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -448,7 +448,7 @@
       },
       {
         "path": "lib/codex-dispatcher.mjs",
-        "sha256": "8621e477514b6a92e8f22987fe1443b9bce2d5e5d32c651d853627924b696f46"
+        "sha256": "e74c1816e277e607b5ad6b547af6d9a10722bbcade41341cd494a773c356576a"
       },
       {
         "path": "lib/codex-independence.mjs",
@@ -676,11 +676,11 @@
       },
       {
         "path": "lib/legacy-candidate-adapter.mjs",
-        "sha256": "e9a3519fd55364c8bd5be20f74658e8cca796d01c6dc115f07d4d289db94db20"
+        "sha256": "30c8a71add786dce9564dc203c4796de8953944b3fe0a3d895ea640c540ccea3"
       },
       {
         "path": "lib/lifecycle-b-evidence-context.mjs",
-        "sha256": "df140fee90ca0eaa3593504674bfbee6c930da9ee0be47303e5672fcc7bcd8fa"
+        "sha256": "9b1fe5d7c39dc4f39d5b250f5ee5d905be9257f5571626d718e76b17167e9d3e"
       },
       {
         "path": "lib/lifecycle-b-evidence-preparation.mjs",
@@ -692,11 +692,11 @@
       },
       {
         "path": "lib/lifecycle-b-evidence-runtime.mjs",
-        "sha256": "8214f8a6c0780cd44758e6bdb39052f232b6a5707abe87f42b57b78e12de11f1"
+        "sha256": "290db2e89be2d22875dc475c696e22973aebf7d7844af95550a50e96743ff097"
       },
       {
         "path": "lib/lifecycle-b-input-bundle.mjs",
-        "sha256": "c9ce73bc06468da7a55063caa26b03c4848cf041c82e40b2ae5973e839d48ac3"
+        "sha256": "ec6c125f8bd36d1228037195a0556c425407c8cf6916e910ddba8d0bdda84664"
       },
       {
         "path": "lib/lifecycle-b-real-evidence-readers.mjs",
@@ -1032,7 +1032,7 @@
       },
       {
         "path": "lib/real-a-b-c1-flow.mjs",
-        "sha256": "47d220c55bee8a4f2233d555fa433a37cb3908f5abee394042db6506b62749f2"
+        "sha256": "df866bb46cba9a77d6499fd2ce8b21e8f309a10cb4dacc4aecd0213b1549483c"
       },
       {
         "path": "lib/real-a-b-evidence-orchestration.mjs",
@@ -1164,7 +1164,11 @@
       },
       {
         "path": "lib/store-binding.mjs",
-        "sha256": "aea684659cad84c6c8e1bd2b0d57f89ac5b5e708ff319c21bd53c75c296c0310"
+        "sha256": "f7e2b3121760c086a8b573299f40001bae0e2f8e71279b7f2becd622c590a671"
+      },
+      {
+        "path": "lib/store-registry.mjs",
+        "sha256": "496aac0cacc2952e2aec535c5c61a2b9d6d3069d0b8e3a7cb4b02c9963120f6d"
       },
       {
         "path": "lib/supplier-draft.mjs",
@@ -1204,7 +1208,7 @@
       },
       {
         "path": "lib/workflow.mjs",
-        "sha256": "c884cfcd97890a886c555b491d9a299cbeec64d404dd103488e88e485ab6dbb9"
+        "sha256": "c115a865c035d775dd7f4d0b311bca87dc178c13fd5d5d3f9a7de7a69f1880ba"
       },
       {
         "path": "package.json",
@@ -1516,7 +1520,7 @@
       },
       {
         "path": "scripts/ci-test-suites.mjs",
-        "sha256": "7dcb5c5f235c8033106910fd449435348745a592f8e0c308a22e73819ba5a365"
+        "sha256": "736b74ad13083871557e069b216a749a2b79b58aa6628919fac48639ccb89bec"
       },
       {
         "path": "scripts/deploy-local-runtime.sh",
@@ -1576,7 +1580,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "7dedbebd101a872fd8f5d198da82574f996754a2541716a48aa2bf8c67a21543"
+        "sha256": "0617310f08e595f0793ff524e9aaf3b0cdf08dba58533cb40c8e8fc042b7a108"
       },
       {
         "path": "src/App.jsx",
@@ -1592,7 +1596,7 @@
       },
       {
         "path": "src/api.js",
-        "sha256": "8dd7541968acac420a09f9425dbced5e5962373620be1a0a651298e9d0fda305"
+        "sha256": "f1521a7b4af2876c7efad2af698afc45b88c1c36f376a2632c25964ae9d619c4"
       },
       {
         "path": "src/bExactCommissionInput.js",
@@ -1796,7 +1800,7 @@
       },
       {
         "path": "src/components/UserInspector.jsx",
-        "sha256": "347ab3466bdd2950175897101923c2f988c4d0978c43af111cd29439f6d8b160"
+        "sha256": "c6f5b9a0a1aa5cecd402d80326605c6fb9a1e5ae55b779ad02a82953382f0c6d"
       },
       {
         "path": "src/components/WorkflowMap.jsx",
@@ -1808,7 +1812,7 @@
       },
       {
         "path": "src/constants.js",
-        "sha256": "ffe70098c7d4d6c37b9d78609fb8ecfc65cce4c023ebefbf6237c9e9efee8421"
+        "sha256": "b25bd0e0c26c9dec03fe5b3db78b0442f2e48aca8a0f8ba5737ee95ccfae669e"
       },
       {
         "path": "src/dESoftwareRuntimeView.js",
@@ -1832,7 +1836,7 @@
       },
       {
         "path": "src/formState.js",
-        "sha256": "469276c57268a95b4e6ad4d0dfc35fb61d7c2cb046b5d3d7a564f97ecb8af152"
+        "sha256": "9726218405439a210329446fd062437bbfaad207dc1b9eeedebf2330adbce9f3"
       },
       {
         "path": "src/headerStatusView.js",
@@ -3615,6 +3619,14 @@
         "sha256": "dbc1e3482a9a53bcbac23dc3dd83a24cf25fa73f19c288df8e6cbb06f2420e20"
       },
       {
+        "path": "tests/store-registry-api.test.mjs",
+        "sha256": "e1ef8cd8b8d5107778a33f85e22c9c16f8917ee401bce8060bd55070d5339d40"
+      },
+      {
+        "path": "tests/store-registry.test.mjs",
+        "sha256": "0f3b97b1918fc83da071067e06637839469863d9863c6d72c8b8cda9fdf759bd"
+      },
+      {
         "path": "tests/structured-dispatch-integration.test.mjs",
         "sha256": "b2faf5ee1295720c60a0b01fe32497d6283e69d598216288e2b184d916a313e8"
       },
@@ -4407,6 +4419,10 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/store-registry.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/supplier-selection-flow.mjs",
           "status": "present_in_integration_source"
         },
@@ -4420,6 +4436,14 @@
         },
         {
           "path": "tests/real-a-b-c1-flow.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/store-registry-api.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/store-registry.test.mjs",
           "status": "present_in_integration_source"
         }
       ],

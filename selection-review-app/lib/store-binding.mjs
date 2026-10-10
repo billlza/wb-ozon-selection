@@ -1,4 +1,7 @@
-export const STORE_PLATFORMS = Object.freeze({ dandanshu: "ozon", miska: "ozon", wb: "wb" });
+import { storePlatformMap } from "./store-registry.mjs";
+
+// 店铺属于哪个平台，统一从 store-registry 查。
+export const STORE_PLATFORMS = Object.freeze(storePlatformMap());
 const REF_FIELDS = Object.freeze(["stableStoreId", "platformStoreId", "mappingVersion"]);
 const PLACEHOLDERS = new Set(["unknown", "null", "undefined", "not_applicable", "missing"]);
 

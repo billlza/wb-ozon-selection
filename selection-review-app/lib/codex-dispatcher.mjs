@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
+import { platformOfStore } from "./store-registry.mjs";
 import path from "node:path";
 import { sourceCaptureForDispatch } from "./source-capture.mjs";
 
@@ -179,7 +180,7 @@ export function requiredSkillsForDispatch(node, candidate, skillCatalog = DISPAT
   if (node.id === "M07") {
     return [skillCatalog.pricing, skillCatalog.ecommerceSeo].map((skill) => ({ ...skill }));
   }
-  if (node.id === "M10" && candidate?.targetStore === "wb") {
+  if (node.id === "M10" && platformOfStore(candidate?.targetStore) === "wb") {
     return [skillCatalog.wbListing, skillCatalog.wbSafeWrite].map((skill) => ({ ...skill }));
   }
   return [];
