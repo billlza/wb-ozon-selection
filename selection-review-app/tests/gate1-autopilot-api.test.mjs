@@ -9,6 +9,8 @@ import { spawn } from "node:child_process";
 import { stopApiProcess } from "./helpers/api-process-lifecycle.mjs";
 import { createSavedLocalPreparationCandidate } from "./fixtures/c1-local-draft-source-fixture.mjs";
 import { buildGate1AutopilotGrant } from "../lib/gate1-autopilot.mjs";
+import { buildGate1RightsDeclaration } from "../lib/gate1-rights-declaration.mjs";
+import { createFormalC1DraftFixture } from "./fixtures/formal-c1-flow-fixture.mjs";
 
 // 「做这件」之后不花钱的几步由软件自己往下走。合成商品、合成文案网关；网关被叫到一次就是错。
 const appDir = fileURLToPath(new URL("..", import.meta.url));
@@ -175,6 +177,37 @@ test("做这件之后：有许可的商品软件自己做到付费那一步停�
     const saved = (await readDocument()).candidates[0];
     assert.equal(saved.gate1AutopilotV1.failure.sourceRevision, candidate.dataRevision + 1);
     assert.ok(saved.history.some(item => item.action === "gate1AutopilotContinued" && /再试一次/u.test(item.detail)));
+    assert.equal(providerCalls, 0);
+  });
+
+  await t.test("「做这件」卡上声明过品牌与权利：C1 计划一生成，软件就按那份声明记下，声明人是主人，不再停下等签", async () => {
+    const formal = createFormalC1DraftFixture({ rightsReviewOptions: null });
+    const candidate = structuredClone(formal.candidate);
+    candidate.targetPlatform = formal.created.skuPackage.targetPlatform;
+    candidate.storeRef = structuredClone(formal.created.skuPackage.g1Identity.storeRef);
+    candidate.lifecycleV11.skuPackage = structuredClone(formal.created.skuPackage);
+    assert.equal(candidate.lifecycleV11.skuPackage.c1ProductPlan.status, "inputs_ready");
+    assert.equal(candidate.lifecycleV11.skuPackage.c1RightsReviewRecord ?? null, null);
+    const decidedAt = new Date(Date.now() - 60000).toISOString();
+    candidate.gate1DecisionV1 = { schemaVersion: "gate1-decision-v1", decision: "accept", decidedAt, decidedBy: "synthetic-owner",
+      sourceRevision: candidate.dataRevision, roundIndex: 0 };
+    candidate.gate1AutopilotGrantV1 = structuredClone(buildGate1AutopilotGrant({ candidateId: candidate.id, sourceRevision: candidate.dataRevision,
+      decision: candidate.gate1DecisionV1, via: "gate1_accept", grantedAt: decidedAt, grantedBy: "synthetic-owner" }));
+    candidate.gate1RightsDeclarationV1 = structuredClone(buildGate1RightsDeclaration({ candidateId: candidate.id, sourceRevision: candidate.dataRevision,
+      input: { brandStatus: "unbranded", brandName: null, rights: "no_third_party_rights_identified", validMonths: 3 },
+      decision: candidate.gate1DecisionV1, declaredByUserId: "synthetic-owner", declaredAt: decidedAt }));
+    await start(candidate);
+    const current = await until(candidate.id, item => item.gate1AutopilotView?.ranSteps?.some(step => step.step === "c1_apply_rights") &&
+      item.gate1AutopilotView.status !== "running");
+    const saved = (await readDocument()).candidates[0];
+    const record = saved.lifecycleV11.skuPackage.c1RightsReviewRecord;
+    assert.equal(record.declaredByUserId, "synthetic-owner");
+    assert.deepEqual(record.ownerDeclaration.rights, { status: "verified", basis: "no_third_party_rights_identified" });
+    assert.equal(record.ownerDeclaration.reviewedAt, decidedAt);
+    assert.equal(current.gate1AutopilotView.ranSteps[0].step, "c1_apply_rights");
+    assert.ok(!current.gate1AutopilotView.stops.some(item => /品牌与权利声明/u.test(item.line)), JSON.stringify(current.gate1AutopilotView));
+    assert.ok((await readDocument()).runtime.operationAudit.some(item => item.action === "c1_sku_rights_gate1_declaration_apply" &&
+      item.actor?.source === "gate1_autopilot"));
     assert.equal(providerCalls, 0);
   });
 });

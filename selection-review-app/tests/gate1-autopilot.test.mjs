@@ -209,3 +209,34 @@ test("有许可的软件身份能把整理好的材料准备成文案请求，�
   const view = planGate1Autopilot({ candidate: saved });
   assert.deepEqual([view.status, view.stops[0].code], ["waiting_owner", "c1_paid_draft"]);
 });
+
+test("「做这件」卡上声明过品牌与权利：C1 计划一生成就由软件记下；老许可、过期、计划已冻结或已有声明都不动", async () => {
+  const { buildGate1RightsDeclaration } = await import("../lib/gate1-rights-declaration.mjs");
+  const declared = (extra = {}) => {
+    const candidate = product({ sku: { c1ProductPlan: { status: "inputs_ready", c1PlanId: "c1:sku-1:v1", inputSnapshots: {} } }, ...extra });
+    candidate.gate1RightsDeclarationV1 = buildGate1RightsDeclaration({ candidateId: "cand-1", sourceRevision: 2,
+      input: { brandStatus: "unbranded", brandName: null, rights: "no_third_party_rights_identified", validMonths: 3 }, decision,
+      declaredByUserId: "owner", declaredAt: AT });
+    return candidate;
+  };
+  const view = planGate1Autopilot({ candidate: declared(), observedAt: AT });
+  assert.equal(view.status, "running");
+  assert.deepEqual(view.next, { step: "c1_apply_rights", skuPackageId: "sku-1", c1PlanId: "c1:sku-1:v1", label: "按你在「做这件」卡上的声明记下品牌与权利" });
+  assert.equal(view.line, "软件正在按你在「做这件」卡上的声明记下品牌与权利");
+  assert.equal(gate1AutopilotMayAct(softwareActor, declared(), "c1_apply_rights"), true);
+  // 不记的几种：都回到原来那一步（整理属性与关键词），缺声明的话到时候照旧停下等主人。
+  assert.equal(planGate1Autopilot({ candidate: declared(), observedAt: "2027-01-11T10:00:00.000Z" }).next.step, "c1_local_material", "过期");
+  const v2 = declared();
+  v2.gate1AutopilotGrantV1 = { ...v2.gate1AutopilotGrantV1, scopeVersion: "gate1-autopilot-scope-v2",
+    scope: v2.gate1AutopilotGrantV1.scope.filter(step => step !== "c1_apply_rights") };
+  assert.equal(planGate1Autopilot({ candidate: v2, observedAt: AT }).next.step, "c1_local_material", "v2 许可不含这一步");
+  const recorded = declared();
+  recorded.lifecycleV11.skuPackage.c1RightsReviewRecord = { recordId: "r" };
+  assert.equal(planGate1Autopilot({ candidate: recorded, observedAt: AT }).next.step, "c1_local_material", "已经有声明");
+  const frozen = declared();
+  frozen.lifecycleV11.skuPackage.c1ProductPlan.inputSnapshots.skuRightsReview = { reviewId: "x" };
+  assert.equal(planGate1Autopilot({ candidate: frozen, observedAt: AT }).next.step, "c1_local_material", "计划已冻结");
+  const newRound = declared();
+  newRound.gate1DecisionV1 = { ...decision, decidedAt: "2026-10-12T00:00:00.000Z" };
+  assert.equal(planGate1Autopilot({ candidate: newRound, observedAt: AT }).status, "ready", "换了一轮：许可和声明都不算了");
+});

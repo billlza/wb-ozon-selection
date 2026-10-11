@@ -5,6 +5,7 @@ import {
   normalizeGate1AcceptInput, normalizeGate1ShortfallInput, normalizeGate1SkipInput, reopenGate1Round
 } from './gate1-decision.mjs';
 import { buildGate1AutopilotGrant } from './gate1-autopilot.mjs';
+import { buildGate1RightsDeclaration, gate1RightsLine } from './gate1-rights-declaration.mjs';
 
 /**
  * 「做这件」卡的服务端：给商品页的那份显示数据，和三条写入路（做、不做、利润没过线之后怎么办）。
@@ -148,8 +149,14 @@ export function createGate1Service({ readData, mutateData, now, estimateInputs, 
       current.gate1AutopilotGrantV1 = input.autopilot ? structuredClone(buildGate1AutopilotGrant({ candidateId,
         sourceRevision: input.dataRevision, decision: built.decision, via: 'gate1_accept', grantedAt: at,
         grantedBy: actor?.userId ?? null })) : null;
-      addHistory(current, 'user', 'gate1Accepted', input.autopilot
-        ? `${built.history}。不花钱的几步（重算利润、整理属性和关键词、准备文案请求）由软件接着做，要花钱或要主人签字时停下` : built.history, at);
+      // 卡上的品牌与权利声明单独存一份，和这一次「做这件」绑在一起；规格定下、C1 计划生成后由软件原样记成权利评审。
+      // 这一轮没声明（还没核实）就清掉上一轮的，免得旧声明挂在新一轮上。
+      current.gate1RightsDeclarationV1 = input.rights && actor?.userId ? structuredClone(buildGate1RightsDeclaration({ candidateId,
+        sourceRevision: input.dataRevision, input: input.rights, decision: built.decision, declaredByUserId: actor.userId, declaredAt: at })) : null;
+      const rightsLine = gate1RightsLine(current.gate1RightsDeclarationV1);
+      addHistory(current, 'user', 'gate1Accepted', [input.autopilot
+        ? `${built.history}。不花钱的几步（重算利润、整理属性和关键词、准备文案请求）由软件接着做，要花钱或要主人签字时停下` : built.history,
+      rightsLine ? `主人在卡上声明了${rightsLine}` : null].filter(Boolean).join('；'), at);
       finishWrite(current, at);
       return { candidate: publicCandidate(current, data.rules), decision: structuredClone(built.decision) };
     });

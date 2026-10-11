@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T18:30:37.751Z",
+  "frozenAt": "2026-10-11T18:49:38.016Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 992,
-      "sha256": "87ad740aa147dd7790bbd83dc125ef34c331bec7a9e6ac4d581e8f91bc5752a5",
+      "artifactCount": 994,
+      "sha256": "6307e4be406fc4b0a1a34deda03a584c785a6ff0e09031928da04eb764480423",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -380,7 +380,7 @@
       },
       {
         "path": "lib/c1-sku-rights-review-submission.mjs",
-        "sha256": "a3c1c9280bb92a62f7ac59af6b8f0d8fabe3dd4717044248a280b9f85d0c82f4"
+        "sha256": "c2b0946a9f3924574ddbb26339ae3ffce7a5128575f751a3e2f7fd0bae8faa4f"
       },
       {
         "path": "lib/c1-sku-rights-review.mjs",
@@ -440,7 +440,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "c41510b44148d3dd497264348dfd614f81fed71ee49a863015822bb8a16dd78c"
+        "sha256": "263ccc5e6268141c9c09c59ddf701747a723d075170cf76f57b7634732b38cba"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -636,15 +636,19 @@
       },
       {
         "path": "lib/gate1-autopilot.mjs",
-        "sha256": "a8552d48ce3e4110e5426bd6a66d300c5b9dd237c0ed3373249dfff59cc6354f"
+        "sha256": "e06c3d196d0c54f3cbc12aa826b10e0b9cee4f0f5d9896875cad8c49a3335d38"
       },
       {
         "path": "lib/gate1-decision.mjs",
-        "sha256": "a0a0e64967d80eefee4fbccfe178d14ae5ab0f291c21fa9f6f02f640757e1798"
+        "sha256": "a8a23070f4caafb6286c4080f2a912842fa2cccfbefc7cda6abe981d1a12c0c2"
       },
       {
         "path": "lib/gate1-preselect.mjs",
         "sha256": "adbbcdea86948941c7a748349d93fe7a8dcd8f5e206345bbd3070394fb4b9c2b"
+      },
+      {
+        "path": "lib/gate1-rights-declaration.mjs",
+        "sha256": "ede165ee8f7f813ec1bb1849b46d5ca4bcbd522162452008102e5176ef3579f1"
       },
       {
         "path": "lib/gate1-rough-profit.mjs",
@@ -652,7 +656,7 @@
       },
       {
         "path": "lib/gate1-service.mjs",
-        "sha256": "f43f860a3c63cf4e65d0cbb3f12937a12b6a8cdeff41f738eeb5590373fbf6b4"
+        "sha256": "8aa39aa4c2133fa01aa0d6885de8892412d71373beeabc2d41157efe22b521ad"
       },
       {
         "path": "lib/gate2-listing.mjs",
@@ -1684,7 +1688,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "3eab5d86c8efedacb85103a3d62f6b68355b8ca3bfa69cd8680c6470a5d11691"
+        "sha256": "29bb1f6f295ad4a67c7f1a4cea72de2d6534317806644e12886a2dcd0c9348be"
       },
       {
         "path": "src/App.jsx",
@@ -1808,7 +1812,7 @@
       },
       {
         "path": "src/components/Gate1Card.jsx",
-        "sha256": "34f5629163534d6e73257766b403dd550e0397bc213447fc659070217927d4b5"
+        "sha256": "e8cfcca2d0415d0b682061e7617268995ea8502640f0ed348e5be637441e0f7b"
       },
       {
         "path": "src/components/Gate2ListingCard.jsx",
@@ -1992,7 +1996,7 @@
       },
       {
         "path": "src/gate1View.js",
-        "sha256": "50d2b50055482420748544bf3254c8ab34a488e8b60a2a5693576d905a3d0a7d"
+        "sha256": "bd3167d9d8450a63d027689ab3d151023e640f54b48280c34cf19cb845a376c8"
       },
       {
         "path": "src/headerStatusView.js",
@@ -2528,7 +2532,7 @@
       },
       {
         "path": "tests/c1-sku-rights-review-submission.test.mjs",
-        "sha256": "4598de16649e27baf220732a750e6ad26b7a9af140ca0697d1b96e7775f0704c"
+        "sha256": "5d51d87b34a6458724ccc43a6155fcd53f281fb969a533b0a62980288bb57a41"
       },
       {
         "path": "tests/c1-sku-rights-review.test.mjs",
@@ -3108,15 +3112,15 @@
       },
       {
         "path": "tests/gate1-autopilot-api.test.mjs",
-        "sha256": "6d0c4879df123e59882fbd06063f97abec0fc4d086ac0b770d6936681d57c3ac"
+        "sha256": "dee8c3e63da2448e8833abee0c1a1ad5664d7a6b5417e39c5b91bebe7df48633"
       },
       {
         "path": "tests/gate1-autopilot.test.mjs",
-        "sha256": "5c318f11bb930f45056f4478e3a0b999d5389d9770a5512eb0320d7780f6ebda"
+        "sha256": "22ae174d7b12cccb3582f0a4221ce88320fc6db5b071c1484001496dcbc84410"
       },
       {
         "path": "tests/gate1-card-ui.test.mjs",
-        "sha256": "3c83f0e6b1a328449c2a4e2e84e93b9b783955183d910a796ea99537874d139c"
+        "sha256": "01166a7f3474d6fa35d1b24016407dced2b23857b0dd9e856c89127a524a50c6"
       },
       {
         "path": "tests/gate1-decision.test.mjs",
@@ -3127,8 +3131,12 @@
         "sha256": "4ff7b109c307d56ac1ca72f0fd5110d4d91e4de6dd5f9e06bdb8cc7a88fd7419"
       },
       {
+        "path": "tests/gate1-rights-declaration.test.mjs",
+        "sha256": "fdd857d07fe3df223b7d47a9fe69a2cb5552e2e38d8426a227f4919388b18341"
+      },
+      {
         "path": "tests/gate1-service.test.mjs",
-        "sha256": "2a1bb7e23cd27d02e51643c2ab231dfcf0cfcb192d73d367dcf306c20c422353"
+        "sha256": "0d2e3561d160ed8656958353ddb0475c395dc9a15a24690342318c27877706e3"
       },
       {
         "path": "tests/gate2-listing-api.test.mjs",
@@ -4423,6 +4431,10 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/c1-sku-rights-review-submission.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/gate1-autopilot.mjs",
           "status": "present_in_integration_source"
         },
@@ -4432,6 +4444,10 @@
         },
         {
           "path": "lib/gate1-preselect.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "lib/gate1-rights-declaration.mjs",
           "status": "present_in_integration_source"
         },
         {
@@ -4592,6 +4608,10 @@
         },
         {
           "path": "tests/gate1-preselect.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/gate1-rights-declaration.test.mjs",
           "status": "present_in_integration_source"
         },
         {

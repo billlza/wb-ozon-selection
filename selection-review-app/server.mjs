@@ -710,6 +710,11 @@ async function runGate1AutopilotStep(candidate, next) {
       skuPackageId: next.skuPackageId, ...keys } });
     return;
   }
+  if (next.step === "c1_apply_rights") {
+    await c1SkuRightsReviewUseCase.applyGate1Declaration({ actor, input: { candidateId, skuPackageId: next.skuPackageId,
+      expectedRevision: revision, expectedC1PlanId: next.c1PlanId, ...keys } });
+    return;
+  }
   if (next.step === "c1_local_material") {
     await persistC1KeywordPlanningLocalMaterial({ repository: businessStateRepository, runtimeMode: runtimeConfiguration.deploymentMode,
       actor, candidateId, expectedRevision: revision, producedAt: now(), codexOffline: true, producer: produceC1LocalPreparation });
@@ -751,7 +756,7 @@ async function advanceGate1Autopilot(candidateId) {
       const candidate = document.candidates.find(item => item.id === candidateId);
       if (!candidate || !gate1AutopilotGrantCurrent(candidate)) break;
       const plan = planGate1Autopilot({ candidate, bExactCommissionRuntimeView: gate1AutopilotRecalculationView(document, candidate),
-        c1EditorialPending: c1EditorialPendingFor(candidate) });
+        c1EditorialPending: c1EditorialPendingFor(candidate), observedAt: now() });
       if (plan?.status !== "running") break;
       const attempt = `${plan.next.step}:${candidate.dataRevision}`;
       if (attempt === previous) {
@@ -816,7 +821,7 @@ async function gate1AutopilotContinueRoute(req, res, pathname) {
       throw httpError(409, "商品资料已变化，请刷新后再点。", { code: "revision_conflict", currentRevision: current.dataRevision });
     }
     const plan = planGate1Autopilot({ candidate: current, bExactCommissionRuntimeView: gate1AutopilotRecalculationView(data, current),
-      c1EditorialPending: c1EditorialPendingFor(current) });
+      c1EditorialPending: c1EditorialPendingFor(current), observedAt: now() });
     if (!plan?.next) {
       throw httpError(409, plan?.line ? `现在没有软件能接着做的步骤：${plan.line}。` : "这件商品现在没有软件能接着做的步骤。",
         { code: "gate1_autopilot_nothing_to_do" });
@@ -4069,7 +4074,8 @@ function publicCandidate(candidate, rules, queueInfo = {}, evidencePacks = [], c
     executionRuntimeView: buildCurrentExecutionRuntimeView(candidate),
     bExactCommissionRuntimeView,
     // 「做这件」之后软件做到了哪一步、停在哪儿等主人（lib/gate1-autopilot.mjs）。只读已保存的记录。
-    gate1AutopilotView: planGate1Autopilot({ candidate, bExactCommissionRuntimeView, c1EditorialPending: c1EditorialPendingFor(candidate) }),
+    gate1AutopilotView: planGate1Autopilot({ candidate, bExactCommissionRuntimeView, c1EditorialPending: c1EditorialPendingFor(candidate),
+      observedAt: now() }),
     // 「上架」那一道确认到了哪一段：等传图、可以预演上架卡、或者卡已生成待授权（lib/gate2-listing.mjs）。卡本身单独取。
     gate2ListingView: buildGate2ListingView(candidate),
     // 「这件的佣金还是估算的」那一块。挂在每一份候选视图上，所以从条件测算一路到上架之前的每一屏都看得见——
