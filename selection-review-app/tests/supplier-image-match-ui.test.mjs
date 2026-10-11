@@ -243,6 +243,8 @@ test("the Ozon block prefills the last search's words, else the product's own Ru
   const last = ozonImageMatchView(candidate({ productName: "Жилет для кошки", ozonImageMatch: ozonCompared({ query: "попона для собаки" }) }));
   assert.deepEqual([last.suggestedQuery, last.query], ["попона для собаки", "попона для собаки"]);
   assert.match(last.suggestionNote, /上次在 Ozon 搜用的词/);
+  const translated = ozonImageMatchView(candidate({ intake: { ozonWords: { status: "completed", query: "жилет для собак" } } }));
+  assert.deepEqual([translated.suggestedQuery, translated.suggestionNote], ["жилет для собак", "AI 翻译的俄文词，可以改。"]);
   for (const value of ["жилет", " жилет  для\u00a0кошки ", "a", "12", "<b>жилет</b>", "https://www.ozon.ru/", "ж".repeat(101), null]) {
     assert.equal(ozonSearchQueryReady(value), normalizeOzonSearchQuery(value) !== null);
   }
