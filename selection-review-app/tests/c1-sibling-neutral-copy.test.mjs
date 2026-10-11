@@ -112,3 +112,16 @@ test('reviewed color slots allow normal words after the exact color without inte
     'Мини-жилет из ткани оксфорд подходит для кошек. Его также можно надеть на винную бутылку. Модель подходит для любого сезона.');
   assert.equal(content.seoTitleDraft.reviewZh, '宠物服装：适用于猫的迷你背心。');
 });
+
+// 张大帅交接时复现的那一条：五点不止一条时，第二条曾被当成「已审过的替换文本」处理（map 把下标传了进去），整批报错。
+test('every bullet without a colour is kept as it is, not only the first one', () => {
+  const second = piece('Подходит для любого сезона: модель из ткани оксфорд.', '四季适用：牛津布款式。',
+    [paths.season, paths.material], ['saved-vest-keywords/2'],
+    [{ value: 'На любой сезон', dictionaryValueId: 30937 }, { value: 'Оксфорд', dictionaryValueId: 61979 }]);
+  const third = piece('Можно надеть на винную бутылку.', '也可以套在酒瓶上。', [paths.uses], ['saved-vest-keywords/4'], [['猫', '酒瓶']]);
+  const plan = { ...vestPlan, bulletPointsDraft: [...vestPlan.bulletPointsDraft, second, third] };
+  const content = buildC1SiblingNeutralContent(plan);
+  assert.deepEqual(content.bulletPointsDraft.map(item => item.text), plan.bulletPointsDraft.map(item => item.text));
+  assert.deepEqual(content.bulletPointsDraft.map(item => item.reviewZh), plan.bulletPointsDraft.map(item => item.reviewZh));
+  assert.deepEqual(content.differences.bulletIndexes, []);
+});

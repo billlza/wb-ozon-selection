@@ -125,7 +125,8 @@ export function buildC1SiblingNeutralContent(sourcePlan) {
   };
   const title = neutralizePiece(sourcePlan.seoTitleDraft, reviewed?.title);
   const description = neutralizePiece(sourcePlan.descriptionDraft, reviewed?.description);
-  const bullets = sourcePlan.bulletPointsDraft.map(neutralizePiece);
+  // 五点没有审过的替换文本：带颜色的五点要先改源方案，不带颜色的原样沿用。map 会把下标当第二个参数传进来，所以不能直接 map(neutralizePiece)。
+  const bullets = sourcePlan.bulletPointsDraft.map(piece => neutralizePiece(piece));
   const keywords = { ...structuredClone(sourcePlan.searchKeywordsDraft), keywords: structuredClone(neutralKeywords) };
   const refs = [...new Set([title, description, ...bullets].flatMap(piece => piece.keywordEvidenceRefs)
     .concat(neutralKeywords.flatMap(item => item.evidenceRefs)))];

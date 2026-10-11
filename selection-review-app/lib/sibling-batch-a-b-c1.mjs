@@ -206,7 +206,6 @@ export async function commitSiblingBatchABAndC1({ repository, runtimeMode, actor
       const otherCosts = buildLifecycleBExplicitOtherCosts(contextual, profitRule, { asOf: at });
       const result = runRealAConfirmationToBAndC1({ candidate: contextual, submission,
         evidencePacks: packs, currentCommissionCatalogs: catalogs, otherCosts, confirmedAt: at });
-      if (result.profitModel.result !== 'passed' || result.c1Handoff === null) fail('SIBLING_BATCH_A_B_NOT_PASSED');
       assertCurrentBCommissionEvidence({ bundle: result.systemEvidenceBundle,
         evidencePacks: packs, currentCommissionCatalogs: catalogs, asOf: at });
       return { child, result, platform, reuse, siblingSource, context: contextual.lifecycleEvidenceContextV11 };
@@ -215,6 +214,27 @@ export async function commitSiblingBatchABAndC1({ repository, runtimeMode, actor
       document.evidencePacks = document.evidencePacks ?? [];
       commitLifecycleBEvidencePacks(document, newPacks, { createdAt: at, currentCommissionCatalogs: catalogs,
         createdBy: 'sibling_batch_a_confirmation_system_evidence' });
+    }
+    // 有颜色没过 B：整批仍不推进（过线的颜色也不动），但没过线的那份利润结论要存下来（AGENTS §5.4），
+    // 读到的证据包也留着，下次提交不用再读一遍平台。记在这个颜色自己身上，不碰它的生命周期，改价后可以整批再提交。
+    const failed = prepared.filter(({ result }) => result.profitModel.result !== 'passed' || result.c1Handoff === null);
+    if (failed.length) {
+      for (const { child, result } of failed) {
+        child.siblingBatchBAttemptsV1 = [...(Array.isArray(child.siblingBatchBAttemptsV1) ? child.siblingBatchBAttemptsV1 : []), {
+          schemaVersion: 'sibling-batch-b-attempt-v1', parentCandidateId: parent.id, parentRevision: parent.dataRevision,
+          sourceRevision: child.dataRevision, recordedAt: at, recordedBy: actor.userId,
+          result: result.profitModel.result, profitModel: structuredClone(result.profitModel), platformWrites: 0 }];
+        child.dataRevision += 1;
+        child.updatedAt = at;
+        child.lastModifiedBy = actor.userId;
+        assertSafeBusinessMutationCandidate(child);
+      }
+      return { changed: true, document, result: { status: 'b_not_passed',
+        members: failed.map(({ child, result }) => ({ candidateId: child.id, supplierSkuId: result.skuPackage?.supplierSkuId ?? null,
+          result: result.profitModel.result, unitProfitRmb: result.profitModel.unitProfitRmb ?? null,
+          profitMargin: result.profitModel.profitMargin ?? null, resultRevision: child.dataRevision })),
+        passedMembers: prepared.length - failed.length, platformWrites: 0,
+        externalRequests: Object.values(preparedEvidence?.externalAccesses ?? {}).flat().length } };
     }
     for (const { child, result, context, platform, reuse, siblingSource } of prepared) {
       child.siblingSourceV1 = structuredClone(siblingSource);
