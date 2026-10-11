@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T07:34:58.348Z",
+  "frozenAt": "2026-10-11T15:15:59.633Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 923,
-      "sha256": "1eb743a00cc50181cdcb9b74c7b06e404f66b3f6312c3b8393e0ab8e287f7151",
+      "sha256": "8668e5624d87494d38c48aa5d615086ee472eb00391d94f0d4466f35cb9aa567",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -648,7 +648,7 @@
       },
       {
         "path": "lib/intake-pipeline.mjs",
-        "sha256": "701f5794e1338f6c5330f7df5d9126f2bca7712afe9b0643ba5d8745af80bbcd"
+        "sha256": "1b999300580b81a25f2d02632859995a18416fb819c190b35756bc6aaa46070e"
       },
       {
         "path": "lib/intake-rough-profit.mjs",
@@ -1588,7 +1588,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "99eec0fba5909a7ac6583d3bdba30ed24769bb85ef1f11d7d3ff727f0589ae47"
+        "sha256": "3588f02b12500449c4fe372eedc9d18d649f3b4e0177201bc177ce2a8c7b2b2f"
       },
       {
         "path": "src/App.jsx",
@@ -1604,7 +1604,7 @@
       },
       {
         "path": "src/api.js",
-        "sha256": "f0af3566894848fcfc542a8e6eda73fe2c0a71682e710f93088282100b8dc911"
+        "sha256": "a6fbcbd7a3dc22331f8b88425920abb04dc6bcc0343e051fec983b4737350114"
       },
       {
         "path": "src/bExactCommissionInput.js",
@@ -3004,7 +3004,7 @@
       },
       {
         "path": "tests/intake-api.test.mjs",
-        "sha256": "8ab1f8b2a8a59d8738d11d7c7e3abf57afa49acd410447884476a9c6a3bab96b"
+        "sha256": "8ad9193d92a6a0b0973290bf33eb4e8ba22a91f1a85a1d499a396036989304f1"
       },
       {
         "path": "tests/intake-job-bridge.test.mjs",
@@ -3012,7 +3012,7 @@
       },
       {
         "path": "tests/intake-pipeline.test.mjs",
-        "sha256": "318706d3dbba332091df97c85d7f204184f8d0538b5d164164bdc7047af4e4cb"
+        "sha256": "ab7a626dff631450a70e2a9af97d4fb5323af2bb058faeec090c79b0b9bae867"
       },
       {
         "path": "tests/intake-rough-profit.test.mjs",

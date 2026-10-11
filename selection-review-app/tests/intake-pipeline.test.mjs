@@ -53,6 +53,11 @@ test("查重按商品号认：之前贴过的、Seerfar 挑到同一个 1688 货
   assert.equal(intakeDuplicateOf([resolvedShare], pdd)?.id, "SHARE", "短链读完以后，贴商品页链接也认得出来");
   assert.equal(intakeDuplicateOf([resolvedShare], share)?.id, "SHARE");
   assert.equal(intakeDuplicateOf([{ ...otherPdd, id: "OLD", sourceUrl: PDD, workflowStatus: "eliminated" }], pdd)?.id, "OLD");
+  // 同一个货源进另一家店是那家店自己的一件（AGENTS.md §3.2）；没写店铺的旧商品按同一家算。
+  const miska = { id: "MISKA", targetStore: "miska", sourceUrl: PDD };
+  assert.equal(intakeDuplicateOf([miska], pdd, "miska")?.id, "MISKA");
+  assert.equal(intakeDuplicateOf([miska], pdd, "dandanshu"), null);
+  assert.equal(intakeDuplicateOf([{ id: "LEGACY", sourceUrl: PDD }], pdd, "dandanshu")?.id, "LEGACY");
 });
 
 test("一件商品走到哪一步：排队 → 读货源页 → 1688 → Ozon → 粗算；作业在等插件时不排下一步", () => {
@@ -165,15 +170,23 @@ test("写回 stage：变了才写；停下的一直停着，直到主人重跑",
   assert.equal(intakeStageUpdate({ ...stuck, workflowStatus: "eliminated" }), null);
 });
 
-test("重跑：只对停下而且能重跑的；读货源页重跑时后面几步一起重来，结果未知的算主人知道了；不能重跑的说清楚", () => {
+test("重跑：只对停下而且能重跑的；读货源页重跑时后面几步一起重来；结果未知的先核实、不重放，核实后另点重跑；不能重跑的说清楚", () => {
   const unknown = withJobs(intakeCandidate("R"), { sourceCaptureId: "S", supplierMatchId: "OLD" },
     { sourceCapture: { captureId: "S", status: "failed", jobStatus: "unknown_outcome", failureCode: "unknown_outcome" } });
-  const plan = intakeRetryPlan(unknown, { requestedAt: "2026-10-10T06:00:00.000Z", requestedBy: "owner-1" });
-  assert.equal(plan.ok, true);
-  assert.equal(plan.acknowledgeSourceUnknown, true);
-  assert.deepEqual([plan.intake.stage, plan.intake.jobs, plan.intake.lastRetry.step],
-    ["queued", { sourceCaptureId: null, supplierMatchId: null, ozonMatchId: null }, "capture_source"]);
-  assert.equal(intakeProgress({ ...unknown, intake: plan.intake }).next, "capture_source");
+  assert.equal(intakeProgress(unknown).blocker.code, "unknown_outcome");
+  const reconcile = intakeRetryPlan(unknown, { requestedAt: "2026-10-10T06:00:00.000Z", requestedBy: "owner-1" });
+  assert.deepEqual([reconcile.ok, reconcile.reconcileOnly, reconcile.acknowledgeSourceUnknown], [true, true, true]);
+  assert.deepEqual([reconcile.intake.stage, reconcile.intake.blocker.code, reconcile.intake.jobs.sourceCaptureId, reconcile.intake.lastRetry.action],
+    ["blocked", "source_unknown_reconciled", "S", "reconcile"], "核实这一下不排新作业（AGENTS.md §8.3）");
+  // 主人核实过（录入页或商品页上）以后，下一下「重跑」才另起一轮。
+  const reconciled = { ...unknown, sourceCapture: { ...unknown.sourceCapture, jobStatus: "failed", reviewedAt: "2026-10-10T06:00:00.000Z",
+    reviewedBy: "owner", acknowledgement: "no_result_received" } };
+  assert.equal(intakeProgress(reconciled).blocker.code, "source_unknown_reconciled");
+  const plan = intakeRetryPlan({ ...reconciled, intake: reconcile.intake }, { requestedAt: "2026-10-10T06:01:00.000Z", requestedBy: "owner-1" });
+  assert.deepEqual([plan.ok, plan.reconcileOnly, plan.acknowledgeSourceUnknown], [true, false, false]);
+  assert.deepEqual([plan.intake.stage, plan.intake.jobs, plan.intake.lastRetry.step, plan.intake.lastRetry.action],
+    ["queued", { sourceCaptureId: null, supplierMatchId: null, ozonMatchId: null }, "capture_source", "rerun"]);
+  assert.equal(intakeProgress({ ...reconciled, intake: plan.intake }).next, "capture_source");
 
   const read = withJobs(intakeCandidate("R2"), { sourceCaptureId: "S", supplierMatchId: "I" },
     { sourceCapture: captured("S"), supplierImageMatch: { captureId: "I", status: "failed", jobStatus: "failed", failureCode: "site_verification_required" } });
