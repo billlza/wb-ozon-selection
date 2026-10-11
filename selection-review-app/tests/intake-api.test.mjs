@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { allocatedTestPorts, stopApiProcess } from "./helpers/api-process-lifecycle.mjs";
 import { newIntakeRecord, parseIntakeLinks } from "../lib/intake-pipeline.mjs";
 
@@ -362,5 +363,74 @@ test("贴货源链接：接到还没有货源的那一件上，从读货源页�
   await api.heartbeat();
   const pending = await api.pending("supplier_capture");
   assert.ok(["SEERFAR-2", "DELISTED"].includes(pending.candidateId));
+  assert.equal(api.stderr.join(""), "");
+});
+
+test("Ozon 以图搜没找到首图一致的：AI 把货源标题翻成俄文词，再用它在 Ozon 搜一次；每件只翻一次，翻得不对照样往下粗算", async t => {
+  // A stand-in for the AI gateway: it answers every job at once and records what it was sent.
+  const requests = [];
+  const outputs = [{ query: "жилет для собак" }, { query: "合成猫窝" }];
+  const gateway = createServer(async (req, res) => {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    if (req.method !== "POST" || req.url !== "/v1/inference-jobs") { res.writeHead(404, { "content-type": "application/json" }).end("{}"); return; }
+    const request = JSON.parse(body);
+    requests.push(request);
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ jobId: `GW-synthetic-${requests.length}`, status: "completed",
+      model: request.model, taskType: request.taskType, receipt: { output: outputs[requests.length - 1],
+        usage: { prompt_tokens: 100, completion_tokens: 8, total_tokens: 108 }, completedAt: new Date().toISOString() } }));
+  });
+  await new Promise(resolve => gateway.listen(ports.gateway, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => gateway.close(resolve)));
+  const api = await startApi(t, []);
+  await api.login();
+  const [first, second] = (await api.post("/api/intake/links", { links: [PDD_A, PDD_B], targetStore: "miska" })).body.items.map(item => item.candidateId);
+  await api.heartbeat();
+
+  await api.runSource(first, PDD_A, "合成宠物背心 狗狗衣服");
+  await api.failMatch(first, "supplier_image_match", "site_login_required");
+  const image = await api.failMatch(first, "ozon_image_match", "image_upload_unavailable");
+  // While the words are being translated the plugin is free, so the next product may start reading its source page first.
+  const next = await api.until("下一个作业", queue => (queue.pendingStart && queue.pendingStart.captureId !== image.captureId ? queue.pendingStart : null));
+  const secondSourceFirst = next.kind === "supplier_capture";
+  if (secondSourceFirst) await api.runSource(second, PDD_B, "合成猫窝 冬季");
+  const text = await api.until("用俄文词搜那一次排好", queue => (queue.pendingStart?.kind === "ozon_image_match" &&
+    queue.pendingStart.captureId !== image.captureId ? queue.pendingStart : null));
+  assert.equal(text.candidateId, first);
+  assert.equal(requests.length, 1);
+  assert.deepEqual([requests[0].candidateId, requests[0].taskType, requests[0].businessPhase, requests[0].input.images],
+    [first, "russian_translation", "A", []]);
+  assert.ok(requests[0].input.text.includes("合成宠物背心 狗狗衣服"), "只发货源页上的标题");
+  const claim = await api.claim(text.captureId);
+  assert.equal(claim.status, 200, JSON.stringify(claim.body));
+  assert.deepEqual([claim.body.captureJob.searchBy, claim.body.captureJob.query], ["text", "жилет для собак"]);
+  const searching = await api.record(first);
+  assert.deepEqual([searching.ozonImageMatch.searchBy, searching.ozonImageMatch.queryOrigin, searching.intake.jobs.ozonTextMatchId,
+    searching.intake.jobs.ozonMatchId], ["text", "ai_translation", text.captureId, image.captureId]);
+  const receipt = searching.intake.ozonWords;
+  assert.deepEqual([receipt.status, receipt.attempt, receipt.query, receipt.gatewayJobId, receipt.validation, receipt.imageCaptureId,
+    receipt.usage, receipt.authorization.kind], ["completed", 1, "жилет для собак", "GW-synthetic-1", "passed", image.captureId,
+    { inputTokens: 100, outputTokens: 8, totalTokens: 108 }, "owner_standing_decision"]);
+  assert.deepEqual(["intakeOzonWordsRequested", "intakeOzonWordsReady"].map(action => searching.history.some(entry => entry.action === action)), [true, true]);
+  const job = claim.body.captureJob;
+  const stopped = await api.post(`/api/candidates/${first}/ozon-match/result`, { captureId: job.captureId, token: job.token,
+    dataRevision: job.dataRevision, status: "failed", failureCode: "results_empty", observedAt: new Date().toISOString() },
+  { authenticated: false, headers: { Origin: extensionOrigin } });
+  assert.equal(stopped.status, 200, JSON.stringify(stopped.body));
+  await api.until("第一件找完", async () => ((await api.record(first)).intake.stage === "ready"));
+
+  // The second product: the model answers in Chinese, so nothing is searched and the estimate goes ahead without it.
+  if (!secondSourceFirst) await api.runSource(second, PDD_B, "合成猫窝 冬季");
+  await api.failMatch(second, "ozon_image_match", "image_upload_unavailable");
+  const done = await api.until("第二件找完", async () => {
+    const current = await api.record(second);
+    return current.intake.stage === "ready" ? current : null;
+  });
+  assert.deepEqual([done.intake.ozonWords.status, done.intake.ozonWords.validation, done.intake.ozonWords.failure.layer,
+    done.intake.jobs.ozonTextMatchId, done.ozonImageMatch.searchBy], ["failed", "failed", "validation", null, "image"]);
+  assert.ok(done.history.some(entry => entry.action === "intakeOzonWordsFailed"));
+  assert.ok(done.roughProfit.missing.includes("Ozon 售价"));
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(requests.length, 2, "每件每轮只翻一次，没翻成也不重发");
   assert.equal(api.stderr.join(""), "");
 });

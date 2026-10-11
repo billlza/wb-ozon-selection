@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T15:15:59.633Z",
+  "frozenAt": "2026-10-11T15:29:22.470Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 923,
-      "sha256": "8668e5624d87494d38c48aa5d615086ee472eb00391d94f0d4466f35cb9aa567",
+      "artifactCount": 925,
+      "sha256": "43c63d6599dc58c8263288e6c972853e4ea05ba008a8c3536323762851ef7255",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -436,7 +436,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "12e4bd9c5918452c228c828d498701abec1b6f638d39be94232e04d6b2ca3c4b"
+        "sha256": "49e0be724a733deb2c7216ae88d6ae6145190cb3580ddee0ca05fda8a7b15e78"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -647,8 +647,12 @@
         "sha256": "8a32108a337bc8f6dbcb78f47df5cab4cfd220b3035a1344e4774c44aa5e76be"
       },
       {
+        "path": "lib/intake-ozon-words.mjs",
+        "sha256": "52818d87de8e20b99bd272c1faeab98334a6c0cb37961a0ebdba10a78b440bcb"
+      },
+      {
         "path": "lib/intake-pipeline.mjs",
-        "sha256": "1b999300580b81a25f2d02632859995a18416fb819c190b35756bc6aaa46070e"
+        "sha256": "d6042a76f6a0dd1af649dcdb8a243fd8542f1e935f96c3fc9447194b8f8f49de"
       },
       {
         "path": "lib/intake-rough-profit.mjs",
@@ -888,7 +892,7 @@
       },
       {
         "path": "lib/ozon-same-product-match.mjs",
-        "sha256": "bde4521cddb8bc97347cbe74027f6cc5623c34a2857daefca9aa0a456b71c72e"
+        "sha256": "2fa918f665574e7815ab1eb86a151f06d2bcfccc5b16c62072be36e718dd6663"
       },
       {
         "path": "lib/ozon-search-query.mjs",
@@ -1588,7 +1592,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "3588f02b12500449c4fe372eedc9d18d649f3b4e0177201bc177ce2a8c7b2b2f"
+        "sha256": "84781369e9e31a73cbc70b15cfb81292e5fd56cb42d8331fd85770713a3746c2"
       },
       {
         "path": "src/App.jsx",
@@ -3004,15 +3008,19 @@
       },
       {
         "path": "tests/intake-api.test.mjs",
-        "sha256": "8ad9193d92a6a0b0973290bf33eb4e8ba22a91f1a85a1d499a396036989304f1"
+        "sha256": "e05841d7aa6344a38c7e3c8b447300fdb18c04ff7d2b757c9a6ee1f972602d9b"
       },
       {
         "path": "tests/intake-job-bridge.test.mjs",
         "sha256": "6284ba64cfebf029ac7bb0a1b7d7f56a2012bae9eabc7425e90b9fef317b7d90"
       },
       {
+        "path": "tests/intake-ozon-words.test.mjs",
+        "sha256": "fd598617e97f05c3b9ac2d6f922111436b031b870be2b7073b4e53f100d03b49"
+      },
+      {
         "path": "tests/intake-pipeline.test.mjs",
-        "sha256": "ab7a626dff631450a70e2a9af97d4fb5323af2bb058faeec090c79b0b9bae867"
+        "sha256": "9972efc9299c2a36f41d0463ef289d62f74627ee68c328cc39ea316f27a3e05d"
       },
       {
         "path": "tests/intake-rough-profit.test.mjs",
@@ -4123,6 +4131,10 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/intake-ozon-words.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/intake-pipeline.mjs",
           "status": "present_in_integration_source"
         },
@@ -4232,6 +4244,10 @@
         },
         {
           "path": "tests/intake-job-bridge.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/intake-ozon-words.test.mjs",
           "status": "present_in_integration_source"
         },
         {
