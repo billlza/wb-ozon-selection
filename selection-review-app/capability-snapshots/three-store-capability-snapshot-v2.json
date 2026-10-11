@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T17:36:57.287Z",
+  "frozenAt": "2026-10-11T17:49:42.274Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 986,
-      "sha256": "05e407e41bdf9001c61c0dc74d627e33023ee3ed2518e7fba4ef004d00209edc",
+      "sha256": "04656262ff7b212b835a28851fd6d2becd9ae75ae4ce6de2f1e86849442b25d4",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -636,7 +636,7 @@
       },
       {
         "path": "lib/gate1-autopilot.mjs",
-        "sha256": "e76a87c49a7105e00624c9d06ef38b57ec3ba7dcfdfc0782e8953e86a8a4f213"
+        "sha256": "0730d20ba5873c3c2c10a2b7a7ea1587a858bd09bb0e1feee0155beebc740755"
       },
       {
         "path": "lib/gate1-decision.mjs",
@@ -1620,7 +1620,7 @@
       },
       {
         "path": "scripts/ci-test-suites.mjs",
-        "sha256": "017a5619ac3bf232a966c3e73fdb7f1814f7fc2ab0dd255fcdf8afac2b5b7358"
+        "sha256": "7e1481df8d31c009de253539273ce36166a69db5cfb86fe511e873bf12165e1a"
       },
       {
         "path": "scripts/deploy-local-runtime.sh",
@@ -1680,7 +1680,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "97366a26b96d56c9fcdf38e37ed1d96ea0473f636e434d37620e273324fd2097"
+        "sha256": "8363d6f1aa989a4134287ecc24bc7b79d69e6255ea2c0ee91aafd6973b6254f8"
       },
       {
         "path": "src/App.jsx",
@@ -2608,7 +2608,7 @@
       },
       {
         "path": "tests/ci-api-boundary.test.mjs",
-        "sha256": "0e5ac35c6d436c9511bcf06cfe8f22a2538250fbc5c01161258650414ef0da31"
+        "sha256": "ee7c22ece74e056c5507722c3a84b0a277c3b2037fbbbd118ce789e346ed1181"
       },
       {
         "path": "tests/ci-test-policy.test.mjs",
@@ -3096,7 +3096,7 @@
       },
       {
         "path": "tests/gate1-autopilot.test.mjs",
-        "sha256": "03b2f1f00edcb4624738f10eec5ddfa2773390ef59f6424b58e9d173f4a959a7"
+        "sha256": "3e6bc6709a5ce376fa79e17267b677e9f3e3ccf04a5038278142f0147fb627f7"
       },
       {
         "path": "tests/gate1-card-ui.test.mjs",
