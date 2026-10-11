@@ -202,6 +202,8 @@ export function intakeProgress(candidate, { login1688Expired = false } = {}) {
   if (!isObject(intake)) return null;
   const idle = (stage, extra = {}) => ({ stage, blocker: null, step: null, next: null, waiting: false, ...extra });
   if (candidate.workflowStatus === "eliminated") return idle(intake.stage, { blocker: intake.blocker ?? null, closed: true });
+  // 主人在「做这件」卡上做过决定（candidate.gate1），这件就不归录入流水线管了：不再排作业、不再改它的记录。
+  if (isObject(candidate.gate1)) return idle(intake.stage, { blocker: intake.blocker ?? null, closed: true });
   if (intake.stage === "ready") return idle("ready");
   if (intake.stage === "blocked" && isObject(intake.blocker)) return idle("blocked", { blocker: intake.blocker, step: intake.blocker.step ?? null });
   const jobs = isObject(intake.jobs) ? intake.jobs : {};
@@ -275,7 +277,7 @@ export function intakeQueue(candidates) {
   const active = (Array.isArray(candidates) ? candidates : [])
     .filter((candidate) => isObject(candidate?.intake) && candidate.workflowStatus !== "eliminated")
     .map((candidate) => ({ candidate, progress: intakeProgress(candidate, { login1688Expired }) }))
-    .filter(({ progress }) => progress && progress.stage !== "ready");
+    .filter(({ progress }) => progress && progress.stage !== "ready" && !progress.closed);
   active.sort((left, right) => time(left.candidate.intake.submittedAt) - time(right.candidate.intake.submittedAt) ||
     (left.candidate.intake.batch?.index ?? 0) - (right.candidate.intake.batch?.index ?? 0));
   const waiting = active.filter(({ progress }) => progress.stage === "queued");
@@ -338,6 +340,43 @@ export function intakeRetryPlan(candidate, { requestedAt, requestedBy } = {}) {
       (source?.jobStatus === "unknown_outcome" || source?.failureCode === "unknown_outcome") && !source?.reviewedAt,
     intake: { ...candidate.intake, stage: step === "capture_source" ? "queued" : STEP_STAGE[step], blocker: null, jobs, skips,
       finishedAt: null, lastRetry: { step, code: progress.blocker.code, requestedAt, requestedBy } }
+  };
+}
+
+/** 货源这一步停下、而且只拦这一件的（下架、没货、没价、分享链接没打开、预售太晚、没首图、读不出来）；结果未知的要先由主人重跑或核实。 */
+function sourceUnusable(candidate, progress) {
+  if (progress) {
+    return progress.stage === "blocked" && progress.blocker?.step === "capture_source" && progress.blocker.scope === "item" &&
+      progress.blocker.code !== "unknown_outcome";
+  }
+  const source = candidate.sourceCapture;
+  if (source?.status !== "captured_waiting_owner_selection") return true;
+  return source.offerStatus === "off_sale" ||
+    !(Array.isArray(source.skuChoices) ? source.skuChoices : []).some((sku) => sku?.inStock !== false && Number(sku?.priceCny) > 0);
+}
+
+/**
+ * 「贴货源链接」：把一条拼多多 / 1688 链接接到一件还没有能用货源的商品上（Seerfar 挑来的、货源下架 / 没货 / 没价的），
+ * 这件从读货源页重新走一遍，不另建一件。只在「做这件」之前、没有作业在跑、主人没确认过供货时可以接；别的商品已经有这个货源时不接。
+ * 返回 { ok: false, code, duplicate? } 或 { ok: true, intake, previous }；previous 是换下来的旧链接和旧记录，原样留存，不覆盖历史。
+ */
+export function intakeAttachPlan(candidate, link, { candidates = [], requestedAt, requestedBy, batchId, busy = false, stillOpen = () => true } = {}) {
+  if (!isObject(candidate)) return { ok: false, code: "intake_attach_target_missing" };
+  if (candidate.workflowStatus === "eliminated") return { ok: false, code: "intake_attach_target_eliminated" };
+  if (isObject(candidate.gate1) || !stillOpen(candidate)) return { ok: false, code: "intake_attach_past_gate1" };
+  if (candidate.sourceCapture?.ownerSupplyConfirmed === true) return { ok: false, code: "intake_attach_supply_confirmed" };
+  const progress = isObject(candidate.intake) ? intakeProgress(candidate) : null;
+  if (busy || progress?.waiting || SOURCE_IN_FLIGHT.has(candidate.sourceCapture?.status)) return { ok: false, code: "intake_attach_busy" };
+  if (!sourceUnusable(candidate, progress)) return { ok: false, code: "intake_attach_has_source" };
+  const wanted = link?.identity || intakeSourceIdentity(link?.sourceUrl);
+  const duplicate = (Array.isArray(candidates) ? candidates : [])
+    .find((other) => other?.id !== candidate.id && wanted && candidateSourceIdentities(other).has(wanted)) || null;
+  if (duplicate) return { ok: false, code: "intake_attach_duplicate", duplicate };
+  return {
+    ok: true,
+    intake: newIntakeRecord({ link, submittedAt: requestedAt, submittedBy: requestedBy, batchId, batchIndex: 0, batchSize: 1 }),
+    previous: { sourceUrl: candidate.sourceUrl || candidate.intake?.sourceUrl || candidate.sourceCapture?.sourceUrl || null, intake: candidate.intake ?? null, sourceCapture: candidate.sourceCapture ?? null,
+      replacedAt: requestedAt, replacedBy: requestedBy }
   };
 }
 
