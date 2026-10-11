@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T08:05:44.576Z",
+  "frozenAt": "2026-10-11T15:16:45.290Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 967,
-      "sha256": "115c22c7ee2d95d4ab58d159e6a9e64cd1df8702a59566f2db097794a01d7c46",
+      "sha256": "2f127acbd334838d62c577a843460f758a9acf0c7fcf45a9155de7cb1eb3485f",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -676,7 +676,7 @@
       },
       {
         "path": "lib/intake-pipeline.mjs",
-        "sha256": "701f5794e1338f6c5330f7df5d9126f2bca7712afe9b0643ba5d8745af80bbcd"
+        "sha256": "1b999300580b81a25f2d02632859995a18416fb819c190b35756bc6aaa46070e"
       },
       {
         "path": "lib/intake-rough-profit.mjs",
@@ -1660,7 +1660,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "f0d38506a03b066dd5f550ec358350207ae4827d5672d7afad8a0789dfa40530"
+        "sha256": "e2f7038c421ee1f674a85d128e8ffacb77a9882c3c64a06601f618df4eea358e"
       },
       {
         "path": "src/App.jsx",
@@ -3144,7 +3144,7 @@
       },
       {
         "path": "tests/intake-api.test.mjs",
-        "sha256": "8ab1f8b2a8a59d8738d11d7c7e3abf57afa49acd410447884476a9c6a3bab96b"
+        "sha256": "8ad9193d92a6a0b0973290bf33eb4e8ba22a91f1a85a1d499a396036989304f1"
       },
       {
         "path": "tests/intake-job-bridge.test.mjs",
@@ -3156,7 +3156,7 @@
       },
       {
         "path": "tests/intake-pipeline.test.mjs",
-        "sha256": "318706d3dbba332091df97c85d7f204184f8d0538b5d164164bdc7047af4e4cb"
+        "sha256": "ab7a626dff631450a70e2a9af97d4fb5323af2bb058faeec090c79b0b9bae867"
       },
       {
         "path": "tests/intake-rough-profit.test.mjs",
