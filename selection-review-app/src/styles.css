@@ -1045,6 +1045,13 @@ label em { color: var(--red); font-style: normal; font-size: 9px; }
 .listed-readback.tone-ok { color: var(--green); }
 .listed-readback.tone-warning { color: var(--amber); }
 .listed-readback.tone-muted, .listed-observed { color: var(--muted); font-size: 12px; }
+
+/* 做这件之后软件做到哪儿、停在哪儿：出错时用提醒色，其余和普通一节一样。 */
+.product-autopilot-stops { margin: 0 0 8px; padding-left: 18px; }
+.product-autopilot-stops li + li { margin-top: 4px; }
+.product-autopilot-failed h3 { color: var(--amber); }
+.gate1-autopilot-line { margin-bottom: 8px; }
+
 .maint-readonly { min-width: 0; }
 .maint-readonly-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--line-dark); border-radius: 8px; background: var(--amber-soft); color: var(--amber); font-weight: 700; }
 .maint-readonly-body { min-width: 0; margin: 0; padding: 0; border: 0; }

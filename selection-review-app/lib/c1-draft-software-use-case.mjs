@@ -7,6 +7,7 @@ import { assertCurrentC1AiDraftRequest, validateC1AiDraftRequest } from "./c1-ai
 import { prepareCurrentC1AiDraftRequest, assertCurrentC1AiDraftRequestSources, assertC1DraftExecutionBinding } from "./c1-ai-draft-request-source.mjs";
 import { C1AiGatewayError, C1_AI_GATEWAY_TOTAL_TIMEOUT_MS, buildC1GatewayJob } from "./c1-ai-gateway.mjs";
 import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
+import { gate1AutopilotMayAct, isGate1AutopilotActor } from "./gate1-autopilot.mjs";
 import { authorizeOperation, workerSatisfiesCapabilities } from "./runtime-identity.mjs";
 import { createRepositoryBackedSoftwareJobStore, assertC1PaidKeywordContinuationResult } from "./software-job-repository.mjs";
 import { C1_AI_DRAFT_CAPABILITY, C1_AI_DRAFT_JOB_TYPE, createSoftwareJobEnvelope, createSoftwareJobResultEnvelope,
@@ -96,14 +97,19 @@ export function createC1DraftSoftwareUseCase({ repository, runtimeMode, serverCl
     async prepareLocal({ actor, input }) {
       input = structuredClone(input); actor = structuredClone(actor);
       closed(input, ["candidateId", "expectedRevision", "idempotencyKey", "auditEventId"], "C1_DRAFT_PREPARE_INPUT_INVALID");
-      authorizeOperation({ actor, requiredRoles: ["owner"] });
-      if (actor.actorType !== "human" || actor.source !== "authenticated_identity_provider") throw new Error("C1_DRAFT_AUTHENTICATED_OWNER_REQUIRED");
+      // 主人点过「做这件」并许可之后，软件身份也能准备这份请求（lib/gate1-autopilot.mjs）。只准备、不付费：
+      // 付费生成仍要主人另外允许。
+      const software = isGate1AutopilotActor(actor);
+      const requiredRoles = software ? ["operator"] : ["owner"];
+      authorizeOperation({ actor, requiredRoles });
+      if (!software && (actor.actorType !== "human" || actor.source !== "authenticated_identity_provider")) throw new Error("C1_DRAFT_AUTHENTICATED_OWNER_REQUIRED");
       const { candidate } = await candidateSnapshot(input.candidateId);
-      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: ["owner"], action: "c1_local_draft_prepare",
+      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles, action: "c1_local_draft_prepare",
         candidateId: input.candidateId, skuPackageId: candidate.lifecycleV11.skuPackage.skuPackageId, expectedRevision: input.expectedRevision,
         idempotencyKey: input.idempotencyKey, inputFingerprint: fingerprintCanonicalRecord(input), auditEventId: input.auditEventId,
         serverClock, includeRelatedSoftwareJobs: true,
         mutate: ({ candidate: current, observedAt, relatedSoftwareJobs }) => {
+          if (software && !gate1AutopilotMayAct(actor, current, "c1_prepare_copy")) throw new Error("C1_LOCAL_DRAFT_AUTOPILOT_GRANT_REQUIRED");
           if (current.lifecycleV11.c1AiDraftRequestV1) throw new Error("C1_LOCAL_DRAFT_REQUEST_ALREADY_SAVED");
           const prepared = prepareC1LocalDraftSource({ candidate: current, preparedAt: observedAt });
           current.lifecycleV11.skuPackage = structuredClone(prepared.skuPackage);

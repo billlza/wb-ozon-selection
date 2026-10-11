@@ -1,5 +1,6 @@
 import { buildSupplierDraftV1, normalizeSupplierDraftInput, SupplierDraftError } from './supplier-draft.mjs';
 import { GATE1_SKIP_REASONS, gate1PickTag } from './gate1-preselect.mjs';
+import { GATE1_AUTOPILOT_SCOPE_VERSION } from './gate1-autopilot.mjs';
 
 /**
  * 「做这件」（关口 1）的三个决定：做、不做、正式利润没过线之后怎么办。
@@ -16,7 +17,7 @@ import { GATE1_SKIP_REASONS, gate1PickTag } from './gate1-preselect.mjs';
 export const GATE1_DECISION_SCHEMA_VERSION = 'gate1-decision-v1';
 export const GATE1_SHORTFALL_SCHEMA_VERSION = 'gate1-shortfall-v1';
 export const GATE1_SHORTFALL_CHOICES = Object.freeze({ change_supplier: '换货源', change_price: '改售价', skip: '不做' });
-const ACCEPT_KEYS = Object.freeze(['dataRevision', 'ozonProductId', 'matchOfferId', 'supplierOfferId', 'facts']);
+const ACCEPT_KEYS = Object.freeze(['dataRevision', 'ozonProductId', 'matchOfferId', 'supplierOfferId', 'facts', 'autopilot']);
 const FACT_KEYS = Object.freeze(['domesticShippingRmb', 'packedWeightKg', 'dimensionsCm', 'targetSalePriceRub']);
 const SKIP_KEYS = Object.freeze(['dataRevision', 'reason', 'note']);
 const SHORTFALL_KEYS = Object.freeze(['dataRevision', 'choice', 'reason', 'note']);
@@ -57,9 +58,16 @@ function optionalId(value, label) {
   return value;
 }
 
-/** 做这件：只收这几样。facts 只放软件读不到、主人在卡上补的那几项。 */
+/**
+ * 做这件：只收这几样。facts 只放软件读不到、主人在卡上补的那几项。
+ * autopilot 是卡上那句「不花钱的几步软件自己往下做」的版本号：带着它，说明主人是看着这句话点的，一起存下许可
+ * （lib/gate1-autopilot.mjs）；不带就照旧，每一步等主人点。
+ */
 export function normalizeGate1AcceptInput(input) {
   closedObject(input, ACCEPT_KEYS, '做这件只接受修订号、选中的同款和货源，以及读不到时补的几项', 'gate1_input_invalid');
+  if (input.autopilot !== undefined && input.autopilot !== GATE1_AUTOPILOT_SCOPE_VERSION) {
+    reject('这张卡上的说明已经更新，请刷新页面后再点「做这件」', 'gate1_autopilot_scope_stale');
+  }
   const supplierOfferId = optionalId(input.supplierOfferId, '货源');
   if (supplierOfferId === null) reject('先选一家货源', 'gate1_supplier_required');
   const facts = {};
@@ -81,7 +89,8 @@ export function normalizeGate1AcceptInput(input) {
     }
   }
   return Object.freeze({ dataRevision: revision(input), ozonProductId: optionalId(input.ozonProductId, 'Ozon 同款'),
-    matchOfferId: optionalId(input.matchOfferId, '1688 同款'), supplierOfferId, facts: Object.freeze(facts) });
+    matchOfferId: optionalId(input.matchOfferId, '1688 同款'), supplierOfferId, facts: Object.freeze(facts),
+    autopilot: input.autopilot === GATE1_AUTOPILOT_SCOPE_VERSION });
 }
 
 /** 不做这件：一个原因码，「其他」要带一句话。 */

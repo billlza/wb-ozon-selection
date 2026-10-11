@@ -2,6 +2,7 @@ import { executeBusinessMutation } from "./business-mutation-transaction.mjs";
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from "./business-state-repository.mjs";
 import { authorizeOperation } from "./runtime-identity.mjs";
 import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
+import { gate1AutopilotMayAct, isGate1AutopilotActor } from "./gate1-autopilot.mjs";
 
 export class C1SupplyAttributeBackfillError extends Error {
   constructor(code) { super(code); this.name = "C1SupplyAttributeBackfillError"; this.code = code; }
@@ -50,16 +51,22 @@ export function createC1SupplyAttributeBackfillUseCase({ repository, runtimeMode
           keys.filter(key => key !== "expectedRevision").some(key => !nonEmpty(input[key]))) {
         throw new C1SupplyAttributeBackfillError("C1_SUPPLY_ATTRIBUTE_BACKFILL_INPUT_INVALID");
       }
-      authorizeOperation({ actor, requiredRoles: ["owner"] });
-      if (actor.actorType !== "human" || actor.source !== "authenticated_identity_provider") {
+      // 主人点过「做这件」并许可之后，软件身份也能做这一步（lib/gate1-autopilot.mjs）；许可在事务里再核一次。
+      const software = isGate1AutopilotActor(actor);
+      const requiredRoles = software ? ["operator"] : ["owner"];
+      authorizeOperation({ actor, requiredRoles });
+      if (!software && (actor.actorType !== "human" || actor.source !== "authenticated_identity_provider")) {
         throw new C1SupplyAttributeBackfillError("C1_SUPPLY_ATTRIBUTE_BACKFILL_AUTHENTICATED_OWNER_REQUIRED");
       }
-      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: ["owner"],
+      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles,
         action: "c1_frozen_supply_attribute_backfill", candidateId: input.candidateId, skuPackageId: input.skuPackageId,
         expectedRevision: input.expectedRevision, idempotencyKey: input.idempotencyKey,
         inputFingerprint: fingerprintCanonicalRecord(input), auditEventId: input.auditEventId,
         serverClock,
         mutate: ({ candidate, observedAt }) => {
+          if (software && !gate1AutopilotMayAct(actor, candidate, "c1_supply_backfill")) {
+            throw new C1SupplyAttributeBackfillError("C1_SUPPLY_ATTRIBUTE_BACKFILL_AUTOPILOT_GRANT_REQUIRED");
+          }
           const sku = candidate.lifecycleV11?.skuPackage;
           if (sku?.skuPackageId !== input.skuPackageId) throw new C1SupplyAttributeBackfillError("C1_SUPPLY_ATTRIBUTE_BACKFILL_SOURCE_CONFLICT");
           if (sku.businessPhase !== "C1") throw new C1SupplyAttributeBackfillError("C1_SUPPLY_ATTRIBUTE_BACKFILL_PHASE_REJECTED");

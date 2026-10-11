@@ -2,7 +2,7 @@ import { useState } from "react";
 import { IMAGE_MATCH_JUDGEMENT_LABELS, supplierImageMatchView } from "../supplierImageMatchView.js";
 import { ozonImageMatchView, ozonSearchQueryReady } from "../ozonImageMatchView.js";
 import {
-  GATE1_PICK_TAGS, GATE1_SKIP_REASONS, gate1AcceptPayload, gate1AcceptedLine, gate1CardView, gate1Mode, gate1ReopenLine,
+  GATE1_AUTOPILOT_LINE, GATE1_PICK_TAGS, GATE1_SKIP_REASONS, gate1AcceptPayload, gate1AcceptedLine, gate1CardView, gate1Mode, gate1ReopenLine,
   gate1ShortfallView, gate1SkipErrors, gate1SkipPayload, rubles, yuan
 } from "../gate1View.js";
 
@@ -180,6 +180,7 @@ export default function Gate1Card({ candidate, gate1, storeName, saving, noticeA
         </label>)}
     </div> : null}
 
+    <p className="product-section-hint gate1-autopilot-line">{GATE1_AUTOPILOT_LINE}</p>
     <div className="gate1-actions">
       <button type="button" className="button primary" disabled={saving || !card.canAccept}
         onClick={() => run(onAccept, gate1AcceptPayload(gate1, card, facts, candidate.dataRevision),

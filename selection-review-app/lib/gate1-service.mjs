@@ -4,6 +4,7 @@ import {
   Gate1Error, applyGate1Elimination, buildGate1Acceptance, buildGate1Skip, gate1Marker, gate1Open, gate1ShortfallPending,
   normalizeGate1AcceptInput, normalizeGate1ShortfallInput, normalizeGate1SkipInput, reopenGate1Round
 } from './gate1-decision.mjs';
+import { buildGate1AutopilotGrant } from './gate1-autopilot.mjs';
 
 /**
  * 「做这件」卡的服务端：给商品页的那份显示数据，和三条写入路（做、不做、利润没过线之后怎么办）。
@@ -143,7 +144,12 @@ export function createGate1Service({ readData, mutateData, now, estimateInputs, 
       current.gate1DecisionV1 = structuredClone(built.decision);
       current.gate1 = gate1Marker(built.decision);
       current.gate1ReopenV1 = null;
-      addHistory(current, 'user', 'gate1Accepted', built.history, at);
+      // 主人看着「不花钱的几步软件自己往下做」那句话点的，许可和这一次决定一起存；没看到那句话的旧页面不发许可。
+      current.gate1AutopilotGrantV1 = input.autopilot ? structuredClone(buildGate1AutopilotGrant({ candidateId,
+        sourceRevision: input.dataRevision, decision: built.decision, via: 'gate1_accept', grantedAt: at,
+        grantedBy: actor?.userId ?? null })) : null;
+      addHistory(current, 'user', 'gate1Accepted', input.autopilot
+        ? `${built.history}。不花钱的几步（重算利润、整理属性和关键词、准备文案请求）由软件接着做，要花钱或要主人签字时停下` : built.history, at);
       finishWrite(current, at);
       return { candidate: publicCandidate(current, data.rules), decision: structuredClone(built.decision) };
     });

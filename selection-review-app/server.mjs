@@ -610,6 +610,8 @@ function seerfarSelectionView(document, operationResult = null) {
 // ── 「做这件」确认卡（关口 1）：软件先选同款和货源、粗算、品牌提示；做 / 不做 / 利润没过线之后怎么办。逻辑在 lib/gate1-*.mjs。
 import { createGate1Service } from './lib/gate1-service.mjs';
 import { Gate1Error, applyGate1Shortfall } from './lib/gate1-decision.mjs';
+import { GATE1_AUTOPILOT_ACTOR_SOURCE, GATE1_AUTOPILOT_ACTOR_USER_ID, buildGate1AutopilotGrant, gate1AutopilotGrantCurrent,
+  gate1AutopilotRecordAfterRun, planGate1Autopilot } from './lib/gate1-autopilot.mjs';
 import { recordSkipReason } from './lib/store-profile.mjs';
 const gate1Service = createGate1Service({
   readData: () => readData(), mutateData: mutator => mutateData(mutator), now: () => now(), estimateInputs: supplierDraftEstimateInputs,
@@ -619,6 +621,7 @@ const gate1Service = createGate1Service({
   supplierDraftEstimate: (document, candidate, draft) => supplierDraftEstimate(document, candidate, draft)
 });
 async function gate1Route(req, res, pathname) {
+  if (req.method === "POST" && GATE1_AUTOPILOT_CONTINUE_ROUTE.test(pathname)) return gate1AutopilotContinueRoute(req, res, pathname);
   const route = pathname.match(/^\/api\/candidates\/([^/]+)\/gate1\/(accept|skip|shortfall)$/);
   if (req.method !== "POST" || !route) return false;
   const actor = runtimeIdentityProvider.resolveActor({ request: req });
@@ -645,6 +648,191 @@ async function gate1Route(req, res, pathname) {
   }
 }
 // ── 「做这件」确认卡 end
+
+// ── 「做这件」之后不花钱的几步由软件自己往下走。哪一步、停在哪儿，判断都在 lib/gate1-autopilot.mjs，这里只照着做。
+// 某件商品的写入请求成功之后（主人点了什么、插件回了结果），看一眼这件商品：许可还算数、下一步是软件能做的，就以那个
+// 软件身份做这一步，做完再看下一步，直到停在要主人做的地方。同一件商品同一时间只跑一个；某一步出错就记下来停住，
+// 不自己重试；被别的写入抢先（修订号变了）就放下，那次写入之后会再看一次。
+const GATE1_AUTOPILOT_CONTINUE_ROUTE = /^\/api\/candidates\/([^/]+)\/gate1\/autopilot\/continue$/;
+const GATE1_AUTOPILOT_MAX_STEPS = 6;
+const GATE1_AUTOPILOT_CONFLICT_CODES = new Set(["BUSINESS_MUTATION_REVISION_CONFLICT", "BUSINESS_MUTATION_IDEMPOTENCY_CONFLICT",
+  "C1_KEYWORD_LOCAL_MATERIAL_REVISION_CONFLICT", "C1_KEYWORD_LOCAL_MATERIAL_INPUT_DRIFT", "C1_LOCAL_DRAFT_REQUEST_ALREADY_SAVED"]);
+const gate1AutopilotBusy = new Set();
+const gate1AutopilotAgain = new Set();
+
+function gate1AutopilotActor(candidateId, revision) {
+  return createActorContext({ userId: GATE1_AUTOPILOT_ACTOR_USER_ID, sessionId: `gate1-autopilot:${candidateId}:${revision}`,
+    actorType: "software", roles: ["operator"], source: GATE1_AUTOPILOT_ACTOR_SOURCE, authenticatedAt: now() });
+}
+
+/** 和商品页那份「能不能重算」同一个算法；算不出来就当没有，计划器会停在「等费用证据」。 */
+function gate1AutopilotRecalculationView(document, candidate) {
+  try {
+    return buildBExactCommissionRuntimeView({ candidate, evidencePacks: document.evidencePacks || [],
+      currentCommissionCatalogs: document.currentCommissionCatalogs ?? [], rules: document.rules, observedAt: now() });
+  } catch {
+    return null;
+  }
+}
+
+function gate1AutopilotErrorCode(error) {
+  const code = String(error?.code ?? error?.message ?? "");
+  return /^[A-Z][A-Z0-9_]{2,80}$/u.test(code) ? code : "GATE1_AUTOPILOT_STEP_FAILED";
+}
+
+/** 照计划做这一步。每一步都是主人页面上那个按钮背后的同一个用例，只是身份换成有许可的软件。 */
+async function runGate1AutopilotStep(candidate, next) {
+  const candidateId = candidate.id;
+  const revision = candidate.dataRevision;
+  const actor = gate1AutopilotActor(candidateId, revision);
+  const keys = { idempotencyKey: `gate1-autopilot:${next.step}:${candidateId}:${revision}`,
+    auditEventId: `gate1-autopilot-audit:${next.step}:${candidateId}:${revision}` };
+  if (next.step === "b_exact_recalculation") {
+    const transaction = await bExactCommissionRecalculation.recalculate({ actor, input: { candidateId, expectedRevision: revision,
+      skuPackageId: next.skuPackageId, failureId: next.failureId, ...keys } });
+    // 和主人点重算那条路一样：通过了就接上 C1 的软件准备（只整理，不付费）。接不上不算这一步出错，下一步会照实停。
+    if (transaction.status === "committed" && transaction.result.status === "passed") {
+      await continueC1SoftwareWhenEvidenceReady(candidateId, transaction.candidate.dataRevision).catch(error => {
+        if (!(error instanceof C1KeywordContinuationRevisionConflictError)) console.error(`GATE1_AUTOPILOT_C1_CONTINUATION_STOPPED: ${gate1AutopilotErrorCode(error)}`);
+      });
+    }
+    return;
+  }
+  if (next.step === "c1_supply_backfill") {
+    await c1SupplyAttributeBackfillUseCase.backfill({ actor, input: { candidateId, expectedRevision: revision,
+      skuPackageId: next.skuPackageId, ...keys } });
+    return;
+  }
+  if (next.step === "c1_local_material") {
+    await persistC1KeywordPlanningLocalMaterial({ repository: businessStateRepository, runtimeMode: runtimeConfiguration.deploymentMode,
+      actor, candidateId, expectedRevision: revision, producedAt: now(), codexOffline: true, producer: produceC1LocalPreparation });
+    return;
+  }
+  if (next.step === "c1_prepare_copy") {
+    await c1DraftRuntimeServices.prepareLocal({ actor, input: { candidateId, expectedRevision: revision, ...keys } });
+    return;
+  }
+  throw new Error("GATE1_AUTOPILOT_STEP_UNKNOWN");
+}
+
+/** 软件自己的运行记录：做过哪几步、哪一步出错。不改业务状态，也不加修订号——加了会让刚整理好的材料显得过期。 */
+async function saveGate1AutopilotRecord(candidateId, { ranSteps, failure }) {
+  if (!ranSteps.length && failure === null) return;
+  await mutateData(data => {
+    const current = data.candidates.find(item => item.id === candidateId);
+    if (current) current.gate1AutopilotV1 = gate1AutopilotRecordAfterRun(current.gate1AutopilotV1, { ranSteps, failure, at: now() });
+    return null;
+  });
+}
+
+async function advanceGate1Autopilot(candidateId) {
+  if (gate1AutopilotBusy.has(candidateId)) {
+    gate1AutopilotAgain.add(candidateId);
+    return { status: "busy", ranSteps: [] };
+  }
+  gate1AutopilotBusy.add(candidateId);
+  const ranSteps = [];
+  let failure = null;
+  try {
+    let previous = null;
+    for (let index = 0; index < GATE1_AUTOPILOT_MAX_STEPS; index += 1) {
+      const document = await readData();
+      const candidate = document.candidates.find(item => item.id === candidateId);
+      if (!candidate || !gate1AutopilotGrantCurrent(candidate)) break;
+      const plan = planGate1Autopilot({ candidate, bExactCommissionRuntimeView: gate1AutopilotRecalculationView(document, candidate) });
+      if (plan?.status !== "running") break;
+      const attempt = `${plan.next.step}:${candidate.dataRevision}`;
+      if (attempt === previous) {
+        failure = { step: plan.next.step, code: "GATE1_AUTOPILOT_NO_PROGRESS", at: now(), sourceRevision: candidate.dataRevision };
+        break;
+      }
+      previous = attempt;
+      try {
+        await runGate1AutopilotStep(candidate, plan.next);
+      } catch (error) {
+        const code = gate1AutopilotErrorCode(error);
+        if (GATE1_AUTOPILOT_CONFLICT_CODES.has(code)) break;
+        failure = { step: plan.next.step, code, at: now(), sourceRevision: candidate.dataRevision };
+        console.error(`GATE1_AUTOPILOT_STEP_FAILED: ${plan.next.step} ${code}`);
+        break;
+      }
+      ranSteps.push({ step: plan.next.step, at: now(), sourceRevision: candidate.dataRevision });
+    }
+    await saveGate1AutopilotRecord(candidateId, { ranSteps, failure });
+    return { status: failure === null ? "stopped" : "failed", ranSteps, failure };
+  } finally {
+    gate1AutopilotBusy.delete(candidateId);
+    if (gate1AutopilotAgain.delete(candidateId)) scheduleGate1Autopilot(candidateId);
+  }
+}
+
+function scheduleGate1Autopilot(candidateId) {
+  setImmediate(() => {
+    advanceGate1Autopilot(candidateId).catch(error => console.error(`GATE1_AUTOPILOT_STOPPED: ${gate1AutopilotErrorCode(error)}`));
+  });
+}
+
+/** 某件商品的写入请求成功之后看一眼。「让软件接着做」那条路自己会跑，不重复排。 */
+function scheduleGate1AutopilotAfterRequest(req, res, pathname) {
+  if (req.method !== "POST" || res.statusCode >= 300 || GATE1_AUTOPILOT_CONTINUE_ROUTE.test(pathname)) return;
+  const match = pathname.match(/^\/api\/candidates\/([^/]+)\//);
+  if (!match) return;
+  let candidateId;
+  try { candidateId = decodeURIComponent(match[1]); } catch { return; }
+  scheduleGate1Autopilot(candidateId);
+}
+
+/**
+ * 「让软件接着做」/「让软件再试一次」：只主人。还没有许可的（老商品，或做这件时页面还没有那句说明）这一下就是许可；
+ * 有许可、上一步出过错的，这一下就是让它再试一次。记一条历史、修订号加一，然后当场跑到停下为止。
+ */
+async function gate1AutopilotContinueRoute(req, res, pathname) {
+  const actor = runtimeIdentityProvider.resolveActor({ request: req });
+  if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    throw httpError(403, "请先登录主人身份后再让软件接着做。", { code: "gate1_autopilot_owner_required" });
+  }
+  const input = await readJsonRequestBody(req, { maxBytes: 1024, requireJsonContentType: true });
+  if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some(key => key !== "dataRevision") ||
+      !Number.isInteger(input.dataRevision)) {
+    throw httpError(400, "只接受当前数据修订号。", { code: "gate1_autopilot_input_invalid" });
+  }
+  const candidateId = decodeURIComponent(pathname.match(GATE1_AUTOPILOT_CONTINUE_ROUTE)[1]);
+  await mutateData(data => {
+    const current = data.candidates.find(item => item.id === candidateId);
+    if (!current) throw httpError(404, "候选不存在");
+    if (Number(current.dataRevision) !== input.dataRevision) {
+      throw httpError(409, "商品资料已变化，请刷新后再点。", { code: "revision_conflict", currentRevision: current.dataRevision });
+    }
+    const plan = planGate1Autopilot({ candidate: current, bExactCommissionRuntimeView: gate1AutopilotRecalculationView(data, current) });
+    if (!plan?.next) {
+      throw httpError(409, plan?.line ? `现在没有软件能接着做的步骤：${plan.line}。` : "这件商品现在没有软件能接着做的步骤。",
+        { code: "gate1_autopilot_nothing_to_do" });
+    }
+    const at = now();
+    if (!gate1AutopilotGrantCurrent(current)) {
+      current.gate1AutopilotGrantV1 = structuredClone(buildGate1AutopilotGrant({ candidateId, sourceRevision: current.dataRevision,
+        decision: current.gate1DecisionV1, skuPackageId: current.lifecycleV11?.skuPackage?.skuPackageId ?? null, via: "owner_continue",
+        grantedAt: at, grantedBy: actor.userId }));
+    }
+    if (current.gate1AutopilotV1) current.gate1AutopilotV1 = { ...current.gate1AutopilotV1, failure: null };
+    addHistory(current, "user", "gate1AutopilotContinued", plan.failure
+      ? `主人让软件再试一次「${plan.next.label}」；上一次出错：${plan.failure.code}`
+      : `主人让软件接着做「${plan.next.label}」，之后不花钱的几步也由软件接着做，要花钱或要主人签字时停下`, at);
+    current.dataRevision = Number(current.dataRevision || 0) + 1;
+    current.updatedAt = at;
+    current.lastModifiedBy = "user";
+    assertSafeBusinessMutationCandidate(current, "businessMutation.candidate");
+    return null;
+  });
+  const run = await advanceGate1Autopilot(candidateId);
+  const saved = await readData();
+  const candidate = saved.candidates.find(item => item.id === candidateId);
+  json(res, 200, { autopilot: { status: run.status, ranSteps: run.ranSteps.map(item => item.step), failure: run.failure ?? null },
+    candidate: publicCandidate(candidate, saved.rules, {}, saved.evidencePacks || [], saved.currentCommissionCatalogs ?? []),
+    paidCalls: 0, platformWrites: 0 });
+  return true;
+}
+// ── 「做这件」之后软件自己往下走 end
 const aProductDetailApplication = createAProductDetailApplicationUseCase({repository:businessStateRepository,serverClock:now});
 const aProductDetailRuntime = createAProductDetailRuntimeServices({repository:businessStateRepository,softwareJobStore,
   runtimeMode:runtimeConfiguration.deploymentMode,serverClock:now,workerRegistry,
@@ -3861,6 +4049,7 @@ function publicCandidate(candidate, rules, queueInfo = {}, evidencePacks = [], c
     }
   }
   const eReadbackRuntimeView = deRuntimeServices.readbackView(candidate);
+  const bExactCommissionRuntimeView = buildBExactCommissionRuntimeView({ candidate, evidencePacks, currentCommissionCatalogs, rules, observedAt: now() });
   return {
     ...candidate,
     c1KeywordSoftwarePlanningView,
@@ -3872,7 +4061,9 @@ function publicCandidate(candidate, rules, queueInfo = {}, evidencePacks = [], c
     savedSkuFactReconciliation: candidate.lifecycleV11?.skuPackage?.productionConfirmationCard
       ? inspectSavedSkuFactReconciliation({ candidate }) : null,
     executionRuntimeView: buildCurrentExecutionRuntimeView(candidate),
-    bExactCommissionRuntimeView: buildBExactCommissionRuntimeView({ candidate, evidencePacks, currentCommissionCatalogs, rules, observedAt: now() }),
+    bExactCommissionRuntimeView,
+    // 「做这件」之后软件做到了哪一步、停在哪儿等主人（lib/gate1-autopilot.mjs）。只读已保存的记录。
+    gate1AutopilotView: planGate1Autopilot({ candidate, bExactCommissionRuntimeView }),
     // 「这件的佣金还是估算的」那一块。挂在每一份候选视图上，所以从条件测算一路到上架之前的每一屏都看得见——
     // 中间隔着几天，只在出事那一屏说一次，主人会忘；忘了最坏的结果是拿估算费率去上架。佣金换成精确的那一刻
     // 它自己消失（present 为 false），不用谁去清。
@@ -10700,7 +10891,11 @@ const server = http.createServer(async (req, res) => {
     const { pathname } = parseHttpRequestTarget(req.url, req.headers.host, {
       fallbackHost: `${host}:${port}`
     });
-    if (pathname.startsWith("/api/")) return await handleApi(req, res, pathname);
+    if (pathname.startsWith("/api/")) {
+      const handled = await handleApi(req, res, pathname);
+      scheduleGate1AutopilotAfterRequest(req, res, pathname);
+      return handled;
+    }
     if (pathname.startsWith("/product-images/")) {
       const filename = path.basename(pathname);
       return await serveFile(res, path.join(imagesDir, filename));
@@ -10753,6 +10948,14 @@ if (lostSeerfarWebRounds?.length) {
 }
 if (lostImageMatches?.length) {
   console.log(`找同款作业已随服务重启收口为失败（不会再有结果，需要重新找一次）：${lostImageMatches.join("、")}`);
+}
+// 重启之前已经有许可、还有不花钱的步骤没做完的商品，开门后各看一眼。读不出来就不看，不挡服务开门。
+try {
+  for (const candidate of (await readData()).candidates) {
+    if (gate1AutopilotGrantCurrent(candidate)) scheduleGate1Autopilot(candidate.id);
+  }
+} catch (error) {
+  console.error(`GATE1_AUTOPILOT_STARTUP_SKIPPED: ${gate1AutopilotErrorCode(error)}`);
 }
 server.listen(port, host, () => {
   if (runtimeConfiguration.dPlatformObservation.pumpIntervalMs !== null ||

@@ -73,6 +73,28 @@ test('做这件：方案、关口 1 记录和历史一起写，修订号加一�
     facts: { dimensionsCm: { length: 30, width: 20, height: 10 } } } }), error => error.code === 'gate1_not_open');
 });
 
+test('做这件时带着卡上那句许可说明的版本，就一起存下软件接着做的许可；版本对不上就不收；不带就不发许可', async () => {
+  const { GATE1_AUTOPILOT_SCOPE_VERSION, gate1AutopilotGrantCurrent } = await import('../lib/gate1-autopilot.mjs');
+  const input = { dataRevision: 2, ozonProductId: '9001', supplierOfferId: '7001', facts: { dimensionsCm: { length: 30, width: 20, height: 10 } } };
+  const stale = setup();
+  await assert.rejects(() => stale.service.accept({ candidateId: 'candidate:svc', actor, input: { ...input, autopilot: 'gate1-autopilot-scope-v0' } }),
+    error => error.code === 'gate1_autopilot_scope_stale');
+  assert.equal(stale.document.candidates[0].dataRevision, 2);
+
+  const { document, history, service } = setup();
+  await service.accept({ candidateId: 'candidate:svc', actor, input: { ...input, autopilot: GATE1_AUTOPILOT_SCOPE_VERSION } });
+  const saved = document.candidates[0];
+  assert.equal(saved.gate1AutopilotGrantV1.via, 'gate1_accept');
+  assert.equal(saved.gate1AutopilotGrantV1.grantedBy, 'owner-1');
+  assert.equal(saved.gate1AutopilotGrantV1.gate1DecidedAt, saved.gate1DecisionV1.decidedAt);
+  assert.equal(gate1AutopilotGrantCurrent(saved), true);
+  assert.match(history[0].detail, /由软件接着做/u);
+
+  const plain = setup();
+  await plain.service.accept({ candidateId: 'candidate:svc', actor, input });
+  assert.equal(plain.document.candidates[0].gate1AutopilotGrantV1, null);
+});
+
 test('不做这件：原因记进店铺档案，商品退出正常处理，可以恢复', async () => {
   const { document, history, service } = setup();
   await service.skip({ candidateId: 'candidate:svc', actor, input: { dataRevision: 2, reason: 'too_large', note: '太占地方' } });

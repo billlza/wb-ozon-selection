@@ -435,5 +435,8 @@ export const api = {
   skipGate1: (candidateId, payload) =>
     request(`/api/candidates/${encodeURIComponent(candidateId)}/gate1/skip`, { method: "POST", body: JSON.stringify(payload) }),
   resolveGate1Shortfall: (candidateId, payload) =>
-    request(`/api/candidates/${encodeURIComponent(candidateId)}/gate1/shortfall`, { method: "POST", body: JSON.stringify(payload) })
+    request(`/api/candidates/${encodeURIComponent(candidateId)}/gate1/shortfall`, { method: "POST", body: JSON.stringify(payload) }),
+  // 做这件之后：老商品点一下让软件接着做不花钱的几步，出过错的点一下再试一次。只做本地资料整理，不付费、不碰平台。
+  continueGate1Autopilot: (candidateId, payload) =>
+    request(`/api/candidates/${encodeURIComponent(candidateId)}/gate1/autopilot/continue`, { method: "POST", body: JSON.stringify(payload) })
 };

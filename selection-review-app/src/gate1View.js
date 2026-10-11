@@ -1,4 +1,8 @@
 import { GATE1_PICK_TAGS, GATE1_SKIP_REASONS, gate1BrandRisk, gate1PickTag, gate1SkipInputErrors } from "../lib/gate1-preselect.mjs";
+import { GATE1_AUTOPILOT_CONSENT_LINE, GATE1_AUTOPILOT_SCOPE_VERSION } from "../lib/gate1-autopilot.mjs";
+
+/** 「做这件」按钮旁边那句话：点下去之后哪几步由软件接着做。请求带上它的版本号，服务端才发许可。 */
+export const GATE1_AUTOPILOT_LINE = GATE1_AUTOPILOT_CONSENT_LINE;
 
 /**
  * 「做这件」卡要显示的东西，全部从服务端那份 gate1V1 里读：选项、软件先选的、每一对售价 × 货源的粗算。
@@ -124,7 +128,8 @@ export function gate1AcceptPayload(gate1, card, facts, dataRevision) {
     ozonProductId: card.picks.ozonProductId ?? null,
     matchOfferId: card.picks.matchOfferId ?? null,
     supplierOfferId: card.picks.supplierOfferId,
-    ...(Object.keys(extra).length ? { facts: extra } : {})
+    ...(Object.keys(extra).length ? { facts: extra } : {}),
+    autopilot: GATE1_AUTOPILOT_SCOPE_VERSION
   };
 }
 

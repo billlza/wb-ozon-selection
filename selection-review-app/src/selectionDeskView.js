@@ -367,6 +367,9 @@ function gate1Attention(candidate) {
  */
 export function ownerAttentionReasons(candidate) {
   if (!isObject(candidate)) return { reasons: ["未取得需要你做什么的记录"], action: { key: "open", label: "打开" } };
+  const autopilot = autopilotAttention(candidate);
+  // 做这件之后软件停下来等主人的那几样（权利声明、属性、付费生成、确认文案、素材、上架确认），原话照搬。
+  if (autopilot !== null) return autopilot;
   const capture = captureAttention(candidate);
   // 录入流水线找完、等「做这件」的商品不再走手填找货：卡上读到的同款、货源和粗算就是要主人认的东西。
   const gate1 = gate1Attention(candidate);
@@ -383,6 +386,21 @@ export function ownerAttentionReasons(candidate) {
     reasons: reasons.length ? reasons : ["未取得需要你做什么的具体记录，打开看它的六步"],
     action: gate1?.action ?? source?.action ?? capture?.action ?? draft.action ?? { key: "open", label: "打开" }
   };
+}
+
+/**
+ * 「做这件」之后软件停下来等主人的那一刻（服务端 gate1AutopilotView，lib/gate1-autopilot.mjs）：停在哪几样、软件哪一步出错、
+ * 或者老商品还没让软件接着做。软件自己还在做的，不算等主人。
+ */
+const AUTOPILOT_WAITS = ["waiting_owner", "failed", "ready"];
+function autopilotAttention(candidate) {
+  const view = isObject(candidate.gate1AutopilotView) ? candidate.gate1AutopilotView : null;
+  if (!AUTOPILOT_WAITS.includes(view?.status)) return null;
+  const stops = list(view.stops).map(item => text(item?.line)).filter(line => line !== null);
+  const reasons = view.status === "waiting_owner" && stops.length ? stops : [text(view.line)].filter(line => line !== null);
+  if (!reasons.length) return null;
+  const more = Number.isInteger(view.moreStops) && view.moreStops > 0 ? [`还有 ${view.moreStops} 项，打开看`] : [];
+  return { reasons: [...reasons, ...more], action: { key: "open", label: "打开" } };
 }
 
 /** The Ozon price this product carried when the round returned it; the unit is only named when the record names it. */
@@ -662,6 +680,7 @@ export function boardColumns(candidates, store, options = {}) {
 function waitsOnOwner(candidate) {
   if (gate1Waiting(candidate)) return true;
   if (list(candidate.needsFromUser).some(need => text(need) !== null)) return true;
+  if (autopilotAttention(candidate) !== null) return true;
   if (unsourcedBlocker(candidate) !== null) return true;
   const capture = candidate.sourceCapture;
   if (!isObject(capture)) return false;
