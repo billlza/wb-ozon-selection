@@ -83,7 +83,7 @@ test('主人换了一格：标「你改过」，粗算按那一对取服务端�
   assert.deepEqual(gate1AcceptPayload(gate1(), filled, { domesticShippingRmb: '4' }, 5),
     { dataRevision: 5, ozonProductId: '9001', matchOfferId: '7001', supplierOfferId: '7003', facts: { domesticShippingRmb: 4 },
       // 卡上那句「不花钱的几步软件自己往下做」的版本号；带着它服务端才发许可。
-      autopilot: 'gate1-autopilot-scope-v3' });
+      autopilot: 'gate1-autopilot-scope-v4' });
   const otherPrice = gate1CardView(gate1(), { local: { ozonProductId: '9002' } });
   assert.match(otherPrice.profit.text, /每件赚 ¥41\.00/u);
   const noOzon = gate1CardView(gate1(), { local: { ozonProductId: null } });

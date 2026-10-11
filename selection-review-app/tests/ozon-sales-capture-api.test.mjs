@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { stopApiProcess } from "./helpers/api-process-lifecycle.mjs";
 import { createServer } from "node:http";
 import { isOzonCaptureJob, validateOzonCaptureRequest } from "../extension/1688-capture/capture-request.js";
+import { buildGate1AutopilotGrant } from "../lib/gate1-autopilot.mjs";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const port = Number(process.env.SELECTION_REVIEW_TEST_PORT || 43927);
@@ -409,5 +410,85 @@ test("服务重启时把等不到结果的读页面记录收口，不留下永�
   // 收口之后这件商品可以重新读一次。
   const retry = await api.post(startRoute("OZON-RESTART-QUEUED"), { dataRevision: closedQueued.dataRevision });
   assert.equal(retry.status, 202, JSON.stringify(retry.body));
+  assert.equal(api.stderr.join(""), "");
+});
+
+test("「做这件」之后：1688 规格采回来，软件读一次主人认的 Ozon 同款；工作台页面递编号，插件领一次，读到了就不再读", async (t) => {
+  // 从拼多多链接录进来的商品：自己没有 Ozon 页面，主人在「做这件」卡上认了一个 Ozon 同款。
+  const picked = candidate("GATE1-READ-1", "1111111");
+  picked.productUrl = "unknown";
+  picked.workflowStatus = "needs_user_data";
+  delete picked.processing;
+  const decidedAt = new Date(Date.now() - 60000).toISOString();
+  picked.gate1DecisionV1 = { schemaVersion: "gate1-decision-v1", decision: "accept", decidedAt, decidedBy: "synthetic-owner",
+    sourceRevision: 1, roundIndex: 0, ownerSupplyConfirmed: false,
+    picks: { ozon: { id: "4403916892", sourceUrl: "https://www.ozon.ru/product/shkatulka-4403916892/?from=search" }, match: null, supplier: null } };
+  picked.gate1AutopilotGrantV1 = structuredClone(buildGate1AutopilotGrant({ candidateId: picked.id, sourceRevision: 1,
+    decision: picked.gate1DecisionV1, via: "gate1_accept", grantedAt: decidedAt, grantedBy: "synthetic-owner" }));
+  picked.sourceCapture = { captureId: "SCJ-gate1-read", status: "captured_waiting_owner_selection", mode: "a_supplier_capture",
+    jobStatus: "completed", attempt: 1, offerId: "876240928352", sourceUrl: "https://detail.1688.com/offer/876240928352.html",
+    title: "合成音乐盒", observedAt: "2026-10-11T08:00:00.000Z", collectionMethod: "chrome_extension_structured_page_v1",
+    skuChoices: [{ sourceSkuId: "sku-1", propPath: "1627207:sku-1", attributes: { 颜色: "白色" }, priceCny: 20.5,
+      priceSource: "tradeModel.skuMap.price", stock: 30, stockSource: "tradeModel.skuMap.canBookCount", inStock: true,
+      weight: { value: 0.3, unit: "kg" }, weightSource: "detailDescription.freightInfo.skuWeight", imageUrl: null }],
+    selectedSkuIds: [], ownerSupplyConfirmed: false, writeOccurred: false, businessStateEffect: "unchanged" };
+  const api = await startApi(t, [picked]);
+
+  // 服务一开门软件就看到：规格采回来了，认下的那一页还没读过，于是排一次读页面，只排这一次。
+  let saved = null;
+  for (let attempt = 0; attempt < 100 && saved?.salesCapture?.queuedBy !== "gate1_autopilot"; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    saved = (await api.readDocument()).candidates[0];
+  }
+  assert.equal(saved?.salesCapture?.queuedBy, "gate1_autopilot", JSON.stringify({ stderr: api.stderr.join(""),
+    record: saved?.gate1AutopilotV1, capture: saved?.sourceCapture?.status, grant: saved?.gate1AutopilotGrantV1?.scopeVersion,
+    decision: saved?.gate1DecisionV1?.picks, history: saved?.history?.slice(-3) }));
+  assert.equal(saved.salesCapture.productId, "4403916892");
+  assert.equal(saved.salesCapture.status, "waiting_extension");
+  assert.equal(saved.lastModifiedBy, "software");
+  const queuedLine = saved.history.at(-1);
+  assert.deepEqual([queuedLine.actor, queuedLine.action], ["software", "ozonPageReadJobQueued"]);
+  assert.match(queuedLine.detail, /按「做这件」的许可读一次主人认的那个 Ozon 同款页面（4403916892），只读这一次/u);
+  for (let attempt = 0; attempt < 100 && !saved.gate1AutopilotV1; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    saved = (await api.readDocument()).candidates[0];
+  }
+  assert.deepEqual(saved.gate1AutopilotV1.ranSteps.map(item => item.step), ["a_read_ozon_benchmark"]);
+
+  // 插件只领页面递过去的编号：开着的工作台页面从「找货中」那里拿到这一个，递过去，回执记下来。
+  await api.login();
+  const queue = await api.get("/api/intake/queue?bridge=1");
+  assert.equal(queue.status, 200, JSON.stringify(queue.body));
+  assert.deepEqual(queue.body.pendingStart, { candidateId: "GATE1-READ-1", captureId: saved.salesCapture.captureId, kind: "ozon_page_read" });
+  const ack = await api.post("/api/intake/start-ack", { captureId: saved.salesCapture.captureId, kind: "ozon_page_read", accepted: true, code: "" });
+  assert.equal(ack.status, 200, JSON.stringify(ack.body));
+
+  const claim = await api.claim(saved.salesCapture.captureId);
+  assert.equal(claim.status, 200, JSON.stringify(claim.body));
+  const job = claim.body.captureJob;
+  assert.deepEqual(validateOzonCaptureRequest({ payload: job, manifestVersion: "1.4.1" }),
+    { ok: true, sourceUrl: "https://www.ozon.ru/product/4403916892/" });
+  assert.equal((await api.get("/api/intake/queue?bridge=1")).body.pendingStart, null, "领走了就不再递");
+  const captured = await api.result("GATE1-READ-1", { captureId: job.captureId, token: job.token, dataRevision: job.dataRevision,
+    status: "captured", evidence: evidence("4403916892") });
+  assert.equal(captured.status, 200, JSON.stringify(captured.body));
+  const [snapshot] = captured.body.candidate.salesSnapshotsV11;
+  assert.deepEqual([snapshot.collectorMode, snapshot.productUrl, snapshot.comparable],
+    ["real_page_read_only", "https://www.ozon.ru/product/4403916892/", true]);
+
+  // 读到了：类目可以用，对标就是认下的那一件；软件不再读第二次。
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const after = (await api.readDocument()).candidates[0];
+  assert.equal(after.salesCapture.status, "verified");
+  assert.deepEqual(after.gate1AutopilotV1.ranSteps.map(item => item.step), ["a_read_ozon_benchmark"]);
+  assert.equal((await api.get("/api/health")).body.captureControl.status, "idle");
+  const view = await api.get("/api/candidates/GATE1-READ-1/lifecycle/supplier-draft");
+  assert.equal(view.status, 200, JSON.stringify(view.body));
+  assert.equal(view.body.ozonCategoryReadStepV1.ready, true);
+  assert.equal(view.body.ozonCategoryReadStepV1.target.from, "gate1_pick");
+  assert.equal(view.body.candidate.realAConfirmationCard.salesReview.productUrl, "https://www.ozon.ru/product/4403916892/");
+  const persisted = await api.readDocument();
+  assert.equal(persisted.dispatches.length, 0);
+  assert.equal(api.terraCalls(), 0);
   assert.equal(api.stderr.join(""), "");
 });

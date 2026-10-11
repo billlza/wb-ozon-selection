@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T18:51:53.085Z",
+  "frozenAt": "2026-10-11T19:07:11.257Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 994,
-      "sha256": "c41d7f8b5e805f485f819ebc01f4dce940beafdccedc617d6b80c7a4427d7cc5",
+      "sha256": "c092b00eb04fd5aebdfae2c9c3f2243e0720bd32c5d0356fdc9b95ce0a6b4593",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -440,7 +440,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "263ccc5e6268141c9c09c59ddf701747a723d075170cf76f57b7634732b38cba"
+        "sha256": "fa2b7642ae4fa7b9dd1382f20c3f60d18120335e3f1f6abaa41b9353daaf5b36"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -636,7 +636,7 @@
       },
       {
         "path": "lib/gate1-autopilot.mjs",
-        "sha256": "e06c3d196d0c54f3cbc12aa826b10e0b9cee4f0f5d9896875cad8c49a3335d38"
+        "sha256": "3a89cdb468683c011f9090855289cdb5889a777fed751695c5a6fe8275aaf34d"
       },
       {
         "path": "lib/gate1-decision.mjs",
@@ -868,7 +868,7 @@
       },
       {
         "path": "lib/ozon-category-read-step.mjs",
-        "sha256": "eb1ee56ef3ec79f3b21f88b32d67385f70cf004d34e2ac47bd6b944d969cf72d"
+        "sha256": "cc82a4b6b176fbb67175c2e81c6110aa44a7bee7984f07f7f05093eb725b2553"
       },
       {
         "path": "lib/ozon-commission-reference-reader.mjs",
@@ -1688,7 +1688,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "29bb1f6f295ad4a67c7f1a4cea72de2d6534317806644e12886a2dcd0c9348be"
+        "sha256": "3c1e3a87c7af966679a23424bc927a4f5c32111309444fb39925bb60de5d1b42"
       },
       {
         "path": "src/App.jsx",
@@ -1808,7 +1808,7 @@
       },
       {
         "path": "src/components/Gate1AutopilotSection.jsx",
-        "sha256": "4da3f537cccdd6d2fa21a6afda48b36d79fc7f5dcbdee0a4b7d4fee4e63d93c7"
+        "sha256": "12e1614265c0ac5ccf5cae83c80745459331308c4bd758870a632b2d534af678"
       },
       {
         "path": "src/components/Gate1Card.jsx",
@@ -2004,7 +2004,7 @@
       },
       {
         "path": "src/intakeJobBridge.js",
-        "sha256": "df4cc25d6ca6e5b7880e345ac52f3fe530b8cbe12cd294fdcab7bbf961623396"
+        "sha256": "ec3d4a3b9ee69911d97913bc1db45d69fe2b452420107857dcbd2c27a0b91459"
       },
       {
         "path": "src/intakeView.js",
@@ -2372,7 +2372,7 @@
       },
       {
         "path": "tests/c1-forward-to-listing-api.test.mjs",
-        "sha256": "db74e86cb65847b49bc4a451e9f3072b2b95f8256809fda162ba3b9b07366f3c"
+        "sha256": "9a0e7827c336896464f66d2c427f56ae8130cab57d532cc790c188e29557cc53"
       },
       {
         "path": "tests/c1-frozen-schema-refresh.test.mjs",
@@ -3116,11 +3116,11 @@
       },
       {
         "path": "tests/gate1-autopilot.test.mjs",
-        "sha256": "22ae174d7b12cccb3582f0a4221ce88320fc6db5b071c1484001496dcbc84410"
+        "sha256": "f2ffd3f74d679ec1985a71f4e58d2d27a59c4774e3a8432d7386a0b95f8864c1"
       },
       {
         "path": "tests/gate1-card-ui.test.mjs",
-        "sha256": "01166a7f3474d6fa35d1b24016407dced2b23857b0dd9e856c89127a524a50c6"
+        "sha256": "70e1841ba6664024f046177327ed4ab44a70d6e03e502b0b3238d5bd0f2d394b"
       },
       {
         "path": "tests/gate1-decision.test.mjs",
@@ -3236,7 +3236,7 @@
       },
       {
         "path": "tests/intake-job-bridge.test.mjs",
-        "sha256": "6284ba64cfebf029ac7bb0a1b7d7f56a2012bae9eabc7425e90b9fef317b7d90"
+        "sha256": "9aa2e384d6f7a890592de46a6303a9cee42b9bac452d4324c7237481edac55ce"
       },
       {
         "path": "tests/intake-ozon-words.test.mjs",
@@ -3456,7 +3456,7 @@
       },
       {
         "path": "tests/ozon-category-read-step.test.mjs",
-        "sha256": "5c265e5cad0d77534431663c67e68d237b8283636388aff8ac40be1fba7cdb2b"
+        "sha256": "c502f4e8882bbecd219d22919c26086c1cc6c2b9fe194b748d511b12efc37c0a"
       },
       {
         "path": "tests/ozon-commission-reference-reader.test.mjs",
@@ -3516,7 +3516,7 @@
       },
       {
         "path": "tests/ozon-sales-capture-api.test.mjs",
-        "sha256": "cd86f1f6987f4aa2c06eb640c47fd9d8e1da04d91f58489c344ccdefee87cbcb"
+        "sha256": "60c3d63b287454c954a2aa0b8d520808fafa531f0228f7ed38d4d1aeac9444f9"
       },
       {
         "path": "tests/ozon-same-product-match.test.mjs",
