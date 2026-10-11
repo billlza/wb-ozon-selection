@@ -4,6 +4,7 @@ import { isCanonicalFrozenRef } from './production-contract-primitives.mjs';
 import { resolveLifecycleBProfitRule } from './lifecycle-b-evidence-runtime.mjs';
 import { readADiscoveryBatchMarketProducts } from './discovery-title-translation-store.mjs';
 import { estimateDiscoveredProduct, describeEstimate, estimateOutcomeForPool } from './a-discovery-estimate.mjs';
+import { platformOfStore } from './store-registry.mjs';
 
 export const A_DISCOVERY_ESTIMATE_SCHEMA_VERSION = 'a-discovery-estimate-record-v1';
 export const A_DISCOVERY_ESTIMATE_COLLECTION = 'aDiscoveryEstimates';
@@ -94,6 +95,10 @@ const commissionTiersGap = (code, field) => ({ tiers: [], sourceRef: null, gaps:
 
 /** Store cost rules saved by the owner win; the injected defaults only fill fields a saved rule never carried. */
 function storeRuleFor(document, targetStore, fallbackRules) {
+  // The commission and freight resolved here are Ozon's (official table + GUOO). A WB store is estimated by
+  // lib/wb-rough-estimate.mjs with WB's commission and CEL freight; it must never borrow Ozon's numbers.
+  const platform = platformOfStore(targetStore);
+  requireValue(platform === null || platform === 'ozon', 'ESTIMATE_PLATFORM_UNSUPPORTED');
   const saved = isObject(document?.rules) ? document.rules : {};
   const rules = { ...fallbackRules, ...saved,
     ozonMiska: { ...fallbackRules?.ozonMiska, ...saved.ozonMiska },

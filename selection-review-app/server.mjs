@@ -279,6 +279,9 @@ import { assembleProductCoreForFamily, buildFamilyListingDrafts, ProductCoreFami
 import { ProductCoreError } from "./lib/product-core.mjs";
 import { loadPlatformMapping, loadPlatformProfile, PlatformProjectionError } from "./lib/platform-projection.mjs";
 import { listStores } from "./lib/store-registry.mjs";
+import { createWbRoughEstimateInputs, wbRoughProfitForCandidate } from "./lib/wb-rough-estimate.mjs";
+import { DEFAULT_CEL_TARIFF_PATH, readCelWbTariffCatalog } from "./lib/cel-tariff-reader.mjs";
+import { readWbCommissionReference } from "./lib/wb-commission-reference-reader.mjs";
 import { buildDESoftwareIntegrationView } from "./lib/d-e-software-integration.mjs";
 import { assertCurrentProductionExecutionBinding } from "./lib/platform-write-preflight.mjs";
 import { assertCurrentC2UploadDraft, reserveC2Upload, settleC2Upload, saveC2UploadSelection, selectedC2DraftAssets, resolveRegisteredC2FinalAsset, LOCAL_UPLOAD_MAX_BYTES } from "./lib/c2-upload-draft.mjs";
@@ -5129,6 +5132,22 @@ async function handleApi(req, res, pathname) {
       if (!(error instanceof ProductCoreFamilyError || error instanceof ProductCoreError || error instanceof PlatformProjectionError)) throw error;
       return json(res, /_MISSING$/.test(error.code) ? 404 : 409, { code: error.code, message: error.message, externalRequests: 0, platformWrites: 0 });
     }
+  }
+
+  // WB 粗算（改动清单第 7 条）：这件放到 WB 卖，每件大概赚多少、卖多少钱才过线。WB 佣金表 + CEL 资费表 WB 页，和 Ozon 粗算同一套公式。
+  // 只读：不写状态、不碰平台。?priceRub= 换一个售价算，?wbSubject= 指定 WB 类目号；CEL 表的位置可用 SELECTION_REVIEW_CEL_TARIFF_FILE 改。
+  const wbRoughProfitRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/wb-rough-profit$/);
+  if (req.method === "GET" && wbRoughProfitRoute) {
+    const snapshot = await readData();
+    const candidate = snapshot.candidates.find((item) => item.id === decodeURIComponent(wbRoughProfitRoute[1]));
+    if (!candidate) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
+    const params = new URL(req.url, `http://${host}:${port}`).searchParams;
+    const celTariffFile = String(process.env.SELECTION_REVIEW_CEL_TARIFF_FILE ?? "").trim();
+    return json(res, 200, await wbRoughProfitForCandidate({ document: snapshot, candidate, priceRub: params.get("priceRub"),
+      wbSubject: params.get("wbSubject"), at: now(), rules: DEFAULT_RULES, assumptions: extraHandlingFeeAssumptions(candidate),
+      resolveExchangeRate: supplierDraftEstimateInputs.resolveExchangeRate,
+      inputs: createWbRoughEstimateInputs({ readers: { commission: (input) => readWbCommissionReference(input), tariff: (input) => readCelWbTariffCatalog(input) },
+        configuration: { celTariffFile: celTariffFile ? path.resolve(celTariffFile) : DEFAULT_CEL_TARIFF_PATH } }) }));
   }
 
   if (req.method === "GET" && pathname === "/api/three-store-map") {
