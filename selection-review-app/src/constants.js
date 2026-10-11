@@ -3,13 +3,17 @@ import { storeLabelMap } from "../lib/store-registry.mjs";
 // 店铺显示名统一从店铺登记表取，顺序也跟它走。
 export const STORE_LABELS = storeLabelMap();
 
+/**
+ * 旧的保存状态说成「进行中」那五个词（找货 / 待确认 / 准备中 / 待上架 / 在售），再加一个问题标记；
+ * 不再出现「选品处理」「上架前确认」这类旧叫法（2026-10-11 工作台评审）。
+ */
 export const QUEUE_LABELS = {
-  awaiting_user_direction: "待你确认",
-  codex_processing: "选品处理",
-  needs_user_data: "需你补资料",
-  listing_preparation: "待上架准备",
-  ready_to_list: "上架前确认",
-  listed: "已上架",
+  awaiting_user_direction: "待确认",
+  codex_processing: "找货",
+  needs_user_data: "待确认 · 缺资料",
+  listing_preparation: "准备中",
+  ready_to_list: "待上架",
+  listed: "在售",
   eliminated: "已淘汰"
 };
 
