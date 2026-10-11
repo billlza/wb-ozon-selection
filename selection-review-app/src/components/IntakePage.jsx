@@ -104,6 +104,7 @@ export default function IntakePage({
   loadStoreProfiles,
   saveStoreProfile,
   onOpenBoard,
+  onOpenLive = null,
   onOpenMaintenance
 }) {
   const [draft, setDraft] = useState("");
@@ -258,6 +259,7 @@ export default function IntakePage({
       <nav className="intake-more" aria-label="其他页面">
         <span>其他页面：</span>
         <button type="button" className="intake-link" onClick={onOpenBoard}>进行中的商品</button>
+        {typeof onOpenLive === "function" ? <button type="button" className="intake-link" onClick={onOpenLive}>在售的商品</button> : null}
         <button type="button" className="intake-link" onClick={onOpenMaintenance}>维护</button>
       </nav>
     </main>
