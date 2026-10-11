@@ -32,7 +32,7 @@ function isObject(value) {
  * 这次在 Ozon 找同款要用的东西：比对用哪张首图（与 1688 找同款同一份规则），搜什么词，这件商品自己在 Ozon 上是哪一件
  * （它自己出现在结果里时标出来，免得当成另一家）。
  */
-export function ozonImageMatchTarget(candidate, query, { searchBy = "text" } = {}) {
+export function ozonImageMatchTarget(candidate, query, { searchBy = "text", queryOrigin = null } = {}) {
   const picture = supplierImageMatchSource(candidate);
   if (!picture.ok) {
     return { ok: false, code: picture.code,
@@ -53,7 +53,8 @@ export function ozonImageMatchTarget(candidate, query, { searchBy = "text" } = {
   }
   const suggested = suggestedOzonSearchQuery(candidate);
   return { ok: true, searchBy, imageUrl: picture.imageUrl, query: normalized, searchUrl: ozonSearchUrl(normalized),
-    queryOrigin: suggested.query === normalized ? suggested.origin : "owner",
+    // 录入流水线用 AI 翻的词搜时标 ai_translation；主人在商品页上点的，按预填的词还是自己改的标。
+    queryOrigin: queryOrigin === "ai_translation" ? queryOrigin : suggested.query === normalized ? suggested.origin : "owner",
     source: picture.source, ownProductId };
 }
 

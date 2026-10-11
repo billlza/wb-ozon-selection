@@ -2,7 +2,8 @@ import { normalizeSupplierCaptureSource } from "./source-capture.mjs";
 
 /**
  * 新录入页（主人 2026-10-10 拍板的找同款草稿第 1 页）：主人贴一条或几条拼多多 / 1688 链接，软件自己往下跑——
- * 读货源页 → 用首图在 1688 找同款 → 用首图在 Ozon 以图搜 → 粗算利润 → 放进「需要你处理」等主人点「做这件」。
+ * 读货源页 → 用首图在 1688 找同款 → 用首图在 Ozon 以图搜（没找到首图一致的，用 AI 把货源标题翻成俄文词再搜一次）→ 粗算利润
+ * → 放进「需要你处理」等主人点「做这件」。
  *
  * 这个文件只做判断，不碰网络、不写数据：看一件商品此刻的记录，说出它走到了哪一步、卡在哪、下一步该排哪个作业。
  * 真正排作业、收结果的是 server.mjs 里的录入泵；三个作业（货源采集、1688 找同款、Ozon 找同款）都是早就有的那几条，
@@ -22,11 +23,13 @@ export const INTAKE_SCHEMA_VERSION = "intake-v1";
 export const INTAKE_MAX_LINKS_PER_PASTE = 20;
 export const INTAKE_STAGES = Object.freeze(["queued", "reading_source", "searching_1688", "searching_ozon", "estimating", "ready", "blocked"]);
 export const INTAKE_SOURCE_KINDS = Object.freeze(["pinduoduo", "1688", "seerfar"]);
-export const INTAKE_STEPS = Object.freeze(["capture_source", "search_1688", "search_ozon", "estimate"]);
-const STEP_STAGE = Object.freeze({ capture_source: "reading_source", search_1688: "searching_1688", search_ozon: "searching_ozon", estimate: "estimating" });
-const STEP_JOB = Object.freeze({ capture_source: "sourceCaptureId", search_1688: "supplierMatchId", search_ozon: "ozonMatchId" });
-/** 不用插件的步骤：整条队停着、或者插件正忙时也可以做。 */
-const OFFLINE_STEPS = new Set(["estimate", "skip_1688"]);
+export const INTAKE_STEPS = Object.freeze(["capture_source", "search_1688", "search_ozon", "ozon_words", "search_ozon_words", "estimate"]);
+const STEP_STAGE = Object.freeze({ capture_source: "reading_source", search_1688: "searching_1688", search_ozon: "searching_ozon",
+  ozon_words: "searching_ozon", search_ozon_words: "searching_ozon", estimate: "estimating" });
+const STEP_JOB = Object.freeze({ capture_source: "sourceCaptureId", search_1688: "supplierMatchId", search_ozon: "ozonMatchId",
+  search_ozon_words: "ozonTextMatchId" });
+/** 不用插件的步骤：整条队停着、或者插件正忙时也可以做。AI 翻俄文词走网关，也不用插件。 */
+const OFFLINE_STEPS = new Set(["estimate", "skip_1688", "ozon_words"]);
 
 /**
  * 每种停下的原话。scope 是 page 的是整页的事：页面最上面提示一次，整条队先停着；item 只拦这一件。
@@ -144,7 +147,7 @@ export function newIntakeRecord({ link, submittedAt, submittedBy, batchId, batch
     batch: { id: batchId, index: batchIndex, size: batchSize },
     stage: "queued",
     blocker: null,
-    jobs: { sourceCaptureId: null, supplierMatchId: null, ozonMatchId: null },
+    jobs: { sourceCaptureId: null, supplierMatchId: null, ozonMatchId: null, ozonTextMatchId: null },
     skips: {},
     lastRetry: null,
     resumedAt: null,
@@ -197,6 +200,19 @@ function matchBlocker(record, step) {
   return null;
 }
 
+/**
+ * Ozon 以图搜这一次算不算没找到：搜成了但没有一条首图一致、主人也没点过「是同款」，或者没搜成（上传框没找到、页面读不出、
+ * 没结果）。结果未知的不算：那一次可能搜成了，不接着另搜（AGENTS.md §8.3）。没找到的，用 AI 翻的俄文词再搜一次（主人 2026-10-11 定）。
+ */
+export function ozonImageSearchFoundNothing(record) {
+  if (!isObject(record) || record.searchBy !== "image" || record.jobStatus === "unknown_outcome") return false;
+  if (record.status === "failed") return true;
+  if (record.status !== "compared") return false;
+  const results = Array.isArray(record.results) ? record.results : [];
+  const judgedSame = Object.values(isObject(record.judgements) ? record.judgements : {}).some((entry) => entry?.judgement === "exact");
+  return !judgedSame && !results.some((item) => item?.similarity === "identical");
+}
+
 /** 这一件的 1688 找同款是不是因为没登录而没搜成（不拦这件，只记下来，等主人登录后补）。 */
 export function supplierMatchNeedsLogin(candidate) {
   const record = candidate?.supplierImageMatch;
@@ -245,10 +261,25 @@ export function intakeProgress(candidate, { login1688Expired = false } = {}) {
 
   if (!jobs.ozonMatchId && !skips.ozonMatch) return idle("searching_ozon", { next: "search_ozon" });
   const ozon = candidate.ozonImageMatch;
+  if (jobs.ozonTextMatchId) {
+    // 以图搜没找到，已经用 AI 翻的俄文词又搜了一次：等这一次，结果就是这件在 Ozon 上的结果。
+    if (ozon?.captureId === jobs.ozonTextMatchId) {
+      if (MATCH_IN_FLIGHT.has(ozon.status) || JOB_IN_FLIGHT.has(ozon.jobStatus)) return idle("searching_ozon", { waiting: true });
+      const blocker = matchBlocker(ozon, "search_ozon_words");
+      if (blocker) return blocked(blocker);
+    }
+    return idle("estimating", { next: "estimate" });
+  }
+  // 这一次以图搜的俄文词：AI 在翻时不占插件，后面的照常排；翻成了就拿这几个词搜（词搜那一次停下重跑时也用它，不再翻）；
+  // 没翻成、没等到结果的不重发，照样往下粗算。
+  const words = jobs.ozonMatchId && isObject(intake.ozonWords) && intake.ozonWords.imageCaptureId === jobs.ozonMatchId ? intake.ozonWords : null;
+  if (words?.status === "requested") return idle("searching_ozon");
+  if (words?.status === "completed" && words.query) return idle("searching_ozon", { next: "search_ozon_words" });
   if (jobs.ozonMatchId && ozon?.captureId === jobs.ozonMatchId) {
     if (MATCH_IN_FLIGHT.has(ozon.status) || JOB_IN_FLIGHT.has(ozon.jobStatus)) return idle("searching_ozon", { waiting: true });
     const blocker = matchBlocker(ozon, "search_ozon");
     if (blocker) return blocked(blocker);
+    if (!words && ozonImageSearchFoundNothing(ozon)) return idle("searching_ozon", { next: "ozon_words" });
   }
   return idle("estimating", { next: "estimate" });
 }
@@ -351,8 +382,10 @@ export function intakeRetryPlan(candidate, { requestedAt, requestedBy } = {}) {
     };
   }
   const jobs = { ...(isObject(candidate.intake.jobs) ? candidate.intake.jobs : {}) };
-  // 货源那一步重跑，后面几步跟着重来：新读的货源页可能换了首图。
-  const reset = step === "capture_source" ? ["capture_source", "search_1688", "search_ozon"] : [step];
+  // 货源那一步重跑，后面几步跟着重来：新读的货源页可能换了首图。以图搜重跑，跟着的俄文词搜也重来；
+  // 只是俄文词搜那一次停下的，用原来翻好的词再搜，不再花一次 AI。
+  const reset = step === "capture_source" ? ["capture_source", "search_1688", "search_ozon", "search_ozon_words"]
+    : step === "search_ozon" ? ["search_ozon", "search_ozon_words"] : [step];
   for (const name of reset) if (STEP_JOB[name]) jobs[STEP_JOB[name]] = null;
   const skips = { ...(isObject(candidate.intake.skips) ? candidate.intake.skips : {}) };
   if (step === "capture_source") { delete skips.supplierMatch; delete skips.ozonMatch; }

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   INTAKE_MAX_LINKS_PER_PASTE, intakeAttachPlan, intakeBlocker, intakeDuplicateOf, intakeLogin1688State, intakePause, intakeProgress, intakeQueue,
-  intakeResumePlan, intakeRetryPlan, intakeStageUpdate, newIntakeRecord, nextIntakeWork, parseIntakeLinks
+  intakeResumePlan, intakeRetryPlan, intakeStageUpdate, newIntakeRecord, nextIntakeWork, ozonImageSearchFoundNothing, parseIntakeLinks
 } from "../lib/intake-pipeline.mjs";
 
 // Every link, offer number and record below is synthetic.
@@ -117,6 +117,57 @@ test("找同款没找到、上传框没找到、结果未知都照样往下走�
   assert.equal(intakeProgress(manual).next, "search_ozon", "主人在商品页上自己搜的那次不算这一轮的作业");
 });
 
+test("Ozon 以图搜没找到首图一致的：先请 AI 翻俄文词（不占插件），翻成了用它词搜一次；没翻成、结果未知的照样往下粗算", () => {
+  const searched = withJobs(intakeCandidate("W"), { sourceCaptureId: "S", supplierMatchId: "I", ozonMatchId: "OMJ-img" }, {
+    sourceCapture: captured("S"), supplierImageMatch: { captureId: "I", status: "compared", jobStatus: "completed" } });
+  const byImage = (fields) => ({ ...searched, ozonImageMatch: { captureId: "OMJ-img", searchBy: "image", jobStatus: "completed", ...fields } });
+  const similarOnly = byImage({ status: "compared", results: [{ productId: "1", similarity: "similar" }, { productId: "2", similarity: "different" }] });
+  assert.equal(ozonImageSearchFoundNothing(similarOnly.ozonImageMatch), true);
+  assert.equal(intakeProgress(similarOnly).next, "ozon_words");
+  const identical = byImage({ status: "compared", results: [{ productId: "1", similarity: "identical" }] });
+  assert.equal(intakeProgress(identical).next, "estimate", "以图搜找到首图一致的就不再花 AI");
+  const ownerSaidSame = byImage({ status: "compared", results: [{ productId: "1", similarity: "similar" }],
+    judgements: { 1: { judgement: "exact" } } });
+  assert.equal(intakeProgress(ownerSaidSame).next, "estimate");
+  assert.equal(intakeProgress(byImage({ status: "failed", failureCode: "image_upload_unavailable" })).next, "ozon_words");
+  assert.equal(intakeProgress(byImage({ status: "failed", jobStatus: "unknown_outcome", failureCode: "unknown_outcome" })).next, "estimate",
+    "以图搜结果未知的不接着另搜（AGENTS.md §8.3）");
+  assert.equal(intakeProgress({ ...similarOnly, ozonImageMatch: { ...similarOnly.ozonImageMatch, searchBy: "text" } }).next, "estimate");
+
+  const words = (fields) => ({ ...similarOnly, intake: { ...similarOnly.intake,
+    ozonWords: { imageCaptureId: "OMJ-img", status: "requested", query: null, ...fields } } });
+  const translating = intakeProgress(words({}));
+  assert.deepEqual(pick(translating), ["searching_ozon", null, null, false], "AI 在翻时不占插件，后面的照常排");
+  assert.equal(intakeProgress(words({ status: "completed", query: "жилет для собак" })).next, "search_ozon_words");
+  for (const status of ["failed", "unknown_outcome"]) assert.equal(intakeProgress(words({ status })).next, "estimate", status);
+  assert.equal(intakeProgress(words({ imageCaptureId: "OMJ-older", status: "failed" })).next, "ozon_words", "换了一次以图搜，就是新的一轮");
+
+  const textSearch = (fields) => withJobs(words({ status: "completed", query: "жилет для собак" }), { ozonTextMatchId: "OMJ-txt" },
+    { ozonImageMatch: { captureId: "OMJ-txt", searchBy: "text", query: "жилет для собак", ...fields } });
+  assert.deepEqual(pick(intakeProgress(textSearch({ status: "searching", jobStatus: "claimed" }))), ["searching_ozon", null, null, true]);
+  assert.equal(intakeProgress(textSearch({ status: "compared", jobStatus: "completed", results: [] })).next, "estimate");
+  const slider = intakeProgress(textSearch({ status: "failed", jobStatus: "failed", failureCode: "site_verification_required" }));
+  assert.deepEqual(pickBlocker(slider.blocker), ["slider_required", "page", true, "search_ozon_words"]);
+
+  // 俄文词搜那一次停下的，重跑只重搜，用原来的词，不再花一次 AI；以图搜重跑，跟着的词搜也重来。
+  const blockedText = { ...textSearch({ status: "failed", jobStatus: "failed", failureCode: "site_verification_required" }) };
+  const rerunText = intakeRetryPlan({ ...blockedText, intake: { ...blockedText.intake, stage: "blocked", blocker: slider.blocker } },
+    { requestedAt: "t", requestedBy: "owner-1" });
+  assert.deepEqual([rerunText.step, rerunText.intake.jobs.ozonMatchId, rerunText.intake.jobs.ozonTextMatchId, rerunText.intake.ozonWords.query],
+    ["search_ozon_words", "OMJ-img", null, "жилет для собак"]);
+  assert.equal(intakeProgress({ ...blockedText, intake: rerunText.intake }).next, "search_ozon_words");
+  const imageSlider = { ...blockedText, intake: { ...blockedText.intake, stage: "blocked",
+    blocker: intakeBlocker("slider_required", { step: "search_ozon", detail: "Ozon" }) } };
+  const rerunImage = intakeRetryPlan(imageSlider, { requestedAt: "t", requestedBy: "owner-1" });
+  assert.deepEqual([rerunImage.intake.jobs.ozonMatchId, rerunImage.intake.jobs.ozonTextMatchId], [null, null]);
+
+  // AI 这一步不用插件：插件忙着别的作业时也可以做。
+  const queue = [{ ...similarOnly, id: "W1" }, withJobs(intakeCandidate("W2", { submittedAt: "2026-10-10T06:00:00.000Z" }),
+    { sourceCaptureId: "S2" }, { sourceCapture: { captureId: "S2", status: "capturing", jobStatus: "claimed" } })];
+  assert.deepEqual(nextIntakeWork(queue, { extensionReady: false }) && [nextIntakeWork(queue).candidate.id, nextIntakeWork(queue).step],
+    ["W1", "ozon_words"]);
+});
+
 test("排队：按贴进来的先后和行序；插件一次一个，在等插件时不排别的要插件的步骤，但粗算照常做；整页停下时整条队停着", () => {
   const first = intakeCandidate("Q1", { index: 0, size: 3 });
   const second = intakeCandidate("Q2", { index: 1, size: 3 });
@@ -185,7 +236,7 @@ test("重跑：只对停下而且能重跑的；读货源页重跑时后面几�
   const plan = intakeRetryPlan({ ...reconciled, intake: reconcile.intake }, { requestedAt: "2026-10-10T06:01:00.000Z", requestedBy: "owner-1" });
   assert.deepEqual([plan.ok, plan.reconcileOnly, plan.acknowledgeSourceUnknown], [true, false, false]);
   assert.deepEqual([plan.intake.stage, plan.intake.jobs, plan.intake.lastRetry.step, plan.intake.lastRetry.action],
-    ["queued", { sourceCaptureId: null, supplierMatchId: null, ozonMatchId: null }, "capture_source", "rerun"]);
+    ["queued", { sourceCaptureId: null, supplierMatchId: null, ozonMatchId: null, ozonTextMatchId: null }, "capture_source", "rerun"]);
   assert.equal(intakeProgress({ ...reconciled, intake: plan.intake }).next, "capture_source");
 
   const read = withJobs(intakeCandidate("R2"), { sourceCaptureId: "S", supplierMatchId: "I" },

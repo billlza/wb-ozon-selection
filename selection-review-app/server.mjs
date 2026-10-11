@@ -317,6 +317,8 @@ import { createRuntimeHealth } from './lib/runtime-health.mjs';
 import { INTAKE_MAX_LINKS_PER_PASTE, intakeBlocker, intakeDuplicateOf, intakeLogin1688State, intakePause, intakeProgress, intakeQueue,
   intakeAttachPlan, intakeResumePlan, intakeRetryPlan, intakeStageUpdate, newIntakeRecord, nextIntakeWork, parseIntakeLinks } from "./lib/intake-pipeline.mjs";
 import { buildIntakeRoughProfit, intakeRoughProfitPlan } from "./lib/intake-rough-profit.mjs";
+import { buildIntakeOzonWordsRequest, completedIntakeOzonWords, createIntakeOzonWordsTranslator, failedIntakeOzonWords,
+  interruptedIntakeOzonWords, intakeOzonWordsTitle, requestedIntakeOzonWords, skippedIntakeOzonWords } from "./lib/intake-ozon-words.mjs";
 
 const appDir = path.dirname(fileURLToPath(import.meta.url));
 const runtimeConfiguration = createSelectionReviewRuntimeConfiguration({ env: process.env, appDir, argv: process.argv });
@@ -1767,13 +1769,17 @@ const IMAGE_MATCH_KINDS = Object.freeze({
     key: "ozon", field: "ozonImageMatch", rules: ozonImageMatchRules, captureKind: OZON_IMAGE_MATCH_CAPTURE_KIND,
     idPrefix: "OMJ", historyPrefix: "ozonImageMatch", logLabel: "Ozon找同款", site: "Ozon", idField: "productId",
     jobPayload: ozonImageMatchJobPayload, jobPublic: ozonImageMatchJobPublic,
-    target: (candidate, input) => ozonImageMatchTarget(candidate, input.query, { searchBy: input.searchBy === "image" ? "image" : "text" }),
+    // queryOrigin 只有录入泵会传（主人的请求在路由上就不让带这个字段）。
+    target: (candidate, input) => ozonImageMatchTarget(candidate, input.query, { searchBy: input.searchBy === "image" ? "image" : "text",
+      queryOrigin: input.queryOrigin ?? null }),
     queuedRecord: (previous, target, fields) => queuedOzonImageMatchRecord(previous, { ...fields, source: target.source,
       searchBy: target.searchBy, query: target.query, queryOrigin: target.queryOrigin }),
     queuedHistory: (target) => (target.searchBy === "image"
       ? `主人要求拿${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[target.source.platform]}在 Ozon 以图搜一次，再和结果的主图比，找同款；` +
         "系统已建立一个受控作业（在这台电脑的 Chrome 里打开 Ozon 首页，点一次搜索栏的拍照按钮上传这张图，最多读回 36 条），等待插件后台领取。"
-      : `主人要求用「${target.query}」在 Ozon 搜一次，再拿${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[target.source.platform]}` +
+      : (target.queryOrigin === "ai_translation" ? `以图搜没找到首图一致的，录入流水线用 AI 翻的俄文词「${target.query}」在 Ozon 搜一次，` +
+        `再拿${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[target.source.platform]}` : `主人要求用「${target.query}」在 Ozon 搜一次，再拿` +
+        `${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[target.source.platform]}`) +
         "和结果的主图比，找同款；系统已建立一个受控只读作业（在这台电脑的 Chrome 里打开一次 Ozon 搜索页，最多读回 36 条），等待插件后台领取。") +
       "不加购、不收藏、不联系任何人，也不推进业务阶段",
     sameTarget: (record, session) => record.source?.imageUrl === session.imageUrl && (record.searchBy ?? "text") === session.searchBy &&
@@ -1965,7 +1971,7 @@ const INTAKE_ATTACH_MESSAGES = Object.freeze({
   intake_attach_duplicate: "这条货源已经在另一件商品上了"
 });
 const INTAKE_STEP_LABELS = Object.freeze({ capture_source: "读货源页", search_1688: "在 1688 用首图找同款", search_ozon: "在 Ozon 用首图以图搜",
-  estimate: "粗算利润" });
+  ozon_words: "用 AI 把货源标题翻成俄文搜索词", search_ozon_words: "在 Ozon 用俄文词搜", estimate: "粗算利润" });
 const INTAKE_SOURCE_LABELS = Object.freeze({ pinduoduo: "拼多多", "1688": "1688" });
 /** 排作业时碰上这些，只是这会儿轮不到（别的作业占着、刚好有人改了这件），下一轮再排；别的拒绝说明这一步开始不了，停下等主人。 */
 const INTAKE_TRANSIENT_CODES = new Set(["revision_conflict", "candidate_busy", "capture_job_state_conflict", "image_match_in_flight",
@@ -1980,6 +1986,16 @@ let intakeHasOpenWork = false;
 let intakePumpPrimed = false;
 let intakeBridgeSeenAt = 0;
 let intakeLastStart = null;
+// 正在等 AI 网关翻俄文词的商品。服务重启后记录上还是 requested、这里却没有的，就是没等到结果（不重发）。
+const intakeOzonWordsInFlight = new Set();
+/** Ozon 以图搜没找到时翻俄文搜索词用的（主人 2026-10-11 定）；网关自己管凭证，这里不传任何密钥。没配网关就是 null。 */
+const intakeOzonWordsTranslator = (() => {
+  const gatewayUrl = typeof runtimeConfiguration.aiGatewayUrl === "string" ? runtimeConfiguration.aiGatewayUrl.trim() : "";
+  if (gatewayUrl === "") return null;
+  try {
+    return createIntakeOzonWordsTranslator({ gatewayUrl, fetchImpl: fetch, now, gatewayDeploymentMode: runtimeConfiguration.deploymentMode });
+  } catch { return null; }
+})();
 
 function intakeExtensionState(timestamp = Date.now()) {
   const heartbeat = extensionHeartbeatSnapshot(timestamp);
@@ -1994,7 +2010,8 @@ function intakePendingStart(candidates, timestamp = Date.now()) {
     const jobs = candidate.intake?.jobs;
     if (!jobs || candidate.workflowStatus === "eliminated" || candidate.gate1) continue;
     for (const [kind, captureId, sessions] of [["supplier_capture", jobs.sourceCaptureId, sourceCaptureSessions],
-      ["supplier_image_match", jobs.supplierMatchId, imageMatchSessions], ["ozon_image_match", jobs.ozonMatchId, imageMatchSessions]]) {
+      ["supplier_image_match", jobs.supplierMatchId, imageMatchSessions], ["ozon_image_match", jobs.ozonMatchId, imageMatchSessions],
+      ["ozon_image_match", jobs.ozonTextMatchId, imageMatchSessions]]) {
       const session = captureId ? sessions.get(captureId) : null;
       if (session?.candidateId === candidate.id && session.jobStatus === "queued" && session.expiresAt > timestamp) {
         return { candidateId: candidate.id, captureId, kind };
@@ -2055,6 +2072,12 @@ async function intakePumpStep() {
       if (!current.intake || current.workflowStatus === "eliminated" || current.gate1) continue;
       const timestamp = now();
       let touched = false;
+      if (current.intake.ozonWords?.status === "requested" && !intakeOzonWordsInFlight.has(current.id)) {
+        current.intake = { ...current.intake, ozonWords: interruptedIntakeOzonWords(current.intake.ozonWords, timestamp) };
+        addHistory(current, "system", "intakeOzonWordsUnknown",
+          "AI 翻俄文搜索词那一次没等到结果（服务中途重启），不知道网关那边跑没跑；按规矩不重发，这件照样往下粗算", timestamp);
+        touched = true;
+      }
       const update = intakeStageUpdate(current, { login1688Expired });
       if (update) {
         if (update.stage === "blocked" && current.intake.stage !== "blocked") {
@@ -2094,6 +2117,10 @@ async function intakePumpStep() {
     await settleIntakeEstimate(candidateId);
     return { ...quiet, progressed: true, active: true };
   }
+  if (step === "ozon_words") {
+    await startIntakeOzonWords(candidateId);
+    return { ...quiet, progressed: true, active: true };
+  }
   if (step === "skip_1688") {
     await mutateDataWhenChanged((data) => {
       const current = data.candidates.find((item) => item.id === candidateId);
@@ -2109,8 +2136,10 @@ async function intakePumpStep() {
     });
     return { ...quiet, progressed: true, active: true };
   }
-  const jobKey = { capture_source: "sourceCaptureId", search_1688: "supplierMatchId", search_ozon: "ozonMatchId" }[step];
-  const stage = { capture_source: "reading_source", search_1688: "searching_1688", search_ozon: "searching_ozon" }[step];
+  const jobKey = { capture_source: "sourceCaptureId", search_1688: "supplierMatchId", search_ozon: "ozonMatchId",
+    search_ozon_words: "ozonTextMatchId" }[step];
+  const stage = { capture_source: "reading_source", search_1688: "searching_1688", search_ozon: "searching_ozon",
+    search_ozon_words: "searching_ozon" }[step];
   const onQueued = (current, session, timestamp) => {
     current.intake = { ...current.intake, stage, blocker: null, startedAt: current.intake.startedAt ?? timestamp,
       jobs: { ...current.intake.jobs, [jobKey]: session.captureId } };
@@ -2120,11 +2149,13 @@ async function intakePumpStep() {
     if (step === "capture_source") {
       await enqueueASupplierCaptureJob({ candidateId, requestRevision: dataRevision, requestedSourceUrl: intake.sourceUrl, onQueued });
     } else {
-      await enqueueImageMatchJob(step === "search_ozon" ? IMAGE_MATCH_KINDS.ozon : IMAGE_MATCH_KINDS.supplier, {
+      await enqueueImageMatchJob(step === "search_1688" ? IMAGE_MATCH_KINDS.supplier : IMAGE_MATCH_KINDS.ozon, {
         candidateId, requestRevision: dataRevision, actor: { userId: intake.submittedBy },
         // 只有主人为这一步点过「重跑」，才算他知道上一次结果未知（商品页上的「已知道」是同一个意思）。
         acknowledgeUnknownOutcome: intake.lastRetry?.step === step,
-        input: step === "search_ozon" ? { searchBy: "image" } : {}, onQueued });
+        input: step === "search_ozon" ? { searchBy: "image" }
+          : step === "search_ozon_words" ? { searchBy: "text", query: intake.ozonWords?.query, queryOrigin: "ai_translation" } : {},
+        onQueued });
     }
     return { ...quiet, active: true };
   } catch (error) {
@@ -2143,6 +2174,77 @@ async function intakePumpStep() {
     });
     return { ...quiet, progressed: true, active: true };
   }
+}
+
+/**
+ * 以图搜没找到首图一致的：把这一轮读到的货源标题交给 AI 网关翻成俄文搜索词（主人 2026-10-11 定，一件一轮一次）。
+ * 先把 requested 记下再发请求；回来的词写进 intake.ozonWords，泵下一轮拿它在 Ozon 词搜。没翻成的不重发、不换模型，这件照样往下粗算。
+ */
+async function startIntakeOzonWords(candidateId) {
+  intakeOzonWordsInFlight.add(candidateId);
+  let planned = null;
+  try {
+    planned = await mutateDataWhenChanged((data) => {
+      const current = data.candidates.find((item) => item.id === candidateId);
+      if (!current?.intake || intakeProgress(current)?.next !== "ozon_words") return { changed: false };
+      const timestamp = now();
+      const title = intakeOzonWordsTitle(current);
+      const imageCaptureId = current.intake.jobs.ozonMatchId;
+      let record;
+      let request = null;
+      if (!title || !intakeOzonWordsTranslator) {
+        // 没有可翻的标题，或者这台电脑没配 AI 网关：这一步做不了，记下来照样往下走，不算停下。
+        record = skippedIntakeOzonWords({ imageCaptureId, title, at: timestamp, ...(title
+          ? { layer: "configuration", code: "AI_GATEWAY_NOT_CONFIGURED", detail: "这台电脑没配 AI 网关，没有发请求" }
+          : { layer: "input", code: "SOURCE_TITLE_MISSING", detail: "货源页没读到标题，没有可翻的，没有发请求" }) });
+        addHistory(current, "system", "intakeOzonWordsSkipped", `以图搜没在 Ozon 找到首图一致的，本该请 AI 翻俄文搜索词，但${record.failure.detail}；` +
+          "这件照样往下粗算，可以在商品页上自己填俄文词再搜", timestamp);
+      } else {
+        request = buildIntakeOzonWordsRequest({ candidateId: current.id, dataRevision: Number(current.dataRevision), title });
+        record = requestedIntakeOzonWords({ imageCaptureId, title, request, requestedAt: timestamp });
+        addHistory(current, "system", "intakeOzonWordsRequested", "以图搜没在 Ozon 找到首图一致的；按主人 10 月 11 日的决定，请 AI 网关把货源标题" +
+          "翻成俄文搜索词（一次付费调用，只发货源页上的公开标题，不发图片、链接或店铺资料），翻好后用它在 Ozon 搜一次", timestamp);
+      }
+      current.intake = { ...current.intake, ozonWords: record };
+      current.dataRevision = Number(current.dataRevision || 0) + 1;
+      current.updatedAt = timestamp;
+      current.lastModifiedBy = "system";
+      return { changed: true, result: request && { request, fingerprint: record.requestFingerprint } };
+    });
+  } catch (error) {
+    intakeOzonWordsInFlight.delete(candidateId);
+    throw error;
+  }
+  if (!planned) {
+    intakeOzonWordsInFlight.delete(candidateId);
+    return;
+  }
+  const settle = async (build) => {
+    try {
+      await mutateDataWhenChanged((data) => {
+        const current = data.candidates.find((item) => item.id === candidateId);
+        const words = current?.intake?.ozonWords;
+        if (!words || words.status !== "requested" || words.requestFingerprint !== planned.fingerprint) return { changed: false };
+        const timestamp = now();
+        const settled = build(words, timestamp);
+        current.intake = { ...current.intake, ozonWords: settled };
+        addHistory(current, "system", settled.status === "completed" ? "intakeOzonWordsReady" : "intakeOzonWordsFailed",
+          settled.status === "completed" ? `AI 翻好了俄文搜索词「${settled.query}」，接着用它在 Ozon 搜一次；词只是拿来搜，同款照样由你判断`
+            : `AI 没翻成俄文搜索词（${settled.failure.detail}）；按规矩不重发、不换模型，这件照样往下粗算，可以在商品页上自己填词再搜`, timestamp);
+        current.dataRevision = Number(current.dataRevision || 0) + 1;
+        current.updatedAt = timestamp;
+        current.lastModifiedBy = "system";
+        return { changed: true };
+      });
+    } finally {
+      intakeOzonWordsInFlight.delete(candidateId);
+      scheduleIntakePump(0);
+    }
+  };
+  void intakeOzonWordsTranslator.translate(planned.request)
+    .then((result) => settle((words) => completedIntakeOzonWords(words, result)),
+      (error) => settle((words, timestamp) => failedIntakeOzonWords(words, error, timestamp)))
+    .catch((error) => { console.error("录入流水线没能记下 AI 翻俄文词的结果", error); });
 }
 
 function intakeRoughProfitSummary(roughProfit) {
