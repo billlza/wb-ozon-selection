@@ -1701,7 +1701,7 @@ const IMAGE_MATCH_KINDS = Object.freeze({
     queuedHistory: (target) => (target.searchBy === "image"
       ? `主人要求拿${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[target.source.platform]}在 Ozon 以图搜一次，再和结果的主图比，找同款；` +
         "系统已建立一个受控作业（在这台电脑的 Chrome 里打开 Ozon 首页，点一次搜索栏的拍照按钮上传这张图，最多读回 36 条），等待插件后台领取。"
-      : (target.queryOrigin === "ai_translation" ? `以图搜没找到首图一致的，录入流水线用 AI 翻的俄文词「${target.query}」在 Ozon 搜一次，` +
+      : (target.queryOrigin === "ai_translation" ? `用 AI 从货源标题翻的俄文词「${target.query}」在 Ozon 搜一次，` +
         `再拿${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[target.source.platform]}` : `主人要求用「${target.query}」在 Ozon 搜一次，再拿` +
         `${SUPPLIER_IMAGE_MATCH_SOURCE_LABELS[target.source.platform]}`) +
         "和结果的主图比，找同款；系统已建立一个受控只读作业（在这台电脑的 Chrome 里打开一次 Ozon 搜索页，最多读回 36 条），等待插件后台领取。") +

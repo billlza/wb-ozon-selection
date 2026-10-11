@@ -10,6 +10,7 @@ import { IMAGE_MATCH_JUDGEMENT_LABELS, IMAGE_MATCH_SIMILARITY_LABELS } from "./s
  */
 const SIMILARITY_ORDER = Object.freeze(["identical", "similar", "unknown", "different"]);
 const QUERY_ORIGIN_NOTES = Object.freeze({
+  ai_translation: "AI 翻译的俄文词，可以改。",
   last_search: "上次在 Ozon 搜用的词，可以改。",
   ozon_title: "取自这件商品在 Ozon 上的标题，可以改。"
 });

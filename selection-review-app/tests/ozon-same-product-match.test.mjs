@@ -42,6 +42,15 @@ test("the words are prefilled from the last Ozon search, else from the product's
   { query: "Жилет синтетический для кошек с капюшоном на молнии", origin: "ozon_title" }, "at most eight words, before the first comma or bracket");
   assert.deepEqual(suggestedOzonSearchQuery(candidate({ productName: "Жилет", ozonImageMatch: { query: QUERY } })),
     { query: QUERY, origin: "last_search" });
+  // Words the intake pipeline had the AI translate are offered next, and stay marked as AI-translated after they were searched.
+  const translated = { intake: { ozonWords: { status: "completed", query: "жилет для собак" } } };
+  assert.deepEqual(suggestedOzonSearchQuery(candidate({ productName: "Жилет", ...translated })),
+    { query: "жилет для собак", origin: "ai_translation" });
+  assert.deepEqual(suggestedOzonSearchQuery(candidate({ intake: { ozonWords: { status: "failed", query: null } } })), { query: "", origin: null });
+  assert.deepEqual(suggestedOzonSearchQuery(candidate({ ...translated, ozonImageMatch: { query: "жилет для собак", queryOrigin: "ai_translation" } })),
+    { query: "жилет для собак", origin: "ai_translation" });
+  assert.equal(ozonImageMatchTarget(candidate(translated), "жилет для собак").queryOrigin, "ai_translation");
+  assert.equal(ozonImageMatchTarget(candidate(translated), "жилет для кошек").queryOrigin, "owner", "改过的词算主人的");
 });
 
 test("the picture follows the same rule as the 1688 search, and the words must be real words", () => {

@@ -52,12 +52,17 @@ function queryFromTitle(value) {
 }
 
 /**
- * 预先填好的搜索词：上一次在 Ozon 找同款用过的词；没有的话，这件商品自己在 Ozon 上的俄文标题。都没有就空着，等主人填。
- * 只是建议，主人改了以后用主人的。
+ * 预先填好的搜索词：上一次在 Ozon 找同款用过的词；没有的话，录入流水线让 AI 从货源标题翻的俄文词（以图搜没找到首图一致时，
+ * 主人 2026-10-11 定）；再没有，这件商品自己在 Ozon 上的俄文标题。都没有就空着，等主人填。AI 翻的词标 ai_translation，
+ * 页面上写明是 AI 翻的。只是建议，主人改了以后用主人的。
  */
 export function suggestedOzonSearchQuery(candidate) {
-  const last = normalizeOzonSearchQuery(candidate?.ozonImageMatch?.query);
-  if (last) return { query: last, origin: "last_search" };
+  const record = candidate?.ozonImageMatch;
+  const last = normalizeOzonSearchQuery(record?.query);
+  if (last) return { query: last, origin: record.queryOrigin === "ai_translation" ? "ai_translation" : "last_search" };
+  const words = candidate?.intake?.ozonWords;
+  const translated = words?.status === "completed" ? normalizeOzonSearchQuery(words.query) : null;
+  if (translated) return { query: translated, origin: "ai_translation" };
   const snapshots = Array.isArray(candidate?.salesSnapshotsV11) ? candidate.salesSnapshotsV11 : [];
   for (const snapshot of [...snapshots].reverse()) {
     const query = queryFromTitle(snapshot?.title);

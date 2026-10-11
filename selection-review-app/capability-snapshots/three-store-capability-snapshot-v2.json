@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T15:29:22.470Z",
+  "frozenAt": "2026-10-11T15:37:26.173Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 925,
-      "sha256": "43c63d6599dc58c8263288e6c972853e4ea05ba008a8c3536323762851ef7255",
+      "sha256": "ec91b924c788f3005e87019711c6197e01531d0b7111b42181e944955903d639",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -896,7 +896,7 @@
       },
       {
         "path": "lib/ozon-search-query.mjs",
-        "sha256": "695968cca3cda98742b4bf00682b7a116bb070b2232398eaae3462fc5014575c"
+        "sha256": "209ce49e8d67d186e8b5c41935a79baf2bd1523645be41ac60d2e28adf96e034"
       },
       {
         "path": "lib/ozon-seller-api-de-adapter.mjs",
@@ -1592,7 +1592,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "84781369e9e31a73cbc70b15cfb81292e5fd56cb42d8331fd85770713a3746c2"
+        "sha256": "b9ab70fcb4a834ce0d6460e39d07a4e4a391913b1f25bf76acada5fa7eda7362"
       },
       {
         "path": "src/App.jsx",
@@ -1876,7 +1876,7 @@
       },
       {
         "path": "src/ozonImageMatchView.js",
-        "sha256": "2f6ece9762baa84edf1cdb42ed472f1757a01139a176a56a44880fd659d173bf"
+        "sha256": "0d7d7e5f2fb79ffdc8188c61ec8ca1d3fb0f0845638764dde3f233335dc95f26"
       },
       {
         "path": "src/productionAuthorizationInput.js",
@@ -3284,7 +3284,7 @@
       },
       {
         "path": "tests/ozon-same-product-match.test.mjs",
-        "sha256": "40c5084b7d4b3281942f9d014973ca686c270a39719fef0f6ef3c5bb40422726"
+        "sha256": "1ee99276791ea928ba485b95af45c05063bad6e1bffe8e911992be0f121b67db"
       },
       {
         "path": "tests/ozon-search-extension.test.mjs",
@@ -3680,7 +3680,7 @@
       },
       {
         "path": "tests/supplier-image-match-ui.test.mjs",
-        "sha256": "665bdf862e6c0b587b1bb7da4f5d612db087625acaa0bc88c03029b70f545391"
+        "sha256": "844ad13d09d0ed054c7dac2b2977318d33a9dd2bfa996601b34a2197a1eb472a"
       },
       {
         "path": "tests/supplier-image-match.test.mjs",
