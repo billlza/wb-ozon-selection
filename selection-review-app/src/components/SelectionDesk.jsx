@@ -35,7 +35,7 @@ function ProfitBox({ row }) {
 }
 
 function FeedCard({ row, active, saving, declining, candidateRevision = null,
-  onDeclining, onSelect, onDecline, onLater, onOpenCandidate, onEliminate, onSubmitSourceLink = null }) {
+  onDeclining, onSelect, onDecline, onLater, onOpenCandidate, onEliminate, onSubmitSourceLink = null, store = null }) {
   return <article className={`desk-card${active ? " desk-card-active" : ""}`}>
     {row.imageUrl
       ? <img className="desk-thumb" src={row.imageUrl} alt="" width="132" height="132" loading="lazy" referrerPolicy="no-referrer" />
@@ -71,7 +71,7 @@ function FeedCard({ row, active, saving, declining, candidateRevision = null,
             </details>
             <button type="button" className="button secondary" disabled={saving} onClick={() => onLater(row)}>稍后</button>
             {/* Item 9: a folded row nobody found a source for gets a way forward, not only a place to be hidden. */}
-            {onSubmitSourceLink === null ? null : <SourceLinkControl target={{ batchId: row.batchId, marketProductId: row.marketProductId }}
+            {onSubmitSourceLink === null ? null : <SourceLinkControl target={{ batchId: row.batchId, marketProductId: row.marketProductId, store }}
               disabled={saving} onSubmit={onSubmitSourceLink} onOpenCandidate={onOpenCandidate} />}
           </>}
       </div>
@@ -286,7 +286,7 @@ export default function SelectionDesk({
           {history.map(row => <FeedCard key={row.key} row={row} active={false} saving={saving}
             declining={declining === row.key} onDeclining={setDeclining} candidateRevision={revisions.get(row.importedCandidateId) ?? null}
             onSelect={select} onDecline={decline} onLater={later} onOpenCandidate={onOpenCandidate} onEliminate={eliminate}
-            onSubmitSourceLink={typeof onSubmitSourceLink === "function" ? onSubmitSourceLink : null} />)}
+            onSubmitSourceLink={typeof onSubmitSourceLink === "function" ? onSubmitSourceLink : null} store={feed.store} />)}
         </details> : null}
         {feed.excluded.length ? <details className="desk-folded"><summary>已自动排除 {feed.excluded.length} 条（预估负利润）</summary>
           <ul>{feed.excluded.map(row => <li key={row.key}>{row.titleZh ?? row.title} · 售价 {fact(row.price)} 卢布 · {row.estimate?.summary ?? "预估负利润"}</li>)}</ul>

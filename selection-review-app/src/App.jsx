@@ -610,7 +610,7 @@ export default function App() {
     try{
       return payload.attachTo
         ? await api.attachIntakeSourceLink(payload.links[0],payload.attachTo)
-        : await api.submitIntakeLinks(payload.links,["miska","dandanshu"].includes(deskStore)?deskStore:null);
+        : await api.submitIntakeLinks(payload.links,payload.targetStore);
     }finally{await load(true);}
   }
 

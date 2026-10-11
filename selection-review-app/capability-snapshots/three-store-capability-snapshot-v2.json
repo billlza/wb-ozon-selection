@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-10T08:05:44.576Z",
+  "frozenAt": "2026-10-11T15:18:40.681Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 967,
-      "sha256": "115c22c7ee2d95d4ab58d159e6a9e64cd1df8702a59566f2db097794a01d7c46",
+      "sha256": "760233deea7baa990b3dc06deed4fa75ef2d96cecf20bc9491bbf5d3e9827f21",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -1664,7 +1664,7 @@
       },
       {
         "path": "src/App.jsx",
-        "sha256": "60d79ac136c219ea0d0e0b010ecb5df8e0cfbabd8de07c2ec7f2487e9da6ca3f"
+        "sha256": "53209cd9871f6c612101bc6371cecb1c5d663a186d53948978b2317cb50b9baa"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1872,7 +1872,7 @@
       },
       {
         "path": "src/components/SelectionDesk.jsx",
-        "sha256": "07b524813fd178412c78614567a9a4fede68c05033fa288f6cc362fcb868e3be"
+        "sha256": "86b5311d28ff255a0ff69cd7f6dadb010608833fbc875924ca45effc29588a79"
       },
       {
         "path": "src/components/SiblingBatchPreparation.jsx",
@@ -1888,7 +1888,7 @@
       },
       {
         "path": "src/components/SourceLinkControl.jsx",
-        "sha256": "8118a60881e72a6897f6282c240694b774ce471d19feb59ff4299899576d7643"
+        "sha256": "86b002bd4d4a226e9a1deb15da37a84a4ad39067bd4348a126eb21af57922fb7"
       },
       {
         "path": "src/components/StatusBadge.jsx",
@@ -1988,7 +1988,7 @@
       },
       {
         "path": "src/selectionDeskView.js",
-        "sha256": "46e7146a498dcad024199b253af096dc7c3843a701f5de5e733fefc0d74c36a3"
+        "sha256": "e8867a4d0e5b1c25530d48f669c858e4d7d26da4d71d97cb54935acbd0345f8e"
       },
       {
         "path": "src/siblingBatchAuthorizationInput.js",
@@ -3140,7 +3140,7 @@
       },
       {
         "path": "tests/inbox-notices-ui.test.mjs",
-        "sha256": "d950b9fa55a586400be30864d9231d6761ffc1c3d8a06625bc322f3df39965b0"
+        "sha256": "6476dfdb8ce8c547eb8c08c1bd3a65fead04dcb725d58495b8b0b0929f3c5dc6"
       },
       {
         "path": "tests/intake-api.test.mjs",

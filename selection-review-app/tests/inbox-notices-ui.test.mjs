@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import react from '@vitejs/plugin-react';
-import { inboxItems, roundStartPayload, sourceLinkPayload, sourceLinkRefusal, sourceLinkResult, unsourcedReason,
+import { inboxItems, roundStartPayload, sourceLinkBlocked, sourceLinkPayload, sourceLinkRefusal, sourceLinkResult, unsourcedReason,
   unsourcedRows } from '../src/selectionDeskView.js';
 
 // 需要你处理, the desk and the page-wide notices render synthetic display data only: no saved records, no services.
@@ -65,8 +65,15 @@ test('a blocked-without-source product is a 需要你处理 row whose action is 
 test('a link pasted on a product attaches to that product; on a market row it is a product of its own', () => {
   assert.deepEqual(sourceLinkPayload('https://detail.1688.com/offer/1.html', { candidateId: 'c1', dataRevision: 7 }),
     { links: ['https://detail.1688.com/offer/1.html'], attachTo: { candidateId: 'c1', dataRevision: 7 } });
-  assert.deepEqual(sourceLinkPayload('https://detail.1688.com/offer/1.html', { batchId: 'b', marketProductId: 'm' }),
-    { links: ['https://detail.1688.com/offer/1.html'] });
+  assert.deepEqual(sourceLinkPayload('https://detail.1688.com/offer/1.html', { batchId: 'b', marketProductId: 'm', store: 'dandanshu' }),
+    { links: ['https://detail.1688.com/offer/1.html'], targetStore: 'dandanshu' });
+  assert.equal(sourceLinkBlocked({ candidateId: 'c1', dataRevision: 7 }), null, 'attaching needs no store');
+  assert.equal(sourceLinkBlocked({ batchId: 'b', marketProductId: 'm', store: 'miska' }), null);
+  // A new product never falls back to a default store (AGENTS.md §13.1): without one the button stays disabled.
+  for (const store of [null, 'wb_store']) {
+    assert.match(sourceLinkBlocked({ batchId: 'b', marketProductId: 'm', store }), /先在上面选好店铺/u);
+    assert.equal(sourceLinkPayload('https://detail.1688.com/offer/1.html', { batchId: 'b', marketProductId: 'm', store }).targetStore, null);
+  }
   const attached = sourceLinkResult({ items: [{ candidateId: 'c1', created: false, attached: true }], rejected: [] });
   assert.deepEqual(attached, { message: '已换上这个货源，这件会从读货源页重新开始，找完回到需要你处理。', candidateId: null });
   const fresh = sourceLinkResult({ items: [{ candidateId: 'new', created: true, duplicateOfCandidateId: null }], rejected: [] });
@@ -164,4 +171,13 @@ test('the desk gives every folded history row 贴货源链接 and points the rai
   assert.match(html, /历史轮次未处理的 1 条/u);
   assert.equal((html.match(/source-link-button">贴货源链接</gu) ?? []).length, 1, 'only the folded row, not the current round');
   assert.match(html, /还有 1 件没有货源/u);
+  const elsewhere = (await pages()).desk({ store: 'wb_store', candidates: [], onSubmitSourceLink: forbidden,
+    discoveryView: { schemaVersion: 'a-discovery-view-v1', targetStores: ['wb_store'], plans: [], bindings: [],
+      batches: [{ ...batch('new', '2026-10-10T04:00:00.000Z', '1'), batch: { ...batch('new', '2026-10-10T04:00:00.000Z', '1').batch, targetStore: 'wb_store' } },
+        { ...batch('old', '2026-10-09T04:00:00.000Z', '2'), batch: { ...batch('old', '2026-10-09T04:00:00.000Z', '2').batch, targetStore: 'wb_store' } }] },
+    onSelectProduct: forbidden, onDeclineProduct: forbidden, onLaterProduct: forbidden, onOpenCandidate: forbidden,
+    onEliminateCandidate: forbidden, onRestoreCandidate: forbidden });
+  assert.match(elsewhere, /历史轮次未处理的 1 条/u);
+  assert.match(elsewhere, /source-link-button" title="[^"]*先在上面选好店铺[^"]*" disabled="">贴货源链接</u,
+    'a store the intake pipeline cannot open products for gets a disabled button that says why');
 });
