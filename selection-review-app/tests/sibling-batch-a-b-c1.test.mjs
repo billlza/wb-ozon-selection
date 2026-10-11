@@ -230,3 +230,33 @@ test('evidence filed after the read, a provider gap or a colour outside the pare
   await assert.rejects(() => stale.prepare(staleDocument), /SIBLING_BATCH_A_MEMBER_CONFLICT/);
   assert.deepEqual(stale.calls, [], 'a stale row stops the batch before any read');
 });
+
+test('colours created before the family rule are still judged and saved on the parent frozen snapshot', async () => {
+  const f = await fixture();
+  let older, newer;
+  await f.repository.transact(document => {
+    const [parent, ...children] = document.candidates;
+    older = structuredClone(parent.salesSnapshotsV11[0]);
+    newer = { ...structuredClone(older), snapshotId: 'sales:synthetic-newer-copy', currentPrice: 475,
+      collectedAt: new Date(Date.parse(older.collectedAt) + 86_400_000).toISOString() };
+    parent.salesSnapshotsV11 = [older, newer];
+    parent.lifecycleV11.opportunityPackage = { salesSnapshots: [structuredClone(older)] };
+    parent.lifecycleV11.skuPackage.inheritedSalesSnapshotRefs = [older.snapshotId];
+    for (const child of children) {
+      child.salesSnapshotsV11 = [structuredClone(older), structuredClone(newer)];
+      child.siblingSourceV1.salesSnapshotId = newer.snapshotId; // what creation used to record: the newest copy
+    }
+    return { changed: true, document, result: null };
+  });
+  const run = input => commitSiblingBatchABAndC1({ ...f, input, runtimeMode: 'local_development', serverClock: () => confirmedAt, guooFilePath });
+  const before = await f.repository.readSnapshot();
+  await assert.rejects(() => run({ ...f.input, shared: { ...f.input.shared,
+    salesReview: { ...f.input.shared.salesReview, snapshotId: newer.snapshotId } } }), /REAL_A_CONFIRMATION_INVALID/);
+  assert.deepEqual(await f.repository.readSnapshot(), before);
+
+  await run(f.input);
+  for (const child of (await f.repository.readSnapshot()).candidates.slice(1)) {
+    assert.equal(child.siblingSourceV1.salesSnapshotId, older.snapshotId);
+    assert.deepEqual(child.lifecycleV11.opportunityPackage.salesSnapshots.map(snapshot => snapshot.snapshotId), [older.snapshotId]);
+  }
+});
