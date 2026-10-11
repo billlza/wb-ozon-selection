@@ -354,7 +354,11 @@ test("贴货源链接：接到还没有货源的那一件上，从读货源页�
   assert.equal(after.history.at(-1).action, "intakeSourceAttached");
   assert.equal((await attach([PDD_B], { candidateId: "SEERFAR-2", dataRevision: after.dataRevision })).body.code, "intake_attach_has_source");
 
-  const delisted = await api.record("DELISTED");
+  // The first attach woke the pump, which marks the delisted item blocked; read its revision only after that write.
+  const delisted = await api.until("下架那一件停下", async () => {
+    const current = await api.record("DELISTED");
+    return current.intake.stage === "blocked" ? current : null;
+  });
   const swapped = await attach([PDD_B], { candidateId: "DELISTED", dataRevision: delisted.dataRevision });
   assert.equal(swapped.status, 200, JSON.stringify(swapped.body));
   const kept = (await api.record("DELISTED")).intakeSourceHistory[0];
