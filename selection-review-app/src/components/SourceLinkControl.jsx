@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { sourceLinkCheck } from "../../lib/global-notices.mjs";
 import { errorMessage } from "../formState.js";
-import { sourceLinkPayload, sourceLinkRefusal, sourceLinkResult } from "../selectionDeskView.js";
+import { sourceLinkBlocked, sourceLinkPayload, sourceLinkRefusal, sourceLinkResult } from "../selectionDeskView.js";
 
 /**
  * 贴货源链接 on one product (item 9 of the 2026-10-10 list). One click opens a single field; the link is checked to be
  * a 1688 or 拼多多 page and sent once to the intake pipeline, which reads it. Pasted on a product, the link attaches to
- * that product and its reading starts over; pasted on a market row, it becomes a product of its own. A link pasted
- * before is never a second card: the answer names the card it already belongs to, with a way to open it.
+ * that product and its reading starts over; pasted on a market row, it becomes a product of that row's store (and
+ * stays disabled until the store is one the pipeline accepts). A link already on a product of the same store is never
+ * a second card: the answer names the card it already belongs to, with a way to open it.
  * Nothing runs until the owner submits.
  */
 export default function SourceLinkControl({ target, disabled = false, onSubmit, onOpenCandidate }) {
@@ -18,7 +19,7 @@ export default function SourceLinkControl({ target, disabled = false, onSubmit, 
   const [result, setResult] = useState(null);
   async function submit(event) {
     event.preventDefault();
-    if (busy || typeof onSubmit !== "function") return;
+    if (busy || typeof onSubmit !== "function" || sourceLinkBlocked(target) !== null) return;
     const check = sourceLinkCheck(value);
     if (!check.ok) { setError(check.reason); return; }
     setBusy(true); setError(null);
@@ -39,9 +40,10 @@ export default function SourceLinkControl({ target, disabled = false, onSubmit, 
         ? <button type="button" className="button secondary" onClick={() => onOpenCandidate(result.candidateId)}>打开那件</button> : null}
     </span>;
   }
+  const blocked = sourceLinkBlocked(target);
   if (!open) {
-    return <button type="button" className="button secondary source-link-button" disabled={disabled || typeof onSubmit !== "function"}
-      onClick={() => setOpen(true)}>贴货源链接</button>;
+    return <button type="button" className="button secondary source-link-button" title={blocked ?? undefined}
+      disabled={disabled || blocked !== null || typeof onSubmit !== "function"} onClick={() => setOpen(true)}>贴货源链接</button>;
   }
   return <form className="source-link-form" onSubmit={submit}>
     <label>1688 或拼多多商品链接（要能一件起订）

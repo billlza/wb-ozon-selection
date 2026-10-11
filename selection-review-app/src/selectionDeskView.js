@@ -503,14 +503,26 @@ export function unsourcedRows(candidates, store, discoveryView = null) {
     }));
 }
 
+/** The stores the intake pipeline can open a new product for; it never picks one by itself (AGENTS.md §13.1). */
+const INTAKE_STORES = Object.freeze(["miska", "dandanshu"]);
+
 /**
  * The body 贴货源链接 sends. On a saved product it carries attachTo, so the intake pipeline puts the link on that very
- * card (bound to the revision the owner saw) instead of opening a second one; a market row is not a product yet.
+ * card (bound to the revision the owner saw) instead of opening a second one; a market row is not a product yet, so
+ * it names the row's own store for the new product.
  */
 export function sourceLinkPayload(link, target) {
-  return isObject(target) && text(target.candidateId) !== null
-    ? { links: [link], attachTo: { candidateId: target.candidateId, dataRevision: target.dataRevision ?? null } }
-    : { links: [link] };
+  if (isObject(target) && text(target.candidateId) !== null) {
+    return { links: [link], attachTo: { candidateId: target.candidateId, dataRevision: target.dataRevision ?? null } };
+  }
+  return { links: [link], targetStore: isObject(target) && INTAKE_STORES.includes(target.store) ? target.store : null };
+}
+
+/** Why 贴货源链接 cannot be used on this target yet, or null: a new product needs a store the pipeline accepts. */
+export function sourceLinkBlocked(target) {
+  if (isObject(target) && text(target.candidateId) !== null) return null;
+  if (isObject(target) && INTAKE_STORES.includes(target.store)) return null;
+  return `贴货源链接只能给${INTAKE_STORES.map(storeLabel).join("或")}新建商品，先在上面选好店铺。`;
 }
 
 /** What the owner reads after 贴货源链接 came back from piece A's POST /api/intake/links. */
