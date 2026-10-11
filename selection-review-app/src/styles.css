@@ -1151,7 +1151,18 @@ label em { color: var(--red); font-style: normal; font-size: 9px; }
 .eliminate-confirm-hint { color: var(--muted); font-size: 10px; }
 .eliminate-confirm .button { padding: 4px 8px; font-size: 11px; }
 .board-card-shell { display: grid; gap: 5px; }
-.board-card-shell .eliminate-button { justify-self: start; padding: 3px 8px; font-size: 10px; }
+.board-card-shell.stuck .board-card { border-color: var(--amber); }
+.board-card-stuck { color: var(--amber); font-size: 10px; font-weight: 700; }
+.board-card-body .intake-chip { justify-self: start; padding: 2px 8px; font-size: 10px; }
+.board-card-colours { list-style: none; margin: 0; padding: 0 0 0 4px; display: grid; gap: 2px; font-size: 10px; color: var(--muted); }
+.board-card-colours li { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.board-card-colours .intake-link { font-size: 11px; }
+.board-card-elsewhere { padding-left: 4px; color: var(--muted); font-size: 10px; }
+.board-card-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
+.board-card-actions > .button { padding: 3px 10px; font-size: 11px; }
+.board-card-more { font-size: 11px; color: var(--muted); }
+.board-card-more summary { cursor: pointer; padding: 3px 4px; }
+.board-card-more .eliminate-button { padding: 3px 8px; font-size: 10px; }
 .eliminated-fold .eliminated-list { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .eliminated-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
 .eliminated-body { min-width: 0; display: grid; gap: 2px; }

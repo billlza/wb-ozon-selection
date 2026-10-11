@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T16:57:30.899Z",
+  "frozenAt": "2026-10-11T17:30:33.318Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 982,
-      "sha256": "12b3d485bff2cb73309d1a2835b6f153da9ae752609fa1c99a1dacec95f64f75",
+      "sha256": "f3280a3cef5a8b40eefff3bf273b1b1f0f93d611a8ef94ae86f975ed3bfcebc3",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -1680,7 +1680,7 @@
       },
       {
         "path": "src/App.jsx",
-        "sha256": "f5361a26d534e3b812006ceea38d6027d397c627b3769834d11102d3db4a5348"
+        "sha256": "08febafbb73a4793b1c662fc092c5afc8b1c924a21f6368b64a731f417484286"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1860,7 +1860,7 @@
       },
       {
         "path": "src/components/PipelineBoard.jsx",
-        "sha256": "e5dae65641a06fcaaa150474542edfb2cb8cee079dc202f7df43924c6cbbe973"
+        "sha256": "87b6a86653f987c6d6178f8d79f3caf9b7e3682b02e1c9a3a428b3043d7df7b3"
       },
       {
         "path": "src/components/ProcessingBreakdown.jsx",
@@ -2020,7 +2020,7 @@
       },
       {
         "path": "src/selectionDeskView.js",
-        "sha256": "e8867a4d0e5b1c25530d48f669c858e4d7d26da4d71d97cb54935acbd0345f8e"
+        "sha256": "fd99fe12b91d321138f6c14d8c2efd760aa266ed07b8db1a037df1b9f5a76de9"
       },
       {
         "path": "src/siblingBatchAuthorizationInput.js",
@@ -2044,7 +2044,7 @@
       },
       {
         "path": "src/styles.css",
-        "sha256": "11b483861c76588fd0a7be9bd49a04e82b39d9d3138e19b99a76047050044a1f"
+        "sha256": "8b9cb07e7d09f23810ec32f5ab5c2d66b719a1bcfc20502c496380f243f90933"
       },
       {
         "path": "src/supplierImageMatchView.js",
@@ -3116,7 +3116,7 @@
       },
       {
         "path": "tests/header-status-view.test.mjs",
-        "sha256": "14e73426de47611be9df218a8c2f0bcc263b089fa462afc32a36a1072a968d8a"
+        "sha256": "72d0b985902941d37197a1a2e60bbd3a69ae7afbcce576d1a49884903e0f1b17"
       },
       {
         "path": "tests/helpers/a-supplier-image-search-fixture.mjs",
@@ -3196,7 +3196,7 @@
       },
       {
         "path": "tests/intake-page-ui.test.mjs",
-        "sha256": "f064968aaf5ecc50e1cfe1f9ac3bb116803cac5f62a742205fbf3c92f4efef12"
+        "sha256": "745c018f66b466a078124b940c8d9d25a295351db4b072edf9a4c976e0c0f07e"
       },
       {
         "path": "tests/intake-pipeline.test.mjs",
@@ -3360,7 +3360,7 @@
       },
       {
         "path": "tests/owner-inbox-board-ui.test.mjs",
-        "sha256": "71f895d22e82c50421449cbcd37c0570792ab2096446ef9a4c53362bf8cc6615"
+        "sha256": "4118926822275b1a69b6e46fed506f05a1c25754bf66925667a0644f89493828"
       },
       {
         "path": "tests/owner-media-authorization.test.mjs",
@@ -3744,7 +3744,7 @@
       },
       {
         "path": "tests/selection-desk-view.test.mjs",
-        "sha256": "f4480115eee03832f9adbb6d8ee508ef1887a098332fcd4f5ca4a43d3861c030"
+        "sha256": "e8aaf39fad66598314782c565854a29222d3c0236ac8fd6c028c50bace401b8f"
       },
       {
         "path": "tests/sibling-batch-a-b-c1.test.mjs",

@@ -108,7 +108,7 @@ export default function App() {
     bridge.start();
     return () => bridge.stop();
   }, [accountOwnerId]);
-  const intake = useIntakeQueue({ enabled: view === "desk" && accountOwner, loadQueue: loadIntakeQueue });
+  const intake = useIntakeQueue({ enabled: (view === "desk" || view === "board") && accountOwner, loadQueue: loadIntakeQueue });
   useEffect(() => {
     if (view !== 'product' || !accountOwnerId || !selectedId) return undefined;
     let cancelled = false;
@@ -1433,7 +1433,7 @@ export default function App() {
             : <p className="app-brand-product">{VIEW_TITLES[view] ?? "今日选品评审"}
               <button type="button" className="app-brand-back" onClick={() => setView("desk")}>← 录入新商品</button></p>}
         </div>
-        {/* 顶栏只剩：平台和店铺、需要你处理、一个状态指示器。进行中和维护在录入页底部。 */}
+        {/* 顶栏只剩：平台和店铺、进行中、需要你处理、一个状态指示器。维护在录入页底部。 */}
         <div className="desk-store-switch" role="group" aria-label="平台和店铺">
           <label>平台
             <select value={deskPlatform ?? ""} aria-label="选择平台"
@@ -1448,6 +1448,10 @@ export default function App() {
           </label>
         </div>
         <div className="header-actions">
+          <button type="button" className={`button secondary header-board${view === "board" ? " current" : ""}`} onClick={() => setView("board")}
+            aria-current={view === "board" ? "page" : undefined}>
+            进行中<span className="desk-badge">{counts.board}</span>
+          </button>
           <button type="button" className={`button ${view === "inbox" ? "secondary" : "primary"} header-inbox`} onClick={() => setView("inbox")}>
             需要你处理<span className="desk-badge">{counts.inbox}</span>
           </button>
@@ -1509,8 +1513,10 @@ export default function App() {
           {accountOwner ? seerfarError ? <p role="alert">读取 Seerfar 榜单失败：{seerfarError}</p>
             : seerfarView ? <SeerfarWebRoundCard view={seerfarView} onStart={startSeerfarRound} onReadStoreSales={readStoreSales} onOpenCandidate={openDiscoveredCandidate} /> : null : null}
         </>) : view === "board" ? (
-          <PipelineBoard candidates={state.candidates} store={deskStore} onOpenCandidate={openDiscoveredCandidate}
-            onEliminateCandidate={eliminateCandidate} onRestoreCandidate={restoreCandidate} />
+          <PipelineBoard candidates={state.candidates} store={deskStore} discoveryView={discoveryView} intakeQueue={intake.queue}
+            onOpenCandidate={openDiscoveredCandidate} onEliminateCandidate={eliminateCandidate} onRestoreCandidate={restoreCandidate}
+            onRetryIntake={async (candidateId, dataRevision) => { try { return await api.retryIntake(candidateId, dataRevision); } finally { intake.refresh(); } }}
+            onResumeIntake={async () => { try { return await api.resumeIntake(); } finally { intake.refresh(); } }} />
         ) : view === "live" ? (
           <ListedProducts candidates={state.candidates} store={deskStore} discoveryView={discoveryView} onOpenCandidate={openDiscoveredCandidate} />
         ) : view === "inbox" ? (
