@@ -9994,6 +9994,14 @@ async function handleApi(req, res, pathname) {
       }
       throw error;
     }
+    if (result?.status === 'b_not_passed') {
+      const percent = value => Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '未取得';
+      const lines = result.members.map(member => `规格 ${member.supplierSkuId ?? member.candidateId}：单件利润 ${
+        Number.isFinite(member.unitProfitRmb) ? `${member.unitProfitRmb} 元` : '未取得'}，利润率 ${percent(member.profitMargin)}`);
+      return json(res, 422, { code: 'SIBLING_BATCH_A_B_NOT_PASSED', members: result.members,
+        message: `整批没有推进：${result.members.length} 个颜色利润没过线（${lines.join('；')}）。这几个颜色的利润结论已经存下，过线的颜色没有动。改售价或去掉这几个颜色后再整批提交。`,
+        externalRequests: result.externalRequests, platformWrites: 0 });
+    }
     return json(res, 200, result);
   }
   if (req.method === 'POST' && siblingBatchRoute) {

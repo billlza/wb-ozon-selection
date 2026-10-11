@@ -260,3 +260,42 @@ test('colours created before the family rule are still judged and saved on the p
     assert.deepEqual(child.lifecycleV11.opportunityPackage.salesSnapshots.map(snapshot => snapshot.snapshotId), [older.snapshotId]);
   }
 });
+
+// 张大帅交接时指出的那条：有一个颜色利润没过线时，整批回滚，连没过线的那份结论也没存。现在整批照旧不推进，
+// 但没过线的颜色把这次的利润结论记在自己身上（只追加，修订号加一），过线的颜色一点不动。
+test('a colour that fails B keeps its failed profit result while the batch stays unsaved', async () => {
+  const { repository, actor, input, parent, children } = await fixture();
+  const quote = input.members[1].unitProductPrice;
+  input.members[1].unitProductPrice = 800;
+  const result = await commitSiblingBatchABAndC1({ repository, runtimeMode: 'local_development', actor, input,
+    serverClock: () => confirmedAt, guooFilePath });
+  assert.equal(result.status, 'b_not_passed');
+  assert.deepEqual(result.members.map(member => member.candidateId), [children[1].id]);
+  assert.equal(result.passedMembers, 1);
+  assert.equal(result.platformWrites, 0);
+  const saved = await repository.readSnapshot();
+  const [savedParent, passed, failed] = ['candidate:synthetic-parent', children[0].id, children[1].id]
+    .map(id => saved.candidates.find(item => item.id === id));
+  assert.deepEqual(savedParent, parent);
+  assert.deepEqual(passed, children[0]);
+  assert.equal(failed.lifecycleV11, children[1].lifecycleV11);
+  assert.equal(failed.dataRevision, children[1].dataRevision + 1);
+  assert.equal(result.members[0].resultRevision, failed.dataRevision);
+  assert.equal(failed.siblingBatchBAttemptsV1.length, 1);
+  const [attempt] = failed.siblingBatchBAttemptsV1;
+  assert.equal(attempt.parentCandidateId, parent.id);
+  assert.equal(attempt.sourceRevision, children[1].dataRevision);
+  assert.notEqual(attempt.result, 'passed');
+  assert.equal(attempt.profitModel.result, attempt.result);
+  assert.equal(attempt.platformWrites, 0);
+
+  // 改回能过线的货价，用新的修订号整批再交一次：两个颜色都推进，失败记录留着。
+  input.members[1].unitProductPrice = quote;
+  input.members[1].candidateRevision = failed.dataRevision;
+  const retried = await commitSiblingBatchABAndC1({ repository, runtimeMode: 'local_development', actor, input,
+    serverClock: () => confirmedAt, guooFilePath });
+  assert.equal(retried.status, 'c1_inputs_ready');
+  const after = (await repository.readSnapshot()).candidates.find(item => item.id === children[1].id);
+  assert.equal(after.lifecycleV11.status, 'b_passed_auto_c1');
+  assert.equal(after.siblingBatchBAttemptsV1.length, 1);
+});

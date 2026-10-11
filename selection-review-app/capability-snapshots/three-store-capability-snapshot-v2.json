@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T16:14:14.026Z",
+  "frozenAt": "2026-10-11T17:08:15.159Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 976,
-      "sha256": "3b044984e9b2d60d34fe8480d1a0813ed74f8898f1de7d4dde959adc9a588986",
+      "sha256": "a54870422899fb0599580981a3beb6deddfea8dcaae2f7458632a59f1c99c1ae",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -376,7 +376,7 @@
       },
       {
         "path": "lib/c1-sibling-neutral-copy.mjs",
-        "sha256": "9b087d03313d5f4282e02337c51a006265c78ec81c234fc85797ef9770c23d11"
+        "sha256": "4b81c1c846b36ccb6b148f3106b46f246abc0bc8ec92f1e30d3b54c281e303c3"
       },
       {
         "path": "lib/c1-sku-rights-review-submission.mjs",
@@ -1172,7 +1172,7 @@
       },
       {
         "path": "lib/sibling-batch-a-b-c1.mjs",
-        "sha256": "cf85217b79f91cb0d058b43b78b608c5184a5f8924ceae2795bac2ed59acb5de"
+        "sha256": "8766c31d69680f8cb582adcc2ddb3b8723da6e4e7ab49e665e4f08eda265a36e"
       },
       {
         "path": "lib/sibling-batch-c1-preparation.mjs",
@@ -1676,7 +1676,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "52552463cf5f6199c48b06fef60fac91572728461a341ee2694cf3fc28a2fbf8"
+        "sha256": "195da0e6db35e9844d1a8d23a7a5f6cf0a1c143efb7aa55d64393d0132981486"
       },
       {
         "path": "src/App.jsx",
@@ -2484,7 +2484,7 @@
       },
       {
         "path": "tests/c1-sibling-neutral-copy.test.mjs",
-        "sha256": "63a58ff75b32e074eda792cb11f040515de08390e4b69858cf6daa7526020c04"
+        "sha256": "f24210dc230cd31101b32c4953b97a214a4cd0f15e8cbcb147cd30f481e04441"
       },
       {
         "path": "tests/c1-sku-rights-review-submission.test.mjs",
@@ -3724,7 +3724,7 @@
       },
       {
         "path": "tests/sibling-batch-a-b-c1.test.mjs",
-        "sha256": "d6fb4c09e425a0bdf5183d3e11ca61846d45fd3f36717b9e5bfadf9831b9c68d"
+        "sha256": "183f706bc39f2b6993158ffc89a12d3cc7624d87376998c3bf778373c52f4df7"
       },
       {
         "path": "tests/sibling-batch-authorization-input.test.mjs",
