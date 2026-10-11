@@ -1,5 +1,5 @@
 import { validateSalesSnapshot } from "./sales-snapshot.mjs";
-import { ozonCapturePageTarget } from "./ozon-page-capture-job.mjs";
+import { canonicalOzonCapturePageUrl, ozonCapturePageProductId, ozonCapturePageTarget } from "./ozon-page-capture-job.mjs";
 
 /**
  * 算利润之前的那一小块：这件商品的类目到底是不是真实读过的 Ozon 页面给的。
@@ -80,6 +80,25 @@ export function ozonPageReadInFlight(record) {
 }
 
 /**
+ * 这件商品自己没有保存 Ozon 商品页（比如从拼多多或 1688 链接录进来的），而主人在「做这件」卡上认了一个 Ozon 同款：
+ * 读的就是那一个。它是主人自己指名的页面，所以照「主人指名」那条路读（页面带上这个地址，快照打对标标记）。
+ */
+function gate1PickTarget(candidate) {
+  const decision = candidate?.gate1DecisionV1;
+  const ozon = decision?.decision === "accept" ? decision.picks?.ozon : null;
+  if (!isObject(ozon)) return null;
+  const productId = ozonCapturePageProductId(ozon.sourceUrl);
+  const productUrl = productId === "" ? null : canonicalOzonCapturePageUrl(ozon.sourceUrl, productId);
+  return productUrl === null ? null : { ok: true, productId, productUrl, from: "gate1_pick", reason: "" };
+}
+
+/** 主人点「读一次这个 Ozon 页面」时读哪一个：这件商品自己的页面；自己没有、卡上认过同款的，就是那个同款。服务端和这一小块共用。 */
+export function ozonPageReadTarget(candidate) {
+  const own = ozonCapturePageTarget(candidate);
+  return !own.ok && own.code === "ozon_product_url_missing" ? gate1PickTarget(candidate) ?? own : own;
+}
+
+/**
  * 算利润这一步在类目上到底通不通，通不过的时候差什么、出路是什么。
  * ready 为真的两种情况：这件商品已经存了一条明确的技术范围类目，或者有一份真实读过的页面快照带着类目。
  */
@@ -90,7 +109,7 @@ export function buildOzonCategoryReadStep(candidate) {
   const saved = savedCategorySnapshot(candidate);
   const record = ozonPageReadRecord(candidate);
   const inFlight = ozonPageReadInFlight(record);
-  const target = ozonCapturePageTarget(candidate);
+  const target = ozonPageReadTarget(candidate);
   const ready = known(explicitCategory) || realPage !== null;
   const readySource = known(explicitCategory) ? "explicit_context" : realPage !== null ? "real_page_snapshot" : null;
 

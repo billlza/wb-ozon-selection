@@ -1,5 +1,7 @@
 import { GATE1_PICK_TAGS, GATE1_SKIP_REASONS, gate1BrandRisk, gate1PickTag, gate1SkipInputErrors } from "../lib/gate1-preselect.mjs";
 import { GATE1_AUTOPILOT_CONSENT_LINE, GATE1_AUTOPILOT_SCOPE_VERSION } from "../lib/gate1-autopilot.mjs";
+import { GATE1_RIGHTS_BRANDS, GATE1_RIGHTS_CHOICES, GATE1_RIGHTS_DEFAULT_MONTHS, GATE1_RIGHTS_VALID_MONTHS, gate1RightsInputProblem,
+  gate1RightsLine } from "../lib/gate1-rights-declaration.mjs";
 
 /** 「做这件」按钮旁边那句话：点下去之后哪几步由软件接着做。请求带上它的版本号，服务端才发许可。 */
 export const GATE1_AUTOPILOT_LINE = GATE1_AUTOPILOT_CONSENT_LINE;
@@ -115,8 +117,37 @@ function basisLine(roughProfit, packageFacts) {
   return `${parts.join("，")}。`;
 }
 
-/** 做这件的请求体：只带选中的三格和主人补的那几项。 */
-export function gate1AcceptPayload(gate1, card, facts, dataRevision) {
+/**
+ * 卡上的品牌与权利那一格。两项都选了才算声明；留着「还没核实」就不声明，到时候软件停下等主人在商品页上声明。
+ * 选了但搭配不对（有品牌没写名称、有品牌却选「未发现第三方权利」）就挡住「做这件」，说清楚哪儿不对。
+ */
+export const GATE1_RIGHTS_EMPTY = Object.freeze({ brandStatus: "", brandName: "", rights: "", validMonths: GATE1_RIGHTS_DEFAULT_MONTHS });
+export const GATE1_RIGHTS_MONTH_LABELS = Object.freeze(Object.fromEntries(GATE1_RIGHTS_VALID_MONTHS.map(months =>
+  [months, months === 12 ? "一年" : `${months} 个月`])));
+export { GATE1_RIGHTS_BRANDS };
+
+export function gate1RightsView(rights = GATE1_RIGHTS_EMPTY) {
+  const choices = Object.entries(GATE1_RIGHTS_CHOICES)
+    .filter(([key]) => key !== "no_third_party_rights_identified" || rights.brandStatus === "unbranded")
+    .map(([value, choice]) => ({ value, label: choice.label }));
+  if (!rights.brandStatus || !rights.rights) {
+    return { choices, declared: false, problem: null,
+      line: "还没核实就先留着：规格定下后软件会停下来，等你在商品页上声明。" };
+  }
+  const payload = gate1RightsPayload(rights);
+  const problem = gate1RightsInputProblem(payload);
+  return { choices, declared: problem === null, problem: problem?.message ?? null,
+    line: problem ? null : `${gate1RightsLine({ ...payload, brand: { status: payload.brandStatus, name: payload.brandName },
+      rights: GATE1_RIGHTS_CHOICES[payload.rights] })}。规格定下后软件按这份声明记到这件商品上，不用再签一次。` };
+}
+
+function gate1RightsPayload(rights) {
+  return { brandStatus: rights.brandStatus, brandName: rights.brandStatus === "branded" ? String(rights.brandName ?? "").trim() : null,
+    rights: rights.rights, validMonths: Number(rights.validMonths) };
+}
+
+/** 做这件的请求体：只带选中的三格、主人补的那几项，和（声明了的话）品牌与权利。 */
+export function gate1AcceptPayload(gate1, card, facts, dataRevision, rights = GATE1_RIGHTS_EMPTY) {
   const extra = {};
   for (const item of card.askFor) {
     if (item.key === "dimensionsCm") {
@@ -129,7 +160,8 @@ export function gate1AcceptPayload(gate1, card, facts, dataRevision) {
     matchOfferId: card.picks.matchOfferId ?? null,
     supplierOfferId: card.picks.supplierOfferId,
     ...(Object.keys(extra).length ? { facts: extra } : {}),
-    autopilot: GATE1_AUTOPILOT_SCOPE_VERSION
+    autopilot: GATE1_AUTOPILOT_SCOPE_VERSION,
+    ...(gate1RightsView(rights).declared ? { rights: gate1RightsPayload(rights) } : {})
   };
 }
 

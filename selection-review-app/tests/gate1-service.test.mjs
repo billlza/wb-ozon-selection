@@ -95,6 +95,38 @@ test('做这件时带着卡上那句许可说明的版本，就一起存下软�
   assert.equal(plain.document.candidates[0].gate1AutopilotGrantV1, null);
 });
 
+test('卡上声明了品牌与权利：单独存一份，声明人是点「做这件」的主人，绑在这一次决定上；没声明就清掉上一轮的', async () => {
+  const { GATE1_AUTOPILOT_SCOPE_VERSION } = await import('../lib/gate1-autopilot.mjs');
+  const { gate1RightsDeclarationCurrent } = await import('../lib/gate1-rights-declaration.mjs');
+  const input = { dataRevision: 2, ozonProductId: '9001', supplierOfferId: '7001', facts: { dimensionsCm: { length: 30, width: 20, height: 10 } },
+    autopilot: GATE1_AUTOPILOT_SCOPE_VERSION };
+  const rights = { brandStatus: 'branded', brandName: ' Miska ', rights: 'owned', validMonths: 6 };
+  const bad = setup();
+  await assert.rejects(() => bad.service.accept({ candidateId: 'candidate:svc', actor, input: { ...input, rights: { ...rights, brandName: '' } } }),
+    error => error.code === 'gate1_rights_brand_name');
+  await assert.rejects(() => bad.service.accept({ candidateId: 'candidate:svc', actor, input: { ...input, autopilot: undefined, rights } }),
+    error => error.code === 'gate1_rights_without_autopilot');
+  assert.equal(bad.document.candidates[0].dataRevision, 2, '被拒的不写');
+
+  const { document, history, service } = setup();
+  await service.accept({ candidateId: 'candidate:svc', actor, input: { ...input, rights } });
+  const saved = document.candidates[0];
+  const declaration = saved.gate1RightsDeclarationV1;
+  assert.equal(declaration.declaredByUserId, 'owner-1');
+  assert.equal(declaration.gate1DecidedAt, saved.gate1DecisionV1.decidedAt);
+  assert.equal(declaration.declaredAt, saved.gate1DecisionV1.decidedAt);
+  assert.deepEqual(declaration.brand, { status: 'branded', name: 'Miska' });
+  assert.deepEqual(declaration.rights, { status: 'verified', basis: 'owned' });
+  assert.equal(gate1RightsDeclarationCurrent(saved, declaration.declaredAt), declaration);
+  assert.equal(saved.gate1DecisionV1.ownerSupplyConfirmed, false, '声明品牌与权利不等于确认供货');
+  assert.match(history[0].detail, /主人在卡上声明了品牌与权利：有品牌「Miska」，我拥有所需权利，6 个月内有效/u);
+
+  const plain = setup();
+  plain.document.candidates[0].gate1RightsDeclarationV1 = { schemaVersion: 'gate1-rights-declaration-v1', candidateId: 'candidate:svc' };
+  await plain.service.accept({ candidateId: 'candidate:svc', actor, input });
+  assert.equal(plain.document.candidates[0].gate1RightsDeclarationV1, null);
+});
+
 test('不做这件：原因记进店铺档案，商品退出正常处理，可以恢复', async () => {
   const { document, history, service } = setup();
   await service.skip({ candidateId: 'candidate:svc', actor, input: { dataRevision: 2, reason: 'too_large', note: '太占地方' } });

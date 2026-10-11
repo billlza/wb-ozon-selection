@@ -15,8 +15,14 @@ const TITLES = Object.freeze({
 });
 
 export function gate1AutopilotDoneLine(view) {
-  const labels = [...new Set((Array.isArray(view?.ranSteps) ? view.ranSteps : []).map(item => item.label).filter(Boolean))];
-  return labels.length ? `软件已经替你做了：${labels.join("、")}。都只用已经保存的资料，没有打开平台，也没有花钱。` : null;
+  const steps = Array.isArray(view?.ranSteps) ? view.ranSteps : [];
+  const labels = [...new Set(steps.map(item => item.label).filter(Boolean))];
+  if (!labels.length) return null;
+  // 读那一次 Ozon 同款页面是唯一一步打开了平台的：照实说，只看、没写。
+  const read = steps.some(item => item.step === "a_read_ozon_benchmark");
+  return `软件已经替你做了：${labels.join("、")}。` + (read
+    ? "除了用你的浏览器读那一次 Ozon 同款页面（只看，没写任何东西），都只用已经保存的资料，也没有花钱。"
+    : "都只用已经保存的资料，没有打开平台，也没有花钱。");
 }
 
 export default function Gate1AutopilotSection({ candidate, saving = false, onContinue = null }) {

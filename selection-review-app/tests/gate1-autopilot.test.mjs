@@ -209,3 +209,113 @@ test("有许可的软件身份能把整理好的材料准备成文案请求，�
   const view = planGate1Autopilot({ candidate: saved });
   assert.deepEqual([view.status, view.stops[0].code], ["waiting_owner", "c1_paid_draft"]);
 });
+
+test("「做这件」卡上声明过品牌与权利：C1 计划一生成就由软件记下；老许可、过期、计划已冻结或已有声明都不动", async () => {
+  const { buildGate1RightsDeclaration } = await import("../lib/gate1-rights-declaration.mjs");
+  const declared = (extra = {}) => {
+    const candidate = product({ sku: { c1ProductPlan: { status: "inputs_ready", c1PlanId: "c1:sku-1:v1", inputSnapshots: {} } }, ...extra });
+    candidate.gate1RightsDeclarationV1 = buildGate1RightsDeclaration({ candidateId: "cand-1", sourceRevision: 2,
+      input: { brandStatus: "unbranded", brandName: null, rights: "no_third_party_rights_identified", validMonths: 3 }, decision,
+      declaredByUserId: "owner", declaredAt: AT });
+    return candidate;
+  };
+  const view = planGate1Autopilot({ candidate: declared(), observedAt: AT });
+  assert.equal(view.status, "running");
+  assert.deepEqual(view.next, { step: "c1_apply_rights", skuPackageId: "sku-1", c1PlanId: "c1:sku-1:v1", label: "按你在「做这件」卡上的声明记下品牌与权利" });
+  assert.equal(view.line, "软件正在按你在「做这件」卡上的声明记下品牌与权利");
+  assert.equal(gate1AutopilotMayAct(softwareActor, declared(), "c1_apply_rights"), true);
+  // 不记的几种：都回到原来那一步（整理属性与关键词），缺声明的话到时候照旧停下等主人。
+  assert.equal(planGate1Autopilot({ candidate: declared(), observedAt: "2027-01-11T10:00:00.000Z" }).next.step, "c1_local_material", "过期");
+  const v2 = declared();
+  v2.gate1AutopilotGrantV1 = { ...v2.gate1AutopilotGrantV1, scopeVersion: "gate1-autopilot-scope-v2",
+    scope: v2.gate1AutopilotGrantV1.scope.filter(step => step !== "c1_apply_rights") };
+  assert.equal(planGate1Autopilot({ candidate: v2, observedAt: AT }).next.step, "c1_local_material", "v2 许可不含这一步");
+  const recorded = declared();
+  recorded.lifecycleV11.skuPackage.c1RightsReviewRecord = { recordId: "r" };
+  assert.equal(planGate1Autopilot({ candidate: recorded, observedAt: AT }).next.step, "c1_local_material", "已经有声明");
+  const frozen = declared();
+  frozen.lifecycleV11.skuPackage.c1ProductPlan.inputSnapshots.skuRightsReview = { reviewId: "x" };
+  assert.equal(planGate1Autopilot({ candidate: frozen, observedAt: AT }).next.step, "c1_local_material", "计划已冻结");
+  const newRound = declared();
+  newRound.gate1DecisionV1 = { ...decision, decidedAt: "2026-10-12T00:00:00.000Z" };
+  assert.equal(planGate1Autopilot({ candidate: newRound, observedAt: AT }).status, "ready", "换了一轮：许可和声明都不算了");
+});
+
+// 「做这件」之后、确认供货之前：软件只做一件事，读一次主人认的那个 Ozon 同款页面。
+const OZON_ID = "3605840795";
+const OZON_URL = `https://www.ozon.ru/product/kurtka-${OZON_ID}/?at=abc`;
+const pickedDecision = { ...decision, picks: { ozon: { id: OZON_ID, sourceUrl: OZON_URL }, match: null, supplier: { id: "771" } } };
+const pageSnapshot = (productId = OZON_ID) => ({
+  schemaVersion: "sales-snapshot-v1.1", snapshotId: `sales-snapshot:${productId}`, platform: "ozon", marketScope: "unknown",
+  sellerType: "unknown", sellerIdentityEvidence: { status: "unverified", signals: [], evidenceRef: "test-evidence" },
+  productUrl: `https://www.ozon.ru/product/${productId}/`, title: "Тестовая куртка", imageRefs: [], currentPrice: 1457, currency: "RUB",
+  categoryPath: "Одежда > Куртки", attributes: {}, collectedAt: "2026-10-11T10:30:00.000Z", evidenceRef: "test-evidence",
+  collectorMode: "real_page_read_only", collectorVersion: "real-ozon-sales-snapshot-v1", readOnly: true
+});
+
+function choosing({ granted = true, capture = "captured_waiting_owner_selection", extra = {} } = {}) {
+  const candidate = { id: "cand-1", dataRevision: 9, workflowStatus: "needs_user_data", gate1DecisionV1: pickedDecision,
+    sourceCapture: capture === null ? undefined : { captureId: "SC-1", status: capture }, ...extra };
+  if (granted) candidate.gate1AutopilotGrantV1 = buildGate1AutopilotGrant({ candidateId: "cand-1", sourceRevision: 8,
+    decision: pickedDecision, via: "gate1_accept", grantedAt: AT, grantedBy: "owner" });
+  return candidate;
+}
+
+test("许可里单独存一份公开页面读取授权：只读认下的那一个 Ozon 商品页、只读一次、只在确认供货之前", () => {
+  const grant = choosing().gate1AutopilotGrantV1;
+  assert.equal(grant.scopeVersion, "gate1-autopilot-scope-v4");
+  assert.ok(grant.scope.includes("a_read_ozon_benchmark"));
+  assert.deepEqual({ ...grant.publicRead, excludes: [...grant.publicRead.excludes] }, {
+    schemaVersion: "gate1-public-read-v1", site: "www.ozon.ru", action: "read_product_page", productId: OZON_ID,
+    productUrl: `https://www.ozon.ru/product/${OZON_ID}/`, maxReads: 1, stage: "A", candidateId: "cand-1", sourceRevision: 8,
+    excludes: ["store_backend", "login_required_page", "platform_write", "paid_call"] });
+  // 卡上没认 Ozon 同款、地址不是商品页、或者已经有 SKU 包：没有这份授权。
+  for (const ozon of [null, { id: OZON_ID, sourceUrl: "https://ozon.ru/search?q=1" }, { id: "999999999", sourceUrl: OZON_URL }]) {
+    const built = buildGate1AutopilotGrant({ candidateId: "cand-1", sourceRevision: 8, decision: { ...pickedDecision, picks: { ozon } },
+      via: "gate1_accept", grantedAt: AT, grantedBy: "owner" });
+    assert.equal(Object.hasOwn(built, "publicRead"), false);
+  }
+  const later = buildGate1AutopilotGrant({ candidateId: "cand-1", sourceRevision: 8, decision: pickedDecision, skuPackageId: "sku-1",
+    via: "owner_continue", grantedAt: AT, grantedBy: "owner" });
+  assert.equal(Object.hasOwn(later, "publicRead"), false);
+});
+
+test("规格采回来以后软件读一次认下的 Ozon 同款；在读就说在读，读过没读到就停下等主人，不再自己读", () => {
+  const ready = planGate1Autopilot({ candidate: choosing() });
+  assert.equal(ready.status, "running");
+  assert.deepEqual({ ...ready.next }, { step: "a_read_ozon_benchmark", productId: OZON_ID,
+    productUrl: `https://www.ozon.ru/product/${OZON_ID}/`, label: "读一次你认的那个 Ozon 同款页面" });
+  assert.equal(gate1AutopilotMayAct(softwareActor, choosing(), "a_read_ozon_benchmark"), true);
+
+  // 1688 采集还没采回来（采集控制同一时刻只给一个作业），没有许可，已经确认过供货，或者已经读到过这一页：不归这里管。
+  assert.equal(planGate1Autopilot({ candidate: choosing({ capture: "waiting_extension" }) }), null);
+  assert.equal(planGate1Autopilot({ candidate: choosing({ capture: null }) }), null);
+  assert.equal(planGate1Autopilot({ candidate: choosing({ granted: false }) }), null);
+  assert.equal(planGate1Autopilot({ candidate: choosing({ extra: { lifecycleV11: { aConfirmationReceipt: { decision: "confirm" } } } }) }), null);
+  assert.equal(planGate1Autopilot({ candidate: choosing({ extra: { salesSnapshotsV11: [pageSnapshot()] } }) }), null);
+  assert.equal(planGate1Autopilot({ candidate: choosing({ extra: { salesSnapshotsV11: [pageSnapshot("1234567")] } }) }).next.step,
+    "a_read_ozon_benchmark", "读到的是别的商品，不算读过认下的这一页");
+  // 老许可（v3）没有这一步。
+  const v3 = choosing();
+  v3.gate1AutopilotGrantV1 = { ...v3.gate1AutopilotGrantV1, scopeVersion: "gate1-autopilot-scope-v3",
+    scope: v3.gate1AutopilotGrantV1.scope.filter(step => step !== "a_read_ozon_benchmark") };
+  assert.equal(planGate1Autopilot({ candidate: v3 }), null);
+
+  const reading = planGate1Autopilot({ candidate: choosing({ extra: { salesCapture: { captureId: "OPR-1", productId: OZON_ID,
+    status: "waiting_extension", jobStatus: "queued", queuedBy: GATE1_AUTOPILOT_ACTOR_SOURCE } } }) });
+  assert.equal(reading.status, "working");
+  assert.equal(reading.next, null);
+  assert.match(reading.line, /正在读你认的那个 Ozon 同款页面/u);
+
+  // 读失败时那条记录整份重写、不带 queuedBy；「读过」看软件自己的运行记录。
+  const ran = { schemaVersion: "gate1-autopilot-v1", ranSteps: [{ step: "a_read_ozon_benchmark", at: "2026-10-11T10:05:00.000Z", sourceRevision: 9 }] };
+  const failed = planGate1Autopilot({ candidate: choosing({ extra: { gate1AutopilotV1: ran, salesCapture: { captureId: "OPR-1",
+    productId: OZON_ID, status: "failed", jobStatus: "failed", reason: "页面要求登录。" } } }) });
+  assert.equal(failed.status, "waiting_owner");
+  assert.equal(failed.stops[0].code, "a_ozon_read_failed");
+  assert.match(failed.line, /没读到（页面要求登录）；它不会自己再读，在这件商品的「算利润」里点「读一次这个 Ozon 页面」/u);
+  assert.match(planGate1Autopilot({ candidate: choosing({ extra: { gate1AutopilotV1: ran } }) }).line, /没读到；它不会自己再读/u);
+  // 许可之前的那次运行记录不算这一轮读过。
+  const before = { ...ran, ranSteps: [{ ...ran.ranSteps[0], at: "2026-10-11T09:00:00.000Z" }] };
+  assert.equal(planGate1Autopilot({ candidate: choosing({ extra: { gate1AutopilotV1: before } }) }).next.step, "a_read_ozon_benchmark");
+});

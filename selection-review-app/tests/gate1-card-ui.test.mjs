@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import react from '@vitejs/plugin-react';
-import { gate1AcceptPayload, gate1CardView, gate1Mode, gate1ShortfallView, gate1SkipPayload } from '../src/gate1View.js';
+import { GATE1_RIGHTS_EMPTY, gate1AcceptPayload, gate1CardView, gate1Mode, gate1RightsView, gate1ShortfallView, gate1SkipPayload } from '../src/gate1View.js';
 
 // Synthetic display data only: no saved records, no services, no requests.
 const forbidden = () => { throw new Error('RENDER_MUST_NOT_START_WORK'); };
@@ -68,7 +68,7 @@ test('卡上三格都已先选好并标「软件先选的」，粗算一行说�
   assert.doesNotMatch(html, /aria-label="软件读不到的几项"/u, '都读得到时不问任何东西');
   assert.match(html, /不确认供货、不下单、不碰平台/u);
   // 点下去之后哪几步由软件接着做、哪儿停下等主人，就写在按钮上面。
-  assert.match(html, /重算利润、整理属性和关键词、准备文案请求这几步不花钱，软件自己往下做；文案写好就直接进入传图，文案和图片最后在上架卡上一起看。要花钱、要你声明品牌与权利、要你传图和点「上架」时，它停下来等你。/u);
+  assert.match(html, /重算利润、整理属性和关键词、准备文案请求这几步不花钱，软件自己往下做；上面声明了品牌与权利的，规格定下后软件按这份声明记到这件商品上；文案写好就直接进入传图，文案和图片最后在上架卡上一起看。要花钱、要你传图和点「上架」时，它停下来等你；品牌与权利没声明的，到时候也停下等你。/u);
 });
 
 test('主人换了一格：标「你改过」，粗算按那一对取服务端算好的数；运费没读到时只问运费', () => {
@@ -83,7 +83,7 @@ test('主人换了一格：标「你改过」，粗算按那一对取服务端�
   assert.deepEqual(gate1AcceptPayload(gate1(), filled, { domesticShippingRmb: '4' }, 5),
     { dataRevision: 5, ozonProductId: '9001', matchOfferId: '7001', supplierOfferId: '7003', facts: { domesticShippingRmb: 4 },
       // 卡上那句「不花钱的几步软件自己往下做」的版本号；带着它服务端才发许可。
-      autopilot: 'gate1-autopilot-scope-v2' });
+      autopilot: 'gate1-autopilot-scope-v4' });
   const otherPrice = gate1CardView(gate1(), { local: { ozonProductId: '9002' } });
   assert.match(otherPrice.profit.text, /每件赚 ¥41\.00/u);
   const noOzon = gate1CardView(gate1(), { local: { ozonProductId: null } });
@@ -143,4 +143,29 @@ test('改售价重开的那一轮，卡顶上说上一轮怎么了，并且一�
 test('不做的请求体只带原因码和一句备注', () => {
   assert.deepEqual(gate1SkipPayload('other', '  颜色不好看 ', 5), { dataRevision: 5, reason: 'other', note: '颜色不好看' });
   assert.deepEqual(gate1SkipPayload('too_large', '', 5), { dataRevision: 5, reason: 'too_large' });
+});
+
+test('品牌与权利在「做这件」卡上声明：两项都选了才带上，搭配不对就挡住并说清楚；还没核实就照旧不带', async () => {
+  const html = card(await render({ candidate: candidate(), view: { gate1V1: gate1() } }));
+  assert.match(html, /<legend>品牌与权利（这件商品，不论最后上哪个规格）<\/legend>/u);
+  assert.match(html, /<select id="gate1-brand"><option value="" selected="">还没核实<\/option><option value="unbranded">明确无品牌<\/option><option value="branded">有品牌<\/option><\/select>/u);
+  assert.doesNotMatch(html, /value="no_third_party_rights_identified"/u, '品牌没选明确无品牌时，不给「未发现第三方权利」');
+  assert.match(html, /<option value="12" selected="">一年<\/option>/u);
+  assert.match(html, /还没核实就先留着：规格定下后软件会停下来，等你在商品页上声明。/u);
+  const view = gate1CardView(gate1());
+  const base = gate1AcceptPayload(gate1(), view, {}, 5);
+  assert.equal(Object.hasOwn(base, 'rights'), false, '没声明就不带');
+  assert.equal(Object.hasOwn(gate1AcceptPayload(gate1(), view, {}, 5, { ...GATE1_RIGHTS_EMPTY, brandStatus: 'unbranded' }), 'rights'), false,
+    '只选了一项也不带');
+  const unbranded = { brandStatus: 'unbranded', brandName: '', rights: 'no_third_party_rights_identified', validMonths: 6 };
+  assert.deepEqual(gate1AcceptPayload(gate1(), view, {}, 5, unbranded).rights,
+    { brandStatus: 'unbranded', brandName: null, rights: 'no_third_party_rights_identified', validMonths: 6 });
+  assert.equal(gate1RightsView(unbranded).line, '品牌与权利：明确无品牌，已核对，未发现第三方权利，6 个月内有效。规格定下后软件按这份声明记到这件商品上，不用再签一次。');
+  assert.ok(gate1RightsView(unbranded).choices.some(item => item.value === 'no_third_party_rights_identified'));
+  const noName = gate1RightsView({ brandStatus: 'branded', brandName: '  ', rights: 'owned', validMonths: 12 });
+  assert.equal(noName.declared, false);
+  assert.equal(noName.problem, '有品牌时写上准确的品牌名称');
+  const branded = { brandStatus: 'branded', brandName: ' Miska ', rights: 'owned', validMonths: 12 };
+  assert.deepEqual(gate1AcceptPayload(gate1(), view, {}, 5, branded).rights, { brandStatus: 'branded', brandName: 'Miska', rights: 'owned', validMonths: 12 });
+  assert.equal(gate1RightsView({ ...branded, rights: 'no_third_party_rights_identified' }).problem, '「未发现第三方权利」只适用于明确无品牌的商品');
 });

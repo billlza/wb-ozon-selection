@@ -1,4 +1,5 @@
-import { IMAGE_MATCH_CHANNEL, OZON_IMAGE_MATCH_CHANNEL, SUPPLIER_CAPTURE_CHANNEL, requestSupplierCaptureStart } from "./captureStart.js";
+import { IMAGE_MATCH_CHANNEL, OZON_IMAGE_MATCH_CHANNEL, OZON_PAGE_READ_CHANNEL, SUPPLIER_CAPTURE_CHANNEL,
+  requestSupplierCaptureStart } from "./captureStart.js";
 
 /**
  * 录入流水线的开始信号。
@@ -7,20 +8,23 @@ import { IMAGE_MATCH_CHANNEL, OZON_IMAGE_MATCH_CHANNEL, SUPPLIER_CAPTURE_CHANNEL
  * 录入泵在服务端排好一步以后，就靠开着的工作台页面把编号递给插件——和主人在商品页上点「找同款」时页面做的是同一件事，
  * 同一条通道、同一套回执码。页面每隔几秒看一眼「找货中」，有刚排好、还没领取的就递一次；同一个编号只递一次，
  * 插件没领的不会再递（作业到期后停下，等主人点「接着找」），软件不自动重试。
+ * 「做这件」之后软件排的那一次读 Ozon 同款页面（ozon_page_read）也走这里：同一条递编号的路，只是换成读页面那条通道。
  */
 export const INTAKE_BRIDGE_ACTIVE_POLL_MS = 3000;
 export const INTAKE_BRIDGE_IDLE_POLL_MS = 15000;
 const CHANNELS = Object.freeze({
   supplier_capture: SUPPLIER_CAPTURE_CHANNEL,
   supplier_image_match: IMAGE_MATCH_CHANNEL,
-  ozon_image_match: OZON_IMAGE_MATCH_CHANNEL
+  ozon_image_match: OZON_IMAGE_MATCH_CHANNEL,
+  ozon_page_read: OZON_PAGE_READ_CHANNEL
 });
 
 export function intakeStartChannel(kind) {
   return CHANNELS[kind] ?? null;
 }
 
-const openWork = (queue) => Array.isArray(queue?.items) && queue.items.some((item) => !["ready", "blocked"].includes(item?.stage));
+const openWork = (queue) => (queue?.pendingStart !== null && typeof queue?.pendingStart === "object") ||
+  (Array.isArray(queue?.items) && queue.items.some((item) => !["ready", "blocked"].includes(item?.stage)));
 
 export function createIntakeJobBridge({ readQueue, onAck = () => {}, signal = requestSupplierCaptureStart,
   setTimer = (callback, ms) => setTimeout(callback, ms), clearTimer = (timer) => clearTimeout(timer) }) {

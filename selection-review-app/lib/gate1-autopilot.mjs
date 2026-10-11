@@ -8,30 +8,49 @@
  *    或者商品被淘汰，许可就不再算数。
  * 2. 下一步（planGate1Autopilot）：按已经保存的记录，判断下一步是软件能做的哪一步，还是停在哪儿等主人。
  *
- * 一直停下来等主人的：重新读费用证据（只主人触发）、品牌与权利声明、属性映射、付费生成文案、传图、上架确认。
- * 文案写好后不再单独确认，软件让它进入传图，主人在「上架」卡上和图片一起看（v2 许可才有这一步）。
+ * 一直停下来等主人的：重新读费用证据（只主人触发）、属性映射、付费生成文案、传图、上架确认；品牌与权利没在「做这件」卡上
+ * 声明的，也停下等主人声明。
+ * 文案写好后不再单独确认，软件让它进入传图，主人在「上架」卡上和图片一起看（v2 许可起才有这一步）。
+ * 主人在「做这件」卡上声明了品牌与权利的，C1 计划一生成，软件就把那份声明原样记成权利评审（v3 许可起才有这一步，
+ * lib/gate1-rights-declaration.mjs）。
+ * v4 许可起，1688 规格采回来以后，软件用主人自己的浏览器读一次主人在卡上认的那个 Ozon 同款页面（只看，不写），
+ * 算利润要的类目和对标价格就有了。这是唯一一步要打开平台的：许可里单独存一份公开页面读取授权（publicRead），锁定
+ * 网站、动作、商品编号、次数（一次）、阶段和修订号（AGENTS.md §8.1）；读不成就停下说清楚，不自己再读。
  * 软件某一步出错就记下来停住，不自己重试；资料变了（修订号变了）才会再试，主人也可以点「让软件再试一次」。
  */
+import { gate1RightsDeclarationCurrent } from './gate1-rights-declaration.mjs';
+import { canonicalOzonCapturePageUrl, ozonCapturePageProductId } from './ozon-page-capture-job.mjs';
+import { validateSalesSnapshot } from './sales-snapshot.mjs';
+
 export const GATE1_AUTOPILOT_GRANT_SCHEMA_VERSION = 'gate1-autopilot-grant-v1';
 export const GATE1_AUTOPILOT_RECORD_SCHEMA_VERSION = 'gate1-autopilot-v1';
 export const GATE1_AUTOPILOT_VIEW_SCHEMA_VERSION = 'gate1-autopilot-view-v1';
 /**
  * 卡上那句许可说明的版本。做这件的请求带着它，才算主人看过这句话。v2 多了一步「文案写好后直接进入传图」：文案不再单独
- * 确认，和图片、店铺、价格一起在「上架」卡上看、一起点（lib/gate2-listing.mjs）。v1 的许可照旧算数，只是不含这一步。
+ * 确认，和图片、店铺、价格一起在「上架」卡上看、一起点（lib/gate2-listing.mjs）。v3 再多一步「按卡上的声明记下品牌与
+ * 权利」。v4 再多一步「规格采回来后读一次认下的 Ozon 同款页面」。老版本的许可照旧算数，只是不含后来加的步骤。
  */
-export const GATE1_AUTOPILOT_SCOPE_VERSION = 'gate1-autopilot-scope-v2';
-const GATE1_AUTOPILOT_SCOPE_VERSIONS = Object.freeze(['gate1-autopilot-scope-v1', GATE1_AUTOPILOT_SCOPE_VERSION]);
+export const GATE1_AUTOPILOT_SCOPE_VERSION = 'gate1-autopilot-scope-v4';
+const GATE1_AUTOPILOT_SCOPE_VERSIONS = Object.freeze(['gate1-autopilot-scope-v1', 'gate1-autopilot-scope-v2', 'gate1-autopilot-scope-v3',
+  GATE1_AUTOPILOT_SCOPE_VERSION]);
 export const GATE1_AUTOPILOT_ACTOR_SOURCE = 'gate1_autopilot';
 export const GATE1_AUTOPILOT_ACTOR_USER_ID = 'selection-review-software';
-export const GATE1_AUTOPILOT_CONSENT_LINE = '点「做这件」之后，重算利润、整理属性和关键词、准备文案请求这几步不花钱，软件自己往下做；' +
-  '文案写好就直接进入传图，文案和图片最后在上架卡上一起看。要花钱、要你声明品牌与权利、要你传图和点「上架」时，它停下来等你。';
+export const GATE1_AUTOPILOT_CONSENT_LINE = '点「做这件」之后，1688 规格采回来时，软件用你的浏览器读一次你认的那个 Ozon 同款页面，只看类目和价格，不写任何东西；' +
+  '重算利润、整理属性和关键词、准备文案请求这几步不花钱，软件自己往下做；' +
+  '上面声明了品牌与权利的，规格定下后软件按这份声明记到这件商品上；文案写好就直接进入传图，文案和图片最后在上架卡上一起看。' +
+  '要花钱、要你传图和点「上架」时，它停下来等你；品牌与权利没声明的，到时候也停下等你。';
 export const GATE1_AUTOPILOT_STEPS = Object.freeze({
+  a_read_ozon_benchmark: '读一次你认的那个 Ozon 同款页面',
   b_exact_recalculation: '用店里的实收费率重算利润',
   c1_supply_backfill: '补齐已采到的供应属性',
+  c1_apply_rights: '按你在「做这件」卡上的声明记下品牌与权利',
   c1_local_material: '整理商品属性与关键词',
   c1_prepare_copy: '准备文案请求',
   c1_forward_copy: '把写好的文案送进传图'
 });
+/** 许可里那份公开页面读取授权：只读这一个 Ozon 商品页、只读一次、只在确认供货之前（AGENTS.md §8.1）。 */
+export const GATE1_PUBLIC_READ_SCHEMA_VERSION = 'gate1-public-read-v1';
+export const GATE1_PUBLIC_READ_EXCLUDES = Object.freeze(['store_backend', 'login_required_page', 'platform_write', 'paid_call']);
 const RAN_STEPS_KEPT = 12;
 const STOP_LINES_SHOWN = 4;
 const LOCAL_MATERIAL_VERSION = 'c1-local-preparation-v2';
@@ -51,6 +70,7 @@ export function buildGate1AutopilotGrant({ candidateId, sourceRevision, decision
   if (text(candidateId) === null || !Number.isInteger(sourceRevision) || text(grantedAt) === null) {
     throw new Error('GATE1_AUTOPILOT_GRANT_INPUT_INVALID');
   }
+  const publicRead = gate1PublicReadFor({ candidateId, sourceRevision, decision: accepted, skuPackageId });
   return Object.freeze({
     schemaVersion: GATE1_AUTOPILOT_GRANT_SCHEMA_VERSION,
     grantId: `gate1-autopilot-grant:${candidateId}:${sourceRevision}`,
@@ -63,8 +83,33 @@ export function buildGate1AutopilotGrant({ candidateId, sourceRevision, decision
     gate1DecidedAt: accepted?.decidedAt ?? null,
     gate1RoundIndex: accepted?.roundIndex ?? null,
     skuPackageId: text(skuPackageId),
+    ...(publicRead === null ? {} : { publicRead }),
     paidCalls: 0,
     platformWrites: 0
+  });
+}
+
+/**
+ * 认下的那个 Ozon 同款页面。卡上没认 Ozon 同款、地址不是一个能直接打开的商品页、或者已经确认过供货（有 SKU 包），
+ * 就没有这份授权，软件也就不读。
+ */
+function gate1PublicReadFor({ candidateId, sourceRevision, decision, skuPackageId }) {
+  const ozon = decision?.picks?.ozon;
+  if (!isObject(ozon) || text(skuPackageId) !== null) return null;
+  const productId = ozonCapturePageProductId(ozon.sourceUrl);
+  const productUrl = productId === '' ? null : canonicalOzonCapturePageUrl(ozon.sourceUrl, productId);
+  if (productUrl === null || String(ozon.id) !== productId) return null;
+  return Object.freeze({
+    schemaVersion: GATE1_PUBLIC_READ_SCHEMA_VERSION,
+    site: 'www.ozon.ru',
+    action: 'read_product_page',
+    productId,
+    productUrl,
+    maxReads: 1,
+    stage: 'A',
+    candidateId,
+    sourceRevision,
+    excludes: GATE1_PUBLIC_READ_EXCLUDES
   });
 }
 
@@ -122,6 +167,15 @@ function supplyBackfillApplies(candidate, sku) {
     .every(key => ['quantityOneEvidence', 'purchaseCostComponents'].includes(key)));
 }
 
+/** 主人在「做这件」卡上声明过品牌与权利、C1 计划刚生成还没有声明记录：软件按那份声明记下（不替换已冻结的计划）。 */
+function rightsDeclarationApplies(candidate, sku, granted, observedAt) {
+  const plan = sku.c1ProductPlan;
+  return granted && candidate.gate1AutopilotGrantV1.scope.includes('c1_apply_rights') && plan?.status === 'inputs_ready' &&
+    isObject(plan.inputSnapshots) && !Object.hasOwn(plan.inputSnapshots, 'skuRightsReview') && text(plan.c1PlanId) !== null &&
+    (sku.c1RightsReviewRecord === undefined || sku.c1RightsReviewRecord === null) &&
+    gate1RightsDeclarationCurrent(candidate, observedAt) !== null;
+}
+
 function gapLine(gap) {
   if (gap?.field === 'skuRightsReview') {
     return gap.code === 'C1_SKU_RIGHTS_REVIEW_REQUIRED'
@@ -133,23 +187,66 @@ function gapLine(gap) {
 
 const stop = (code, line) => Object.freeze({ code, line });
 
+/** 这件商品身上有没有一份真实打开过这个 Ozon 商品页读回来的快照。 */
+function realPageSnapshotOf(candidate, productId) {
+  return (Array.isArray(candidate.salesSnapshotsV11) ? candidate.salesSnapshotsV11 : []).some(snapshot =>
+    snapshot?.collectorMode === 'real_page_read_only' && ozonCapturePageProductId(snapshot.productUrl) === productId &&
+    validateSalesSnapshot(snapshot).valid);
+}
+
+const readInFlight = capture => ['waiting_extension', 'capturing'].includes(capture?.status) ||
+  ['queued', 'claimed'].includes(capture?.jobStatus);
+
+/**
+ * 确认供货之前那一次读页面。许可里有 publicRead、认下的就是那个商品、还没读到过它：等「做这件」那一下申请的 1688
+ * 采集采回规格（采集控制同一时刻只给一个作业），软件读一次。读过一次就不再读：还在读就说在读，没读成就停下等主人。
+ */
+function benchmarkReadPlan(candidate, granted) {
+  if (!granted || isObject(candidate.lifecycleV11?.aConfirmationReceipt)) return null;
+  const grant = candidate.gate1AutopilotGrantV1;
+  const read = isObject(grant.publicRead) && grant.publicRead.schemaVersion === GATE1_PUBLIC_READ_SCHEMA_VERSION ? grant.publicRead : null;
+  if (read === null || !grant.scope.includes('a_read_ozon_benchmark') || read.candidateId !== candidate.id ||
+      String(candidate.gate1DecisionV1?.picks?.ozon?.id ?? '') !== read.productId) return null;
+  if (realPageSnapshotOf(candidate, read.productId)) return null;
+  const capture = isObject(candidate.salesCapture) ? candidate.salesCapture : null;
+  const ran = (Array.isArray(candidate.gate1AutopilotV1?.ranSteps) ? candidate.gate1AutopilotV1.ranSteps : [])
+    .some(item => item?.step === 'a_read_ozon_benchmark' && Date.parse(item.at) >= Date.parse(grant.grantedAt));
+  // 读失败时那条记录会整份重写（不带 queuedBy），所以「是不是读的这一页」看商品编号，「读没读过」看软件自己的运行记录。
+  const same = capture !== null && capture.productId === read.productId;
+  if (ran || (same && capture.queuedBy === GATE1_AUTOPILOT_ACTOR_SOURCE)) {
+    if (same && readInFlight(capture)) return { working: '软件正在读你认的那个 Ozon 同款页面' };
+    const reason = same ? text(capture.reason) : null;
+    return { stop: stop('a_ozon_read_failed', `软件读了一次你认的那个 Ozon 同款页面，没读到${reason ? `（${reason.replace(/[。.]+$/u, '')}）` : ''}；` +
+      '它不会自己再读，在这件商品的「算利润」里点「读一次这个 Ozon 页面」') };
+  }
+  if (readInFlight(capture) || candidate.sourceCapture?.status !== 'captured_waiting_owner_selection') return null;
+  return { next: { step: 'a_read_ozon_benchmark', productId: read.productId, productUrl: read.productUrl } };
+}
+
 /**
  * 下一步。只看已经保存的记录（以及服务端顺手算好的「能不能重算」那份视图），不探测、不读平台。
  * 返回 null：这件商品不在「做这件」和「上架确认」之间（还没确认供货、已经上架、被淘汰、同款各色成员，或不是 Ozon）。
  */
-export function planGate1Autopilot({ candidate, bExactCommissionRuntimeView = null, c1EditorialPending = false }) {
+export function planGate1Autopilot({ candidate, bExactCommissionRuntimeView = null, c1EditorialPending = false, observedAt = null }) {
   if (!isObject(candidate) || candidate.workflowStatus === 'eliminated' || candidate.workflowStatus === 'listed') return null;
   if (isObject(candidate.siblingSourceV1)) return null;
   const lifecycle = isObject(candidate.lifecycleV11) ? candidate.lifecycleV11 : null;
   const sku = isObject(lifecycle?.skuPackage) ? lifecycle.skuPackage : null;
-  if (sku === null || sku.targetPlatform !== 'ozon') return null;
-  if (sku.productionAuthorization || sku.productionRecord || /^[DE]/u.test(String(sku.businessPhase ?? ''))) return null;
-
   const granted = gate1AutopilotGrantCurrent(candidate);
   let next = null;
   const stops = [];
   let working = null;
-  if (lifecycle.status === 'b_conditional_awaiting_exact_commission') {
+  if (sku === null) {
+    // 还没确认供货：软件只做一件事，读一次认下的 Ozon 同款页面；挑规格、确认供货还是主人在商品页上做，这里不替它说话。
+    const read = benchmarkReadPlan(candidate, granted);
+    if (read === null) return null;
+    next = read.next ?? null;
+    working = read.working ?? null;
+    if (read.stop) stops.push(read.stop);
+  } else if (sku.targetPlatform !== 'ozon' || sku.productionAuthorization || sku.productionRecord ||
+      /^[DE]/u.test(String(sku.businessPhase ?? ''))) {
+    return null;
+  } else if (lifecycle.status === 'b_conditional_awaiting_exact_commission') {
     const recalc = isObject(bExactCommissionRuntimeView) ? bExactCommissionRuntimeView : null;
     if (recalc?.canRecalculate === true && recalc.commissionEvidenceMode === 'exact' && text(recalc.failureId) !== null) {
       next = { step: 'b_exact_recalculation', skuPackageId: sku.skuPackageId, failureId: recalc.failureId };
@@ -177,6 +274,8 @@ export function planGate1Autopilot({ candidate, bExactCommissionRuntimeView = nu
       working = '软件正在准备文案请求';
     } else if (supplyBackfillApplies(candidate, sku)) {
       next = { step: 'c1_supply_backfill', skuPackageId: sku.skuPackageId };
+    } else if (rightsDeclarationApplies(candidate, sku, granted, observedAt)) {
+      next = { step: 'c1_apply_rights', skuPackageId: sku.skuPackageId, c1PlanId: sku.c1ProductPlan.c1PlanId };
     } else {
       const material = currentLocalMaterial(lifecycle, sku, candidate.dataRevision);
       if (material === null) next = { step: 'c1_local_material', skuPackageId: sku.skuPackageId };

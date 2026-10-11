@@ -137,7 +137,7 @@ import {
   sanitizeOzonImageMatchEvidence
 } from "./lib/ozon-same-product-match.mjs";
 import { fetchImageFingerprint, fetchPublicProductImage, searchUploadImageFromBuffer } from "./lib/image-fingerprint.mjs";
-import { buildOzonCategoryReadStep } from "./lib/ozon-category-read-step.mjs";
+import { buildOzonCategoryReadStep, ozonPageReadTarget } from "./lib/ozon-category-read-step.mjs";
 import { buildCommissionEstimateSignal, buildCommissionEstimateStep, buildEstimatedCommissionNoticeStep,
   ExactCommissionRequiredForProductionError } from "./lib/commission-estimate-authorization.mjs";
 import { adaptLegacyCandidateToOpportunity } from "./lib/legacy-candidate-adapter.mjs";
@@ -658,9 +658,13 @@ async function gate1Route(req, res, pathname) {
 const GATE1_AUTOPILOT_CONTINUE_ROUTE = /^\/api\/candidates\/([^/]+)\/gate1\/autopilot\/continue$/;
 const GATE1_AUTOPILOT_MAX_STEPS = 6;
 const GATE1_AUTOPILOT_CONFLICT_CODES = new Set(["BUSINESS_MUTATION_REVISION_CONFLICT", "BUSINESS_MUTATION_IDEMPOTENCY_CONFLICT",
-  "C1_KEYWORD_LOCAL_MATERIAL_REVISION_CONFLICT", "C1_KEYWORD_LOCAL_MATERIAL_INPUT_DRIFT", "C1_LOCAL_DRAFT_REQUEST_ALREADY_SAVED"]);
+  "C1_KEYWORD_LOCAL_MATERIAL_REVISION_CONFLICT", "C1_KEYWORD_LOCAL_MATERIAL_INPUT_DRIFT", "C1_LOCAL_DRAFT_REQUEST_ALREADY_SAVED",
+  "REVISION_CONFLICT", "GATE1_AUTOPILOT_CAPTURE_CONTROL_BUSY"]);
 const gate1AutopilotBusy = new Set();
 const gate1AutopilotAgain = new Set();
+// 要读页面、采集控制却正被别的商品用着的：不算出错，等那一次采集或读页面的结果回来再看一眼。
+const gate1AutopilotWaitingForCapture = new Set();
+const GATE1_AUTOPILOT_CAPTURE_RESULT_ROUTE = /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/;
 
 function gate1AutopilotActor(candidateId, revision) {
   return createActorContext({ userId: GATE1_AUTOPILOT_ACTOR_USER_ID, sessionId: `gate1-autopilot:${candidateId}:${revision}`,
@@ -683,7 +687,8 @@ function c1EditorialPendingFor(candidate) {
 }
 
 function gate1AutopilotErrorCode(error) {
-  const code = String(error?.code ?? error?.message ?? "");
+  const extraCode = typeof error?.extra?.code === "string" ? error.extra.code.toUpperCase() : null;
+  const code = String(error?.code ?? extraCode ?? error?.message ?? "");
   return /^[A-Z][A-Z0-9_]{2,80}$/u.test(code) ? code : "GATE1_AUTOPILOT_STEP_FAILED";
 }
 
@@ -694,6 +699,20 @@ async function runGate1AutopilotStep(candidate, next) {
   const actor = gate1AutopilotActor(candidateId, revision);
   const keys = { idempotencyKey: `gate1-autopilot:${next.step}:${candidateId}:${revision}`,
     auditEventId: `gate1-autopilot-audit:${next.step}:${candidateId}:${revision}` };
+  if (next.step === "a_read_ozon_benchmark") {
+    // 不指名时服务端会读的就是这一页（这件商品自己的页面，或者它没有自己的页面、读的就是认下的同款），就不指名；
+    // 认下的是另一件商品，就当对标指名去读。
+    const target = ozonPageReadTarget(candidate);
+    const requestedProductUrl = target.ok && target.productId === next.productId ? null : next.productUrl;
+    try {
+      await enqueueOzonPageReadJob({ candidateId, requestRevision: revision, requestedProductUrl, queuedBy: GATE1_AUTOPILOT_ACTOR_SOURCE });
+    } catch (error) {
+      if (!error?.extra?.captureControl) throw error;
+      gate1AutopilotWaitingForCapture.add(candidateId);
+      throw Object.assign(new Error("GATE1_AUTOPILOT_CAPTURE_CONTROL_BUSY"), { code: "GATE1_AUTOPILOT_CAPTURE_CONTROL_BUSY" });
+    }
+    return;
+  }
   if (next.step === "b_exact_recalculation") {
     const transaction = await bExactCommissionRecalculation.recalculate({ actor, input: { candidateId, expectedRevision: revision,
       skuPackageId: next.skuPackageId, failureId: next.failureId, ...keys } });
@@ -708,6 +727,11 @@ async function runGate1AutopilotStep(candidate, next) {
   if (next.step === "c1_supply_backfill") {
     await c1SupplyAttributeBackfillUseCase.backfill({ actor, input: { candidateId, expectedRevision: revision,
       skuPackageId: next.skuPackageId, ...keys } });
+    return;
+  }
+  if (next.step === "c1_apply_rights") {
+    await c1SkuRightsReviewUseCase.applyGate1Declaration({ actor, input: { candidateId, skuPackageId: next.skuPackageId,
+      expectedRevision: revision, expectedC1PlanId: next.c1PlanId, ...keys } });
     return;
   }
   if (next.step === "c1_local_material") {
@@ -751,7 +775,7 @@ async function advanceGate1Autopilot(candidateId) {
       const candidate = document.candidates.find(item => item.id === candidateId);
       if (!candidate || !gate1AutopilotGrantCurrent(candidate)) break;
       const plan = planGate1Autopilot({ candidate, bExactCommissionRuntimeView: gate1AutopilotRecalculationView(document, candidate),
-        c1EditorialPending: c1EditorialPendingFor(candidate) });
+        c1EditorialPending: c1EditorialPendingFor(candidate), observedAt: now() });
       if (plan?.status !== "running") break;
       const attempt = `${plan.next.step}:${candidate.dataRevision}`;
       if (attempt === previous) {
@@ -794,6 +818,14 @@ function scheduleGate1AutopilotAfterRequest(req, res, pathname) {
   scheduleGate1Autopilot(candidateId);
 }
 
+/** 一次采集或读页面的结果回来了，采集控制空出来：之前因为它被占着而没读成页面的商品，再看一眼。 */
+function scheduleGate1AutopilotAfterCapture(req, res, pathname) {
+  if (req.method !== "POST" || !GATE1_AUTOPILOT_CAPTURE_RESULT_ROUTE.test(pathname) || gate1AutopilotWaitingForCapture.size === 0) return;
+  const waiting = [...gate1AutopilotWaitingForCapture];
+  gate1AutopilotWaitingForCapture.clear();
+  for (const candidateId of waiting) scheduleGate1Autopilot(candidateId);
+}
+
 /**
  * 「让软件接着做」/「让软件再试一次」：只主人。还没有许可的（老商品，或做这件时页面还没有那句说明）这一下就是许可；
  * 有许可、上一步出过错的，这一下就是让它再试一次。记一条历史、修订号加一，然后当场跑到停下为止。
@@ -816,7 +848,7 @@ async function gate1AutopilotContinueRoute(req, res, pathname) {
       throw httpError(409, "商品资料已变化，请刷新后再点。", { code: "revision_conflict", currentRevision: current.dataRevision });
     }
     const plan = planGate1Autopilot({ candidate: current, bExactCommissionRuntimeView: gate1AutopilotRecalculationView(data, current),
-      c1EditorialPending: c1EditorialPendingFor(current) });
+      c1EditorialPending: c1EditorialPendingFor(current), observedAt: now() });
     if (!plan?.next) {
       throw httpError(409, plan?.line ? `现在没有软件能接着做的步骤：${plan.line}。` : "这件商品现在没有软件能接着做的步骤。",
         { code: "gate1_autopilot_nothing_to_do" });
@@ -1764,7 +1796,10 @@ async function reconcileOzonPageReadJobsAfterRestart() {
   });
 }
 
-async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedProductUrl = null }) {
+async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedProductUrl = null, queuedBy = "owner" }) {
+  // queuedBy：主人点的（owner），或者「做这件」许可下软件读主人认的那个 Ozon 同款（gate1_autopilot）。只改记录里那句话和
+  // 「谁排的」，作业本身、插件领取和结果回传一模一样。
+  const bySoftware = queuedBy === GATE1_AUTOPILOT_ACTOR_SOURCE;
   const existing = salesCaptureSession(candidateId);
   if (existing?.captureKind === OZON_PAGE_READ_CAPTURE_KIND &&
     [existing.requestRevision, existing.dataRevision].includes(requestRevision) &&
@@ -1782,7 +1817,9 @@ async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedP
   const snapshot = await readData();
   const snapshotCandidate = snapshot.candidates.find((item) => item.id === candidateId);
   if (!snapshotCandidate) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
-  const target = ozonCapturePageTarget(snapshotCandidate, requestedProductUrl);
+  // 不指名时读这件商品自己的页面；自己没有、主人在「做这件」卡上认过 Ozon 同款的，读那一个（lib/ozon-category-read-step.mjs）。
+  const target = requestedProductUrl === null ? ozonPageReadTarget(snapshotCandidate)
+    : ozonCapturePageTarget(snapshotCandidate, requestedProductUrl);
   if (!target.ok) throw httpError(422, target.reason, { code: target.code });
 
   const session = {
@@ -1794,8 +1831,8 @@ async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedP
     expectedProductId: target.productId,
     productUrl: target.productUrl,
     // 主人指名要读的页面 = 对标（别的商品）。落盘时据此打标，反推目标时会跳过它们，
-    // 否则挂上第一个对标之后这件商品就再也读不了自己的页面。
-    comparable: target.from === "owner_requested_url",
+    // 否则挂上第一个对标之后这件商品就再也读不了自己的页面。「做这件」卡上认的同款也是主人指名的别的商品。
+    comparable: target.from === "owner_requested_url" || target.from === "gate1_pick",
     createdAt: Date.now(),
     expiresAt: Date.now() + SOURCE_CAPTURE_JOB_QUEUE_TTL_MS,
     captureKind: OZON_PAGE_READ_CAPTURE_KIND,
@@ -1834,15 +1871,17 @@ async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedP
         startedAt: timestamp,
         businessStateEffect: "unchanged",
         retryAttempted: false,
-        writeOccurred: false
+        writeOccurred: false,
+        ...(bySoftware ? { queuedBy } : {})
       };
       current.dataRevision = Number(current.dataRevision || 0) + 1;
       session.dataRevision = current.dataRevision;
       current.updatedAt = timestamp;
-      current.lastModifiedBy = "user";
-      addHistory(current, "user", "ozonPageReadJobQueued",
-        `主人要求读一次这个 Ozon 商品页（${session.expectedProductId}）；系统已建立一个受控只读作业，等待插件后台领取。` +
-        "不下单、不联系任何人、不向 Ozon 写入任何内容，也不推进业务阶段", timestamp);
+      current.lastModifiedBy = bySoftware ? "software" : "user";
+      addHistory(current, bySoftware ? "software" : "user", "ozonPageReadJobQueued", (bySoftware
+        ? `规格采回来了，软件按「做这件」的许可读一次主人认的那个 Ozon 同款页面（${session.expectedProductId}），只读这一次；`
+        : `主人要求读一次这个 Ozon 商品页（${session.expectedProductId}）；`) +
+        "系统已建立一个受控只读作业，等待插件后台领取。不下单、不联系任何人、不向 Ozon 写入任何内容，也不推进业务阶段", timestamp);
       return publicCandidate(current, data.rules);
     });
   } catch (error) {
@@ -2213,6 +2252,16 @@ function intakePendingStart(candidates, timestamp = Date.now()) {
       if (session?.candidateId === candidate.id && session.jobStatus === "queued" && session.expiresAt > timestamp) {
         return { candidateId: candidate.id, captureId, kind };
       }
+    }
+  }
+  // 「做这件」之后软件排的那一次读 Ozon 同款页面：插件同样只认页面递过去的编号，所以也由开着的页面递。
+  for (const candidate of candidates) {
+    const capture = candidate.salesCapture;
+    if (capture?.queuedBy !== GATE1_AUTOPILOT_ACTOR_SOURCE || candidate.workflowStatus === "eliminated") continue;
+    const session = salesCaptureSessions.get(capture.captureId);
+    if (session?.candidateId === candidate.id && session.captureKind === OZON_PAGE_READ_CAPTURE_KIND &&
+        session.jobStatus === "queued" && session.expiresAt > timestamp) {
+      return { candidateId: candidate.id, captureId: capture.captureId, kind: "ozon_page_read" };
     }
   }
   return null;
@@ -4069,7 +4118,8 @@ function publicCandidate(candidate, rules, queueInfo = {}, evidencePacks = [], c
     executionRuntimeView: buildCurrentExecutionRuntimeView(candidate),
     bExactCommissionRuntimeView,
     // 「做这件」之后软件做到了哪一步、停在哪儿等主人（lib/gate1-autopilot.mjs）。只读已保存的记录。
-    gate1AutopilotView: planGate1Autopilot({ candidate, bExactCommissionRuntimeView, c1EditorialPending: c1EditorialPendingFor(candidate) }),
+    gate1AutopilotView: planGate1Autopilot({ candidate, bExactCommissionRuntimeView, c1EditorialPending: c1EditorialPendingFor(candidate),
+      observedAt: now() }),
     // 「上架」那一道确认到了哪一段：等传图、可以预演上架卡、或者卡已生成待授权（lib/gate2-listing.mjs）。卡本身单独取。
     gate2ListingView: buildGate2ListingView(candidate),
     // 「这件的佣金还是估算的」那一块。挂在每一份候选视图上，所以从条件测算一路到上架之前的每一屏都看得见——
@@ -6111,7 +6161,9 @@ async function handleApi(req, res, pathname) {
     session.consumedAt = Date.now();
     clearSourceCaptureJobTimer(session.captureId);
     salesCaptureSessions.delete(session.captureId);
-    if (input.status === "captured" && candidate.salesCapture?.status === "verified" && candidate.salesCapture?.snapshotId) {
+    // 软件按「做这件」许可读的那一次只读页面，不顺手叫 AI 整理：AI 调用要花钱，只能主人自己点。
+    if (input.status === "captured" && candidate.salesCapture?.status === "verified" && candidate.salesCapture?.snapshotId &&
+        candidate.salesCapture.queuedBy !== GATE1_AUTOPILOT_ACTOR_SOURCE) {
       candidate = await enrichCapturedSalesSnapshotWithTerra(
         candidate.id,
         candidate.dataRevision,
@@ -6248,7 +6300,7 @@ async function handleApi(req, res, pathname) {
     if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).sort().join(",") !== "accepted,captureId,code,kind" ||
         typeof input.captureId !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(input.captureId) || typeof input.accepted !== "boolean" ||
         typeof input.code !== "string" || !/^[a-z0-9_]{0,60}$/.test(input.code) ||
-        !["supplier_capture", "supplier_image_match", "ozon_image_match"].includes(input.kind)) {
+        !["supplier_capture", "supplier_image_match", "ozon_image_match", "ozon_page_read"].includes(input.kind)) {
       throw httpError(400, "开始信号回执的字段无效", { code: "intake_start_ack_invalid" });
     }
     intakeOwner(req, "intake_owner_required");
@@ -11069,6 +11121,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname.startsWith("/api/")) {
       const handled = await handleApi(req, res, pathname);
       scheduleGate1AutopilotAfterRequest(req, res, pathname);
+      scheduleGate1AutopilotAfterCapture(req, res, pathname);
       return handled;
     }
     if (pathname.startsWith("/product-images/")) {

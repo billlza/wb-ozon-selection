@@ -6,6 +6,7 @@ import {
   OZON_PAGE_READ_SCOPE_LINE,
   buildOzonCategoryReadStep,
   ozonPageReadInFlight,
+  ozonPageReadTarget,
   ozonPageReadRecord,
   realPageCategorySnapshot,
   savedCategorySnapshot
@@ -126,6 +127,25 @@ test("读不到页面地址时按钮不给点，理由是保存的地址本身",
   const conflict = buildOzonCategoryReadStep(candidate({ productUrl: "https://www.ozon.ru/product/4403916892/" }));
   assert.equal(conflict.blocked.code, "ozon_product_identity_conflict");
   assert.equal(conflict.action.available, false);
+});
+
+test("自己没有 Ozon 页面、在「做这件」卡上认过 Ozon 同款的，读的就是那一个；自己有页面或地址冲突时不拿它顶替", () => {
+  const picked = { decision: "accept", decidedAt: "2026-10-11T10:00:00.000Z",
+    picks: { ozon: { id: "4403916892", sourceUrl: "https://www.ozon.ru/product/kurtka-4403916892/?from=search" } } };
+  const fromLink = candidate({ productUrl: "https://mobile.yangkeduo.com/goods.html?goods_id=1", salesSnapshotsV11: [], gate1DecisionV1: picked });
+  assert.equal(ozonPageReadTarget(fromLink).from, "gate1_pick");
+  const step = buildOzonCategoryReadStep(fromLink);
+  assert.deepEqual(step.target, { productId: "4403916892", productUrl: "https://www.ozon.ru/product/4403916892/", from: "gate1_pick" });
+  assert.equal(step.blocked, null);
+  assert.equal(step.action.available, true);
+  // 不做这件（或者没认 Ozon 同款）就没有这一个可读。
+  assert.equal(buildOzonCategoryReadStep({ ...fromLink, gate1DecisionV1: { ...picked, decision: "skip" } }).blocked.code, "ozon_product_url_missing");
+  assert.equal(buildOzonCategoryReadStep({ ...fromLink, gate1DecisionV1: { ...picked, picks: { ozon: null } } }).blocked.code,
+    "ozon_product_url_missing");
+  // 自己有页面：读自己的。地址冲突：照旧停下说明，不拿认下的同款去顶替。
+  assert.match(buildOzonCategoryReadStep(candidate({ gate1DecisionV1: picked })).target.from, /^sales_snapshot:/u);
+  assert.equal(buildOzonCategoryReadStep(candidate({ productUrl: "https://www.ozon.ru/product/4403916892/", gate1DecisionV1: picked }))
+    .blocked.code, "ozon_product_identity_conflict");
 });
 
 test("上一次读页面的结局原样带出来，等插件的时候不能再发起第二次", () => {

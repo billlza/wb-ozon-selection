@@ -7,9 +7,12 @@ import { C1SkuRightsReviewError, createC1SkuRightsReviewRecord, buildC1SkuRights
 import { isCanonicalFrozenRef, fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
 import { createActorContext } from "./runtime-identity.mjs";
 import { sameStoreRef } from "./store-binding.mjs";
+import { gate1AutopilotMayAct, isGate1AutopilotActor } from "./gate1-autopilot.mjs";
+import { gate1RightsDeclarationCurrent, gate1RightsOwnerDeclaration } from "./gate1-rights-declaration.mjs";
 
 const INPUT_FIELDS = ["candidateId", "skuPackageId", "expectedRevision", "idempotencyKey", "expectedC1PlanId", "replacesC1PlanId",
   "brand", "rights", "reviewedAt", "expiresAt"];
+const GATE1_APPLY_FIELDS = ["candidateId", "skuPackageId", "expectedRevision", "expectedC1PlanId", "idempotencyKey", "auditEventId"];
 const C1_JOB_TYPES = new Set(["c1_paid_keyword_evidence", "c1_ai_draft"]);
 const C1_ARTIFACT_FIELDS = Object.freeze([
   "c1AiDraftRequestV1", "c1AiDraftJobRefV1", "c1KeywordPlanningEvidenceV1", "c1KeywordPlanningProductionV1",
@@ -144,6 +147,54 @@ export function createC1SkuRightsReviewUseCase({ repository, runtimeMode, server
           candidate.lifecycleV11.skuPackage = sku;
           return { candidate, result: { schemaVersion: "c1-sku-rights-review-submission-v1", rightsReviewRecord: structuredClone(record),
             rightsView, c1PlanId: sku.c1ProductPlan.c1PlanId, supersededC1, externalCalls: 0, paidCalls: 0 } };
+        }
+      });
+    },
+    /**
+     * 「做这件」许可里的「按卡上的声明记下品牌与权利」：主人在「做这件」卡上声明过（lib/gate1-rights-declaration.mjs），
+     * C1 计划刚生成、还没有声明记录时，软件身份把那份声明原样记成这件商品的权利评审。声明人是主人，品牌、权利、核对时间
+     * 和有效期一字不改；不替换已冻结的计划（那会作废旧草稿，只能主人来），声明过期或换了一轮「做这件」就不记。
+     */
+    async applyGate1Declaration({ actor, input }) {
+      if (!isGate1AutopilotActor(actor)) reject("C1_RIGHTS_GATE1_SOFTWARE_ONLY");
+      const software = createActorContext(actor);
+      if (!exact(input, GATE1_APPLY_FIELDS) || !["candidateId", "skuPackageId", "idempotencyKey", "auditEventId", "expectedC1PlanId"].every(field => currentRef(input[field])) ||
+          !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) reject("C1_RIGHTS_INPUT_INVALID");
+      const frozen = structuredClone(input);
+      return executeBusinessMutation({ repository, runtimeMode, actor: software, requiredRoles: ["operator"],
+        action: "c1_sku_rights_gate1_declaration_apply", candidateId: frozen.candidateId, skuPackageId: frozen.skuPackageId,
+        expectedRevision: frozen.expectedRevision, idempotencyKey: frozen.idempotencyKey,
+        inputFingerprint: fingerprintCanonicalRecord({ input: frozen, actorUserId: software.userId }),
+        auditEventId: frozen.auditEventId, serverClock, includeRelatedSoftwareJobs: true,
+        mutate: ({ candidate, observedAt, relatedSoftwareJobs }) => {
+          if (!gate1AutopilotMayAct(software, candidate, "c1_apply_rights")) reject("C1_RIGHTS_GATE1_GRANT_REQUIRED");
+          const declaration = gate1RightsDeclarationCurrent(candidate, observedAt);
+          if (declaration === null) reject("C1_RIGHTS_GATE1_DECLARATION_UNAVAILABLE");
+          const before = assertCandidateScope(candidate, { ...frozen, replacesC1PlanId: null });
+          assertNoActiveC1Jobs(relatedSoftwareJobs, candidate, before);
+          if (before.c1ProductPlan.status !== "inputs_ready" || Object.hasOwn(before.c1ProductPlan.inputSnapshots, "skuRightsReview")) {
+            reject("C1_RIGHTS_GATE1_PLAN_FROZEN");
+          }
+          if (before.c1RightsReviewRecord !== undefined && before.c1RightsReviewRecord !== null) reject("C1_RIGHTS_GATE1_ALREADY_DECLARED");
+          const sku = structuredClone(before);
+          const record = createC1SkuRightsReviewRecord({ plan: sku.c1ProductPlan, sourceIdentity: sku.g1Identity,
+            sourceCandidateRevision: candidate.dataRevision, declaredByUserId: declaration.declaredByUserId, declaredAt: observedAt,
+            ownerDeclaration: gate1RightsOwnerDeclaration(declaration) });
+          const rightsView = buildC1SkuRightsReviewRecordView({ record, plan: sku.c1ProductPlan, sourceIdentity: sku.g1Identity, observedAt });
+          sku.c1RightsReviewRecord = record;
+          sku.ownerAction = rightsView.status === "verified" ? "none" : "review_compliance_risk";
+          sku.audit.updatedAt = observedAt;
+          sku.audit.history.push({ event: "c1_sku_rights_owner_declaration_saved", at: observedAt, recordId: record.recordId,
+            sourceCandidateRevision: candidate.dataRevision, resultCandidateRevision: candidate.dataRevision + 1 });
+          if (!isDeepStrictEqual(before.profitModels, sku.profitModels) || before.activeProfitModelVersion !== sku.activeProfitModelVersion ||
+              !isDeepStrictEqual(before.selectedSupplySnapshot, sku.selectedSupplySnapshot)) reject("C1_RIGHTS_PROTECTED_DATA_CHANGED");
+          assertValidLifecyclePackage(sku);
+          candidate.lifecycleV11.skuPackage = sku;
+          candidate.updatedAt = observedAt;
+          candidate.lastModifiedBy = "software";
+          return { candidate, result: { schemaVersion: "c1-sku-rights-review-gate1-apply-v1", rightsReviewRecord: structuredClone(record),
+            rightsView, c1PlanId: sku.c1ProductPlan.c1PlanId, gate1DeclarationId: declaration.declarationId,
+            externalCalls: 0, paidCalls: 0, aiCalls: 0, platformWrites: 0 } };
         }
       });
     }

@@ -156,7 +156,7 @@ test("「做这件」许可下，文案写好软件直接送进传图；主人�
   const continued = await post(`${route}/gate1/autopilot/continue`, { dataRevision: candidate.dataRevision });
   assert.equal(continued.status, 200, JSON.stringify(continued.body));
   let saved = await readDocument();
-  assert.equal(saved.candidates[0].gate1AutopilotGrantV1.scopeVersion, "gate1-autopilot-scope-v2");
+  assert.equal(saved.candidates[0].gate1AutopilotGrantV1.scopeVersion, "gate1-autopilot-scope-v4");
   assert.ok(saved.candidates[0].gate1AutopilotGrantV1.scope.includes("c1_forward_copy"));
   assert.ok(saved.candidates[0].lifecycleV11.c1AiDraftRequestV1, JSON.stringify(continued.body));
   assert.equal(saved.runtime.softwareJobs.length, 0);

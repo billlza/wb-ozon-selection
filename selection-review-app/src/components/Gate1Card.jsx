@@ -2,7 +2,8 @@ import { useState } from "react";
 import { IMAGE_MATCH_JUDGEMENT_LABELS, supplierImageMatchView } from "../supplierImageMatchView.js";
 import { ozonImageMatchView, ozonSearchQueryReady } from "../ozonImageMatchView.js";
 import {
-  GATE1_AUTOPILOT_LINE, GATE1_PICK_TAGS, GATE1_SKIP_REASONS, gate1AcceptPayload, gate1AcceptedLine, gate1CardView, gate1Mode, gate1ReopenLine,
+  GATE1_AUTOPILOT_LINE, GATE1_PICK_TAGS, GATE1_RIGHTS_BRANDS, GATE1_RIGHTS_EMPTY, GATE1_RIGHTS_MONTH_LABELS, GATE1_SKIP_REASONS,
+  gate1AcceptPayload, gate1AcceptedLine, gate1CardView, gate1Mode, gate1ReopenLine, gate1RightsView,
   gate1ShortfallView, gate1SkipErrors, gate1SkipPayload, rubles, yuan
 } from "../gate1View.js";
 
@@ -11,6 +12,7 @@ import {
  * 一次点「做这件」或「不做这件」。软件从不替主人确认同款：卡上每一格都标着是软件先选的还是主人改过的，点之前什么都没定。
  *
  * 做这件只把认下来的东西存成找货方案并申请采集这家货源的规格；不确认供货、不下单、不碰平台（AGENTS.md §4.4）。
+ * 品牌与权利也在这张卡上声明：它必须在付费写文案之前签，签了就由软件在规格定下后原样记到这件商品上。
  * 正式利润没过线时卡回来，写明差多少，给换货源 / 改售价 / 不做三条路。
  */
 const finite = value => (typeof value === "number" && Number.isFinite(value) ? value : null);
@@ -86,6 +88,7 @@ export default function Gate1Card({ candidate, gate1, storeName, saving, noticeA
   onStartOzonMatch = null, onCompareOzonMatch = null, onJudgeOzonMatch = null }) {
   const [local, setLocal] = useState({});
   const [facts, setFacts] = useState({});
+  const [rights, setRights] = useState(GATE1_RIGHTS_EMPTY);
   const [seenRevision, setSeenRevision] = useState(candidate?.dataRevision);
   // 服务端存下新的一版（比如找同款刚读回来），软件先选的可能换了：主人改过的格子作废，按新的一版重新先选。
   if (candidate?.dataRevision !== seenRevision) { setSeenRevision(candidate?.dataRevision); setLocal({}); }
@@ -123,6 +126,12 @@ export default function Gate1Card({ candidate, gate1, storeName, saving, noticeA
   }
 
   const card = gate1CardView(gate1, { local, facts });
+  const rightsView = gate1RightsView(rights);
+  const changeRights = key => event => setRights(current => {
+    const next = { ...current, [key]: key === "validMonths" ? Number(event.target.value) : event.target.value };
+    if (key === "brandStatus" && next.brandStatus !== "unbranded" && next.rights === "no_third_party_rights_identified") next.rights = "";
+    return next;
+  });
   const choose = key => value => setLocal(current => ({ ...current, [key]: value }));
   const changeFact = key => event => setFacts(current => ({ ...current, [key]: event.target.value }));
   const reopenLine = gate1ReopenLine(gate1.reopen);
@@ -180,10 +189,40 @@ export default function Gate1Card({ candidate, gate1, storeName, saving, noticeA
         </label>)}
     </div> : null}
 
+    <fieldset className="product-form gate1-rights" aria-label="品牌与权利">
+      <legend>品牌与权利（这件商品，不论最后上哪个规格）</legend>
+      <label className="product-field" htmlFor="gate1-brand">
+        <span className="product-field-label">品牌</span>
+        <select id="gate1-brand" value={rights.brandStatus} onChange={changeRights("brandStatus")}>
+          <option value="">还没核实</option>
+          {Object.entries(GATE1_RIGHTS_BRANDS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </label>
+      {rights.brandStatus === "branded" ? <label className="product-field" htmlFor="gate1-brand-name">
+        <span className="product-field-label">品牌名称</span>
+        <input id="gate1-brand-name" maxLength={256} value={rights.brandName} onChange={changeRights("brandName")} />
+      </label> : null}
+      <label className="product-field" htmlFor="gate1-rights">
+        <span className="product-field-label">权利</span>
+        <select id="gate1-rights" value={rights.rights} onChange={changeRights("rights")}>
+          <option value="">还没核实</option>
+          {rightsView.choices.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+        </select>
+      </label>
+      <label className="product-field" htmlFor="gate1-rights-months">
+        <span className="product-field-label">有效期</span>
+        <select id="gate1-rights-months" value={rights.validMonths} onChange={changeRights("validMonths")}>
+          {Object.entries(GATE1_RIGHTS_MONTH_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </label>
+      {rightsView.problem ? <p className="product-field-error" role="alert">{rightsView.problem}</p>
+        : <p className="product-section-hint">{rightsView.line}</p>}
+    </fieldset>
+
     <p className="product-section-hint gate1-autopilot-line">{GATE1_AUTOPILOT_LINE}</p>
     <div className="gate1-actions">
-      <button type="button" className="button primary" disabled={saving || !card.canAccept}
-        onClick={() => run(onAccept, gate1AcceptPayload(gate1, card, facts, candidate.dataRevision),
+      <button type="button" className="button primary" disabled={saving || !card.canAccept || Boolean(rightsView.problem)}
+        onClick={() => run(onAccept, gate1AcceptPayload(gate1, card, facts, candidate.dataRevision, rights),
           "已做这件：方案存下了，正在让插件去采这家货源的规格。", "gate1")}>
         {saving && noticeAt === "gate1" ? "正在保存…" : "做这件"}</button>
       <SkipControl saving={saving} onSkip={(reason, note) => run(onSkip, gate1SkipPayload(reason, note, candidate.dataRevision),
