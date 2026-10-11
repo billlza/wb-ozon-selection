@@ -72,7 +72,7 @@ function RunTodo({ todo, plan, saving, onRerun }) {
  * exactly what the to-do names, once.
  */
 export default function GlobalNotices({ extensionStatus = null, candidates = [], discoveryView = null, store = null,
-  intakeQueue, loadIntakeQueue, onRetryIntake, onResumeIntake, onStartRound, intakeShownOnPage = false }) {
+  intakeQueue, loadIntakeQueue, onRetryIntake, onResumeIntake, onStartRound, intakeShownOnPage = false, showRunTodos = true }) {
   const polled = useIntakeExtension(intakeQueue === undefined ? loadIntakeQueue : null);
   const queueExtension = intakeQueue === undefined ? polled : intakeQueue?.extension ?? null;
   // The intake page already shows the paused queue with its own 接着找 and a 重跑 on each stopped row, so on that page
@@ -80,9 +80,10 @@ export default function GlobalNotices({ extensionStatus = null, candidates = [],
   const notices = useMemo(() => globalNotices({ extensionStatus, queueExtension, candidates, discoveryView, store })
     .filter(notice => !(intakeShownOnPage && INTAKE_PAGE_NOTICES.includes(notice.key))),
   [extensionStatus, queueExtension, candidates, discoveryView, store, intakeShownOnPage]);
-  const todos = useMemo(() => failedRunTodos({ candidates, discoveryView, store, queueExtension })
+  // A product page shows only the page-wide notices; the stopped runs belong to the desk pages.
+  const todos = useMemo(() => !showRunTodos ? [] : failedRunTodos({ candidates, discoveryView, store, queueExtension })
     .filter(todo => !(intakeShownOnPage && todo.kind !== "discovery")),
-  [candidates, discoveryView, store, queueExtension, intakeShownOnPage]);
+  [candidates, discoveryView, store, queueExtension, intakeShownOnPage, showRunTodos]);
   const plan = useMemo(() => newRoundPlan(discoveryView, store), [discoveryView, store]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);

@@ -17,6 +17,7 @@ async function pageModule() {
       resolveId: id => id === entry ? entry : null,
       load: id => id === entry ? `import React from 'react';import {renderToStaticMarkup} from 'react-dom/server';
       import {createPreparationSaveState} from ${JSON.stringify(fileURLToPath(new URL('../src/siblingPreparationState.js',import.meta.url)))};
+      import PublishSection, {showsProductPublish} from ${JSON.stringify(fileURLToPath(new URL('../src/components/ProductPublishSection.jsx', import.meta.url)))};
       import Page, {stepNotice, thresholdBasisLine, captureStatusLine, captureNeedsOwnerReview, captureReviewPayload,
         captureRecaptureReady, captureRecaptureConfirmLine, captureRecapturePayload, CAPTURE_RECAPTURE_REASONS,
         currentProductStep, skuChoiceReady, skuChoiceSaved, showsSkuChoice, skuChoiceHeadline, skuChoiceSwing,
@@ -39,6 +40,7 @@ async function pageModule() {
         ozonCategoryStepGaps, ozonPageReadOutcomeLine, productStepPassed, extraHandlingFeesFormState,
         extraHandlingFeesPayload, extraHandlingFeesFormErrors, extraHandlingFeesFormTotal, extraHandlingFeesStepGaps,
         extraHandlingFeeBreakLine, extraHandlingFeeAppliedLine};
+      export {PublishSection, showsProductPublish};
       export const render=props=>renderToStaticMarkup(<Page preparationSaveState={createPreparationSaveState()} {...props}/>);
       export const renderCommissionEstimate=props=>renderToStaticMarkup(<CommissionEstimateBlock {...props}/>);` : null }],
       ssr: { noExternal: true }, build: { ssr: true, write: false, rollupOptions: { input: entry, output: { format: 'es' } } } });
@@ -90,7 +92,7 @@ const okEstimate = {
   routeBlock: null
 };
 const props = (extra = {}) => ({ candidate: candidate(), view: null, extensionStatus: { code: 'disconnected', label: '插件未安装或未连接' },
-  onSaveDraft: forbidden, onRequestCapture: forbidden, onOpenLegacyCard: forbidden, onBack: forbidden, ...extra });
+  onSaveDraft: forbidden, onRequestCapture: forbidden, onBack: forbidden, ...extra });
 
 test('追加已采集颜色只需选规格，内部候选名称由软件生成', async () => {
   const parent = candidate({ sourceCapture: { mode: 'a_supplier_capture', status: 'captured_waiting_owner_selection',
@@ -637,7 +639,7 @@ test('选定之后进度条走到「算利润」，选定这一步记成已完�
   assert.equal(foldedStepLine('select', 'profit', chosen), '已选定 2 个规格，已经锁进这件商品的供货方案。');
   assert.equal(foldedStepState('copy', 'profit', chosen), '未开始');
   assert.equal(foldedStepLine('copy', 'profit', chosen), '等前面的步骤完成后再开始。');
-  assert.equal(foldedStepLine('profit', 'profit', chosen), '这一步的详细界面还在旧版页面里，先用「打开旧版A卡」查看。');
+  assert.equal(foldedStepLine('profit', 'profit', chosen), '这一步现在没有要你在这里点的东西；需要你处理的事会出现在「需要你处理」里。');
 
   const html = await render(choosingProps({ candidate: chosen }, {}, { selectedSkuIds: ['sku-xl-yellow', 'sku-8xl-yellow'] }));
   assert.match(html, /aria-current="step"[^>]*>[^<]*<span class="product-step-index">3<\/span>算利润/u);
@@ -1675,7 +1677,7 @@ const readyRecalculationView = (mode) => ({
 
 test('条件测算停下来之后，这一页自己就有重算入口，并说明这一次用的是哪一种费用证据', async () => {
   const official = await render({ candidate: recalculationCandidate(readyRecalculationView('official_reference')),
-    view: null, onRecalculateBWithExactCommission: forbidden, onOpenLegacyCard: forbidden });
+    view: null, onRecalculateBWithExactCommission: forbidden });
   assert.match(official, /已经有更好的费用证据，可以重算利润/u);
   assert.match(official, /<button[^>]*>用更好的费用证据重算<\/button>/u);
   assert.match(official, /这一次会用：Ozon 官方费率表上这条类目的公开费率 12%。/u);
@@ -1686,7 +1688,7 @@ test('条件测算停下来之后，这一页自己就有重算入口，并说�
   assert.doesNotMatch(official, /算利润<span class="product-folded-state">/u);
 
   const exact = await render({ candidate: recalculationCandidate(readyRecalculationView('exact')),
-    view: null, onRecalculateBWithExactCommission: forbidden, onOpenLegacyCard: forbidden });
+    view: null, onRecalculateBWithExactCommission: forbidden });
   assert.match(exact, /这一次会用：店里同类目在售商品的实收费率 12%。/u);
   assert.match(exact, /重算通过之后这件商品可以继续往上架走/u);
   assert.doesNotMatch(exact, /上架那道闸门只认店里的实收费率/u);
@@ -1697,7 +1699,7 @@ test('还没有更好的证据时，这一页照实说，不给按钮也不自�
     ...readyRecalculationView('exact'), canRecalculate: false, status: 'evidence_required',
     commissionEvidenceMode: null, commissionEvidenceLabel: null, commissionRate: null,
     blockReason: 'B_EXACT_RECALCULATION_EVIDENCE_UNAVAILABLE', message: '服务端原话：还读不到。'
-  }), view: null, onRecalculateBWithExactCommission: forbidden, onOpenLegacyCard: forbidden });
+  }), view: null, onRecalculateBWithExactCommission: forbidden });
   assert.match(blocked, /条件测算已保存，等更好的费用证据/u);
   assert.match(blocked, /服务端原话：还读不到。/u);
   assert.match(blocked, /软件不会自己重试，也不会替你把估算当成实收/u);
@@ -1713,7 +1715,7 @@ test('读不到更好的证据时，这一页给出重读入口，并说清它�
     ...readyRecalculationView('exact'), canRecalculate: false, status: 'evidence_required',
     commissionEvidenceMode: null, commissionEvidenceLabel: null, commissionRate: null,
     blockReason: 'B_EXACT_RECALCULATION_EVIDENCE_UNAVAILABLE', message: '服务端原话：还读不到。'
-  }), view: null, onRecalculateBWithExactCommission: forbidden, onOpenLegacyCard: forbidden,
+  }), view: null, onRecalculateBWithExactCommission: forbidden,
     onRefreshBFeeEvidence: forbidden });
 
   assert.match(stranded, /<button[^>]*>重新读一次费用证据<\/button>/u);
@@ -1733,7 +1735,7 @@ test('读不到更好的证据时，这一页给出重读入口，并说清它�
 
 test('已经有可用证据时这一块还在，但说清它不是必须的；服务端没给重读入口就整块不出现', async () => {
   const ready = await render({ candidate: recalculationCandidate(readyRecalculationView('official_reference')),
-    view: null, onRecalculateBWithExactCommission: forbidden, onOpenLegacyCard: forbidden,
+    view: null, onRecalculateBWithExactCommission: forbidden,
     onRefreshBFeeEvidence: forbidden });
   assert.match(ready, /也可以重新读一次费用证据/u);
   assert.match(ready, /这一步不是必须的/u);
@@ -1741,7 +1743,7 @@ test('已经有可用证据时这一块还在，但说清它不是必须的；�
 
   // 页面不自己造这条路：没有接上重读处理时，这一块一个字都不出现。
   const withoutHandler = await render({ candidate: recalculationCandidate(readyRecalculationView('exact')),
-    view: null, onRecalculateBWithExactCommission: forbidden, onOpenLegacyCard: forbidden });
+    view: null, onRecalculateBWithExactCommission: forbidden });
   assert.doesNotMatch(withoutHandler, /重新读一次费用证据/u);
 });
 
@@ -1832,7 +1834,7 @@ test('已经走过去的那几步显示成已完成，不再说「等前面的�
   assert.equal(foldedStepState('select', 'copy', passedB), '已完成');
   assert.equal(foldedStepState('copy', 'copy', passedB), '进行中');
   assert.equal(foldedStepState('publish', 'copy', passedB), '未开始');
-  assert.equal(foldedStepLine('profit', 'copy', passedB), '这一步已经做完了；详细内容还在旧版页面里，用「打开旧版A卡」可以回看。');
+  assert.equal(foldedStepLine('profit', 'copy', passedB), '这一步已经做完了。');
   assert.equal(foldedStepLine('publish', 'copy', passedB), '等前面的步骤完成后再开始。');
 
   // 先后按这件商品上真实发生的顺序，不按进度条的排版顺序——「选定」排在最前面，但真正先做的是「找货」。
@@ -1885,4 +1887,82 @@ test('修订稿与原稿明确区分，确认前隐藏付费与图片入口，�
     productionIdentity: { roles: ['owner'] }, onConfirmC1EditorialContent: forbidden }));
   assert.match(blocked, /文案修订需要重新核对/u);
   assert.doesNotMatch(blocked, /确认修订文案，进入图片/u);
+});
+
+/**
+ * 2026-10-11 主人问「进行中」那一页是新版还是旧版：单件商品走到上架以后，「继续已保存任务」和回读结果只长在旧版 A 卡上，
+ * 商品页头上还挂着一个「打开旧版A卡」。现在上架与回读就在商品自己的页面上，旧版那个按钮和那几句话都拿掉了。
+ */
+const savedDJob = (extra = {}) => ({ status: 'failed', currentVerified: false, canContinueSaved: true, continueJobId: 'job:synthetic-d',
+  expectedRevision: 4, d: { stage: 'D', status: 'failed', receiptStatus: 'progress_saved', blockers: [] }, ...extra });
+const accountRead = { schemaVersion: 'ozon-account-read-preparation-v1', candidateId: 'candidate:synthetic-product-page',
+  skuPackageId: 'sku-package:synthetic', expectedRevision: 4, options: [], runtime: [], maxRequests: 3, platformWrites: 0,
+  message: '尚未配置本件商品的准确账户、仓库及读取服务。配置齐备后才能显示读取确认。' };
+const deRuntime = { available: true, status: 'waiting_for_production_authorization', gaps: [{ code: 'synthetic', field: 'productionAuthorization', message: '合成缺口：还没有生产授权' }] };
+
+test('写文案的商品不摆上架与回读，那两步仍是折叠的「未开始」', async () => {
+  const { showsProductPublish } = await pageModule();
+  const writing = candidate({ workflowStatus: 'listing_preparation', executionRuntime: { businessPhase: 'C1' },
+    dESoftwareRuntimeView: deRuntime, ozonAccountReadPreparation: accountRead,
+    lifecycleV11: { aConfirmationReceipt: { decision: 'confirm' }, skuPackage: { businessPhase: 'C1' } } });
+  assert.equal(showsProductPublish(writing), false);
+  const html = await render(props({ candidate: writing, onContinueSavedDE: forbidden }));
+  assert.doesNotMatch(html, /aria-label="上架与回读"/u);
+  assert.doesNotMatch(html, /合成缺口/u);
+  assert.match(html, /<summary>上架<span class="product-folded-state">未开始<\/span><\/summary>/u);
+  assert.doesNotMatch(html, /旧版/u);
+});
+
+test('走到上架的商品：上架与回读就在商品页上，按钮和旧版 A 卡上是同一个，页头不再有「打开旧版A卡」', async () => {
+  const { currentProductStep, showsProductPublish } = await pageModule();
+  const publishing = candidate({ workflowStatus: 'listing_preparation', executionRuntime: { businessPhase: 'C2' },
+    dESoftwareRuntimeView: deRuntime, dESavedJobRuntimeView: savedDJob(), ozonAccountReadPreparation: accountRead,
+    lifecycleV11: { aConfirmationReceipt: { decision: 'confirm' }, skuPackage: { businessPhase: 'D' } } });
+  assert.equal(currentProductStep(publishing), 'publish');
+  assert.equal(showsProductPublish(publishing), true);
+  const html = await render(props({ candidate: publishing, onContinueSavedDE: forbidden, onAuthorizeAccountRead: forbidden }));
+  assert.match(html, /<section class="product-section product-publish" aria-label="上架与回读"><h3>上架与回读<\/h3>/u);
+  assert.match(html, /aria-label="Ozon账户只读核验"/u);
+  assert.match(html, /<button type="button">继续已保存任务<\/button>/u);
+  assert.match(html, /aria-current="step"[^>]*>[^<]*<span class="product-step-index">5<\/span>上架/u);
+  // 有了这一节，上架和回读就不再折叠成一句话。
+  assert.doesNotMatch(html, /<summary>上架<span/u);
+  assert.doesNotMatch(html, /<summary>回读<span/u);
+  assert.doesNotMatch(html, /打开旧版A卡|旧版/u);
+});
+
+test('已在售的商品停在「回读」，回读结果也在这一页', async () => {
+  const { currentProductStep } = await pageModule();
+  const listed = candidate({ workflowStatus: 'listed', dESavedJobRuntimeView: savedDJob({ canContinueSaved: false, currentVerified: true,
+    e: { stage: 'E', status: 'completed', currentVerified: true, receiptStatus: 'readback_saved', blockers: [] } }),
+    lifecycleV11: { aConfirmationReceipt: { decision: 'confirm' }, skuPackage: { businessPhase: 'E' } } });
+  assert.equal(currentProductStep(listed), 'readback');
+  const html = await render(props({ candidate: listed }));
+  assert.match(html, /当前商品已完成独立验证/u);
+  assert.match(html, /平台独立回读：当前商品已独立验证/u);
+  assert.doesNotMatch(html, /继续已保存任务/u);
+});
+
+test('上架与回读的每个按钮都带上这件商品自己的编号，没给的按钮就是空的', async () => {
+  const { PublishSection } = await pageModule();
+  const calls = [];
+  const publishing = candidate({ dESavedJobRuntimeView: savedDJob(), ozonAccountReadPreparation: accountRead,
+    lifecycleV11: { skuPackage: { businessPhase: 'D' } } });
+  const tree = PublishSection({ candidate: publishing,
+    onContinueSavedDE: (id, payload) => calls.push(['continue', id, payload]),
+    onReconcileDFromPlatformState: (id, payload) => calls.push(['reconcile', id, payload]),
+    onAuthorizeAccountRead: payload => calls.push(['account', payload]) });
+  const children = tree.props.children.filter(Boolean);
+  const card = children.find(child => child?.props?.savedJobRuntime !== undefined);
+  const account = children.find(child => child?.props?.preparation !== undefined);
+  card.props.onContinueSaved({ jobId: 'job:synthetic-d', expectedRevision: 4 });
+  card.props.onReconcileFromPlatformState({ productId: 1 });
+  account.props.onAuthorize({ candidateId: publishing.id });
+  assert.deepEqual(calls, [
+    ['continue', publishing.id, { jobId: 'job:synthetic-d', expectedRevision: 4 }],
+    ['reconcile', publishing.id, { productId: 1 }],
+    ['account', { candidateId: publishing.id }]]);
+  assert.equal(card.props.onDispatchNewRound, null);
+  assert.equal(card.props.onRollbackAuthorization, null);
+  assert.equal(PublishSection({ candidate: candidate() }), null);
 });

@@ -128,6 +128,18 @@ test('on the intake page the paused queue is not repeated; the plugin notice sti
   assert.doesNotMatch(html, /接着找</u);
 });
 
+test('on a product page the plugin, login and slider notices show, but not the desk list of stopped runs', async () => {
+  const html = (await pages()).notices({ extensionStatus: { code: 'disconnected' }, showRunTodos: false,
+    intakeQueue: { items: [], pause: null, extension: { online: false, login1688: 'expired' } }, store: 'miska', discoveryView: { batches: [] },
+    onRetryIntake: forbidden, onResumeIntake: forbidden, onStartRound: forbidden,
+    candidates: [candidate('a', { intake: intake('blocked', { code: 'slider_required', message: null, retryable: true, scope: 'page' }, 'pinduoduo') })] });
+  assert.match(html, /插件没连上，或者 Chrome 关着/u);
+  assert.match(html, /1688 登录过期了/u);
+  assert.match(html, /要你验证一下/u);
+  assert.doesNotMatch(html, /没跑成的/u);
+  assert.doesNotMatch(html, /接着找</u);
+});
+
 test('nothing wrong renders nothing at the top of the page', async () => {
   const html = (await pages()).notices({ extensionStatus: { code: 'connected' }, intakeQueue: { items: [], pause: null, extension: { online: true, login1688: 'ok' } },
     store: 'miska', discoveryView: { batches: [] }, candidates: [sourced()] });

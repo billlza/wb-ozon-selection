@@ -562,6 +562,7 @@ export const CAPABILITY_NODES = Object.freeze([
       capabilityRef("src/components/OwnerInbox.jsx", "OwnerInbox", "需要主人处理清单"),
       capabilityRef("src/components/EliminateControl.jsx", "EliminateControl", "各列表通用的淘汰确认与已淘汰恢复"),
       capabilityRef("src/components/ProductPage.jsx", "ProductPage", "商品页六步"),
+      capabilityRef("src/components/ProductPublishSection.jsx", "ProductPublishSection", "商品页上的上架与回读：和旧版 A 卡同一张 D/E 卡与账户只读核验，走到上架才出现"),
       capabilityRef("src/components/IntakePage.jsx", "IntakePage", "录入页：贴拼多多或 1688 链接、找货队列与重跑"),
       capabilityRef("src/components/StoreProfileCards.jsx", "StoreProfileCards", "录入页上每家店的店铺档案与修改")],
     testRefs: [capabilityRef("tests/collaboration-api.test.mjs", "test(", "候选 API 测试"),

@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T16:14:14.026Z",
+  "frozenAt": "2026-10-11T16:51:45.083Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 976,
-      "sha256": "3b044984e9b2d60d34fe8480d1a0813ed74f8898f1de7d4dde959adc9a588986",
+      "artifactCount": 977,
+      "sha256": "bfd2aa1884afc19aa3f7b5a22a4668f400f1439981a9159552137a9f61d32274",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -440,7 +440,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "72a8d76571294ed469d3ccb511f1f8a43acbc82dcae1a6ddc8f5f843e67505cb"
+        "sha256": "01f21a80441607b8fb2c71a2ff239839570af7a603a66f5ffa255dff49465f92"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -1680,7 +1680,7 @@
       },
       {
         "path": "src/App.jsx",
-        "sha256": "53209cd9871f6c612101bc6371cecb1c5d663a186d53948978b2317cb50b9baa"
+        "sha256": "a277afbc5d33e9a9a2cb6310d4fca6beabc65193f20345ce37134b87956e91b4"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1800,7 +1800,7 @@
       },
       {
         "path": "src/components/GlobalNotices.jsx",
-        "sha256": "634e0e2dc453bdba91106e6b0e1090096f3a875300d5f1b9a9f92182b6a841f5"
+        "sha256": "7721d5ee6bec259814ab4b76bf2f560890b4f4262e6a80b6bcf6112b22dd3614"
       },
       {
         "path": "src/components/HeaderStatus.jsx",
@@ -1868,7 +1868,11 @@
       },
       {
         "path": "src/components/ProductPage.jsx",
-        "sha256": "abc88cf1e726439f130ebe717c5cb2b102c615f1b70a4a4f19c0d19c5ccf316d"
+        "sha256": "f0b1e544d3c4a7c240c0401e7e95057a4f22abc44269902c70d50d120db20909"
+      },
+      {
+        "path": "src/components/ProductPublishSection.jsx",
+        "sha256": "1e8cf7546864e72d81d15e356379e541b8523d20dd532b9f075cf62cd27c057b"
       },
       {
         "path": "src/components/ProductionOwnerDecisionForm.jsx",
@@ -3164,7 +3168,7 @@
       },
       {
         "path": "tests/inbox-notices-ui.test.mjs",
-        "sha256": "6476dfdb8ce8c547eb8c08c1bd3a65fead04dcb725d58495b8b0b0929f3c5dc6"
+        "sha256": "2b8fd3a7a8faded4d13d76e96c41999d24495ba349a1bfb30a56a125a4d96a9b"
       },
       {
         "path": "tests/intake-api.test.mjs",
@@ -3540,7 +3544,7 @@
       },
       {
         "path": "tests/product-page-ui.test.mjs",
-        "sha256": "82a4087a1a9ee65fe73031908634cec5195931b4cc84c45e88548b2fe12390ba"
+        "sha256": "32b37d41a395c5688f93e62a0db626dfe43d30e29a1f7a36d3e3371b6a173dc9"
       },
       {
         "path": "tests/production-authorization-rollback-acceptance.test.mjs",
@@ -4200,6 +4204,10 @@
         },
         {
           "path": "src/components/ProductPage.jsx",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "src/components/ProductPublishSection.jsx",
           "status": "present_in_integration_source"
         },
         {
