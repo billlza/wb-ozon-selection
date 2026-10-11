@@ -1520,7 +1520,7 @@ export default function App() {
         ) : view === "live" ? (
           <ListedProducts candidates={state.candidates} store={deskStore} discoveryView={discoveryView} onOpenCandidate={openDiscoveredCandidate} />
         ) : view === "inbox" ? (
-          <OwnerInbox candidates={state.candidates} store={deskStore} onOpenCandidate={openDiscoveredCandidate}
+          <OwnerInbox candidates={state.candidates} store={deskStore} discoveryView={discoveryView} onOpenCandidate={openDiscoveredCandidate}
             onEliminateCandidate={eliminateCandidate} onRestoreCandidate={restoreCandidate} onSubmitSourceLink={submitSourceLink} />
         ) : (
           <div className="page-panel">

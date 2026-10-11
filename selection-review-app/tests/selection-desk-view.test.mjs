@@ -254,10 +254,10 @@ test('需要你处理只列出真的在等你的商品，并保留其余缺口�
   // Owner feedback 2026-09-11: a row has to say what it is waiting for, read from this product's own records —
   // 找货 not filled in yet comes first, then the platform's own asks, in that order.
   assert.deepEqual(items[0], { id: 'candidate:a', dataRevision: null, title: '合成商品 candidate:a', imageUrl: '',
-    storeLabel: 'Miska', statusLine: '还没决定做不做', need: '找货还没填', moreNeeds: 2,
+    storeLabel: 'Miska', statusLine: '待确认 · 还没决定做不做', family: 'candidate:a', colour: null, need: '找货还没填', moreNeeds: 2,
     reasons: ['找货还没填', '补一个1688链接', '补重量'], action: { key: 'draft', label: '去填找货' } });
   assert.equal(items[1].moreNeeds, 1);
-  assert.equal(items[1].statusLine, '状态还没记录');
+  assert.equal(items[1].statusLine, '准备中 · 状态还没记录');
 });
 
 test('点数一行和查询时间只在已保存结果里有时才出现，不要的理由固定五个', () => {

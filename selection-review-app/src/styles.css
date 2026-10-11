@@ -1142,14 +1142,17 @@ label em { color: var(--red); font-style: normal; font-size: 9px; }
 .board-card-waiting { color: var(--amber); font-size: 10px; font-weight: 700; }
 
 .inbox-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
-.inbox-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; }
-.inbox-row-body { min-width: 0; display: grid; gap: 3px; }
+.inbox-list > li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; }
+.inbox-row-body { flex: 1 1 100%; min-width: 0; display: grid; gap: 6px; }
 .inbox-row-body b { font-size: 13px; overflow-wrap: anywhere; }
 .inbox-row-need { color: var(--amber); font-size: 11px; font-weight: 700; }
 .inbox-row-status { color: var(--muted); font-size: 11px; }
 .inbox-row-reasons { margin: 0; padding-left: 16px; display: grid; gap: 2px; color: var(--amber); font-size: 11px; font-weight: 700; line-height: 1.5; }
 .inbox-row-reasons li { overflow-wrap: anywhere; }
 .inbox-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.inbox-row-member { display: grid; gap: 3px; }
+.inbox-row-member + .inbox-row-member { padding-top: 6px; border-top: 1px dashed var(--line); }
+.inbox-row-colour { font-size: 12px; color: var(--green); }
 
 /* 淘汰 looks the same wherever it appears: one quiet button that turns into one sentence plus the choices. */
 .eliminate-confirm { display: flex; flex-direction: column; gap: 5px; flex: 1 1 240px; padding: 7px 9px; border: 1px solid var(--line-dark); border-radius: 10px; background: #fffdf5; }

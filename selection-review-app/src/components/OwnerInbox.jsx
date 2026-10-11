@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { eliminatedRows, inboxItems, storeLabel, unsourcedRows } from "../selectionDeskView.js";
+import { eliminatedRows, inboxItems, inboxRows, storeLabel, unsourcedRows } from "../selectionDeskView.js";
 import { errorMessage } from "../formState.js";
 import EliminateControl, { EliminatedFold } from "./EliminateControl.jsx";
 import SourceLinkControl from "./SourceLinkControl.jsx";
@@ -9,11 +9,12 @@ import SourceLinkControl from "./SourceLinkControl.jsx";
  * for and offers the one next thing to do. Owner feedback: "还有 5 条需要我处理，我不能直观看到它要处理什么，得挨个打开."
  * Every sentence comes from that product's own saved records; opening a row only shows it, it starts no work.
  */
-export default function OwnerInbox({ candidates, store, onOpenCandidate,
+export default function OwnerInbox({ candidates, store, discoveryView = null, onOpenCandidate,
   onEliminateCandidate, onRestoreCandidate, onSubmitSourceLink = null }) {
-  const items = inboxItems(candidates, store);
-  const unsourced = unsourcedRows(candidates, store);
-  const dropped = eliminatedRows(candidates, store);
+  const items = inboxItems(candidates, store, { discoveryView });
+  const rows = inboxRows(items);
+  const unsourced = unsourcedRows(candidates, store, discoveryView);
+  const dropped = eliminatedRows(candidates, store, discoveryView);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   async function run(action, payload, done) {
@@ -33,23 +34,34 @@ export default function OwnerInbox({ candidates, store, onOpenCandidate,
     {error ? <p role="alert">{error}</p> : null}
     {notice ? <p role="status" className="desk-notice">{notice}</p> : null}
     {items.length === 0 ? <p role="status">现在没有等你处理的商品。</p> : <ul className="inbox-list">
-      {items.map(item => <li key={item.id}>
+      {rows.map(row => <li key={row.key} data-testid="inbox-row">
         <div className="inbox-row-body">
-          <b>{item.title}</b>
-          <ul className="inbox-row-reasons">
-            {item.reasons.map(reason => <li key={reason}>{reason}</li>)}
-          </ul>
-          <span className="inbox-row-status">{item.storeLabel} · {item.statusLine}</span>
-        </div>
-        <div className="inbox-row-actions">
-          {item.action.key === "source_link"
-            ? <SourceLinkControl target={{ candidateId: item.id, dataRevision: item.dataRevision }}
-              onSubmit={onSubmitSourceLink} onOpenCandidate={onOpenCandidate} />
-            : <button type="button" className="button primary" onClick={() => open(item)}>{item.action.label}</button>}
-          <button type="button" className="button secondary" onClick={() => onOpenCandidate(item.id)}>打开</button>
-          <EliminateControl id={item.id} dataRevision={item.dataRevision}
-            onEliminate={({ id, dataRevision, reason }) => run(onEliminateCandidate, { id, dataRevision, reason },
-              "已淘汰，它折在下面的「已淘汰」里，随时可以恢复。")} />
+          <b>{row.title}</b>
+          {row.grouped ? <span className="inbox-row-status">{row.members.length} 个颜色在等你</span> : null}
+          {row.members.map(item => <div key={item.id} className="inbox-row-member">
+            {row.grouped ? <strong className="inbox-row-colour">{item.colour ?? "颜色没读到"}</strong> : null}
+            <ul className="inbox-row-reasons">
+              {item.reasons.map(reason => <li key={reason}>{reason}</li>)}
+            </ul>
+            <span className="inbox-row-status">{item.storeLabel} · {item.statusLine}</span>
+            <div className="inbox-row-actions">
+              {item.action.key === "source_link"
+                ? <>
+                  <SourceLinkControl target={{ candidateId: item.id, dataRevision: item.dataRevision }}
+                    onSubmit={onSubmitSourceLink} onOpenCandidate={onOpenCandidate} />
+                  <button type="button" className="button secondary" onClick={() => open(item)}>打开</button>
+                </>
+                // 下一步按钮本身就是打开这件商品，不再另放一个做同一件事的「打开」。
+                : <button type="button" className="button primary" onClick={() => open(item)}>{item.action.label}</button>}
+              <details className="board-card-more">
+                <summary aria-label={`${row.title}${row.grouped ? ` ${item.colour ?? ""}` : ""} 的更多操作`}>更多</summary>
+                <EliminateControl id={item.id} dataRevision={item.dataRevision}
+                  label={row.grouped && item.colour ? `淘汰「${item.colour}」` : "淘汰"}
+                  onEliminate={({ id, dataRevision, reason }) => run(onEliminateCandidate, { id, dataRevision, reason },
+                    "已淘汰，它折在下面的「已淘汰」里，随时可以恢复。")} />
+              </details>
+            </div>
+          </div>)}
         </div>
       </li>)}
     </ul>}

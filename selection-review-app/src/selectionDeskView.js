@@ -700,7 +700,10 @@ export function inboxItems(candidates, store, options = {}) {
         title: card.title,
         imageUrl: card.imageUrl,
         storeLabel: card.storeLabel,
-        statusLine: card.statusLine,
+        // 和「进行中」同一套说法：在哪一列，加上这一步现在怎样。
+        statusLine: `${BOARD_COLUMNS.find(column => column.key === card.column)?.title ?? ""} · ${card.statusLine}`,
+        family: card.family,
+        colour: card.colour,
         // Kept for the desk rail, which has room for exactly one line.
         need: attention.reasons[0],
         moreNeeds: Math.max(attention.reasons.length - 1, 0),
@@ -708,6 +711,24 @@ export function inboxItems(candidates, store, options = {}) {
         action: attention.action
       };
     });
+}
+
+/**
+ * 「需要你处理」一行一件货：同一件货的几个颜色合成一行，每个颜色下面各写各的原因和按钮。只有一个颜色在等的，就是普通的一行。
+ */
+export function inboxRows(items) {
+  const rows = [];
+  const byFamily = new Map();
+  for (const item of list(items)) {
+    const family = item.family ?? item.id;
+    if (!byFamily.has(family)) {
+      const row = { key: family, title: item.title, imageUrl: item.imageUrl, storeLabel: item.storeLabel, members: [] };
+      byFamily.set(family, row);
+      rows.push(row);
+    }
+    byFamily.get(family).members.push(item);
+  }
+  return rows.map(row => ({ ...row, grouped: row.members.length > 1 }));
 }
 
 /**

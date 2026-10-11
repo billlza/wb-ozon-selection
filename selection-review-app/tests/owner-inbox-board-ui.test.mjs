@@ -108,3 +108,29 @@ test('需要你处理的每一行都开到那件商品自己的页面，「去�
   // 旧版A卡仍然进得去，只是要主人自己点，而不是收件箱替他决定。
   assert.match(app, /view: "review", label: "今日选品评审"/u);
 });
+
+test('需要你处理：同款各色合成一行、每个颜色各有原因和一个按钮，名字用中文，淘汰收在「更多」里', async () => {
+  const choices = [{ sourceSkuId: '11', attributes: { 颜色: '卡其' } }, { sourceSkuId: '12', attributes: { 颜色: '黑色' } }];
+  const html = (await pages()).inbox(props([
+    candidate('candidate:vest', { productName: 'Жилет', needsFromUser: ['确认最终素材'], workflowStatus: 'listing_preparation',
+      executionRuntime: { businessPhase: 'C2', status: 'waiting_owner' }, sourceCapture: { title: '猫咪背心', selectedSkuIds: ['11'], skuChoices: choices } }),
+    candidate('candidate:black', { productName: 'Жилет черный', needsFromUser: ['确认最终素材'], workflowStatus: 'listing_preparation',
+      executionRuntime: { businessPhase: 'C2', status: 'waiting_owner' },
+      siblingSourceV1: { parentCandidateId: 'candidate:vest', supplierSkuId: '12' }, sourceCapture: { skuChoices: choices } }),
+    candidate('candidate:r', { productName: 'Органайзер', workflowStatus: 'awaiting_user_direction', sourceCapture: { title: '桌面收纳盒' },
+      intake: { stage: 'ready', sourceKind: 'pinduoduo' } })
+  ]));
+  assert.equal((html.match(/data-testid="inbox-row"/gu) ?? []).length, 2, '背心两个颜色合成一行');
+  assert.match(html, /<b>猫咪背心<\/b><span class="inbox-row-status">2 个颜色在等你<\/span>/u);
+  assert.match(html, /<strong class="inbox-row-colour">卡其<\/strong>/u);
+  assert.match(html, /<strong class="inbox-row-colour">黑色<\/strong>/u);
+  assert.match(html, /<b>桌面收纳盒<\/b>/u);
+  assert.doesNotMatch(html, /Жилет|Органайзер/u);
+  assert.match(html, /待确认 · 找完了，等你点「做这件」/u);
+  assert.match(html, /准备中 · 等你决定/u);
+  assert.match(html, />去确认<\/button>/u);
+  assert.doesNotMatch(html, />打开<\/button>/u, '下一步按钮就是打开，不再有第二个');
+  assert.doesNotMatch(html, /选品处理|上架前确认|待上架准备/u);
+  assert.equal((html.match(/<details class="board-card-more">/gu) ?? []).length, 3);
+  assert.match(html, />淘汰「黑色」<\/button>/u);
+});
