@@ -568,6 +568,15 @@ export function profitStepFirstSkuId(review, picked) {
   return typeof review?.suggestedSkuId === "string" && ids.includes(review.suggestedSkuId) ? review.suggestedSkuId : null;
 }
 
+/**
+ * 对标商品是不是主人在「做这件」卡上认的那个 Ozon 同款。是的话，「可比的同类」主人已经在那张卡上说过了，不再问第二遍。
+ * 只认编号对得上：对标换成了别的商品（主人另读了一个页面），就照旧让他勾。
+ */
+export function profitStepComparabilityBound(review, gate1Pick) {
+  const number = textOf(review?.benchmark?.productNumber);
+  return number !== "" && isObject(gate1Pick) && String(gate1Pick.id ?? "") === number;
+}
+
 /** This store's own line, in the store rule's own two numbers — never a figure written into this page. */
 export function profitStepThresholdLine(review) {
   const threshold = review?.threshold ?? null;
@@ -690,6 +699,28 @@ export function cargoFactsStepGaps(step) {
     || "这件商品的运输属性还没有你的确认。软件要先知道它带不带电、是不是普货，才能核验线路收不收这件货。" }];
 }
 
+/**
+ * 运输属性表单照现在这样记下去，线路核验用不用得上。和服务端 lib/cargo-facts-declaration.mjs 的
+ * validateOwnerCargoFactsDeclaration、cargoFactsGate 是同一套规则（那个文件连着服务端专用的模块，页面引不进来），
+ * tests/product-page-ui.test.mjs 拿同一张输入表逐个比对两边。
+ */
+export function cargoFactsFormGaps(form) {
+  const facts = cargoFactsPayload(form, 0);
+  const problems = [];
+  if (facts.generalCargo === true && ["installed", "standalone"].includes(facts.batteryType)) problems.push("普货和带电不能同时成立");
+  if (facts.batteryType === "none" && facts.batteryEnergyWh !== null) problems.push("不带电就不能填电池瓦时");
+  const pending = [];
+  if (!["none", "installed", "standalone"].includes(facts.batteryType)) pending.push("带不带电");
+  if (facts.generalCargo === null) pending.push("是不是普货");
+  if (facts.personalUse === null) pending.push("个人自用还是商业用");
+  if (facts.irregularShape === null) pending.push("是不是异形件");
+  if (["installed", "standalone"].includes(facts.batteryType) && facts.batteryEnergyWh === null) pending.push("电池瓦时");
+  if (!problems.length && !pending.length) return [];
+  return [{ field: "cargoFacts", label: "运输属性", why: problems.length
+    ? `运输属性里${problems.join("，")}，改一下。`
+    : `运输属性里还有「${pending.join("」「")}」没定；线路核验用不了说不准的值，在下面那一块选好。` }];
+}
+
 /* ── 每单额外操作费 ────────────────────────────────────────────────────────────────────────────────────────────────
  * 包材、拆单费、合包费、额外材料费——每单要另外花的钱。它不是一个固定数，也不总叫同一个名字，所以这里是一份可增删的
  * 清单：一行一个名目一笔金额。一行都没有 = ¥0.00，而且那是主人的一次明确声明，不是「还没填」。
@@ -753,6 +784,14 @@ export function extraHandlingFeesStepGaps(step) {
  * 「这笔费用涨到 ¥X 以上，这个规格才会掉出利润线」——主人 2026-09-15 最看重的那一句。
  * X 由服务端按这个规格自己的利润和这家店自己的门槛现算，页面一个数都不写。
  */
+/**
+ * 确认供货时能不能顺手把这笔钱一起记下：只有清单是空的（¥0.00）才行。那正是上面利润表现在用的数；加了钱，
+ * 利润就要按它重算，主人得先在这一块点一下确认，看到重算后的利润再确认供货。
+ */
+export function extraHandlingFeesFoldable(step, rows) {
+  return isObject(step) && step.gate?.ready !== true && extraHandlingFeesPayload(rows, 0).items.length === 0;
+}
+
 export function extraHandlingFeeBreakLine(spec) {
   const point = spec?.extraHandling ?? null;
   if (!isObject(point) || finite(point.breakRmb) === null) return null;
@@ -818,7 +857,7 @@ export function profitStepSubmitState({ review, firstSkuId, comparabilityConfirm
   }
   if (spec === null) return { ready: false, gaps: [], hint: "先在上面指定一个变体先上架。" };
   if (!comparabilityConfirmed || !supplyConfirmed) {
-    return { ready: false, gaps: [], hint: "两件都确认后才能进入下一步。" };
+    return { ready: false, gaps: [], hint: "先勾上「这两件商品是可比的同类」，才能确认这套供货。" };
   }
   const rest = (finite(review?.passCount) ?? 0) - 1;
   return { ready: true, gaps: [],
@@ -1104,9 +1143,14 @@ function OzonCategoryReadBlock({ step, saving, onRead }) {
  * 还没声明过的时候这一块必须把两件事说清楚：这件商品还没声明过这笔钱，以及上面那些利润是暂按 ¥0.00 算的。
  * 绝不能悄悄拿一个项目假设值算给他看——2026-09-15 之前页面按 ¥3 显示，确认时按这件货自己的数算，两个数不是一回事。
  */
-export function ExtraHandlingFeesBlock({ step, dataRevision, saving, onDeclare }) {
-  const [rows, setRows] = useState(() => extraHandlingFeesFormState(step));
+export function ExtraHandlingFeesBlock({ step, dataRevision, saving, onDeclare, rows: heldRows = null, onRowsChange = null,
+  folded = false }) {
+  const [ownRows, setOwnRows] = useState(() => extraHandlingFeesFormState(step));
   const [editing, setEditing] = useState(false);
+  // 「算利润」那张卡握着这份清单时，用它的；单独摆出来时用自己的。
+  const held = Array.isArray(heldRows) && typeof onRowsChange === "function";
+  const rows = held ? heldRows : ownRows;
+  const setRows = held ? update => onRowsChange(typeof update === "function" ? update(heldRows) : update) : setOwnRows;
   if (!isObject(step)) return null;
   const declared = step.declared === true;
   const label = textOf(step.label) || "每单额外操作费";
@@ -1126,8 +1170,9 @@ export function ExtraHandlingFeesBlock({ step, dataRevision, saving, onDeclare }
       <span>{declared ? "已确认" : "包材 / 拆单费 / 合包费 / 额外材料费这一类，每单要另外花的钱"}</span>
     </div>
 
-    <p className="product-cargo-headline">{textOf(step.headline) ||
-      "一行都没有就是 ¥0.00，那也是一次明确的声明；不用加钱就直接确认，要加就按「加一行」写上名目和金额。"}</p>
+    <p className="product-cargo-headline">{textOf(step.headline) || (folded
+      ? "一行都没有就是 ¥0.00，那也是一次明确的声明；不用加钱就不用管这一块，要加就按「加一行」写上名目和金额。"
+      : "一行都没有就是 ¥0.00，那也是一次明确的声明；不用加钱就直接确认，要加就按「加一行」写上名目和金额。")}</p>
     {declared || step.status === "total_only" ? null : <p className="product-profit-note">
       {"在你确认之前，上面那些利润是暂按 ¥0.00 算的——这个数还没签过字。"}
     </p>}
@@ -1164,22 +1209,28 @@ export function ExtraHandlingFeesBlock({ step, dataRevision, saving, onDeclare }
     </div> : null}
 
     <div className="product-actions">
-      <button type="button" className={declared ? "button secondary" : "button primary"} disabled={saving || invalid}
-        onClick={() => onDeclare?.(extraHandlingFeesPayload(rows, dataRevision))}>
+      {/* 空清单在「确认这套供货」那一下一起记下，这里不用单独点；加了钱才要先在这里确认，利润按它重算。 */}
+      {folded && rows.length === 0 ? null : <button type="button" className={declared ? "button secondary" : "button primary"}
+        disabled={saving || invalid} onClick={() => onDeclare?.(extraHandlingFeesPayload(rows, dataRevision))}>
         {rows.length === 0 ? "确认：这件不用加钱（¥0.00）" : `确认这 ${rows.length} 笔，合计 ${money(total) ?? "¥0.00"}`}
-      </button>
+      </button>}
       <button type="button" className="button secondary" disabled={saving || rows.length >= maxItems}
         onClick={() => { setEditing(true); setRows(current => [...current, { name: "", amountRmb: "" }]); }}>加一行</button>
       <span className="product-actions-note">
-        {"确认只是记下这件商品每单要另外花多少钱，不会下单、不会联系供应商、也不会向 Ozon 写任何东西。"}
+        {folded && rows.length === 0
+          ? "不用单独点：在下面点「确认这套供货，往下做」时，按 ¥0.00 一起记下。要加钱就按「加一行」，加完在这里确认，利润按它重算。"
+          : "确认只是记下这件商品每单要另外花多少钱，不会下单、不会联系供应商、也不会向 Ozon 写任何东西。"}
       </span>
     </div>
   </div>;
 }
 
-function CargoFactsBlock({ step, dataRevision, saving, onDeclare }) {
-  const [form, setForm] = useState(() => cargoFactsFormState(step));
+function CargoFactsBlock({ step, dataRevision, saving, onDeclare, form: heldForm = null, onFormChange = null, folded = false }) {
+  const [ownForm, setOwnForm] = useState(() => cargoFactsFormState(step));
   const [editing, setEditing] = useState(false);
+  const held = isObject(heldForm) && typeof onFormChange === "function";
+  const form = held ? heldForm : ownForm;
+  const setForm = held ? update => onFormChange(typeof update === "function" ? update(heldForm) : update) : setOwnForm;
   const undecided = Array.isArray(step?.undecided) ? step.undecided : [];
   const basis = Array.isArray(step?.basis) ? step.basis : [];
   const fields = Array.isArray(step?.fields) ? step.fields : [];
@@ -1254,12 +1305,15 @@ function CargoFactsBlock({ step, dataRevision, saving, onDeclare }) {
     {energyField}
 
     <div className="product-actions">
-      <button type="button" className={declared ? "button secondary" : "button primary"} disabled={saving}
-        onClick={() => onDeclare(cargoFactsPayload(form, dataRevision))}>{declared ? "改成这样" : "确认"}</button>
+      {/* 还没确认过的，在「确认这套供货」那一下一起记下，这里不用单独点。 */}
+      {folded && !declared ? null : <button type="button" className={declared ? "button secondary" : "button primary"} disabled={saving}
+        onClick={() => onDeclare(cargoFactsPayload(form, dataRevision))}>{declared ? "改成这样" : "确认"}</button>}
       <button type="button" className="button secondary" disabled={saving}
         onClick={() => setEditing(value => !value)}>{editing ? "收起逐项修改" : "逐项修改"}</button>
       <span className="product-actions-note">
-        {"确认只是记下你对这件货的说法，不会下单、不会联系供应商、也不会向 Ozon 写任何东西。"}
+        {folded && !declared
+          ? "不用单独点：在下面点「确认这套供货，往下做」时，照这里现在的说法一起记下。只记下你对这件货的说法，不会下单、不联系供应商、不向 Ozon 写任何东西。"
+          : "确认只是记下你对这件货的说法，不会下单、不会联系供应商、也不会向 Ozon 写任何东西。"}
       </span>
     </div>
   </div>;
@@ -1388,20 +1442,28 @@ export function CommissionEstimateBlock({ estimate, authorized, saving, onAuthor
  * with no declaration cannot be confirmed here — the button is disabled and says why, instead of letting the owner
  * click and collect the server's 422.
  */
-function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep = null, commissionEstimate = null,
+function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep = null, commissionEstimate = null, gate1Pick = null,
   dataRevision, saving, onConfirm, onDeclareCargoFacts, onDeclareExtraHandlingFees, onReadOzonPage }) {
   const [firstPick, setFirstPick] = useState(null);
-  const [comparabilityConfirmed, setComparability] = useState(false);
-  const [supplyConfirmed, setSupply] = useState(false);
+  const [comparabilityTicked, setComparability] = useState(false);
   const [commissionEstimateTicked, setCommissionEstimateTicked] = useState(false);
+  // 每单额外操作费和运输属性的表单由这张卡握着：还没确认过的，在「确认这套供货」那一下和供货一起记下。
+  const [feeRows, setFeeRows] = useState(() => extraHandlingFeesFormState(extraHandlingStep));
+  const [cargoForm, setCargoForm] = useState(() => cargoFactsFormState(cargoStep));
+  // 对标就是主人在「做这件」卡上认的那个 Ozon 同款时，可比不可比主人已经在那张卡上说过了，这里不再问第二遍。
+  const comparabilityBound = profitStepComparabilityBound(review, gate1Pick);
+  const comparabilityConfirmed = comparabilityBound || comparabilityTicked;
+  const feesFolded = extraHandlingFeesFoldable(extraHandlingStep, feeRows);
+  const cargoFolded = isObject(cargoStep) && cargoStep.gate?.ready !== true;
   // 提议不在场（这一次没撞上，或者软件不敢提议）时，之前勾过的那一下不能留着替主人签字。
   const commissionProposal = isObject(commissionEstimate?.proposal) ? commissionEstimate.proposal : null;
   const commissionEstimateAuthorized = commissionProposal !== null && commissionEstimateTicked;
   const firstSkuId = profitStepFirstSkuId(review, firstPick);
   const spec = review.specifications.find(item => item.sourceSkuId === firstSkuId) ?? null;
-  const gaps = [...profitStepGaps(review, firstSkuId ?? ""), ...cargoFactsStepGaps(cargoStep),
-    ...ozonCategoryStepGaps(categoryStep), ...extraHandlingFeesStepGaps(extraHandlingStep)];
-  const state = profitStepSubmitState({ review, firstSkuId, comparabilityConfirmed, supplyConfirmed, gaps });
+  const gaps = [...profitStepGaps(review, firstSkuId ?? ""), ...(cargoFolded ? cargoFactsFormGaps(cargoForm) : cargoFactsStepGaps(cargoStep)),
+    ...ozonCategoryStepGaps(categoryStep), ...(feesFolded ? [] : extraHandlingFeesStepGaps(extraHandlingStep))];
+  // 供货那一句不再单独打勾：「确认这套供货」这一下就是主人对这一整套的确认（AGENTS.md §4.4 不让连着确认两遍同样的内容）。
+  const state = profitStepSubmitState({ review, firstSkuId, comparabilityConfirmed, supplyConfirmed: true, gaps });
   const benchmark = review.benchmark ?? {};
   const supply = review.supply ?? {};
   const breakdown = spec?.breakdown ?? null;
@@ -1416,7 +1478,7 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
   return <section className="product-section product-profit" aria-label="算利润">
     <h3>算利润</h3>
     <p className="product-section-hint">
-      {`规格已经选定了 ${review.total} 个。这一步不再让你挑哪个最赚——它把整套一起核一遍利润，让你确认两件只有你能判断的事，然后指定一个变体先上架跑通，其余排队等同一张卡追加。`}
+      {`规格已经选定了 ${review.total} 个。这一步不再让你挑哪个最赚——它把整套一起核一遍利润，指定一个变体先上架跑通，其余排队等同一张卡追加。看完点最下面「确认这套供货，往下做」，额外操作费和运输属性也一起记下。`}
     </p>
 
     {/* 一、整套一起核线 */}
@@ -1533,14 +1595,23 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
 
     {/* 四、这一单要另外花多少钱 — 也在确认按钮之前：没声明过这笔钱，B 那边的成本政策就凑不齐，这一步的确认服务端不收。 */}
     <ExtraHandlingFeesBlock step={extraHandlingStep} dataRevision={dataRevision} saving={saving}
-      onDeclare={onDeclareExtraHandlingFees} />
+      onDeclare={onDeclareExtraHandlingFees} rows={feeRows} onRowsChange={setFeeRows} folded={isObject(extraHandlingStep) && extraHandlingStep.gate?.ready !== true} />
 
-    {/* 五、只有主人能确认的两件事 */}
+    {/* 五、你点下去确认的是什么 */}
     <div className="product-profit-judge">
-      <div className="product-sku-table-head"><h4>只有你能确认的两件事</h4>
+      <div className="product-sku-table-head"><h4>你点下去确认的是这一套</h4>
         <span>软件不替你判断，也不替你签字</span></div>
-      <label className="product-profit-check" htmlFor="profit-comparable">
-        <input type="checkbox" id="profit-comparable" checked={comparabilityConfirmed} disabled={saving}
+      {comparabilityBound ? <div className="product-profit-check product-profit-bound">
+        <span>
+          <b>对标就是你在「做这件」卡上认的那个 Ozon 同款</b>
+          <p>
+            {`Ozon ${textOf(benchmark.productNumber) || "编号未取得"}「${textOf(benchmark.title) || "标题未取得"}」`}
+            {finite(benchmark.currentPrice) === null ? "" : ` ${benchmark.currentPrice} ${benchmark.currency === "RUB" ? "卢布" : benchmark.currency ?? ""}`}
+            {textOf(benchmark.collectedOn) ? `，页面读于 ${benchmark.collectedOn}` : ""}。可比不可比你在那张卡上已经说过了，这里不再问。
+          </p>
+        </span>
+      </div> : <label className="product-profit-check" htmlFor="profit-comparable">
+        <input type="checkbox" id="profit-comparable" checked={comparabilityTicked} disabled={saving}
           onChange={event => setComparability(event.target.checked)} />
         <span>
           <b>这两件商品是可比的同类</b>
@@ -1553,10 +1624,8 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
             {spec === null ? "，还没指定变体" : ` ${spec.label}，货价 ${money(spec.priceCny) ?? PENDING}${declaredText(spec.priceBasis)}` +
               `，打包 ${spec.weightKg} 公斤${declaredText(spec.weightBasis)} · ${size}`}。</p>
         </span>
-      </label>
-      <label className="product-profit-check" htmlFor="profit-supply">
-        <input type="checkbox" id="profit-supply" checked={supplyConfirmed} disabled={saving}
-          onChange={event => setSupply(event.target.checked)} />
+      </label>}
+      <div className="product-profit-check product-profit-supply">
         <span>
           <b>链接、规格、成本、包装是同一套采购方案</b>
           <p>{textOf(supply.productUrl) || "1688 链接未取得"}</p>
@@ -1574,7 +1643,7 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
           {spec === null || textOf(spec.quantityOneEvidenceSourceNote) === "" ? null
             : <p className="product-profit-note">{`会一起记下来的核对说明：${spec.quantityOneEvidenceSourceNote}`}</p>}
         </span>
-      </label>
+      </div>
     </div>
 
     {/* 六、这条类目是哪儿来的 — 也在确认按钮之前：类目不是从 Ozon 页面上读来的，这一步的确认服务端就不收。 */}
@@ -1582,7 +1651,8 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
 
     {/* 七、这件货运输上是什么 — 这一块在确认按钮之前，因为不先说清楚，B 那边的线路核验就判不出适用性。 */}
     {cargoStep === null || cargoStep === undefined ? null : <CargoFactsBlock step={cargoStep}
-      dataRevision={dataRevision} saving={saving} onDeclare={onDeclareCargoFacts} />}
+      dataRevision={dataRevision} saving={saving} onDeclare={onDeclareCargoFacts} form={cargoForm} onFormChange={setCargoForm}
+      folded={cargoFolded} />}
 
     {/* 八、精确佣金读不到时的那一条出路。只有服务端真的这么回过才出现，别的时候这一块根本不存在。 */}
     <CommissionEstimateBlock estimate={commissionEstimate} authorized={commissionEstimateAuthorized}
@@ -1596,14 +1666,16 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
 
     <div className="product-actions">
       <button type="button" className="button primary" disabled={saving || !state.ready}
-        onClick={() => onConfirm(firstSkuId, { comparabilityConfirmed, supplyConfirmed,
+        onClick={() => onConfirm(firstSkuId, { comparabilityConfirmed, supplyConfirmed: true,
           commissionEstimateAuthorized,
-          commissionEstimateRate: commissionEstimateAuthorized ? commissionProposal.commissionRate : null })}>确认，进入文案素材</button>
+          commissionEstimateRate: commissionEstimateAuthorized ? commissionProposal.commissionRate : null,
+          declare: { fees: feesFolded ? extraHandlingFeesPayload(feeRows, dataRevision) : null,
+            cargo: cargoFolded ? cargoFactsPayload(cargoForm, dataRevision) : null } })}>确认这套供货，往下做</button>
       <span className="product-actions-note">{state.hint}</span>
     </div>
 
     <p className="product-sku-foot">
-      <strong>确认之后会发生什么：</strong>{"软件把这一套的利润核算冻结下来，商品进入「文案素材」——生成俄文标题、卖点和图片方案给你过目。"}
+      <strong>确认之后会发生什么：</strong>{"还没记下的额外操作费（¥0.00）和运输属性先照上面记下，然后软件把这一套的利润核算冻结下来，商品进入「文案素材」，之后不花钱的几步软件自己往下做。"}
       <strong>不会</strong>{"下单、不会联系供应商、也不会向 Ozon 写任何东西；真正上架是后面「上架」那一步，另需你批准。"}
     </p>
     <p className="product-result-provenance">
@@ -1875,13 +1947,35 @@ export default function ProductPage({
    */
   const readOzonPage = () => run(onReadOzonPage, { dataRevision: candidate.dataRevision },
     "已经让软件去读一次这个 Ozon 商品页；读完这里会显示读到了什么。");
-  function confirmProfitStep(firstSkuId, judgments) {
-    const payload = profitStepSubmission(profitReview, firstSkuId, judgments);
+  function confirmProfitStep(firstSkuId, { declare = null, ...judgments } = {}) {
     setNoticeAt(null);
-    if (payload === null) { setError("这一份确认还凑不齐，没有提交；请看上面列出的缺项。"); return undefined; }
-    // 失败时这里不记任何东西：服务端已经把这一次停在哪存进了记录，页面重读资料时那一块自己就回来了。
-    return run(async input => profitStepOutcomeLine(await onConfirmProfitStep(input)), payload,
-      "已提交这一步的确认；下面显示的是服务端现在保存的状态。");
+    const declarations = [["fees", declare?.fees, onDeclareExtraHandlingFees], ["cargo", declare?.cargo, onDeclareCargoFacts]]
+      .filter(([, payload]) => isObject(payload));
+    if (declarations.length === 0) {
+      const payload = profitStepSubmission(profitReview, firstSkuId, judgments);
+      if (payload === null) { setError("这一份确认还凑不齐，没有提交；请看上面列出的缺项。"); return undefined; }
+      // 失败时这里不记任何东西：服务端已经把这一次停在哪存进了记录，页面重读资料时那一块自己就回来了。
+      return run(async input => profitStepOutcomeLine(await onConfirmProfitStep(input)), payload,
+        "已提交这一步的确认；下面显示的是服务端现在保存的状态。");
+    }
+    if (declarations.some(([, , action]) => typeof action !== "function")) {
+      setError("这一份确认还凑不齐，没有提交；请看上面列出的缺项。");
+      return undefined;
+    }
+    /**
+     * 「确认这套供货」这一下：先把卡上还没记下的额外操作费（¥0.00）和运输属性照卡上的说法记下，每记一样服务端都回一份
+     * 重算过的视图（修订号也跟着走），再拿最后那一份组装确认。重算之后凑不齐，就停在那儿照实说，不硬交。
+     */
+    return run(async () => {
+      let latest = null;
+      for (const [, payload, action] of declarations) {
+        latest = await action({ ...payload, dataRevision: latest?.dataRevision ?? payload.dataRevision });
+      }
+      const review = isObject(latest?.profitStepV1) ? latest.profitStepV1 : null;
+      const payload = review === null ? null : profitStepSubmission(review, firstSkuId, judgments);
+      if (payload === null) return "额外操作费和运输属性已经记下了，但重算之后这一份确认还凑不齐，这次没有确认供货；请看上面列出的缺项。";
+      return profitStepOutcomeLine(await onConfirmProfitStep(payload));
+    }, null, "已提交这一步的确认；下面显示的是服务端现在保存的状态。");
   }
 
   if (!candidate) return <div className="page-panel"><p role="status">{loadingLabel}</p></div>;
@@ -2045,6 +2139,7 @@ export default function ProductPage({
     {/* 算利润：整套一起核线、指定先上的那一个、其余排队，这件货运输上是什么，最后那两个只有主人能做的判断。 */}
     {profitOpen ? <ProfitStepSection key={`${candidate.id}:${candidate.dataRevision}`}
       review={profitReview} cargoStep={cargoStep} categoryStep={categoryStep} extraHandlingStep={extraHandlingStep}
+      gate1Pick={view?.gate1V1?.decision?.decision === "accept" ? view.gate1V1.decision.picks?.ozon ?? null : null}
       commissionEstimate={commissionStep?.present !== true ? null : {
         // 费率、档位和来源引用每次渲染都从当前这份解析结果里取；跨了档位分界线它自己就是另一档。
         // 提议从来不进记录，所以这里取的永远是现在这份解析结果，不是失败那一刻的旧数。

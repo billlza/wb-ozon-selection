@@ -28,7 +28,8 @@ async function pageModule() {
         profitStepOutcomeLine, cargoFactsFormState, cargoFactsPayload, cargoFactsStepGaps, cargoFactsHeadline,
         ozonCategoryStepGaps, ozonPageReadOutcomeLine, productStepPassed, extraHandlingFeesFormState,
         extraHandlingFeesPayload, extraHandlingFeesFormErrors, extraHandlingFeesFormTotal, extraHandlingFeesStepGaps,
-        extraHandlingFeeBreakLine, extraHandlingFeeAppliedLine, CommissionEstimateBlock} from ${JSON.stringify(component)};
+        extraHandlingFeeBreakLine, extraHandlingFeeAppliedLine, CommissionEstimateBlock, ExtraHandlingFeesBlock,
+        cargoFactsFormGaps, extraHandlingFeesFoldable, profitStepComparabilityBound} from ${JSON.stringify(component)};
       export {stepNotice, thresholdBasisLine, captureStatusLine, captureNeedsOwnerReview, captureReviewPayload,
         captureRecaptureReady, captureRecaptureConfirmLine, captureRecapturePayload, CAPTURE_RECAPTURE_REASONS,
         currentProductStep, skuChoiceReady, skuChoiceSaved, showsSkuChoice, skuChoiceHeadline, skuChoiceSwing,
@@ -39,10 +40,12 @@ async function pageModule() {
         profitStepOutcomeLine, cargoFactsFormState, cargoFactsPayload, cargoFactsStepGaps, cargoFactsHeadline,
         ozonCategoryStepGaps, ozonPageReadOutcomeLine, productStepPassed, extraHandlingFeesFormState,
         extraHandlingFeesPayload, extraHandlingFeesFormErrors, extraHandlingFeesFormTotal, extraHandlingFeesStepGaps,
-        extraHandlingFeeBreakLine, extraHandlingFeeAppliedLine};
+        extraHandlingFeeBreakLine, extraHandlingFeeAppliedLine, cargoFactsFormGaps, extraHandlingFeesFoldable,
+        profitStepComparabilityBound};
       export {PublishSection, showsProductPublish};
       export const render=props=>renderToStaticMarkup(<Page preparationSaveState={createPreparationSaveState()} {...props}/>);
-      export const renderCommissionEstimate=props=>renderToStaticMarkup(<CommissionEstimateBlock {...props}/>);` : null }],
+      export const renderCommissionEstimate=props=>renderToStaticMarkup(<CommissionEstimateBlock {...props}/>);
+      export const renderExtraHandlingFees=props=>renderToStaticMarkup(<ExtraHandlingFeesBlock {...props}/>);` : null }],
       ssr: { noExternal: true }, build: { ssr: true, write: false, rollupOptions: { input: entry, output: { format: 'es' } } } });
     const chunk = output.output.find(value => value.type === 'chunk' && value.isEntry);
     assert.ok(chunk);
@@ -1197,7 +1200,7 @@ test('先上这一个：默认建议同尺码那一个，算式摊开，其余�
   assert.match(html, /<b> · 先上<\/b>/u);
 });
 
-test('两个勾选都勾上才能提交，页面价与找货价的差额就写在勾选旁边', async () => {
+test('可比同类勾上才能提交，供货那一套摆出来由最后那个按钮一起确认，页面价与找货价的差额就写在旁边', async () => {
   const { profitStepPriceDeltaLine, profitStepSubmitState } = await pageModule();
   const review = profitReview();
   const spec = review.specifications.find(item => item.sourceSkuId === 'sku-8xl-yellow');
@@ -1212,8 +1215,8 @@ test('两个勾选都勾上才能提交，页面价与找货价的差额就写�
   assert.equal(profitStepSubmitState({ ...base, comparabilityConfirmed: false, supplyConfirmed: false }).ready, false);
   assert.equal(profitStepSubmitState({ ...base, comparabilityConfirmed: true, supplyConfirmed: false }).ready, false);
   assert.equal(profitStepSubmitState({ ...base, comparabilityConfirmed: false, supplyConfirmed: true }).ready, false);
-  assert.equal(profitStepSubmitState({ ...base, comparabilityConfirmed: true, supplyConfirmed: false }).hint,
-    '两件都确认后才能进入下一步。');
+  assert.equal(profitStepSubmitState({ ...base, comparabilityConfirmed: false, supplyConfirmed: true }).hint,
+    '先勾上「这两件商品是可比的同类」，才能确认这套供货。');
   const ready = profitStepSubmitState({ ...base, comparabilityConfirmed: true, supplyConfirmed: true });
   assert.equal(ready.ready, true);
   assert.equal(ready.hint, '8XL · 黄色 先上，其余 1 个变体排队等同一张卡追加。');
@@ -1221,7 +1224,7 @@ test('两个勾选都勾上才能提交，页面价与找货价的差额就写�
   assert.equal(profitStepSubmitState({ review, firstSkuId: null, gaps: [], comparabilityConfirmed: true, supplyConfirmed: true }).ready, false);
 
   const html = await render(profitProps());
-  assert.match(html, /<h4>只有你能确认的两件事<\/h4>/u);
+  assert.match(html, /<h4>你点下去确认的是这一套<\/h4>/u);
   assert.match(html, /<b>这两件商品是可比的同类<\/b>/u);
   assert.match(html, /Ozon 3605840795/u);
   assert.match(html, /Водонепроницаемый дождевик для собак, светоотражающий -8XL/u);
@@ -1233,9 +1236,13 @@ test('两个勾选都勾上才能提交，页面价与找货价的差额就写�
   assert.match(html, /打包 0\.24 公斤 · 25×22×2\.5 厘米/u);
   assert.match(html, /<p class="product-profit-delta">你在「找货」里填的货价是 ¥20\.50；/u);
   assert.match(html, /其他采购费用按 ¥0\.00 算：你在「找货」里只填了货价和国内运费/u);
-  // 两个勾选都还没勾，按钮就是不可点的。
-  assert.match(html, /<button type="button" class="button primary" disabled[^>]*>确认，进入文案素材<\/button>/u);
-  assert.match(html, /两件都确认后才能进入下一步。/u);
+  // 供货那一句不再单独打勾：最后那个按钮就是对这一整套的确认（AGENTS.md §4.4 不连着确认两遍同样的内容）。
+  assert.doesNotMatch(html, /id="profit-supply"/u);
+  assert.match(html, /<div class="product-profit-check product-profit-supply">/u);
+  assert.match(html, /<input type="checkbox" id="profit-comparable"/u);
+  // 可比同类还没勾，按钮就是不可点的。
+  assert.match(html, /<button type="button" class="button primary" disabled[^>]*>确认这套供货，往下做<\/button>/u);
+  assert.match(html, /先勾上「这两件商品是可比的同类」，才能确认这套供货。/u);
   // 渲染这一步不会向服务端发任何东西。
   assert.doesNotMatch(html, /RENDER_MUST_NOT_START_WORK/u);
 
@@ -1279,7 +1286,7 @@ test('资料凑不齐就如实列出来并禁用提交，页面不替主人补�
   }));
   assert.doesNotMatch(noFreight, /其他采购费用按 ¥0\.00 算/u);
   assert.match(html, /其他采购费用按 ¥0\.00 算/u, '能报出来时这句话要在，主人才知道这个 0 是哪来的');
-  assert.match(html, /<button type="button" class="button primary" disabled[^>]*>确认，进入文案素材<\/button>/u);
+  assert.match(html, /<button type="button" class="button primary" disabled[^>]*>确认这套供货，往下做<\/button>/u);
   assert.match(html, /资料还缺东西，先补齐下面列出的这几项才能确认。/u);
 
   // 采集里缺「一件可买」的凭据时，缺的是那一条，说的也是那一条。
@@ -1290,10 +1297,10 @@ test('资料凑不齐就如实列出来并禁用提交，页面不替主人补�
       : item)
   }));
   assert.match(missingEvidence, /<b>一件可买的凭据<\/b>：这一次采集没有读到「一件起订」的报价/u);
-  assert.match(missingEvidence, /<button type="button" class="button primary" disabled[^>]*>确认，进入文案素材<\/button>/u);
+  assert.match(missingEvidence, /<button type="button" class="button primary" disabled[^>]*>确认这套供货，往下做<\/button>/u);
 });
 
-test('运输属性：一行结论、一句依据、一个确认按钮，就摆在「确认，进入文案素材」之前', async () => {
+test('运输属性：一行结论、一句依据，就摆在「确认这套供货，往下做」之前，还没确认过的跟着那一下一起记下', async () => {
   const { cargoFactsHeadline, cargoFactsFormState, cargoFactsPayload } = await pageModule();
 
   assert.equal(cargoFactsHeadline(cargoStep()), CARGO_HEADLINE);
@@ -1321,9 +1328,11 @@ test('运输属性：一行结论、一句依据、一个确认按钮，就摆�
   assert.match(html, /软件只按它真看到的东西提议，判断不了的让你选/u);
   assert.match(html, new RegExp(`<p class="product-cargo-headline">${CARGO_HEADLINE}</p>`, 'u'));
   assert.match(html, /依据采到的类别「雨衣」、全部 3 项属性、商品标题里没有出现电池／锂电／充电／发热／USB／电动／遥控这类字样。/u);
-  assert.match(html, /确认只是记下你对这件货的说法，不会下单、不会联系供应商、也不会向 Ozon 写任何东西。/u);
   // 这一块在确认按钮之前。
-  assert.ok(html.indexOf('product-profit-cargo') < html.indexOf('确认，进入文案素材'));
+  assert.ok(html.indexOf('product-profit-cargo') < html.search(/>确认这套供货，往下做<\/button>/u));
+  // 还没确认过的，这一块自己不摆「确认」：照这里现在的说法，跟着「确认这套供货」那一下一起记下。
+  assert.doesNotMatch(html, /<button type="button" class="button primary"[^>]*>确认<\/button>/u);
+  assert.match(html, /不用单独点：在下面点「确认这套供货，往下做」时，照这里现在的说法一起记下。/u);
   // 四项全提议得出来时不摆四个下拉，只有「逐项修改」。
   assert.doesNotMatch(html, /<div class="product-cargo-ask">/u);
   assert.match(html, /逐项修改<\/button>/u);
@@ -1364,7 +1373,7 @@ test('判不定的那几项才变成选择，并且说清楚软件为什么不�
   assert.match(declared, /改成这样<\/button>/u);
 });
 
-test('运输属性没确认，「算利润」的确认按钮就不可点，并把原因说在缺项单里', async () => {
+test('运输属性还有说不准的项，「算利润」的确认按钮就不可点，并把原因说在缺项单里', async () => {
   const { cargoFactsStepGaps } = await pageModule();
   const gap = { field: 'cargoFacts', label: '运输属性',
     why: '还没有确认这件商品的运输属性。软件要先知道它带不带电、是不是普货，才能核验线路收不收这件货。' };
@@ -1378,11 +1387,91 @@ test('运输属性没确认，「算利润」的确认按钮就不可点，并�
     reason: '运输属性里还有「带不带电」你标着说不准；线路核验用不了说不准的值，补一下再确认。' } })),
     [{ ...gap, why: '运输属性里还有「带不带电」你标着说不准；线路核验用不了说不准的值，补一下再确认。' }]);
 
-  const html = await render(profitProps({}, {}, cargoStep()));
+  // 还没确认过、软件四项都提议得出来：照提议跟着最后那一下记下，缺项单里没有它，挡着的只剩可比同类那个勾。
+  const proposed = await render(profitProps({}, {}, cargoStep()));
+  assert.doesNotMatch(proposed, /product-profit-gaps/u);
+  assert.match(proposed, /先勾上「这两件商品是可比的同类」，才能确认这套供货。/u);
+  // 软件判断不了的那几项还没选：缺项单里点名是哪几项，按钮不亮。
+  const html = await render(profitProps({}, {}, cargoStep({
+    proposal: { batteryType: null, batteryEnergyWh: null, generalCargo: null, personalUse: true, irregularShape: false } })));
   assert.match(html, /<div class="product-profit-gaps" role="alert">/u);
-  assert.match(html, /<b>运输属性<\/b>：还没有确认这件商品的运输属性。软件要先知道它带不带电、是不是普货，才能核验线路收不收这件货。/u);
-  assert.match(html, /<button type="button" class="button primary" disabled[^>]*>确认，进入文案素材<\/button>/u);
+  assert.match(html, /<b>运输属性<\/b>：运输属性里还有「带不带电」「是不是普货」没定；线路核验用不了说不准的值，在下面那一块选好。/u);
+  assert.match(html, /<button type="button" class="button primary" disabled[^>]*>确认这套供货，往下做<\/button>/u);
   assert.match(html, /资料还缺东西，先补齐下面列出的这几项才能确认。/u);
+});
+
+test('运输属性跟着最后那一下记下之前，页面判的「还缺什么」和服务端收不收是同一套规则', async () => {
+  const { cargoFactsFormGaps, cargoFactsPayload } = await pageModule();
+  const { validateOwnerCargoFactsDeclaration, cargoFactsGate } = await import('../lib/cargo-facts-declaration.mjs');
+  const forms = [];
+  for (const batteryType of ['none', 'installed', 'standalone', 'unknown', null, 'bogus']) {
+    for (const batteryEnergyWh of ['', '96', '0', 'abc']) {
+      for (const generalCargo of [true, false, null]) {
+        for (const personalUse of [true, null]) {
+          for (const irregularShape of [false, null]) forms.push({ batteryType, batteryEnergyWh, generalCargo, personalUse, irregularShape });
+        }
+      }
+    }
+  }
+  for (const form of forms) {
+    const { dataRevision, ...facts } = cargoFactsPayload(form, 7);
+    assert.equal(dataRevision, 7);
+    const serverAccepts = validateOwnerCargoFactsDeclaration(facts).valid && cargoFactsGate({ facts }).ready;
+    assert.equal(cargoFactsFormGaps(form).length === 0, serverAccepts, JSON.stringify(form));
+  }
+  assert.deepEqual(cargoFactsFormGaps({ ...CARGO_FULL_FACTS, batteryEnergyWh: '' }), []);
+  assert.match(cargoFactsFormGaps({ ...CARGO_FULL_FACTS, batteryType: 'installed', batteryEnergyWh: '50' })[0].why,
+    /普货和带电不能同时成立/u);
+});
+
+test('对标就是主人在「做这件」卡上认的那个 Ozon 同款时，可比同类不再问第二遍，按钮只等最后那一下', async () => {
+  const { profitStepComparabilityBound, extraHandlingFeesFoldable } = await pageModule();
+  const review = profitReview();
+  assert.equal(profitStepComparabilityBound(review, { id: '3605840795' }), true);
+  assert.equal(profitStepComparabilityBound(review, { id: 3605840795 }), true);
+  // 对标换成了别的商品，或者卡上没认过同款，就照旧让主人勾。
+  assert.equal(profitStepComparabilityBound(review, { id: '1111111111' }), false);
+  assert.equal(profitStepComparabilityBound(review, null), false);
+  assert.equal(profitStepComparabilityBound(profitReview({ benchmark: { productNumber: '' } }), { id: '' }), false);
+
+  // 只有空清单（¥0.00）才能跟着确认供货一起记下；加了钱利润要按它重算，得先在那一块确认。
+  assert.equal(extraHandlingFeesFoldable(extraHandlingNotDeclared(), []), true);
+  assert.equal(extraHandlingFeesFoldable(extraHandlingNotDeclared(), [{ name: '包材', amountRmb: '1.5' }]), false);
+  assert.equal(extraHandlingFeesFoldable(extraHandlingStep(), []), false, '已经声明过的不再替主人记一遍');
+  assert.equal(extraHandlingFeesFoldable(null, []), false);
+
+  const base = profitProps({}, {}, cargoStep(), categoryReadStep(), null, extraHandlingNotDeclared());
+  const bound = await render({ ...base, view: { ...base.view,
+    gate1V1: { decision: { decision: 'accept', picks: { ozon: { id: '3605840795' } } } } } });
+  assert.match(bound, /<b>对标就是你在「做这件」卡上认的那个 Ozon 同款<\/b>/u);
+  assert.match(bound, /可比不可比你在那张卡上已经说过了，这里不再问。/u);
+  assert.doesNotMatch(bound, /id="profit-comparable"/u);
+  // 额外操作费 ¥0.00、运输属性照提议、可比同类都不用另外点：只剩一个按钮，可以点。
+  assert.doesNotMatch(bound, /product-profit-gaps/u);
+  assert.match(bound, /<button type="button" class="button primary">确认这套供货，往下做<\/button>/u);
+  assert.match(bound, /8XL · 黄色 先上，其余 1 个变体排队等同一张卡追加。/u);
+  assert.match(bound, /还没记下的额外操作费（¥0\.00）和运输属性先照上面记下/u);
+  assert.doesNotMatch(bound, /RENDER_MUST_NOT_START_WORK/u);
+
+  // 主人在卡上没点「做这件」（或者认的是别的同款），可比同类那个勾照旧在。
+  const unbound = await render({ ...base, view: { ...base.view,
+    gate1V1: { decision: { decision: 'accept', picks: { ozon: { id: '1111111111' } } } } } });
+  assert.match(unbound, /<input type="checkbox" id="profit-comparable"/u);
+  assert.match(unbound, /<button type="button" class="button primary" disabled[^>]*>确认这套供货，往下做<\/button>/u);
+});
+
+test('「确认这套供货」那一下：先记额外操作费和运输属性，修订号跟着服务端回来的那一份走，再用重算后的那份确认', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const page = await readFile(fileURLToPath(new URL('../src/components/ProductPage.jsx', import.meta.url)), 'utf8');
+  const start = page.indexOf('function confirmProfitStep(');
+  const body = page.slice(start, page.indexOf('\n  }\n', start));
+  assert.ok(start > 0 && body.length > 0);
+  assert.match(body, /\["fees", declare\?\.fees, onDeclareExtraHandlingFees\], \["cargo", declare\?\.cargo, onDeclareCargoFacts\]/u);
+  assert.match(body, /dataRevision: latest\?\.dataRevision \?\? payload\.dataRevision/u);
+  assert.match(body, /latest\.profitStepV1/u);
+  assert.ok(body.indexOf('await action(') < body.lastIndexOf('await onConfirmProfitStep(payload)'), '先记下，再确认');
+  // 重算之后凑不齐就停下来照实说，不硬交。
+  assert.match(body, /这次没有确认供货/u);
 });
 
 // 2026-09-14：类目来自 Seerfar 接口，服务端只认真实读过的页面，主人点了确认才吃到那句 B_EVIDENCE_CONTEXT_INCOMPLETE。
@@ -1410,14 +1499,14 @@ test('类目还不是真实页面读来的，「算利润」的确认按钮就�
   assert.match(html, /要读的页面：https:\/\/www\.ozon\.ru\/product\/3605840795\//u);
   assert.match(html, /<button type="button" class="button primary">读一次这个 Ozon 页面<\/button>/u);
   assert.match(html, /<b>当前类目<\/b>：算利润要用的类目，必须来自真实打开过的 Ozon 商品页。/u);
-  assert.match(html, /<button type="button" class="button primary" disabled[^>]*>确认，进入文案素材<\/button>/u);
+  assert.match(html, /<button type="button" class="button primary" disabled[^>]*>确认这套供货，往下做<\/button>/u);
 
   // 类目已经是真实读过的页面给的，这一小块就不出现——没有事要主人做，缺项单里也不再有「当前类目」。
   const ready = await render(profitProps());
   assert.doesNotMatch(ready, /product-profit-category/u);
   assert.doesNotMatch(ready, /读一次这个 Ozon 页面/u);
   assert.doesNotMatch(ready, /product-profit-gaps/u);
-  assert.match(ready, /两件都确认后才能进入下一步。/u, '这时候挡着的只剩主人自己那两个勾');
+  assert.match(ready, /先勾上「这两件商品是可比的同类」，才能确认这套供货。/u, '这时候挡着的只剩主人自己那个勾');
 
   // 上一次读页面的结局原样说出来；等插件的时候按钮不给点，也不承诺重试。
   assert.equal(ozonPageReadOutcomeLine(categoryReadStep()), null);
@@ -1764,7 +1853,7 @@ test('已经有可用证据时这一块还在，但说清它不是必须的；�
  * Seerfar 发现进来的候选一律没有它，而新版商品页没有任何地方能填。这一组用例钉住的是那个入口本身、它说的那几句话，
  * 以及「没声明」必须在「算利润」这一步就报出来。
  */
-test('没声明每单额外操作费，「算利润」这一步就报缺项，按钮不给点，并且当场就能一键确认 ¥0.00', async () => {
+test('没声明每单额外操作费，「算利润」这一步说清楚，¥0.00 跟着「确认这套供货」一起记下；加了钱才要先在这里确认', async () => {
   const { extraHandlingFeesStepGaps } = await pageModule();
   const missing = extraHandlingFeesStepGaps(extraHandlingNotDeclared());
   assert.deepEqual(missing, [{ field: 'extraHandlingFees', label: '每单额外操作费', why: EXTRA_HANDLING_NOT_DECLARED_WHY }]);
@@ -1777,13 +1866,20 @@ test('没声明每单额外操作费，「算利润」这一步就报缺项，�
   assert.match(html, /<div class="product-profit-extra-handling" role="group" aria-label="每单额外操作费">/u);
   assert.match(html, /<h4>这件商品还没声明每单额外操作费<\/h4>/u);
   assert.match(html, /包材 \/ 拆单费 \/ 合包费 \/ 额外材料费这一类，每单要另外花的钱/u);
-  // 缺项单里点名说的就是这笔钱，不是一句「成本规则不完整」。
-  assert.match(html, /<b>每单额外操作费<\/b>：这件商品还没声明每单额外操作费/u);
-  assert.match(html, /<button type="button" class="button primary" disabled[^>]*>确认，进入文案素材<\/button>/u);
-  // 出路就在缺项旁边：一键确认 ¥0.00，不用打字。
-  assert.match(html, /<button type="button" class="button primary"[^>]*>确认：这件不用加钱（¥0\.00）<\/button>/u);
+  assert.match(html, /在你确认之前，上面那些利润是暂按 ¥0\.00 算的——这个数还没签过字。/u);
+  // 清单是空的（¥0.00）：不单独点，最后那一下一起记下，所以缺项单里没有它，这一块也不摆自己的确认按钮。
+  assert.doesNotMatch(html, /<b>每单额外操作费<\/b>：/u);
+  assert.doesNotMatch(html, /确认：这件不用加钱（¥0\.00）/u);
+  assert.match(html, /不用单独点：在下面点「确认这套供货，往下做」时，按 ¥0\.00 一起记下。/u);
+  assert.match(html, /不用加钱就不用管这一块，要加就按「加一行」写上名目和金额。/u);
   assert.match(html, /<button type="button" class="button secondary"[^>]*>加一行<\/button>/u);
-  assert.match(html, /确认只是记下这件商品每单要另外花多少钱，不会下单、不会联系供应商、也不会向 Ozon 写任何东西。/u);
+  assert.match(html, /<button type="button" class="button primary" disabled[^>]*>确认这套供货，往下做<\/button>/u);
+
+  // 单独摆出来（不在「算利润」卡里）时还是那个一键确认 ¥0.00。
+  const alone = (await pageModule()).renderExtraHandlingFees({ step: extraHandlingNotDeclared(),
+    dataRevision: 3, saving: false, onDeclare: forbidden });
+  assert.match(alone, /<button type="button" class="button primary"[^>]*>确认：这件不用加钱（¥0\.00）<\/button>/u);
+  assert.match(alone, /确认只是记下这件商品每单要另外花多少钱，不会下单、不会联系供应商、也不会向 Ozon 写任何东西。/u);
 
   // 声明过了，这一块说的是那份声明本身，缺项单里也不再有它。
   const declaredHtml = await render(profitProps());
