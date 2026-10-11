@@ -11,7 +11,8 @@ import { createLocalDevelopmentWorkerRegistry } from "../lib/worker-registry.mjs
 import { createActorContext } from "../lib/runtime-identity.mjs";
 import { mergeC1AiDraftReceipt } from "../lib/c1-ai-draft-contract.mjs";
 import { readCompletedC1AiSoftwareJobResult } from "../lib/software-job-contract.mjs";
-import { createC1ContentReviewUseCase, buildC1ContentReviewView, fingerprintC1ReviewContent } from "../lib/c1-content-review-use-case.mjs";
+import { createC1ContentReviewUseCase, buildC1ContentAcceptanceAtListing, buildC1ContentReviewView, fingerprintC1ReviewContent } from "../lib/c1-content-review-use-case.mjs";
+import { GATE1_AUTOPILOT_ACTOR_SOURCE, GATE1_AUTOPILOT_ACTOR_USER_ID, buildGate1AutopilotGrant } from "../lib/gate1-autopilot.mjs";
 
 async function fixture({ sourceCandidate = null, historyRecord = null } = {}) {
   const preparedCandidate = sourceCandidate === null ? createSavedLocalPreparationCandidate() : structuredClone(sourceCandidate);
@@ -244,4 +245,68 @@ test("new-version content confirmation reuses saved assets through the normal at
   assert.equal(saved.lifecycleV11.skuPackage.productionAuthorization, null);
   const retry = await f.useCase.confirm({ actor: f.owner, input: f.input });
   assert.equal(retry.status, 'idempotent_replay');
+});
+
+test("「做这件」许可把写好的文案送进传图：不替主人确认，确认留到「上架」那一下；老许可、主人身份、内容变了都不算", async () => {
+  const f = await fixture();
+  const at = LOCAL_DRAFT_AT;
+  const software = createActorContext({ userId: GATE1_AUTOPILOT_ACTOR_USER_ID, sessionId: "gate1-autopilot:content", actorType: "software",
+    roles: ["operator"], source: GATE1_AUTOPILOT_ACTOR_SOURCE, authenticatedAt: at });
+  const forward = n => ({ candidateId: f.candidate.id, expectedRevision: f.candidate.dataRevision,
+    idempotencyKey: `forward:${n}`, auditEventId: `forward:audit:${n}` });
+  const grant = scopeVersion => f.repository.transact(document => {
+    const built = buildGate1AutopilotGrant({ candidateId: f.candidate.id, sourceRevision: f.candidate.dataRevision,
+      skuPackageId: f.candidate.lifecycleV11.skuPackage.skuPackageId, via: "owner_continue", grantedAt: at, grantedBy: f.owner.userId });
+    document.candidates[0].gate1AutopilotGrantV1 = scopeVersion === "v1"
+      ? { ...built, scopeVersion: "gate1-autopilot-scope-v1", scope: built.scope.filter(step => step !== "c1_forward_copy") } : structuredClone(built);
+    return { changed: true, document, result: null };
+  });
+  await assert.rejects(f.useCase.forwardToListing({ actor: software, input: forward(1) }), { code: "C1_CONTENT_FORWARD_AUTOPILOT_GRANT_REQUIRED" });
+  await grant("v1");
+  await assert.rejects(f.useCase.forwardToListing({ actor: software, input: forward(2) }), { code: "C1_CONTENT_FORWARD_AUTOPILOT_GRANT_REQUIRED" });
+  await grant("v2");
+  await assert.rejects(f.useCase.forwardToListing({ actor: f.owner, input: forward(3) }), { code: "C1_CONTENT_FORWARD_SOFTWARE_ONLY" });
+  await assert.rejects(f.useCase.forwardToListing({ actor: software, input: { ...forward(3), confirmed: true } }), { code: "C1_CONTENT_FORWARD_INPUT_INVALID" });
+  assert.equal((await f.repository.readSnapshot()).candidates[0].dataRevision, f.candidate.dataRevision, "被拒的几次什么都没改");
+
+  const result = await f.useCase.forwardToListing({ actor: software, input: forward(4) });
+  assert.equal(result.status, "committed");
+  assert.equal((await f.useCase.forwardToListing({ actor: software, input: forward(4) })).status, "idempotent_replay");
+  const saved = (await f.repository.readSnapshot()).candidates[0];
+  const life = saved.lifecycleV11;
+  assert.equal(saved.dataRevision, f.candidate.dataRevision + 1);
+  assert.equal(saved.lastModifiedBy, "software");
+  assert.equal(life.skuPackage.businessPhase, "C2");
+  assert.equal(life.skuPackage.productionAuthorization, null);
+  assert.deepEqual(life.skuPackage.c1ProductPlan, f.candidate.lifecycleV11.skuPackage.c1ProductPlan);
+  assert.equal(life.c1ContentReviewV1, undefined, "软件不替主人确认文案");
+  assert.equal(life.c1ContentForwardV1.contentFingerprint, f.input.contentFingerprint);
+  assert.equal(life.c1ContentForwardV1.ownerContentConfirmation, "at_listing");
+  assert.equal(life.c1ContentForwardV1.productionAuthorizationGranted, false);
+  assert.equal(buildC1ContentReviewView(saved).status, "awaiting_listing");
+  // 已经送过：主人单独确认和再送一次都不行，确认只在「上架」那一下。
+  await assert.rejects(f.useCase.forwardToListing({ actor: software, input: { ...forward(5), expectedRevision: saved.dataRevision } }),
+    { code: "C1_CONTENT_REVIEW_PHASE_REJECTED" });
+  await assert.rejects(f.useCase.confirm({ actor: f.owner, input: { ...f.input, expectedRevision: saved.dataRevision,
+    idempotencyKey: "confirm-content:after-forward", auditEventId: "confirm-content:after-forward:audit" } }), { code: "C1_CONTENT_REVIEW_PHASE_REJECTED" });
+
+  assert.throws(() => buildC1ContentAcceptanceAtListing({ candidate: saved, ownerUserId: " ", confirmedAt: at }),
+    { code: "C1_CONTENT_REVIEW_AUTHENTICATED_OWNER_REQUIRED" });
+  const acceptance = buildC1ContentAcceptanceAtListing({ candidate: saved, ownerUserId: f.owner.userId, confirmedAt: at });
+  assert.equal(acceptance.schemaVersion, "c1-content-review-v1");
+  assert.equal(acceptance.reviewId, `c1-content-review:listing:${life.c1ContentForwardV1.forwardId}`);
+  assert.equal(acceptance.confirmedByUserId, f.owner.userId);
+  assert.equal(acceptance.contentFingerprint, f.input.contentFingerprint);
+  assert.equal(acceptance.resultRevision, acceptance.sourceRevision + 1);
+  assert.equal(acceptance.productionAuthorizationGranted, false);
+  const accepted = structuredClone(saved);
+  accepted.lifecycleV11.c1ContentReviewV1 = acceptance;
+  assert.equal(buildC1ContentReviewView(accepted).status, "confirmed");
+  assert.equal(buildC1ContentAcceptanceAtListing({ candidate: accepted, ownerUserId: f.owner.userId, confirmedAt: at }), null);
+  const drifted = structuredClone(saved);
+  drifted.lifecycleV11.c1ContentForwardV1.contentFingerprint = "0".repeat(64);
+  assert.throws(() => buildC1ContentAcceptanceAtListing({ candidate: drifted, ownerUserId: f.owner.userId, confirmedAt: at }),
+    { code: "C1_CONTENT_FORWARD_CONTENT_CHANGED" });
+  assert.equal(buildC1ContentReviewView(drifted).status, "confirmation_missing");
+  assert.equal(buildC1ContentAcceptanceAtListing({ candidate: f.candidate, ownerUserId: f.owner.userId, confirmedAt: at }), null, "没有送过的不管");
 });

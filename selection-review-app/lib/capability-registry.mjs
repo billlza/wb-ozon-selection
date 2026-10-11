@@ -666,6 +666,9 @@ export const CAPABILITY_NODES = Object.freeze([
       capabilityRef("tests/gate1-api.test.mjs", "test(", "「做这件」三个写入口的 API 测试：主人身份、修订号、一件起订、不确认供货"),
       capabilityRef("tests/gate1-autopilot.test.mjs", "test(", "做这件之后的许可、软件身份、下一步判断和停下的理由测试"),
       capabilityRef("tests/gate1-autopilot-api.test.mjs", "test(", "做这件之后软件自己往下走的 API 测试：有许可做到付费前停下、没许可等主人、出错不自己重试"),
+      capabilityRef("lib/c1-content-review-use-case.mjs", "forwardToListing", "文案写好后，软件按「做这件」的许可把它送进传图；不替主人确认文案"),
+      capabilityRef("lib/c1-content-review-use-case.mjs", "buildC1ContentAcceptanceAtListing", "主人点「上架」时，把软件送进传图的那份文案记成主人的文案确认"),
+      capabilityRef("tests/c1-forward-to-listing-api.test.mjs", "test(", "文案送进传图的 API 测试：v2 许可自动送、主人不用单独确认、旧的图片确认不能绕过上架卡"),
       capabilityRef("tests/ozon-same-product-match.test.mjs", "test(", "在 Ozon 找同款的搜索词、结果核验、记录与主人判断规则测试"),
       capabilityRef("tests/ozon-search-extension.test.mjs", "test(", "在 Ozon 找同款的插件作业、以图搜上传、搜索结果页读取与保存页核对测试"),
       capabilityRef("tests/intake-pipeline.test.mjs", "test(", "录入流水线的步骤、停下、排队、重跑与接着找规则测试"),
@@ -1173,13 +1176,19 @@ export const CAPABILITY_NODES = Object.freeze([
       capabilityRef("lib/commission-estimate-authorization.mjs", "assertFormalCommissionBeforeProduction", "钱的闸门：佣金还是估算的就不给授权，判在服务端那一次原子事务里"),
       capabilityRef("lib/commission-estimate-authorization.mjs", "resolveConditionalCommissionRelease", "条件测算是不是仅仅因为佣金是估算：判据全部来自结构化字段，三处共用"),
       capabilityRef("lib/production-owner-preparation.mjs", "resolveProductionOwnerPreparation", "同一事务重验配置与冻结价格"),
-      capabilityRef("server.mjs", "realProductionOwnerDecisionRoute", "单主人确认API")
+      capabilityRef("server.mjs", "realProductionOwnerDecisionRoute", "单主人确认API"),
+      capabilityRef("lib/gate2-listing.mjs", "buildGate2ListingPreview", "「上架」卡：按已保存资料预演最终方案卡，指纹只认主人看到的内容"),
+      capabilityRef("server.mjs", "gate2ListingRoute", "/api/candidates/:id/gate2/preview 与 /gate2/list：点一次「上架」依次保存图片确认、生产授权和写入前的一次只读核验许可")
     ],
     uiRefs: [
       capabilityRef("src/components/ProductionOwnerDecisionForm.jsx", "ProductionOwnerDecisionForm", "准确范围确认表单"),
-      capabilityRef("src/productionAuthorizationInput.js", "productionAuthorizationInputFromCard", "当前卡片与配置引用")
+      capabilityRef("src/productionAuthorizationInput.js", "productionAuthorizationInputFromCard", "当前卡片与配置引用"),
+      capabilityRef("src/components/Gate2ListingCard.jsx", "Gate2ListingCard", "商品页的「上架」卡：取预演、同一张方案卡"),
+      capabilityRef("src/components/Gate2ListingForm.jsx", "Gate2ListingForm", "「上架」那一下：货号、仓库、一句确认，三件事写明")
     ],
-    testRefs: [capabilityRef("tests/production-owner-decision.test.mjs", "test(", "授权原子事务测试")],
+    testRefs: [capabilityRef("tests/production-owner-decision.test.mjs", "test(", "授权原子事务测试"),
+      capabilityRef("tests/gate2-listing.test.mjs", "test(", "「上架」卡的阶段、指纹和授权与核验输入测试"),
+      capabilityRef("tests/gate2-listing-api.test.mjs", "test(", "点一次「上架」的 API 测试：与分步确认结果一致，卡变了什么都不存")],
     artifactRefs: ["schema/production-authorization-v1.1.schema.json"]
   }),
   capability({

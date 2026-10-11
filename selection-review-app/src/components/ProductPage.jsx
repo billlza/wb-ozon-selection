@@ -16,6 +16,7 @@ import C1OzonAttributePanel from "./C1OzonAttributePanel.jsx";
 import C2FinalAssetsPanel from "./C2FinalAssetsPanel.jsx";
 import FinalProductPlanCard from "./FinalProductPlanCard.jsx";
 import Gate1AutopilotSection from "./Gate1AutopilotSection.jsx";
+import Gate2ListingCard from "./Gate2ListingCard.jsx";
 import SiblingBatchPreparation from './SiblingBatchPreparation.jsx';
 import Gate1Card from "./Gate1Card.jsx";
 import ProductPublishSection, { showsProductPublish } from "./ProductPublishSection.jsx";
@@ -1766,7 +1767,7 @@ export default function ProductPage({
   onRecalculateBWithExactCommission = null, onRefreshBFeeEvidence = null,
   onContinueSavedDE = null, onDispatchDProductionRound = null, onRollbackProductionAuthorization = null,
   onRecoverDInitialImport = null, onReobserveDUnknownOutcome = null, onReconcileDFromPlatformState = null,
-  onAuthorizeAccountRead = null, onContinueAccountRead = null, onContinueGate1Autopilot = null,
+  onAuthorizeAccountRead = null, onContinueAccountRead = null, onContinueGate1Autopilot = null, onLoadGate2Preview = null, onListGate2 = null,
   loadingLabel = "正在读取这件商品的找货资料…"
 }) {
   const draft = view?.supplierDraftV1 ?? null;
@@ -2114,13 +2115,18 @@ export default function ProductPage({
       {candidate.lifecycleV11.skuPackage.c2FinalAssets?.softwareState &&
         candidate.lifecycleV11.skuPackage.c2FinalAssets.status === "awaiting_final_uploads" ?
         <C2FinalAssetsPanel key={candidate.id} candidate={candidate} onUpload={onUploadLifecycleFinalAsset}
-          onSave={onSaveC2UploadDraft} onConfirm={onConfirmLifecycleFinalAssets} /> : null}
+          onSave={onSaveC2UploadDraft} onConfirm={onConfirmLifecycleFinalAssets}
+          confirmAtListing={candidate.gate2ListingView != null} /> : null}
       {candidate.lifecycleV11.skuPackage.c2FinalAssets?.status === "completed" ?
         <SavedC2Assets skuPackage={candidate.lifecycleV11.skuPackage} /> : null}
     </> : null}
-    <FinalProductPlanCard candidate={candidate} identity={productionIdentity}
-      onSaveProductionOwnerDecision={onSaveProductionOwnerDecision} onSaveFinalPricingReview={onSaveFinalPricingReview}
-      onReviseC1FinalPlan={onReviseC1FinalPlan} />
+    {/* 单件商品图排好之后，在这一张上架卡上看完点一次「上架」；同款各色和已经授权的照旧。 */}
+    {["preview", "card"].includes(candidate.gate2ListingView?.stage) ?
+      <Gate2ListingCard candidate={candidate} identity={productionIdentity} onLoadPreview={onLoadGate2Preview}
+        onList={onListGate2} onSaveFinalPricingReview={onSaveFinalPricingReview} onReviseC1FinalPlan={onReviseC1FinalPlan} /> :
+      <FinalProductPlanCard candidate={candidate} identity={productionIdentity}
+        onSaveProductionOwnerDecision={onSaveProductionOwnerDecision} onSaveFinalPricingReview={onSaveFinalPricingReview}
+        onReviseC1FinalPlan={onReviseC1FinalPlan} />}
     <ProductPublishSection candidate={candidate}
       onContinueSavedDE={onContinueSavedDE} onDispatchDProductionRound={onDispatchDProductionRound}
       onRollbackProductionAuthorization={onRollbackProductionAuthorization} onRecoverDInitialImport={onRecoverDInitialImport}

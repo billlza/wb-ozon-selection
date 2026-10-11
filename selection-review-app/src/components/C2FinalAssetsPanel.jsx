@@ -14,7 +14,8 @@ function assetRoleLabel(index) {
   return index === 0 ? "主图" : "图库图";
 }
 
-export default function C2FinalAssetsPanel({ candidate, onUpload, onSave, onConfirm }) {
+/** confirmAtListing：单件商品的图片不在这里单独确认，排好之后在下面的「上架」卡上和店铺写入一起确认（lib/gate2-listing.mjs）。 */
+export default function C2FinalAssetsPanel({ candidate, onUpload, onSave, onConfirm, confirmAtListing = false }) {
   const [lastReceipt, setLastReceipt] = useState(null);
   const [ownerChecked, setOwnerChecked] = useState(false);
   const operation = useSubmit();
@@ -128,7 +129,9 @@ export default function C2FinalAssetsPanel({ candidate, onUpload, onSave, onConf
           : uploadProgress.current ? `正在上传“${uploadProgress.current}”…` : "全部上传完成，请核对首图和顺序。"}
       </p>}
       <div className="c2-final-assets-heading">
-        <div><b>C2 最终上传素材</b><span>上传和顺序会保存在本地；排第一张的就是主图，最后一次确认才锁定最终素材。可以直接拖动调整顺序，也可以用「上移／下移」。</span></div>
+        <div><b>{confirmAtListing ? "上架用的图片" : "C2 最终上传素材"}</b><span>{confirmAtListing
+          ? "传上来的图片只存在这台电脑上；排第一张的就是主图。可以直接拖动调整顺序，也可以用「上移／下移」。排好后在下面的上架卡上看一眼再点「上架」。"
+          : "上传和顺序会保存在本地；排第一张的就是主图，最后一次确认才锁定最终素材。可以直接拖动调整顺序，也可以用「上移／下移」。"}</span></div>
         <span className="c2-asset-count">{assets.length}</span>
       </div>
       {candidate.siblingSourceV1 ? <p role="status">本规格需要自己的首图：请上传并把体现当前颜色的图片排第一。首图不得与父卡任何已确认图片相同；现有上传入口就在下方。</p> : null}
@@ -183,12 +186,14 @@ export default function C2FinalAssetsPanel({ candidate, onUpload, onSave, onConf
         </div>
       ) : null}
       {requirementsError && assets.length > 0 && <p className="field-error">{requirementsError}</p>}
+      {confirmAtListing ? null : <>
       <label className="c2-owner-confirmation">
         <input type="checkbox" checked={ownerChecked && checkedIdentity === identity} disabled={!assets.length || disabled} onChange={event => { setOwnerChecked(event.target.checked); setCheckedIdentity(identity); }} />
         <span>我确认以上文件属于当前SKU，并确认所选用途、唯一首图、顺序和本次{assets.some(asset => asset.mediaType === "video") ? "包含视频" : "不含视频"}。</span>
       </label>
       <button type="button" className="button primary" disabled={!canConfirm} onClick={confirmAssets}>{operation.saving ? "正在保存…" : "确认最终素材并生成方案卡"}</button>
       <small>这次确认只完成C2并生成最终商品方案卡，不创建生产授权、不派发任务、不访问或写入店铺。需要公开转存的素材将在取得精确生产授权后由软件处理。</small>
+      </>}
     </div>
   );
 }

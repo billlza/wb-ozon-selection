@@ -8,7 +8,8 @@ export default function C1ContentReviewPanel({ candidate, identity, onConfirm })
   const canConfirm = view.canConfirm && identity?.roles?.includes("owner") && typeof onConfirm === "function" && !saving;
   return <section className="product-section" aria-label="核对商品内容">
     <h3>核对商品内容</h3>
-    <p>请核对实际采用的俄语文案。确认后进入图片；最终上架仍需另行确认。</p>
+    <p>{view.status === "awaiting_listing" ? "文案已经写好，软件已经让它进入传图。下面是实际采用的俄语文案；你在上架卡上和图片一起看、一起确认，不用在这里单独确认。"
+      : "请核对实际采用的俄语文案。确认后进入图片；最终上架仍需另行确认。"}</p>
     <h4>标题</h4><p>{view.title.text}</p>
     <h4>描述</h4><p style={{ whiteSpace: "pre-wrap" }}>{view.description.text}</p>
     <h4>卖点</h4><ul>{view.bulletPoints.map((item, index) => <li key={index}>{item.text}</li>)}</ul>
@@ -21,7 +22,7 @@ export default function C1ContentReviewPanel({ candidate, identity, onConfirm })
         idempotencyKey: `c1-content-review:${candidate.id}:${view.expectedRevision}`,
         auditEventId: `c1-content-review-audit:${candidate.id}:${view.expectedRevision}`
       }))}>{saving ? "正在保存确认…" : "确认商品内容，进入图片"}</button>
-    </> : <p role="status">{view.status === "confirmed" ? "商品内容已确认，可以准备本规格的图片。"
+    </> : view.status === "awaiting_listing" ? null : <p role="status">{view.status === "confirmed" ? "商品内容已确认，可以准备本规格的图片。"
       : view.status === "confirmation_missing" ? "这是已有文案记录，尚无新版内容确认记录。"
         : "商品内容与原确认不一致，请核对当前资料。"}</p>}
     {error ? <p role="alert">{error}</p> : null}

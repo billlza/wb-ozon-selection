@@ -44,7 +44,7 @@ export function applySavedDictionaryMappingToPreparedRevision({ candidate, input
       prep.historyRef !== plan.supersedes?.historyRef || prep.sourceC1PlanId !== plan.supersedes?.c1PlanId ||
       prep.supplierSkuId !== sku.supplierSkuId || prep.variantKey !== sku.variantKey ||
       prep.resultCandidateRevision > candidate.dataRevision ||
-      ["c1AiDraftRequestV1", "c1AiDraftJobRefV1", "c1LocalDraftSourceV1", "c1ContentReviewV1", "c1EditorialContentReviewV1", "c1FinalPlanRevisionCompletion"]
+      ["c1AiDraftRequestV1", "c1AiDraftJobRefV1", "c1LocalDraftSourceV1", "c1ContentReviewV1", "c1ContentForwardV1", "c1EditorialContentReviewV1", "c1FinalPlanRevisionCompletion"]
         .some(key => life[key] !== undefined && life[key] !== null) ||
       sku.productionAuthorization || sku.productionRecord || sku.c2FinalAssets || sku.productionConfirmationCard) {
     throw new C1OzonAttributeMappingError("C1_PREPARED_MAPPING_LINEAGE_REJECTED");
