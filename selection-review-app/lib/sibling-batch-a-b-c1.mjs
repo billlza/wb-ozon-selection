@@ -1,8 +1,9 @@
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from './business-state-repository.mjs';
 import { authorizeOperation, assertSafeBusinessMutationCandidate } from './runtime-identity.mjs';
 import { applyLifecycleBEvidenceContext } from './lifecycle-b-evidence-context.mjs';
-import { buildLifecycleBExplicitOtherCosts, resolveLifecycleBProfitRule } from './lifecycle-b-evidence-runtime.mjs';
-import { buildRealAConfirmationCard } from './real-a-confirmation-card.mjs';
+import { buildLifecycleBExplicitOtherCosts, commitLifecycleBEvidencePacks, resolveLifecycleBProfitRule } from './lifecycle-b-evidence-runtime.mjs';
+import { runLifecycleBEvidencePreparation } from './lifecycle-b-evidence-preparation.mjs';
+import { buildRealAConfirmationCard, validateRealAConfirmationSubmission } from './real-a-confirmation-card.mjs';
 import { runRealAConfirmationToBAndC1, assertCurrentBCommissionEvidence } from './real-a-b-c1-flow.mjs';
 import { sameStoreRef } from './store-binding.mjs';
 import { createSoftwareExecutionRuntime, startSoftwareStep, completeExecutionStep } from './software-execution-state.mjs';
@@ -67,58 +68,148 @@ function submissionFor(candidate, member, common) {
     salesReview: structuredClone(common.salesReview), supplierConfirmation: supply };
 }
 
-/** One owner submission; every child passes the existing A/B/C1 rules before one atomic save. */
-export async function commitSiblingBatchABAndC1({ repository, runtimeMode, actor, input, serverClock, guooFilePath }) {
-  assertBusinessStateRepositoryBoundary(repository);
-  if (CENTRAL_MODES.has(runtimeMode)) assertCentralPersistenceBoundary(repository);
+const OZON_CATEGORY_TOKEN = /^ozon:([1-9]\d*):([1-9]\d*)$/;
+const knownText = value => text(value) && value.trim().toLowerCase() !== 'unknown';
+
+/**
+ * A sibling joins its parent's Ozon card, so it is priced under the category the parent's own A confirmation froze.
+ * Without this the child falls back to the newest sales snapshot it copied, whose category path no longer matches
+ * the `ozon:<description_category_id>:<type_id>` key the fee and schema evidence is filed under (vest run, 2026-10-11).
+ * A category the child already holds is never replaced.
+ */
+function withParentCategory(child, parent) {
+  if (knownText(child.lifecycleEvidenceContextV11?.category)) return child;
+  const category = parent.lifecycleEvidenceContextV11?.category;
+  if (!knownText(category)) return child;
+  const binding = child.siblingSourceV1?.parentCardBinding;
+  if (binding && OZON_CATEGORY_TOKEN.test(category) &&
+      category !== `ozon:${binding.descriptionCategoryId}:${binding.typeId}`) fail('SIBLING_BATCH_A_CATEGORY_CONFLICT');
+  return { ...child, lifecycleEvidenceContextV11: { ...structuredClone(child.lifecycleEvidenceContextV11 ?? {}), category } };
+}
+
+function assertOwner({ actor, input, serverClock }) {
   authorizeOperation({ actor, requiredRoles: ['owner'] });
   if (actor.actorType !== 'human' || actor.source !== 'authenticated_identity_provider' ||
       typeof serverClock !== 'function') fail('SIBLING_BATCH_A_OWNER_REQUIRED');
   assertInput(input);
+}
+
+function batchParent(document, input) {
+  const parents = document.candidates.filter(candidate => candidate.id === input.parentCandidateId);
+  if (parents.length !== 1 || parents[0].dataRevision !== input.parentRevision) fail('SIBLING_BATCH_A_PARENT_CHANGED');
+  const parent = parents[0];
+  const selected = parent.sourceCapture?.selectedSkuIds;
+  if (!Array.isArray(selected) || new Set(selected).size !== selected.length) fail('SIBLING_BATCH_A_PARENT_SELECTION_INVALID');
+  const excluded = parent.lifecycleV11?.skuPackage?.supplierSkuId;
+  const requested = input.members.map(member => member.sourceSkuId);
+  if (requested.length !== selected.filter(id => id !== excluded).length ||
+      requested.some(id => id === excluded || !selected.includes(id))) fail('SIBLING_BATCH_A_SCOPE_MISMATCH');
+  return parent;
+}
+
+/** The one place that turns a batch row into the candidate and submission A/B judge; preparation and save share it. */
+function projectMember({ document, parent, member, input, guooFilePath }) {
+  const matches = document.candidates.filter(candidate => candidate.id === member.candidateId);
+  if (matches.length !== 1) fail('SIBLING_BATCH_A_MEMBER_NOT_UNIQUE');
+  const child = matches[0];
+  if (child.dataRevision !== member.candidateRevision ||
+      child.siblingSourceV1?.parentCandidateId !== parent.id ||
+      child.siblingSourceV1?.supplierSkuId !== member.sourceSkuId || child.lifecycleV11?.skuPackage ||
+      child.sourceCapture?.captureId !== parent.sourceCapture?.captureId ||
+      child.sourceCapture?.offerId !== parent.sourceCapture?.offerId ||
+      !sameStoreRef(child.storeRef, parent.storeRef)) {
+    fail('SIBLING_BATCH_A_MEMBER_CONFLICT');
+  }
+  let platform;
+  try { platform = siblingPlatform(parent, child); }
+  catch (error) { if(error.message!=='SIBLING_PLATFORM_IDENTITY_CONFLICT')throw error;fail('SIBLING_BATCH_A_MEMBER_CONFLICT'); }
+  const reuse = input.shared.reusePriorSupply ? siblingSupplyPreparation(parent, [child]) : null;
+  if (reuse && (reuse.gaps.length || reuse.rows[0].unitProductPrice !== member.unitProductPrice)) fail('SIBLING_BATCH_A_QUANTITY_ONE_EVIDENCE_MISSING');
+  const common = reuse ? { ...input.shared, quantityOneEvidenceSourceNote: reuse.rows[0].quantityOneEvidenceSourceNote } : input.shared;
+  const projected = { ...withParentCategory(child, parent), targetPlatform: platform };
+  const submission = submissionFor(projected, member, common);
+  const withCost = { ...projected, packagingCostRmb: input.shared.packagingCostRmb };
+  const contextual = applyLifecycleBEvidenceContext(withCost, { submission, guooFilePath,
+    route: input.shared.route }).candidate;
+  return { child, platform, reuse, projected, submission, contextual };
+}
+
+const preparedInputKey = input => JSON.stringify(input);
+
+/**
+ * Read, once per colour and before any save, the fee, schema, freight and exchange evidence each child's formal B needs,
+ * exactly as the single-colour A confirmation does. Nothing is saved here; packs one colour read are reused by the next
+ * wherever their scope allows. Any colour that cannot get complete evidence stops the whole batch with its reason.
+ */
+export async function prepareSiblingBatchEvidence({ document, actor, input, providers, serverClock, guooFilePath }) {
+  assertOwner({ actor, input, serverClock });
+  const parent = batchParent(document, input);
+  const basis = document.evidencePacks ?? [];
+  const catalogs = document.currentCommissionCatalogs ?? [];
+  const at = serverClock();
+  const evidencePacksToCommit = [];
+  const externalAccesses = {};
+  // Every row is checked before the first read, so a stale or invalid row never costs an external request.
+  const rows = input.members.map(member => {
+    const { child, projected, submission, contextual } = projectMember({ document, parent, member, input, guooFilePath });
+    const validation = validateRealAConfirmationSubmission(buildRealAConfirmationCard(projected), submission);
+    if (!validation.valid) {
+      fail(`REAL_A_CONFIRMATION_INVALID: ${validation.errors.map(item => `${item.label}：${item.reason}`).join('；')}`);
+    }
+    return { child, contextual, validation };
+  });
+  for (const { child, contextual, validation } of rows) {
+    const run = await runLifecycleBEvidencePreparation({ candidate: contextual,
+      evidencePacks: [...basis, ...evidencePacksToCommit], currentCommissionCatalogs: catalogs,
+      providers, plannedAt: at, clock: () => new Date(serverClock()), submission: validation.normalized });
+    externalAccesses[child.id] = structuredClone(run.providerCalls);
+    if (run.status !== 'completed') {
+      throw Object.assign(new Error(`SIBLING_BATCH_A_EVIDENCE_BLOCKED: ${run.failure?.reason ?? '未知失败'}`),
+        { code: 'SIBLING_BATCH_A_EVIDENCE_BLOCKED', candidateId: child.id, evidencePreparation: run,
+          externalRequests: Object.values(externalAccesses).flat().length });
+    }
+    const category = OZON_CATEGORY_TOKEN.exec(contextual.lifecycleEvidenceContextV11.category);
+    for (const pack of run.evidencePacksToCommit) {
+      const data = pack.evidenceData ?? {};
+      if (category && ['commission', 'schema'].includes(pack.kind) && data.descriptionCategoryId != null &&
+          `${data.descriptionCategoryId}:${data.typeId}` !== `${category[1]}:${category[2]}`) fail('SIBLING_BATCH_A_CATEGORY_CONFLICT');
+      evidencePacksToCommit.push(structuredClone(pack));
+    }
+  }
+  return { inputKey: preparedInputKey(input), basis: JSON.stringify(basis), preparedAt: at,
+    evidencePacksToCommit, externalAccesses };
+}
+
+/** One owner submission; every child passes the existing A/B/C1 rules before one atomic save. */
+export async function commitSiblingBatchABAndC1({ repository, runtimeMode, actor, input, serverClock, guooFilePath, preparedEvidence = null }) {
+  assertBusinessStateRepositoryBoundary(repository);
+  if (CENTRAL_MODES.has(runtimeMode)) assertCentralPersistenceBoundary(repository);
+  assertOwner({ actor, input, serverClock });
+  if (preparedEvidence !== null && preparedEvidence?.inputKey !== preparedInputKey(input)) fail('SIBLING_BATCH_A_EVIDENCE_CHANGED');
   return repository.transact(document => {
-    const parents = document.candidates.filter(candidate => candidate.id === input.parentCandidateId);
-    if (parents.length !== 1 || parents[0].dataRevision !== input.parentRevision) fail('SIBLING_BATCH_A_PARENT_CHANGED');
-    const parent = parents[0];
-    const selected = parent.sourceCapture?.selectedSkuIds;
-    if (!Array.isArray(selected) || new Set(selected).size !== selected.length) fail('SIBLING_BATCH_A_PARENT_SELECTION_INVALID');
-    const excluded = parent.lifecycleV11?.skuPackage?.supplierSkuId;
-    const requested = input.members.map(member => member.sourceSkuId);
-    if (requested.length !== selected.filter(id => id !== excluded).length ||
-        requested.some(id => id === excluded || !selected.includes(id))) fail('SIBLING_BATCH_A_SCOPE_MISMATCH');
+    const parent = batchParent(document, input);
+    // Evidence read outside the transaction only counts if nothing was filed in between; otherwise read again.
+    if (preparedEvidence && JSON.stringify(document.evidencePacks ?? []) !== preparedEvidence.basis) fail('SIBLING_BATCH_A_EVIDENCE_CHANGED');
+    const newPacks = preparedEvidence?.evidencePacksToCommit ?? [];
+    const packs = [...(document.evidencePacks ?? []), ...newPacks];
+    const catalogs = document.currentCommissionCatalogs ?? [];
     const at = serverClock();
     const prepared = input.members.map(member => {
-      const matches = document.candidates.filter(candidate => candidate.id === member.candidateId);
-      if (matches.length !== 1) fail('SIBLING_BATCH_A_MEMBER_NOT_UNIQUE');
-      const child = matches[0];
-      if (child.dataRevision !== member.candidateRevision ||
-          child.siblingSourceV1?.parentCandidateId !== parent.id ||
-          child.siblingSourceV1?.supplierSkuId !== member.sourceSkuId || child.lifecycleV11?.skuPackage ||
-          child.sourceCapture?.captureId !== parent.sourceCapture?.captureId ||
-          child.sourceCapture?.offerId !== parent.sourceCapture?.offerId ||
-          !sameStoreRef(child.storeRef, parent.storeRef)) {
-        fail('SIBLING_BATCH_A_MEMBER_CONFLICT');
-      }
-      let platform;
-      try { platform = siblingPlatform(parent, child); }
-      catch (error) { if(error.message!=='SIBLING_PLATFORM_IDENTITY_CONFLICT')throw error;fail('SIBLING_BATCH_A_MEMBER_CONFLICT'); }
-      const reuse = input.shared.reusePriorSupply ? siblingSupplyPreparation(parent, [child]) : null;
-      if (reuse && (reuse.gaps.length || reuse.rows[0].unitProductPrice !== member.unitProductPrice)) fail('SIBLING_BATCH_A_QUANTITY_ONE_EVIDENCE_MISSING');
-      const common = reuse ? { ...input.shared, quantityOneEvidenceSourceNote: reuse.rows[0].quantityOneEvidenceSourceNote } : input.shared;
-      const projected = { ...child, targetPlatform: platform };
-      const submission = submissionFor(projected, member, common);
-      const withCost = { ...projected, packagingCostRmb: input.shared.packagingCostRmb };
-      const contextual = applyLifecycleBEvidenceContext(withCost, { submission, guooFilePath,
-        route: input.shared.route }).candidate;
+      const { child, platform, reuse, submission, contextual } = projectMember({ document, parent, member, input, guooFilePath });
       const profitRule = resolveLifecycleBProfitRule(contextual, document.rules);
       const otherCosts = buildLifecycleBExplicitOtherCosts(contextual, profitRule, { asOf: at });
       const result = runRealAConfirmationToBAndC1({ candidate: contextual, submission,
-        evidencePacks: document.evidencePacks ?? [], currentCommissionCatalogs: document.currentCommissionCatalogs ?? [],
-        otherCosts, confirmedAt: at });
+        evidencePacks: packs, currentCommissionCatalogs: catalogs, otherCosts, confirmedAt: at });
       if (result.profitModel.result !== 'passed' || result.c1Handoff === null) fail('SIBLING_BATCH_A_B_NOT_PASSED');
       assertCurrentBCommissionEvidence({ bundle: result.systemEvidenceBundle,
-        evidencePacks: document.evidencePacks ?? [], currentCommissionCatalogs: document.currentCommissionCatalogs ?? [], asOf: at });
+        evidencePacks: packs, currentCommissionCatalogs: catalogs, asOf: at });
       return { child, result, platform, reuse, context: contextual.lifecycleEvidenceContextV11 };
     });
+    if (newPacks.length) {
+      document.evidencePacks = document.evidencePacks ?? [];
+      commitLifecycleBEvidencePacks(document, newPacks, { createdAt: at, currentCommissionCatalogs: catalogs,
+        createdBy: 'sibling_batch_a_confirmation_system_evidence' });
+    }
     for (const { child, result, context, platform, reuse } of prepared) {
       child.targetPlatform = platform;
       child.packagingCostRmb = input.shared.packagingCostRmb;
@@ -130,7 +221,7 @@ export async function commitSiblingBatchABAndC1({ repository, runtimeMode, actor
         ownerSupplyConfirmation: structuredClone(result.ownerSupplyConfirmation),
         bSystemEvidenceBundle: structuredClone(result.systemEvidenceBundle),
         skuPackage: structuredClone(result.skuPackage), c1Handoffs: [structuredClone(result.c1Handoff)],
-        externalAccesses: [], platformWrites: 0 };
+        externalAccesses: structuredClone(preparedEvidence?.externalAccesses?.[child.id] ?? []), platformWrites: 0 };
       if (reuse) child.lifecycleV11.aSiblingSupplyReuseV1 = { ...reuse,
         confirmedAt: at, confirmedBy: actor.userId, otherPurchaseCosts: input.shared.otherPurchaseCosts,
         costDecision: reuse.otherPurchaseCosts === input.shared.otherPurchaseCosts ? 'reuse_confirmed_cost_no_additions' : 'owner_explicit_cost_revision' };
@@ -162,6 +253,7 @@ export async function commitSiblingBatchABAndC1({ repository, runtimeMode, actor
       members: prepared.map(({ child, result }) => ({ candidateId: child.id,
         supplierSkuId: result.skuPackage.supplierSkuId, sourceRevision: result.sourceCandidateRevision,
         resultRevision: child.dataRevision, profitModelVersion: result.profitModel.profitModelVersion,
-        c1HandoffId: result.c1Handoff.handoffId })), platformWrites: 0, externalRequests: 0 } };
+        c1HandoffId: result.c1Handoff.handoffId })), platformWrites: 0,
+      externalRequests: Object.values(preparedEvidence?.externalAccesses ?? {}).flat().length } };
   });
 }
