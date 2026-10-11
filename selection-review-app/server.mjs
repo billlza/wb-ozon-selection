@@ -3,7 +3,7 @@ import { siblingSupplyPreparation } from './lib/sibling-supply-preparation.mjs';
 import { createLocalSiblingCatalogReader } from './lib/sibling-preparation-catalog.mjs';
 import { createInitialCandidate, queuedProcessing } from "./lib/candidate-initialization.mjs";
 import { createSiblingSkuCandidate, createSiblingSkuCandidatesBatch, siblingSkuCandidateInput, SiblingSkuCandidateError } from './lib/sibling-sku-candidate.mjs';
-import { commitSiblingBatchABAndC1 } from './lib/sibling-batch-a-b-c1.mjs';
+import { commitSiblingBatchABAndC1, prepareSiblingBatchEvidence } from './lib/sibling-batch-a-b-c1.mjs';
 import { commitSiblingBatchC1Preparation, previewSiblingBatchC1Preparation } from './lib/sibling-batch-c1-preparation.mjs';
 import { commitSiblingBatchC2Final, isSiblingBatchC2Replay } from './lib/sibling-batch-c2-final.mjs';
 import { assertSiblingSkuColorProjection, assertSiblingSkuFinalCard } from './lib/sibling-sku-card-guard.mjs';
@@ -9941,15 +9941,37 @@ async function handleApi(req, res, pathname) {
     const input = await readJsonRequestBody(req, { maxBytes: 65536, requireJsonContentType: true });
     if (input?.parentCandidateId !== parentCandidateId) throw httpError(409, '批量确认的原商品身份不一致');
     let result;
+    let externalRequests = 0;
     try {
+      // 和单件 A 确认同一套只读取证：每个颜色在保存前各自备齐佣金、Schema、物流和汇率证据，一样都不靠旧库存凑。
+      const preparedEvidence = await prepareSiblingBatchEvidence({ document: await readData(), actor, input,
+        serverClock: now, guooFilePath: runtimeConfiguration.guooTariffFile,
+        providers: createLifecycleBRealEvidenceProviderRegistry({
+          ozonServiceUrl: runtimeConfiguration.ozonEvidenceServiceUrl,
+          guooFilePath: runtimeConfiguration.guooTariffFile,
+          cbrSourceUrl: process.env.SELECTION_REVIEW_CBR_FX_URL,
+          ozonCommissionReference: runtimeConfiguration.ozonCommissionReference
+        }) });
+      externalRequests = Object.values(preparedEvidence.externalAccesses).flat().length;
       result = await commitSiblingBatchABAndC1({ repository: businessStateRepository,
         runtimeMode: runtimeConfiguration.deploymentMode, actor, input, serverClock: now,
-        guooFilePath: runtimeConfiguration.guooTariffFile });
+        guooFilePath: runtimeConfiguration.guooTariffFile, preparedEvidence });
     } catch (error) {
       const code = String(error.code || error.message).split(':', 1)[0];
       if (/^(?:SIBLING_BATCH_A|REAL_A|B_EVIDENCE|B_COMMISSION|B_COST_POLICY|C1_PRODUCT_PLAN|SUPPLIER_OPTION)_[A-Z_]+$/.test(code)) {
+        const requests = error.externalRequests ?? externalRequests;
+        if (code === 'SIBLING_BATCH_A_EVIDENCE_BLOCKED') {
+          return json(res, 422, { code, candidateId: error.candidateId,
+            message: `整批未保存：规格 ${error.candidateId} 的 B 系统证据没有备齐（${error.evidencePreparation?.failure?.reason || '未知失败'}）。不会自动重读，当前输入保留。`,
+            evidencePreparation: error.evidencePreparation, externalRequests: requests, platformWrites: 0 });
+        }
+        const specific = {
+          SIBLING_BATCH_A_QUANTITY_ONE_EVIDENCE_MISSING: '当前采集的一件起订报价或本规格同价依据不足，不能沿用其他颜色的确认；整批未推进，当前输入保留。',
+          SIBLING_BATCH_A_EVIDENCE_CHANGED: 'B证据在本轮读取期间发生变化，整批未保存；请刷新后再确认一次。',
+          SIBLING_BATCH_A_CATEGORY_CONFLICT: '这个颜色的类目和原商品那张卡的类目对不上，整批未保存；请先核对原商品的类目。'
+        };
         return json(res, /INPUT_INVALID/.test(code) ? 400 : 409,
-          { code, message: code==='SIBLING_BATCH_A_QUANTITY_ONE_EVIDENCE_MISSING'?'当前采集的一件起订报价或本规格同价依据不足，不能沿用其他颜色的确认；整批未推进，当前输入保留。':'整批 A/B/C1 未保存；请核对当前规格清单与完整证据。', externalRequests: 0, platformWrites: 0 });
+          { code, message: specific[code] ?? '整批 A/B/C1 未保存；请核对当前规格清单与完整证据。', externalRequests: requests, platformWrites: 0 });
       }
       throw error;
     }

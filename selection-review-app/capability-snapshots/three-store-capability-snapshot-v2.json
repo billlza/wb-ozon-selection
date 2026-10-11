@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T15:46:12.417Z",
+  "frozenAt": "2026-10-11T16:00:41.870Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 969,
-      "sha256": "6cef388cdd074566470b307e3da6d885b6df0e4bfb2f87efad80df52cc95c364",
+      "sha256": "a0bf181af1f141299a51851952fb0bde7cb946d21ccd5461a031ecb06b47b062",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -1168,7 +1168,7 @@
       },
       {
         "path": "lib/sibling-batch-a-b-c1.mjs",
-        "sha256": "3d10a6aa7b029ce603b390cff855e19028fffb7b9675b27093bc5a0eb959314e"
+        "sha256": "2a456635f2dc4557c2430825057aa37852abd99785c9ed7f94330fbbaea121cf"
       },
       {
         "path": "lib/sibling-batch-c1-preparation.mjs",
@@ -1664,7 +1664,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "3c23ef166d15f780804594a265e0e4d0c046de5c3ae9a32bb0cc5c5b4d9473d1"
+        "sha256": "fced6e3b11219b5d03929449bc87693826fc01279a9f999d137f2202bca7836b"
       },
       {
         "path": "src/App.jsx",
@@ -3704,7 +3704,7 @@
       },
       {
         "path": "tests/sibling-batch-a-b-c1.test.mjs",
-        "sha256": "9b00e4d3be3cb3ed74e64f20880b6bbcbce29a0800bf0b0d642345e82c0885dd"
+        "sha256": "725e77c7ea88dfdac28d234c0ee379028b4d26f37fe7fa9f0203c5ced098766c"
       },
       {
         "path": "tests/sibling-batch-authorization-input.test.mjs",

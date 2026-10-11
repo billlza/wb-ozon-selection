@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryBusinessStateRepository, initialBusinessStateDocument } from '../lib/business-state-repository.mjs';
 import { createActorContext } from '../lib/runtime-identity.mjs';
-import { commitSiblingBatchABAndC1 } from '../lib/sibling-batch-a-b-c1.mjs';
+import { commitSiblingBatchABAndC1, prepareSiblingBatchEvidence } from '../lib/sibling-batch-a-b-c1.mjs';
 import { candidate, addEvidenceContext, confirmedAt, currentCostRule, evidencePacks } from './fixtures/real-a-b-flow-fixture.mjs';
 import { buildOwnerSkuUniformSupplyRecord } from '../lib/sku-choice-estimate.mjs';
 
@@ -143,4 +143,90 @@ test('an explicit extra-cost revision is counted once in the new child confirmat
     assert.equal(cost.otherPurchaseCosts,3);assert.equal(cost.actualPurchaseCost,23);
     assert.equal(child.lifecycleV11.aSiblingSupplyReuseV1.costDecision,'owner_explicit_cost_revision');
   }
+});
+
+// The vest run (2026-10-11): colours built from a parent whose own A froze its category to the Ozon card's ids.
+const FAMILY_CATEGORY = 'ozon:17028966:96063';
+async function familyFixture({ binding = { descriptionCategoryId: 17028966, typeId: 96063 } } = {}) {
+  const f = await fixture();
+  await f.repository.transact(document => {
+    document.candidates[0].lifecycleEvidenceContextV11.category = FAMILY_CATEGORY;
+    for (const child of document.candidates.slice(1)) {
+      delete child.lifecycleEvidenceContextV11;
+      child.siblingSourceV1.parentCardBinding = structuredClone(binding);
+    }
+    // Freight and exchange evidence is on file; nothing yet for fees or schema under the family's category.
+    document.evidencePacks = document.evidencePacks.filter(pack => !['commission', 'schema'].includes(pack.kind));
+    return { changed: true, document, result: null };
+  });
+  const calls = [];
+  const providers = Object.fromEntries(['commission', 'logistics_tariff', 'exchange_rate', 'schema'].map(kind => [kind, async request => {
+    calls.push([kind, request.candidateId, request.scope.category ?? null]);
+    const source = evidencePacks().find(pack => pack.kind === kind);
+    return { ...structuredClone(source), id: `synthetic:${kind}:${request.candidateId}`, scope: request.scope,
+      checkedAt: confirmedAt, expiresAt: '2026-08-19T02:00:00.000Z', sourceType: 'isolated_test', sourceRef: `fixture:batch:${kind}`,
+      evidenceData: { ...structuredClone(source.evidenceData),
+        ...(['commission', 'schema'].includes(kind) ? { descriptionCategoryId: 17028966, typeId: 96063 } : {}) } };
+  }]));
+  const prepare = document => prepareSiblingBatchEvidence({ document, actor: f.actor, input: f.input, providers,
+    serverClock: () => confirmedAt, guooFilePath });
+  const commit = preparedEvidence => commitSiblingBatchABAndC1({ ...f, runtimeMode: 'local_development',
+    serverClock: () => confirmedAt, guooFilePath, preparedEvidence });
+  return { ...f, calls, prepare, commit };
+}
+
+test('each colour reads its own fee and schema evidence under the parent card category before the one save', async () => {
+  const f = await familyFixture();
+  const before = await f.repository.readSnapshot();
+  await assert.rejects(() => f.commit(null), /REAL_A_SYSTEM_EVIDENCE_GAP/);
+  assert.deepEqual(await f.repository.readSnapshot(), before);
+
+  const prepared = await f.prepare(await f.repository.readSnapshot());
+  const [first, second] = f.children.map(child => child.id);
+  assert.deepEqual(f.calls, [['commission', first, FAMILY_CATEGORY], ['schema', first, FAMILY_CATEGORY]],
+    'the second colour reuses what the first one read; freight and exchange evidence on file is reused');
+  assert.deepEqual(await f.repository.readSnapshot(), before, 'reading evidence saves nothing');
+
+  const result = await f.commit(prepared);
+  assert.deepEqual([result.members.length, result.externalRequests, result.platformWrites], [2, 2, 0]);
+  const saved = await f.repository.readSnapshot();
+  assert.deepEqual(saved.candidates[0], before.candidates[0]);
+  for (const child of saved.candidates.slice(1)) {
+    assert.equal(child.lifecycleEvidenceContextV11.category, FAMILY_CATEGORY);
+    assert.equal(child.lifecycleV11.bSystemEvidenceBundle.platformFeeEvidence.evidenceId, `synthetic:commission:${first}`);
+  }
+  assert.deepEqual(saved.candidates.slice(1).map(child => child.lifecycleV11.externalAccesses.length), [2, 0]);
+  const filed = saved.evidencePacks.filter(pack => pack.createdBy === 'sibling_batch_a_confirmation_system_evidence');
+  assert.deepEqual(filed.map(pack => pack.id).sort(), [`synthetic:commission:${first}`, `synthetic:schema:${first}`]);
+  assert.equal(second, saved.candidates[2].id);
+});
+
+test('evidence filed after the read, a provider gap or a colour outside the parent card saves nothing', async () => {
+  const changed = await familyFixture();
+  const prepared = await changed.prepare(await changed.repository.readSnapshot());
+  await changed.repository.transact(document => {
+    document.evidencePacks.push({ ...structuredClone(document.evidencePacks[0]), id: 'synthetic:filed-meanwhile' });
+    return { changed: true, document, result: null };
+  });
+  const beforeChanged = await changed.repository.readSnapshot();
+  await assert.rejects(() => changed.commit(prepared), /SIBLING_BATCH_A_EVIDENCE_CHANGED/);
+  assert.deepEqual(await changed.repository.readSnapshot(), beforeChanged);
+
+  const gap = await familyFixture();
+  const document = await gap.repository.readSnapshot();
+  const failing = await prepareSiblingBatchEvidence({ document, actor: gap.actor, input: gap.input, serverClock: () => confirmedAt, guooFilePath,
+    providers: { commission: async () => { throw new Error('synthetic: fee service unavailable'); } } }).then(() => null, error => error);
+  assert.deepEqual([failing?.code, failing?.candidateId, failing?.externalRequests], ['SIBLING_BATCH_A_EVIDENCE_BLOCKED', gap.children[0].id, 1]);
+  assert.match(failing.message, /fee service unavailable/);
+
+  const outside = await familyFixture({ binding: { descriptionCategoryId: 17028966, typeId: 1 } });
+  const outsideDocument = await outside.repository.readSnapshot();
+  await assert.rejects(() => outside.prepare(outsideDocument), /SIBLING_BATCH_A_CATEGORY_CONFLICT/);
+  assert.deepEqual(outside.calls, []);
+
+  const stale = await familyFixture();
+  stale.input.members[1].candidateRevision += 1;
+  const staleDocument = await stale.repository.readSnapshot();
+  await assert.rejects(() => stale.prepare(staleDocument), /SIBLING_BATCH_A_MEMBER_CONFLICT/);
+  assert.deepEqual(stale.calls, [], 'a stale row stops the batch before any read');
 });
