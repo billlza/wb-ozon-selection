@@ -72,7 +72,11 @@ test("条件测算：读到店里实收费率就自己重算；只有官方费�
   assert.equal(official.stops[0].code, "b_official_reference_only");
   const none = planGate1Autopilot({ candidate: conditional, bExactCommissionRuntimeView: { canRecalculate: false } });
   assert.equal(none.stops[0].code, "b_evidence_required");
-  assert.match(none.line, /重新读一次费用证据/u);
+  assert.match(none.line, /读到店里的实收费率后软件自己重算/u);
+  // 没有许可的老商品不许诺软件会自己重算。
+  const legacy = planGate1Autopilot({ candidate: product({ phase: "B", granted: false, lifecycle: { status: "b_conditional_awaiting_exact_commission" } }),
+    bExactCommissionRuntimeView: { canRecalculate: false } });
+  assert.doesNotMatch(legacy.line, /软件自己重算/u);
 });
 
 test("C1：没有当前准备材料就整理，整理好了就准备文案请求，有缺口就把缺口原话列出来", () => {

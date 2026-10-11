@@ -10949,9 +10949,13 @@ if (lostSeerfarWebRounds?.length) {
 if (lostImageMatches?.length) {
   console.log(`找同款作业已随服务重启收口为失败（不会再有结果，需要重新找一次）：${lostImageMatches.join("、")}`);
 }
-// 重启之前已经有许可、还有不花钱的步骤没做完的商品，开门后各看一眼。
-for (const candidate of (await readData()).candidates) {
-  if (gate1AutopilotGrantCurrent(candidate)) scheduleGate1Autopilot(candidate.id);
+// 重启之前已经有许可、还有不花钱的步骤没做完的商品，开门后各看一眼。读不出来就不看，不挡服务开门。
+try {
+  for (const candidate of (await readData()).candidates) {
+    if (gate1AutopilotGrantCurrent(candidate)) scheduleGate1Autopilot(candidate.id);
+  }
+} catch (error) {
+  console.error(`GATE1_AUTOPILOT_STARTUP_SKIPPED: ${gate1AutopilotErrorCode(error)}`);
 }
 server.listen(port, host, () => {
   if (runtimeConfiguration.dPlatformObservation.pumpIntervalMs !== null ||

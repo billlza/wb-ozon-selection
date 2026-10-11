@@ -139,6 +139,7 @@ export function planGate1Autopilot({ candidate, bExactCommissionRuntimeView = nu
   if (sku === null || sku.targetPlatform !== 'ozon') return null;
   if (sku.productionAuthorization || sku.productionRecord || /^[DE]/u.test(String(sku.businessPhase ?? ''))) return null;
 
+  const granted = gate1AutopilotGrantCurrent(candidate);
   let next = null;
   const stops = [];
   let working = null;
@@ -149,7 +150,9 @@ export function planGate1Autopilot({ candidate, bExactCommissionRuntimeView = nu
     } else if (recalc?.canRecalculate === true) {
       stops.push(stop('b_official_reference_only', '只读到 Ozon 官方费率表上的公开费率，不是这个店被扣过的钱；要不要先按它重算利润，由你定'));
     } else {
-      stops.push(stop('b_evidence_required', '利润还是按估算佣金算的：在这件商品的页面上重新读一次费用证据，读到店里的实收费率后软件自己重算'));
+      stops.push(stop('b_evidence_required', granted
+        ? '利润还是按估算佣金算的：在这件商品的页面上重新读一次费用证据，读到店里的实收费率后软件自己重算'
+        : '利润还是按估算佣金算的：在这件商品的页面上重新读一次费用证据，再用它重算'));
     }
   } else if (sku.businessPhase === 'C1') {
     const plan = isObject(sku.c1ProductPlan) ? sku.c1ProductPlan : null;
@@ -183,7 +186,6 @@ export function planGate1Autopilot({ candidate, bExactCommissionRuntimeView = nu
   }
 
   const record = isObject(candidate.gate1AutopilotV1) ? candidate.gate1AutopilotV1 : null;
-  const granted = gate1AutopilotGrantCurrent(candidate);
   const savedFailure = isObject(record?.failure) ? record.failure : null;
   // 出错只挡住同一份资料上的同一步；资料变了（修订号变了）就是新的输入，软件可以再试一次。
   const failure = next !== null && savedFailure?.step === next.step && savedFailure.sourceRevision === candidate.dataRevision
