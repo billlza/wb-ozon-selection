@@ -182,18 +182,20 @@ test('顶栏真正画出来的东西：正常时一句，不正常时逐条展�
   assert.doesNotMatch(broken, /一切正常/u);
 });
 
-test('顶栏只剩：我在哪儿、哪个平台哪家店、需要你处理、有没有异常', async () => {
+test('顶栏只剩：我在哪儿、哪个平台哪家店、进行中、需要你处理、有没有异常', async () => {
   const app = await readFile(fileURLToPath(new URL('../src/App.jsx', import.meta.url)), 'utf8');
   const header = app.slice(app.indexOf('<header className="app-header">'), app.indexOf('</header>'));
-  // 留下的：品牌与位置、平台 + 店铺两个下拉、「需要你处理」加数字、一个状态指示器。
+  // 留下的：品牌与位置、平台 + 店铺两个下拉、「进行中」和「需要你处理」各加数字、一个状态指示器。
   assert.match(header, /className="desk-store-switch" role="group" aria-label="平台和店铺"/u);
   assert.match(header, /aria-label="选择平台"/u);
   assert.match(header, /aria-label="选择店铺"/u);
   assert.match(header, /onClick=\{\(\) => setView\("inbox"\)\}>\s*需要你处理<span className="desk-badge">\{counts\.inbox\}<\/span>/u);
+  // 2026-10-11 工作台评审：「进行中」不能只从录入页底部进去。
+  assert.match(header, /onClick=\{\(\) => setView\("board"\)\}[^>]*>\s*进行中<span className="desk-badge">\{counts\.board\}<\/span>/u);
   assert.match(header, /className="app-brand-back" onClick=\{\(\) => setView\("desk"\)\}>← 选品台/u);
   assert.match(header, /<HeaderStatus extensionStatus=\{effectiveExtensionStatus\} captureControl=\{state\.captureControl\}/u);
   assert.match(header, /runtimeArchitecture=\{state\.runtimeArchitecture\} intakeQueue=\{intake\.queue\}/u);
-  // 旧的四个标签（选品台 / 进行中 / 需要你处理 / 维护）和重复的「选品台」都不在顶栏了；进行中和维护在录入页底部。
+  // 旧的四个标签（选品台 / 进行中 / 需要你处理 / 维护）和重复的「选品台」都不在顶栏了；维护在录入页底部。
   assert.doesNotMatch(header, /desk-nav/u);
   assert.doesNotMatch(header, /deskNav/u);
   assert.equal((header.match(/选品台/gu) ?? []).length, 2, '只有品牌名和商品页的返回');

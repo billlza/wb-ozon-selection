@@ -34,17 +34,37 @@ const dropped = (id, extra = {}) => candidate(id, { workflowStatus: 'eliminated'
 const props = (candidates, extra = {}) => ({ candidates, store: 'miska', onOpenCandidate: forbidden,
   onEliminateCandidate: forbidden, onRestoreCandidate: forbidden, ...extra });
 
-test('进行中每张卡片都能淘汰，已淘汰折在最下面并能恢复', async () => {
+test('进行中的淘汰收在「更多」里，卡住的写出来，同款各色合成一张卡，已淘汰折在最下面并能恢复', async () => {
+  const choices = [{ sourceSkuId: '11', attributes: { 颜色: '卡其' } }, { sourceSkuId: '12', attributes: { 颜色: '黑色' } }];
   const html = (await pages()).board(props([
-    candidate('candidate:a', { executionRuntime: { businessPhase: 'A' } }),
-    candidate('candidate:b', { executionRuntime: { businessPhase: 'B' } }),
+    candidate('candidate:a', { workflowStatus: 'awaiting_user_direction', intake: { stage: 'queued', sourceKind: 'pinduoduo' } }),
+    candidate('candidate:b', { executionRuntime: { businessPhase: 'B', status: 'running' } }),
+    candidate('candidate:vest', { productName: '合成背心', executionRuntime: { businessPhase: 'C1', status: 'running' },
+      sourceCapture: { selectedSkuIds: ['11'], skuChoices: choices } }),
+    candidate('candidate:black', { productName: '原商品同款：合成背心 · 供应商原色 黑色 · SKU 12',
+      siblingSourceV1: { parentCandidateId: 'candidate:vest', supplierSkuId: '12' }, sourceCapture: { skuChoices: choices },
+      executionRuntime: { businessPhase: 'C1', status: 'blocked', technicalFailure: { kind: 'external_dependency' } } }),
     dropped('candidate:gone', { productName: '被淘汰的合成商品' })
-  ]));
-  assert.match(html, /共 2 件在做的商品/u, '已淘汰的不算在进行中里');
+  ], { intakeQueue: { items: [{ candidateId: 'candidate:a', stage: 'queued', queue: { position: 1, total: 1 }, batch: null }],
+    pause: null, extension: { online: false } } }));
+  assert.match(html, /共 4 件在做的商品，2 张卡卡住了/u, '已淘汰的不算在进行中里');
+  for (const title of ['找货', '待确认', '准备中', '待上架', '在售']) assert.match(html, new RegExp(`<h3>${title}<span>`, 'u'));
   assert.doesNotMatch(html, /被淘汰的合成商品<\/b><span class="board-card-status"/u);
-  assert.equal((html.match(/eliminate-button/gu) ?? []).length, 2, '每张卡片一个淘汰');
-  // 淘汰 is its own control outside the card button, so opening a product and dropping it are never one click.
-  assert.match(html, /<\/button><button type="button" class="button secondary eliminate-button">淘汰<\/button><\/div>/u);
+  // 淘汰不在卡面上，收在每张卡的「更多」里；合起来的背心按颜色各一个。
+  assert.equal((html.match(/<details class="board-card-more">/gu) ?? []).length, 3);
+  assert.equal((html.match(/eliminate-button/gu) ?? []).length, 4);
+  assert.match(html, />淘汰「卡其」<\/button>/u);
+  assert.match(html, /<summary aria-label="合成背心 的更多操作">更多<\/summary>/u);
+  assert.match(html, /排队中 · 排第 1 \/ 1/u);
+  assert.match(html, /卡住了：插件没连上，这件排着等/u);
+  // 插件没连上时没有可按的：打开 Chrome 后自己接着找，卡上不给一个点了也没用的按钮。
+  assert.doesNotMatch(html, />接着找<\/button>/u);
+  assert.equal((html.match(/data-testid="board-card"/gu) ?? []).length, 3, '背心两个颜色合成一张卡');
+  assert.match(html, /aria-label="合成背心 的颜色"/u);
+  assert.match(html, />卡其<\/button><span>软件在做<\/span>/u);
+  assert.match(html, />黑色<\/button><span>已停下<\/span>/u);
+  assert.match(html, /卡住了：黑色：外部服务不可用，已停下/u);
+  assert.doesNotMatch(html, /选品处理|上架前确认/u);
   assert.match(html, /已淘汰 1（默认隐藏）/u);
   assert.match(html, /主人淘汰：品牌风险/u);
   assert.match(html, />恢复</u);

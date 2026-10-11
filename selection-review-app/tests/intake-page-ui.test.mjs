@@ -272,7 +272,8 @@ test('首页接线：录入页是首页，Seerfar 结果页另开一页，接口
   assert.match(app, /view === "desk" \? \(\s*<IntakePage /u);
   assert.match(app, /view === "seerfar" \? \((?:<>)?\s*<SelectionDesk/u);
   assert.match(app, /onOpenSeerfar=\{\(\) => setView\("seerfar"\)\}/u);
-  assert.match(app, /useIntakeQueue\(\{ enabled: view === "desk" && accountOwner, loadQueue: loadIntakeQueue \}\)/u);
+  // 录入页和进行中都读找货队列（进行中要显示排第几、停在哪）；别的页不读。
+  assert.match(app, /useIntakeQueue\(\{ enabled: \(view === "desk" \|\| view === "board"\) && accountOwner, loadQueue: loadIntakeQueue \}\)/u);
   assert.match(app, /const loadIntakeQueue = \(\) => api\.getIntakeQueue\(\);/u);
   assert.match(app, /onRetry=\{api\.retryIntake\} onResume=\{api\.resumeIntake\}/u);
   assert.match(app, /targetStore=\{deskPlatform === "ozon" \? deskStore : null\}/u);
