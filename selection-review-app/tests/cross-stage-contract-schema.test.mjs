@@ -1245,8 +1245,15 @@ test("server只接原子授权处理器且旧入口永久零派发", async () =>
   assert.doesNotMatch(immutableRoute, /mutateData|reviseProductionAuthorization/);
   const lifecycleStart = source.indexOf(lifecycleMarker);
   const lifecycleEnd = source.indexOf('if (req.method === "POST" && legacyFireTrainFinalAssetsRoute)', lifecycleStart);
-  const lifecycleRoute = source.slice(lifecycleStart, lifecycleEnd);
+  const lifecycleRouteOnly = source.slice(lifecycleStart, lifecycleEnd);
   assert.ok(lifecycleStart > 0 && lifecycleEnd > lifecycleStart);
+  // 上架卡和老的授权入口走同一个处理函数，所以路由本身只转给它，下面的检查看这个函数。
+  assert.match(lifecycleRouteOnly, /saveProductionOwnerDecisionFor\(/);
+  assert.doesNotMatch(lifecycleRouteOnly, /createCandidateDispatch|deliverDispatch|createProductionPlan|ExecutionIntent/);
+  const handlerStart = source.indexOf("async function saveProductionOwnerDecisionFor(");
+  const handlerEnd = source.indexOf("\n}\n", handlerStart);
+  assert.ok(handlerStart > 0 && handlerEnd > handlerStart);
+  const lifecycleRoute = source.slice(handlerStart, handlerEnd);
   assert.match(lifecycleRoute, /commitSingleOwnerProductionAuthorization/);
   assert.match(lifecycleRoute, /resolveProductionOwnerPreparation/);
   assert.match(lifecycleRoute, /production_authorization_reconfirmation_required/);

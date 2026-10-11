@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T18:30:37.751Z",
+  "frozenAt": "2026-10-11T18:52:36.277Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 992,
-      "sha256": "87ad740aa147dd7790bbd83dc125ef34c331bec7a9e6ac4d581e8f91bc5752a5",
+      "sha256": "b61e879eb1595efa293d20639ac5d4c6b5bd32b18f962bab60b27379b3bcb28c",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -2368,7 +2368,7 @@
       },
       {
         "path": "tests/c1-forward-to-listing-api.test.mjs",
-        "sha256": "8050fe45e4f3fee75a81139b39c58e0dae0f9ba3c6e52a81fb8bcf0d283fbbf3"
+        "sha256": "be8daab9c00b392e24cd2e49017e6f26537e9016f849711ef9083b89df37e9d8"
       },
       {
         "path": "tests/c1-frozen-schema-refresh.test.mjs",
@@ -2656,7 +2656,7 @@
       },
       {
         "path": "tests/cross-stage-contract-schema.test.mjs",
-        "sha256": "9979b81d04e92437fba39b71254c064a659ffa1447a4b33046a266b12176a571"
+        "sha256": "dd02e624da0ff9c2c2e8ba973f75342be2d0db9aae15b79d4cf8bd2506ad5361"
       },
       {
         "path": "tests/d-asset-transport-saved-job.test.mjs",
