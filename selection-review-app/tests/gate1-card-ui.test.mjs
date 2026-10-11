@@ -67,6 +67,8 @@ test('卡上三格都已先选好并标「软件先选的」，粗算一行说�
   assert.match(html, />不做这件<\/button>/u);
   assert.doesNotMatch(html, /aria-label="软件读不到的几项"/u, '都读得到时不问任何东西');
   assert.match(html, /不确认供货、不下单、不碰平台/u);
+  // 点下去之后哪几步由软件接着做、哪儿停下等主人，就写在按钮上面。
+  assert.match(html, /重算利润、整理属性和关键词、准备文案请求这几步不花钱，软件自己往下做；要花钱、要你声明品牌与权利、要你确认内容和上架时，它停下来等你。/u);
 });
 
 test('主人换了一格：标「你改过」，粗算按那一对取服务端算好的数；运费没读到时只问运费', () => {
@@ -79,7 +81,9 @@ test('主人换了一格：标「你改过」，粗算按那一对取服务端�
   const filled = gate1CardView(gate1(), { local: { supplierOfferId: '7003' }, facts: { domesticShippingRmb: '4' } });
   assert.equal(filled.canAccept, true);
   assert.deepEqual(gate1AcceptPayload(gate1(), filled, { domesticShippingRmb: '4' }, 5),
-    { dataRevision: 5, ozonProductId: '9001', matchOfferId: '7001', supplierOfferId: '7003', facts: { domesticShippingRmb: 4 } });
+    { dataRevision: 5, ozonProductId: '9001', matchOfferId: '7001', supplierOfferId: '7003', facts: { domesticShippingRmb: 4 },
+      // 卡上那句「不花钱的几步软件自己往下做」的版本号；带着它服务端才发许可。
+      autopilot: 'gate1-autopilot-scope-v1' });
   const otherPrice = gate1CardView(gate1(), { local: { ozonProductId: '9002' } });
   assert.match(otherPrice.profit.text, /每件赚 ¥41\.00/u);
   const noOzon = gate1CardView(gate1(), { local: { ozonProductId: null } });

@@ -460,3 +460,18 @@ test('采到1688页面还没选规格、或采集已停止的商品，即使没�
   assert.equal(items.find(item => item.id === 'candidate:sku').action.key, 'sku');
   assert.equal(items.find(item => item.id === 'candidate:failed').action.key, 'capture');
 });
+
+test('做这件之后软件停下来等你的，进「需要你处理」，理由照搬软件停下的原话；软件还在做的不算等你', () => {
+  const autopilot = (status, extra = {}) => candidate(`candidate:${status}`, { workflowStatus: 'listing_preparation',
+    gate1AutopilotView: { status, line: `${status} 那一句`, stops: [], moreStops: 0, ...extra } });
+  const waiting = autopilot('waiting_owner', { stops: [{ code: 'c1_material_gap', line: '还没有保存这件商品的品牌与权利声明，这一步只能你来签' },
+    { code: 'c1_material_gap', line: '必填属性「类型」仍需核对' }], moreStops: 1 });
+  assert.deepEqual(ownerAttentionReasons(waiting), { reasons: ['还没有保存这件商品的品牌与权利声明，这一步只能你来签', '必填属性「类型」仍需核对', '还有 1 项，打开看'],
+    action: { key: 'open', label: '打开' } });
+  assert.deepEqual(ownerAttentionReasons(autopilot('failed')).reasons, ['failed 那一句']);
+  const items = inboxItems([waiting, autopilot('failed'), autopilot('ready'), autopilot('running'), autopilot('working')], 'miska');
+  assert.deepEqual(items.map(item => item.id).sort(), ['candidate:failed', 'candidate:ready', 'candidate:waiting_owner']);
+  // 进行中看板上，软件在做什么、停在哪儿，也是卡片下面那一行。
+  const card = boardColumns([autopilot('running')], 'miska').flatMap(column => column.cards)[0];
+  assert.equal(card.waitingLine, 'running 那一句');
+});

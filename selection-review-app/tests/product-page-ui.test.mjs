@@ -1966,3 +1966,36 @@ test('上架与回读的每个按钮都带上这件商品自己的编号，没�
   assert.equal(card.props.onRollbackAuthorization, null);
   assert.equal(PublishSection({ candidate: candidate() }), null);
 });
+
+test('做这件之后软件做到哪儿、停在哪儿等你，就在做这件卡下面一节说；只有没许可和出错时才有按钮', async () => {
+  const writing = view => candidate({ workflowStatus: 'listing_preparation', executionRuntime: { businessPhase: 'C1' },
+    lifecycleV11: { aConfirmationReceipt: { decision: 'confirm' }, skuPackage: { businessPhase: 'C1' } }, gate1AutopilotView: view });
+  const ran = [{ step: 'c1_local_material', label: '整理商品属性与关键词', at: null }, { step: 'c1_prepare_copy', label: '准备文案请求', at: null },
+    { step: 'c1_local_material', label: '整理商品属性与关键词', at: null }];
+  const waiting = await render(props({ candidate: writing({ status: 'waiting_owner', granted: true, line: '文案请求已经准备好，等你允许这一次付费生成',
+    next: null, stops: [{ code: 'c1_paid_draft', line: '文案请求已经准备好，等你允许这一次付费生成' }], moreStops: 0, failure: null, ranSteps: ran }),
+    onContinueGate1Autopilot: forbidden }));
+  assert.match(waiting, /aria-label="软件接着做"><h3>现在等你<\/h3><p role="status">文案请求已经准备好，等你允许这一次付费生成。<\/p>/u);
+  assert.match(waiting, /软件已经替你做了：整理商品属性与关键词、准备文案请求。都只用已经保存的资料，没有打开平台，也没有花钱。/u);
+  assert.doesNotMatch(waiting, /让软件接着做|让软件再试一次/u);
+
+  const gaps = await render(props({ candidate: writing({ status: 'waiting_owner', granted: true, line: 'a', next: null,
+    stops: [{ code: 'c1_material_gap', line: '还没有保存这件商品的品牌与权利声明，这一步只能你来签' }, { code: 'c1_material_gap', line: '必填属性「类型」仍需核对' }],
+    moreStops: 2, failure: null, ranSteps: [] }) }));
+  assert.match(gaps, /<ul class="product-autopilot-stops"><li>还没有保存这件商品的品牌与权利声明，这一步只能你来签<\/li><li>必填属性「类型」仍需核对<\/li><\/ul>/u);
+  assert.match(gaps, /还有 2 项，在下面各节里。/u);
+
+  const ready = await render(props({ candidate: writing({ status: 'ready', granted: false, line: '「整理商品属性与关键词」这一步不花钱，可以让软件接着做',
+    next: { step: 'c1_local_material', label: '整理商品属性与关键词' }, stops: [], moreStops: 0, failure: null, ranSteps: [] }),
+    onContinueGate1Autopilot: forbidden }));
+  assert.match(ready, /<h3>这一步可以让软件接着做<\/h3>/u);
+  assert.match(ready, /<button type="button" class="button primary">让软件接着做<\/button>/u);
+  const failed = await render(props({ candidate: writing({ status: 'failed', granted: true, line: '软件准备文案请求时出错停下了（C1_DRAFT_RUNTIME_UNAVAILABLE），没有自己重试',
+    next: { step: 'c1_prepare_copy', label: '准备文案请求' }, stops: [], moreStops: 0,
+    failure: { step: 'c1_prepare_copy', label: '准备文案请求', code: 'C1_DRAFT_RUNTIME_UNAVAILABLE', at: null }, ranSteps: [] }),
+    onContinueGate1Autopilot: forbidden }));
+  assert.match(failed, /<h3>软件停下了<\/h3>/u);
+  assert.match(failed, />让软件再试一次<\/button>/u);
+  // 没有这份视图（还没走到那儿，或已经上架）就没有这一节。
+  assert.doesNotMatch(await render(props({ candidate: writing(null) })), /aria-label="软件接着做"/u);
+});

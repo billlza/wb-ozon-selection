@@ -15,6 +15,7 @@ import C1RightsReviewPanel from "./C1RightsReviewPanel.jsx";
 import C1OzonAttributePanel from "./C1OzonAttributePanel.jsx";
 import C2FinalAssetsPanel from "./C2FinalAssetsPanel.jsx";
 import FinalProductPlanCard from "./FinalProductPlanCard.jsx";
+import Gate1AutopilotSection from "./Gate1AutopilotSection.jsx";
 import SiblingBatchPreparation from './SiblingBatchPreparation.jsx';
 import Gate1Card from "./Gate1Card.jsx";
 import ProductPublishSection, { showsProductPublish } from "./ProductPublishSection.jsx";
@@ -1714,8 +1715,9 @@ function RefreshFeeEvidenceSection({ candidate, saving, onRefresh }) {
     <button type="button" className="button secondary" disabled={saving} onClick={onRefresh}>
       {saving ? "正在重新读取费用证据…" : "重新读一次费用证据"}
     </button>
-    <p className="product-actions-note">
-      读完之后利润不会自己变。要用新读到的证据把利润换掉，请再点一次上面的「用更好的费用证据重算」——那是第二个决定，由主人自己按。
+    <p className="product-actions-note">{candidate.gate1AutopilotView?.granted
+      ? "你点「做这件」时已经让软件接着做：读到店里的实收费率，软件会自己用它重算利润；只读到官方费率表的，要不要按它重算还是你来定。"
+      : "读完之后利润不会自己变。要用新读到的证据把利润换掉，请再点一次上面的「用更好的费用证据重算」——那是第二个决定，由主人自己按。"}
     </p>
   </section>;
 }
@@ -1764,7 +1766,7 @@ export default function ProductPage({
   onRecalculateBWithExactCommission = null, onRefreshBFeeEvidence = null,
   onContinueSavedDE = null, onDispatchDProductionRound = null, onRollbackProductionAuthorization = null,
   onRecoverDInitialImport = null, onReobserveDUnknownOutcome = null, onReconcileDFromPlatformState = null,
-  onAuthorizeAccountRead = null, onContinueAccountRead = null,
+  onAuthorizeAccountRead = null, onContinueAccountRead = null, onContinueGate1Autopilot = null,
   loadingLabel = "正在读取这件商品的找货资料…"
 }) {
   const draft = view?.supplierDraftV1 ?? null;
@@ -1989,6 +1991,11 @@ export default function ProductPage({
       onAccept={acceptGate1} onSkip={onSkipGate1} onShortfall={onResolveGate1Shortfall}
       onStartImageMatch={onStartImageMatch} onCompareImageMatch={onCompareImageMatch} onJudgeImageMatch={onJudgeImageMatch}
       onStartOzonMatch={onStartOzonMatch} onCompareOzonMatch={onCompareOzonMatch} onJudgeOzonMatch={onJudgeOzonMatch} />
+
+    {/* 做这件之后，不花钱的几步软件自己往下走；这里说它做到了哪儿、停在哪儿等你。 */}
+    <Gate1AutopilotSection candidate={candidate} saving={saving}
+      onContinue={typeof onContinueGate1Autopilot === "function" ? payload => run(onContinueGate1Autopilot, payload,
+        "软件接着做了能做的几步，停在了要你看的地方；没有打开平台，也没有花钱。") : null} />
 
     {typeof onCreateSiblingSku === 'function' &&
       candidate.sourceCapture?.mode === 'a_supplier_capture' &&
