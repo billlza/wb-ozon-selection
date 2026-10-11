@@ -170,7 +170,9 @@ test("「做这件」许可下，文案写好软件直接送进传图；主人�
   assert.equal(paid.status, 200, JSON.stringify(paid.body));
   assert.equal(gatewayFailure, undefined);
   assert.equal(providerCalls, 1);
-  saved = await waitFor(document => document.candidates[0].lifecycleV11.c1ContentForwardV1, "forward");
+  // 软件这一轮做完才记下做过的几步，所以等到记录里有了这一步再看。
+  saved = await waitFor(document => document.candidates[0].lifecycleV11.c1ContentForwardV1 &&
+    document.candidates[0].gate1AutopilotV1?.ranSteps?.some(item => item.step === "c1_forward_copy"), "forward");
   const life = saved.candidates[0].lifecycleV11;
   assert.equal(life.skuPackage.businessPhase, "C2");
   assert.equal(life.c1ContentReviewV1, undefined);
