@@ -5,6 +5,7 @@ import { authorizeOperation } from "./runtime-identity.mjs";
 import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
 import { BExactCommissionRecalculationError, runSavedConditionalBWithExactEvidence } from "./real-a-b-c1-flow.mjs";
 import { recoverBExactCommissionTechnicalFailure, startSoftwareStep, completeExecutionStep } from "./software-execution-state.mjs";
+import { applyGate1Shortfall } from "./gate1-decision.mjs";
 
 /** Explicit owner action over saved evidence only; no connector or scheduler dependency. */
 export function createBExactCommissionRecalculationUseCase({ repository, runtimeMode, serverClock }) {
@@ -62,7 +63,8 @@ export function createBExactCommissionRecalculationUseCase({ repository, runtime
             currentStep: "B利润通过，C1输入已自动创建", blockReason: null, userAction: "无需再次点击开始上架准备",
             inheritedInputRevision: computed.c1Handoff.inheritedSkuRevision, handoffId: computed.c1Handoff.handoffId,
             realTaskDispatched: false } : null;
-          if (!passed) {
+          // 做过「做这件」的商品复算没过线，和第一次算没过线一样回到主人（换货源、改售价或不做），不直接淘汰。
+          if (!passed && !applyGate1Shortfall(candidate, { profitModel: computed.profitModel, at: observedAt })) {
             candidate.eliminatedAt = observedAt;
             candidate.eliminationReason = `B阶段利润未达到当前门槛：单件利润${computed.profitModel.unitProfitRmb}元，利润率${(computed.profitModel.profitMargin * 100).toFixed(1)}%`;
           }

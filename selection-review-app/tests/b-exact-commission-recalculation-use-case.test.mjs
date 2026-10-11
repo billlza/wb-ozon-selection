@@ -64,6 +64,23 @@ test("formal rejected recalculation saves a new profit version and no C1", async
   assert.equal(candidate.lifecycleV11.skuPackage.c1ProductPlan, null);
   assert.deepEqual(candidate.lifecycleV11.c1Handoffs, []);
   assert.equal(candidate.executionRuntime.technicalFailure, null);
+  assert.equal(candidate.workflowStatus, "eliminated");
+});
+
+test("a product the owner chose with 做这件 goes back to him when the recalculation still misses the line", async () => {
+  const f = await fixture({ rejected: true });
+  await f.repository.transact(document => {
+    document.candidates[0].gate1DecisionV1 = { decision: "accept", decidedAt: f.at };
+    return { changed: true, document, result: null };
+  });
+  const result = await f.usecase.recalculate({ actor: f.owner, input: f.input });
+  assert.equal(result.result.status, "rejected");
+  const candidate = (await f.repository.readSnapshot()).candidates[0];
+  assert.equal(candidate.lifecycleV11.status, "b_rejected");
+  assert.equal(candidate.workflowStatus, "needs_user_data");
+  assert.equal(candidate.eliminatedAt ?? null, null);
+  assert.equal(candidate.gate1ShortfallV1.profitModelVersion, candidate.lifecycleV11.skuPackage.profitModels.at(-1).profitModelVersion);
+  assert.match(candidate.neededFields[0], /^正式利润没过线：/u);
 });
 
 test("missing, old, estimated or mismatched evidence and source drift cannot save or advance B", async () => {
