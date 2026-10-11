@@ -270,7 +270,10 @@ test('首页接线：录入页是首页，Seerfar 结果页另开一页，接口
   const api = await readFile(fileURLToPath(new URL('../src/api.js', import.meta.url)), 'utf8');
   assert.match(app, /const \[view, setView\] = useState\("desk"\)/u);
   assert.match(app, /view === "desk" \? \(\s*<IntakePage /u);
-  assert.match(app, /view === "seerfar" \? \((?:<>)?\s*<SelectionDesk/u);
+  // Seerfar 页只剩会员网页那一轮和店铺档案的入口；按次扣分的 API 那一轮在「维护」里。
+  assert.match(app, /view === "seerfar" \? \(\s*<div className="page-panel seerfar-page">/u);
+  assert.match(app, /view === "paidround" \? \(\s*<SelectionDesk/u);
+  assert.match(app, /\{ view: "paidround", label: "Seerfar 付费查一轮（API，扣分）" \}/u);
   assert.match(app, /onOpenSeerfar=\{\(\) => setView\("seerfar"\)\}/u);
   // 录入页和进行中都读找货队列（进行中要显示排第几、停在哪）；别的页不读。
   assert.match(app, /useIntakeQueue\(\{ enabled: \(view === "desk" \|\| view === "board"\) && accountOwner, loadQueue: loadIntakeQueue \}\)/u);

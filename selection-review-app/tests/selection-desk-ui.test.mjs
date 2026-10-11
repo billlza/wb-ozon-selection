@@ -63,7 +63,8 @@ test('选品台先要求登录，再显示本店方向、查询时间和一件�
   assert.match(html, /类目：家居 &gt; 收纳/);
   assert.match(html, /<img[^>]*src="https:\/\/ir\.ozone\.ru\/s3\/synthetic\/2107989735\.jpg"[^>]*width="132"/);
   assert.match(html, /找一轮新品/);
-  assert.match(html, /J 下一件 · K 上一件 · Y 要 · N 不要/);
+  // 2026-10-11 工作台评审：键盘提示和运费占比公式不再挂在页面上。
+  assert.doesNotMatch(html, /J 下一件|运费占比＝/u);
 });
 
 test('没算过的商品明说要先算，算过的商品显示四格利润框和标记', async () => {
@@ -114,28 +115,17 @@ test('每张卡片给出要、不要的固定理由和稍后；已建卡的商�
   assert.equal(imported.match(/<summary>不要（淘汰）<\/summary>/gu), null);
 });
 
-test('右栏说明等你处理、进行中和下一轮方向，空的时候直说没有', async () => {
+test('右栏只剩下一轮方向：需要你处理和进行中各有自己的页面，这里不再放第二份', async () => {
   const empty = await render(props(view({ products: [] })));
   assert.match(empty, /本店当前没有等你决定的商品/);
-  assert.match(empty, /现在没有等你处理的商品/);
-  assert.match(empty, /本店暂时没有在做的商品/);
   const candidates = [
     { id: 'candidate:a', productName: '合成商品甲', targetStore: 'miska', workflowStatus: 'codex_processing',
       displayStatus: 'codex_processing', imageUrl: '', needsFromUser: ['补一个1688链接'],
-      updatedAt: '2026-09-09T04:00:00.000Z', createdAt: '2026-09-09T04:00:00.000Z' },
-    { id: 'candidate:b', productName: '合成商品乙', targetStore: 'dandanshu', workflowStatus: 'codex_processing',
-      displayStatus: 'codex_processing', imageUrl: '', needsFromUser: ['别的店的缺口'],
       updatedAt: '2026-09-09T04:00:00.000Z', createdAt: '2026-09-09T04:00:00.000Z' }
   ];
   const html = await render(props(view({ products: [product('2107989735')] }), { candidates }));
-  assert.match(html, /需要你处理（1）/);
-  assert.match(html, /合成商品甲/);
-  // The rail has room for one line, so it shows the first thing this product is waiting for and counts the rest.
-  assert.match(html, /找货还没填/u);
-  assert.match(html, /还有 1 项/u);
-  assert.match(html, />去填找货</u);
-  assert.doesNotMatch(html, /合成商品乙/, '店铺切换后不显示别的店的商品');
-  assert.match(html, /打开进行中/);
+  for (const gone of [/需要你处理（/u, /打开进行中/u, /我选的商品/u, /合成商品甲/u, /一键淘汰/u]) assert.doesNotMatch(html, gone);
+  assert.match(html, /<h3>下一轮方向<\/h3>/u);
   assert.match(html, /普通非电桌面整理小件（合成）/);
 });
 
@@ -183,57 +173,6 @@ const picked = (id, extra = {}) => ({ id, productName: `合成商品 ${id}`, tar
   ...extra });
 const draft = { schemaVersion: 'supplier-draft-v1', sourceUrl: 'https://detail.1688.com/offer/876240928352.html', allInPurchaseRmb: 18.86 };
 
-test('选品台最上面固定一块"我选的商品"，每行给出这件商品的下一步和入口', async () => {
-  const html = await render(props(view({ products: [product('2107989735', { titleZh: '合成收纳盒' })] }), {
-    candidates: [picked('candidate:filled', { supplierDraftV1: draft, createdAt: '2026-09-11T04:00:00.000Z',
-      supplierDraftEstimateV1: { estimate: { status: 'ok' }, profitAtDeclaredPurchase: { passes: true, unitProfitRmb: 41.26 } } }),
-      picked('candidate:empty')]
-  }));
-  assert.match(html, /我选的商品（2）/u);
-  assert.match(html, /找货已填 · 过线 单件利润 ¥41\.26/u);
-  assert.match(html, />去申请采集</u, "这个按钮只会打开商品页，真正的采集按钮在商品页里");
-  assert.match(html, /找货未填/u);
-  assert.match(html, />去填找货</u);
-  assert.match(html, /售价 297 卢布/u);
-  assert.match(html, /合成收纳盒/u);
-  assert.match(html, /<img[^>]*class="desk-mine-thumb"[^>]*src="https:\/\/ir\.ozone\.ru\/s3\/synthetic\/2107989735\.jpg"/u);
-  // The block heads the page: it is read before the feed, whichever round the feed happens to be showing.
-  assert.ok(html.indexOf('我选的商品') < html.indexOf('待你决定'), '我选的商品排在待你决定之前');
-  assert.doesNotMatch(html, /查看全部 2 件/u, '两件还装得下，不给全部入口');
-  assert.doesNotMatch(html, /还没有选定的商品/u);
-});
-
-test('「添加我找到的商品」在选品台自己的位置上：就在「我选的商品」这张单子的头上', async () => {
-  const withAdd = await render(props(view({ products: [product('2107989735')] }), { onAddProduct: forbidden }));
-  assert.match(withAdd, /<h2>我选的商品（0）<\/h2>[\s\S]{0,200}?class="button add-button desk-mine-add"/u);
-  assert.match(withAdd, /添加我找到的商品/u);
-  // 它只是打开原来那个弹窗，页面自己不保存任何东西。
-  assert.doesNotMatch(withAdd, /<form/u);
-  // 没有接这个回调时（例如只读渲染）不显示一个点不动的按钮。
-  const without = await render(props(view({ products: [product('2107989735')] })));
-  assert.doesNotMatch(without, /添加我找到的商品/u);
-});
-
-test('还没选过商品时"我选的商品"直说没有，并指回下面的列表', async () => {
-  const html = await render(props(view({ products: [product('2107989735')] })));
-  assert.match(html, /我选的商品（0）/u);
-  assert.match(html, /还没有选定的商品。在下面的列表里点「要」。/u);
-  assert.doesNotMatch(html, /找货未填/u);
-});
-
-test('选的商品超过六件时只显示六行，其余交给进行中', async () => {
-  const candidates = Array.from({ length: 8 }, (value, index) => picked(`candidate:${index}`,
-    { productName: `合成商品第${index}件`, createdAt: `2026-09-0${index + 1}T04:00:00.000Z` }));
-  const html = await render(props(view({ products: [] }), { candidates }));
-  assert.match(html, /我选的商品（8）/u);
-  assert.match(html, /查看全部 8 件/u);
-  assert.equal((html.match(/desk-mine-row/gu) ?? []).length, 6);
-  // Newest first: the two oldest are the ones left out.
-  assert.match(html, /合成商品第7件/u);
-  assert.doesNotMatch(html, /合成商品第1件/u);
-  assert.doesNotMatch(html, /合成商品第0件/u);
-});
-
 test('顶栏在商品页写明是哪件商品，并留一条回选品台的路', async () => {
   const { readFile } = await import('node:fs/promises');
   const app = await readFile(fileURLToPath(new URL('../src/App.jsx', import.meta.url)), 'utf8');
@@ -246,38 +185,16 @@ test('顶栏在商品页写明是哪件商品，并留一条回选品台的路',
   assert.match(app, /onBack=\{\(\) => setView\("desk"\)\}/u);
 });
 
-test('选品台每一行和每张已建卡的卡片都能淘汰，已淘汰折在下面并能恢复', async () => {
+test('已建卡的那一行还能淘汰；已淘汰的商品在进行中和需要你处理里恢复，不在这里另放一份', async () => {
   const gone = (id, extra = {}) => picked(id, { workflowStatus: 'eliminated', displayStatus: 'eliminated',
     eliminatedAt: new Date(2026, 8, 11, 13, 45).toISOString(), eliminationReason: '主人淘汰：利润太薄', dataRevision: 9, ...extra });
   const html = await render(props(view({ products: [product('2107989735', { titleZh: '合成收纳盒' })],
     importedCandidates: [{ marketProductId: '2107989735', candidateId: 'candidate:filled' }] }), {
     candidates: [picked('candidate:filled', { dataRevision: 4 }), gone('candidate:dropped', { productName: '被淘汰的合成商品' })]
   }));
-  // 我选的商品 keeps only the live product; the dropped one is folded away with its own saved reason and time.
-  assert.match(html, /我选的商品（1）/u);
-  assert.match(html, /已淘汰 1（默认隐藏）/u);
-  assert.match(html, /主人淘汰：利润太薄/u);
-  assert.match(html, /2026-09-11 13:45/u);
-  assert.match(html, />恢复</u);
-  assert.doesNotMatch(html, /<details class="desk-folded eliminated-fold" open/u, '已淘汰默认收起');
-  // Both the shelf row and the already-taken feed card offer the same 淘汰 button.
-  assert.ok((html.match(/eliminate-button/gu) ?? []).length >= 2, '我选的商品和已建卡的卡片都有淘汰');
+  assert.equal((html.match(/eliminate-button/gu) ?? []).length, 1);
   assert.match(html, /已在评审台/u);
-});
-
-test('一键淘汰上一轮全部未选先说清会淘汰几条，只数没要也没不要的那些', async () => {
-  const html = await render(props(view({
-    products: [product('2107989735'), product('2107989736'), product('2107989737')],
-    importedCandidates: [{ marketProductId: '2107989736', candidateId: 'candidate:taken' }],
-    declines: [{ marketProductId: '2107989737', reason: '尺寸太大' }]
-  })));
-  assert.match(html, /一键淘汰上一轮全部未选（1）/u, '已经要过和已经不要的都不算在内');
-  // The sentence itself only appears after the button is pressed, so the first render carries no confirmation.
-  assert.doesNotMatch(html, /确定淘汰这 1 条/u);
-  const none = await render(props(view({ products: [product('2107989735')],
-    declines: [{ marketProductId: '2107989735', reason: '尺寸太大' }] })));
-  assert.match(none, /一键淘汰上一轮全部未选（0）/u);
-  assert.match(none, /<button type="button" class="button secondary" disabled="">一键淘汰上一轮全部未选（0）<\/button>/u);
+  assert.doesNotMatch(html, /被淘汰的合成商品|已淘汰 1（默认隐藏）/u);
 });
 
 test('淘汰按钮的确认是一句话加固定几个理由，不套第二层弹窗', async () => {

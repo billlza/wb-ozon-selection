@@ -167,7 +167,7 @@ test('需要你处理 offers 贴货源链接 on the blocked row and on every fol
   assert.equal((html.match(/source-link-button">贴货源链接</gu) ?? []).length, 3);
 });
 
-test('the desk gives every folded history row 贴货源链接 and points the rail at the unsourced products', async () => {
+test('the paid-round page gives every folded history row 贴货源链接; the unsourced list lives on 需要你处理', async () => {
   const product = productId => ({ productId, title: `Explicitly synthetic ${productId}`, productUrl: `https://www.ozon.ru/product/${productId}`,
     imageUrl: '', price: 900, salesCount: 12, reviewCount: 4, reviewRating: 4.5, categoryPath: { cnTitlePath: '家居' } });
   const batch = (batchId, createdAt, productId) => ({ batch: { batchId, revision: 0, targetStore: 'miska', createdAt,
@@ -182,7 +182,8 @@ test('the desk gives every folded history row 贴货源链接 and points the rai
     onEliminateCandidate: forbidden, onRestoreCandidate: forbidden });
   assert.match(html, /历史轮次未处理的 1 条/u);
   assert.equal((html.match(/source-link-button">贴货源链接</gu) ?? []).length, 1, 'only the folded row, not the current round');
-  assert.match(html, /还有 1 件没有货源/u);
+  // The rail no longer repeats 需要你处理 (2026-10-11 workbench review); unsourced products are listed there.
+  assert.doesNotMatch(html, /还有 1 件没有货源/u);
   const elsewhere = (await pages()).desk({ store: 'wb_store', candidates: [], onSubmitSourceLink: forbidden,
     discoveryView: { schemaVersion: 'a-discovery-view-v1', targetStores: ['wb_store'], plans: [], bindings: [],
       batches: [{ ...batch('new', '2026-10-10T04:00:00.000Z', '1'), batch: { ...batch('new', '2026-10-10T04:00:00.000Z', '1').batch, targetStore: 'wb_store' } },

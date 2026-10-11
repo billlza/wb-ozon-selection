@@ -1562,3 +1562,7 @@ label em { color: var(--red); font-style: normal; font-size: 9px; }
 .unsourced-reason { color: var(--amber); }
 .unsourced-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .desk-rail-unsourced { margin: 8px 0 0; color: var(--amber); font-size: 12px; display: grid; gap: 6px; }
+
+/* Seerfar 自动选品页：只剩会员网页那一轮，加一句店铺档案在哪儿改。 */
+.seerfar-page { display: grid; gap: 12px; }
+.seerfar-profile-link { margin: 0; color: var(--muted); font-size: 12px; }

@@ -1,18 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { DECLINE_REASONS, FEED_SORTS, boardColumns, deskErrorMessage, eliminatedRows, feedRows, inboxItems,
-  lastRoundUndecidedRows, myProductRows, newRoundPlan, pointsLine, unsourcedRows } from "../selectionDeskView.js";
-import EliminateControl, { EliminatedFold } from "./EliminateControl.jsx";
+import { useMemo, useState } from "react";
+import { DECLINE_REASONS, FEED_SORTS, deskErrorMessage, feedRows, newRoundPlan, pointsLine } from "../selectionDeskView.js";
+import EliminateControl from "./EliminateControl.jsx";
 import SourceLinkControl from "./SourceLinkControl.jsx";
-import { PlusIcon } from "./Icons";
-
-/** The one word the bulk drop is recorded under; free text is not accepted anywhere in this flow. */
-const BULK_DECLINE_REASON = "其他";
 
 const fact = value => (value === null || value === undefined || value === "unknown" ? "未知" : value);
 const money = value => (typeof value === "number" && Number.isFinite(value) ? `¥${value.toFixed(2)}` : null);
 const percent = value => (typeof value === "number" && Number.isFinite(value) ? `${Math.round(value * 100)}%` : null);
-/** The block stays one glance tall; everything beyond it lives on 进行中. */
-const MY_PRODUCT_PREVIEW = 6;
 
 function ProfitBox({ row }) {
   const { estimate } = row;
@@ -34,9 +27,9 @@ function ProfitBox({ row }) {
   </div>;
 }
 
-function FeedCard({ row, active, saving, declining, candidateRevision = null,
+function FeedCard({ row, saving, declining, candidateRevision = null,
   onDeclining, onSelect, onDecline, onLater, onOpenCandidate, onEliminate, onSubmitSourceLink = null, store = null }) {
-  return <article className={`desk-card${active ? " desk-card-active" : ""}`}>
+  return <article className="desk-card">
     {row.imageUrl
       ? <img className="desk-thumb" src={row.imageUrl} alt="" width="132" height="132" loading="lazy" referrerPolicy="no-referrer" />
       : <span className="desk-thumb desk-thumb-empty">主图</span>}
@@ -80,39 +73,29 @@ function FeedCard({ row, active, saving, declining, candidateRevision = null,
 }
 
 /**
- * The owner's home page: one card per product still waiting for a decision, plus a rail with what is waiting on the
- * owner. Every number shown comes from a saved query result or a saved estimate; this page computes none of them.
+ * 维护里的「Seerfar 付费查一轮」：按次扣分的 Seerfar API 那一轮，和它查回来的、等你要或不要的商品。方案 B 用会员网页免费读
+ * 榜单，日常不用这一页（2026-10-11 工作台评审）。「需要你处理」「进行中」各有自己的页面，这里不再放第二份。
+ * 每个数字都来自已保存的查询结果或估算；这一页什么也不算。
  */
 export default function SelectionDesk({
   discoveryView, candidates, store, ownerReady = true, loadingLabel = "正在读取本店的查询结果…",
   onSelectProduct, onDeclineProduct, onLaterProduct, onEstimate, onTranslate,
-  onOpenCandidate, onStartNewRound, onResumeRound, onOpenBoard, onOpenInbox, onAddProduct,
-  onEliminateCandidate, onRestoreCandidate, onSubmitSourceLink = null, skipped = []
+  onOpenCandidate, onStartNewRound, onResumeRound, onEliminateCandidate, onSubmitSourceLink = null, skipped = []
 }) {
   const [sort, setSort] = useState("profit");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [declining, setDeclining] = useState(null);
-  const [cursor, setCursor] = useState(0);
   const feed = useMemo(() => feedRows(discoveryView, store, sort), [discoveryView, store, sort]);
   const skippedKeys = useMemo(() => new Set(skipped), [skipped]);
   const rows = useMemo(() => feed.rows.filter(row => !skippedKeys.has(row.key)), [feed, skippedKeys]);
   const history = useMemo(() => feed.history.filter(row => !skippedKeys.has(row.key)), [feed, skippedKeys]);
-  const board = useMemo(() => boardColumns(candidates, store), [candidates, store]);
-  // The fixed way back into a product the owner already took: it never depends on which round the feed is showing.
-  const mine = useMemo(() => myProductRows(candidates, discoveryView, store), [candidates, discoveryView, store]);
-  const dropped = useMemo(() => eliminatedRows(candidates, store, discoveryView), [candidates, discoveryView, store]);
   const revisions = useMemo(() => new Map((Array.isArray(candidates) ? candidates : [])
     .map(candidate => [candidate?.id, candidate?.dataRevision])), [candidates]);
-  const inbox = useMemo(() => inboxItems(candidates, store), [candidates, store]);
-  const unsourced = useMemo(() => unsourcedRows(candidates, store, discoveryView), [candidates, store, discoveryView]);
-  // What the newest round still has no answer on; the count shown before the click is the list acted on after it.
-  const undecided = useMemo(() => lastRoundUndecidedRows(feed).filter(row => !skippedKeys.has(row.key)), [feed, skippedKeys]);
   const points = pointsLine(discoveryView, store);
   // What the next click would query, read before anything is created: the rail names that direction, not the last one.
   const nextRound = useMemo(() => newRoundPlan(discoveryView, store), [discoveryView, store]);
-  const activeKey = rows.length === 0 ? null : rows[Math.min(cursor, rows.length - 1)].key;
 
   async function run(action, payload) {
     if (saving || typeof action !== "function") return null;
@@ -137,38 +120,12 @@ export default function SelectionDesk({
     setNotice("已跳过，本次浏览不再显示；没有保存任何记录。");
     if (typeof onLaterProduct === "function") onLaterProduct(row);
   }
-  /** One arming click, one sentence with the real count, then one row at a time; a refusal stops the rest. */
-  const [bulkArmed, setBulkArmed] = useState(false);
-  async function dropUndecided() {
-    setBulkArmed(false);
-    if (saving || typeof onDeclineProduct !== "function" || undecided.length === 0) return;
-    setSaving(true); setError(null); setNotice(null);
-    let done = 0;
-    try {
-      for (const row of undecided) {
-        await onDeclineProduct({ batchId: row.batchId, expectedRevision: row.expectedRevision,
-          marketProductId: row.marketProductId, reason: BULK_DECLINE_REASON });
-        done += 1;
-      }
-      setNotice(`已淘汰上一轮未选的 ${done} 条，理由记为「${BULK_DECLINE_REASON}」；它们折在下面的「已淘汰」里。`);
-    } catch (cause) {
-      setError(`${deskErrorMessage(cause)}（已淘汰 ${done} 条，其余没有动）`);
-    } finally { setSaving(false); setDeclining(null); }
-  }
   async function eliminate({ id, dataRevision, reason }) {
     if (typeof onEliminateCandidate !== "function") return;
     setError(null); setNotice(null);
     try {
       await onEliminateCandidate({ id, dataRevision: dataRevision ?? revisions.get(id) ?? null, reason });
       setNotice("已淘汰，它现在折在「已淘汰」里，随时可以恢复。");
-    } catch (cause) { setError(deskErrorMessage(cause)); }
-  }
-  async function restore({ id, dataRevision }) {
-    if (typeof onRestoreCandidate !== "function") return;
-    setError(null); setNotice(null);
-    try {
-      await onRestoreCandidate({ id, dataRevision: dataRevision ?? revisions.get(id) ?? null });
-      setNotice("已恢复，它回到了淘汰前的那一步；没有自动继续任何事。");
     } catch (cause) { setError(deskErrorMessage(cause)); }
   }
   const batchAction = action => run(action, feed.current === null ? null : { ...feed.current });
@@ -192,64 +149,10 @@ export default function SelectionDesk({
     }
   }
 
-  // The keyboard shortcuts always act on what the page shows right now, so they read the latest render, not a closure.
-  const live = useRef(null);
-  live.current = { rows, cursor, select };
-  useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    function onKeyDown(event) {
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (["INPUT", "SELECT", "TEXTAREA"].includes(event.target?.tagName) || event.target?.isContentEditable) return;
-      const key = String(event.key).toLowerCase();
-      if (!["j", "k", "y", "n"].includes(key)) return;
-      const state = live.current;
-      const row = state.rows.length === 0 ? null : state.rows[Math.min(state.cursor, state.rows.length - 1)];
-      event.preventDefault();
-      if (key === "j") setCursor(value => Math.min(value + 1, Math.max(state.rows.length - 1, 0)));
-      else if (key === "k") setCursor(value => Math.max(value - 1, 0));
-      else if (row === null) return;
-      else if (key === "y") state.select(row);
-      else setDeclining(row.key);
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
   if (!ownerReady) return <div className="page-panel"><p role="status">请先登录主人身份后查看选品台。</p></div>;
   if (discoveryView === null) return <div className="page-panel"><p role="status">{loadingLabel}</p></div>;
 
   return <div className="page-panel desk-page">
-    <section className="desk-mine" aria-label="我选的商品">
-      <header className="desk-mine-header">
-        <h2>我选的商品（{mine.length}）</h2>
-        {mine.length > MY_PRODUCT_PREVIEW
-          ? <button type="button" className="button secondary" onClick={onOpenBoard}>查看全部 {mine.length} 件</button> : null}
-        {/* 自己在别处找到的商品也进这张单子，所以入口就在这张单子的头上，不在每一页的顶栏里。 */}
-        {typeof onAddProduct === "function"
-          ? <button type="button" className="button add-button desk-mine-add" onClick={onAddProduct}>
-            <PlusIcon /> 添加我找到的商品</button> : null}
-      </header>
-      {/* The button below the cards is called 要, so the empty state has to say 要 — owner mis-click 2026-09-11. */}
-      {mine.length === 0 ? <p className="desk-mine-empty" role="status">还没有选定的商品。在下面的列表里点「要」。</p>
-        : <ul className="desk-mine-list">
-          {mine.slice(0, MY_PRODUCT_PREVIEW).map(row => <li key={row.id} className="desk-mine-row">
-            <button type="button" className="desk-mine-open" onClick={() => onOpenCandidate(row.id)}>
-              {row.imageUrl
-                ? <img className="desk-mine-thumb" src={row.imageUrl} alt="" width="52" height="52" loading="lazy" referrerPolicy="no-referrer" />
-                : <span className="desk-mine-thumb desk-mine-thumb-empty">主图</span>}
-              <span className="desk-mine-body">
-                <b>{row.title}</b>
-                <span className="desk-mine-price">{row.priceLine}</span>
-              </span>
-              <span className="desk-chip desk-mine-chip">{row.chip}</span>
-            </button>
-            <button type="button" className="button secondary desk-mine-action"
-              onClick={() => onOpenCandidate(row.id)}>{row.action}</button>
-            <EliminateControl id={row.id} dataRevision={revisions.get(row.id) ?? null} disabled={saving} onEliminate={eliminate} />
-          </li>)}
-        </ul>}
-      <EliminatedFold rows={dropped} onRestore={restore} disabled={saving} />
-    </section>
     <div className="desk-layout">
       <section className="desk-feed" aria-label="待你决定">
         <header className="desk-feed-header">
@@ -264,26 +167,18 @@ export default function SelectionDesk({
               onClick={() => batchAction(onEstimate)}>算利润区间</button>
             <button type="button" className="button secondary" disabled={saving || feed.current === null || feed.pendingTranslations === 0}
               onClick={() => batchAction(onTranslate)}>翻译标题（{feed.pendingTranslations} 条待翻）</button>
-            <button type="button" className="button secondary" disabled={saving || undecided.length === 0}
-              onClick={() => setBulkArmed(true)}>一键淘汰上一轮全部未选（{undecided.length}）</button>
           </div>
         </header>
-        {bulkArmed ? <p className="desk-bulk-confirm" role="status">
-          这会把上一轮里你既没点「要」也没点「不要」的 {undecided.length} 条一次淘汰，理由记为「{BULK_DECLINE_REASON}」；已经要过的不动。
-          <button type="button" className="button primary" disabled={saving} onClick={dropUndecided}>确定淘汰这 {undecided.length} 条</button>
-          <button type="button" className="button secondary" disabled={saving} onClick={() => setBulkArmed(false)}>取消</button>
-        </p> : null}
-        <p className="desk-hint">键盘：J 下一件 · K 上一件 · Y 要 · N 不要。运费占比＝运费 ÷（采购上限 ＋ 运费），只用已保存的估算数字。</p>
         {error ? <p role="alert">{error}</p> : null}
         {notice ? <p role="status" className="desk-notice">{notice}</p> : null}
         {/* 顶栏那个同名按钮去的是旧工程页，已经去掉了；这里只能指向本页右边「下一轮方向」里的那一个。 */}
         {rows.length === 0 ? <p role="status">本店当前没有等你决定的商品。点右边「下一轮方向」里的「找一轮新品」再找一批。</p> : null}
         {feed.direction === null ? null : <p className="desk-round-header">本轮结果：{feed.direction} · 查询于 {feed.queriedAt ?? "未记录时间"}</p>}
-        {rows.map(row => <FeedCard key={row.key} row={row} active={activeKey === row.key} saving={saving}
+        {rows.map(row => <FeedCard key={row.key} row={row} saving={saving}
           declining={declining === row.key} onDeclining={setDeclining} candidateRevision={revisions.get(row.importedCandidateId) ?? null}
           onSelect={select} onDecline={decline} onLater={later} onOpenCandidate={onOpenCandidate} onEliminate={eliminate} />)}
         {history.length ? <details className="desk-folded"><summary>历史轮次未处理的 {history.length} 条（默认隐藏）</summary>
-          {history.map(row => <FeedCard key={row.key} row={row} active={false} saving={saving}
+          {history.map(row => <FeedCard key={row.key} row={row} saving={saving}
             declining={declining === row.key} onDeclining={setDeclining} candidateRevision={revisions.get(row.importedCandidateId) ?? null}
             onSelect={select} onDecline={decline} onLater={later} onOpenCandidate={onOpenCandidate} onEliminate={eliminate}
             onSubmitSourceLink={typeof onSubmitSourceLink === "function" ? onSubmitSourceLink : null} store={feed.store} />)}
@@ -297,26 +192,6 @@ export default function SelectionDesk({
         </details> : null}
       </section>
       <aside className="desk-rail" aria-label="本店概览">
-        <section className="desk-rail-block">
-          <h3>需要你处理（{inbox.length}）</h3>
-          {inbox.length === 0 ? <p className="desk-rail-empty">现在没有等你处理的商品。</p> : <ul className="desk-rail-list">
-            {inbox.slice(0, 6).map(item => <li key={item.id}>
-              <b>{item.title}</b><span>{item.need}{item.moreNeeds > 0 ? `（还有 ${item.moreNeeds} 项）` : ""}</span>
-              {/* 贴货源链接 lives on 需要你处理, where the field to paste into is; every other action opens the product. */}
-              <button type="button" className="button secondary" onClick={() => item.action.key === "source_link"
-                ? onOpenInbox() : onOpenCandidate(item.id)}>{item.action.label}</button>
-            </li>)}</ul>}
-          {inbox.length > 6 ? <button type="button" className="button secondary" onClick={onOpenInbox}>查看全部 {inbox.length} 条</button> : null}
-          {unsourced.length ? <p className="desk-rail-unsourced">还有 {unsourced.length} 件没有货源，在「需要你处理」里逐件贴货源链接。
-            <button type="button" className="button secondary" onClick={onOpenInbox}>去贴链接</button></p> : null}
-        </section>
-        <section className="desk-rail-block">
-          <h3>进行中</h3>
-          {board.some(column => column.cards.length) ? <ul className="desk-rail-progress">
-            {board.map(column => <li key={column.key}><span>{column.title}</span><b>{column.cards.length}</b></li>)}</ul>
-            : <p className="desk-rail-empty">本店暂时没有在做的商品。</p>}
-          <button type="button" className="button secondary" onClick={onOpenBoard}>打开进行中</button>
-        </section>
         <section className="desk-rail-block">
           <h3>下一轮方向</h3>
           <p className="desk-rail-direction">{nextRound.direction || "还没有配置下一轮的查询方向。"}</p>

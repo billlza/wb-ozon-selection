@@ -44,19 +44,22 @@ const INITIAL_QUEUE = "codex_processing";
 /** 录入页读「找货中」用的那一个读取函数；放在组件外面，引用不变，轮询不会因为重新渲染而重来。 */
 const loadIntakeQueue = () => api.getIntakeQueue();
 /** The owner's own pages plus the maintenance list; every older page stays reachable under 维护. */
-const DESK_VIEWS = ["desk", "seerfar", "board", "inbox", "maint", "live"];
+const DESK_VIEWS = ["desk", "seerfar", "board", "inbox", "maint", "live", "paidround"];
 /** Views that read the saved query results, so the read keeps running while the owner is on any of them. */
-const DISCOVERY_VIEWS = ["discovery", "seerfar", "product", "live"];
+// 进行中和需要你处理也读：卡片上的中文标题来自已保存的查询结果。
+const DISCOVERY_VIEWS = ["discovery", "seerfar", "product", "live", "board", "inbox", "paidround"];
 /** Views whose product links open one product page. */
-const CANDIDATE_LINK_VIEWS = ["discovery", "desk", "seerfar", "board", "inbox", "product", "review", "live"];
+const CANDIDATE_LINK_VIEWS = ["discovery", "desk", "seerfar", "board", "inbox", "product", "review", "live", "paidround"];
 const MAINTENANCE_PAGES = [
+  // 方案 B 用 Seerfar 会员网页免费读榜单；按次扣分的 API 那一轮只留在维护里（2026-10-11 工作台评审）。
+  { view: "paidround", label: "Seerfar 付费查一轮（API，扣分）" },
   { view: "review", label: "今日选品评审" },
   { view: "discovery", label: "软件找商品" },
   { view: "accounts", label: "账户准备" },
   { view: "map", label: "全店能力地图" },
   { view: "phase2a", label: "第2A模拟验收" }
 ];
-const VIEW_TITLES = { desk: "录入新商品", seerfar: "Seerfar 自动选品", board: "进行中", inbox: "需要你处理", maint: "维护", live: "在售", product: "商品",
+const VIEW_TITLES = { desk: "录入新商品", seerfar: "Seerfar 自动选品", board: "进行中", inbox: "需要你处理", maint: "维护", live: "在售", paidround: "Seerfar 付费查一轮", product: "商品",
   map: "全店能力地图", phase2a: "第2A模拟验收", accounts: "账户准备", discovery: "软件找商品", review: "今日选品评审" };
 export default function App() {
   const [preparationSaveState] = useState(createPreparationSaveState);
@@ -1480,7 +1483,7 @@ export default function App() {
             onRetry={api.retryIntake} onResume={api.resumeIntake} onOpenCandidate={openDiscoveredCandidate}
             onOpenSeerfar={() => setView("seerfar")} loadStoreProfiles={api.getStoreProfiles} saveStoreProfile={api.saveStoreProfile}
             onOpenBoard={() => setView("board")} onOpenLive={() => setView("live")} onOpenMaintenance={() => setView("maint")} />
-        ) : view === "seerfar" ? (<>
+        ) : view === "paidround" ? (
           <SelectionDesk
             discoveryView={discoveryView}
             candidates={state.candidates}
@@ -1504,15 +1507,20 @@ export default function App() {
               // An older click that created a batch without a permit: this authorizes that same batch, never a new one.
               mutateProductDiscovery(api.authorizeProductDiscovery, { batchId, expectedRevision,
                 expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(), idempotencyKey: `desk-permit:${crypto.randomUUID()}` })}
-            onOpenBoard={() => setView("board")}
-            onOpenInbox={() => setView("inbox")}
             onEliminateCandidate={eliminateCandidate}
-            onRestoreCandidate={restoreCandidate}
             onSubmitSourceLink={submitSourceLink}
           />
-          {accountOwner ? seerfarError ? <p role="alert">读取 Seerfar 榜单失败：{seerfarError}</p>
-            : seerfarView ? <SeerfarWebRoundCard view={seerfarView} onStart={startSeerfarRound} onReadStoreSales={readStoreSales} onOpenCandidate={openDiscoveredCandidate} /> : null : null}
-        </>) : view === "board" ? (
+        ) : view === "seerfar" ? (
+          <div className="page-panel seerfar-page">
+            {accountOwner ? seerfarError ? <p role="alert">读取 Seerfar 榜单失败：{seerfarError}</p>
+              : seerfarView ? <SeerfarWebRoundCard view={seerfarView} onStart={startSeerfarRound} onReadStoreSales={readStoreSales} onOpenCandidate={openDiscoveredCandidate} />
+              : <p role="status">正在读取今天的 Seerfar 榜单…</p>
+              : <p role="status">请先登录主人身份后查看 Seerfar 自动选品。</p>}
+            {/* 每家店挑什么由店铺档案定，档案在录入页上看和改，这里不再放第二份。 */}
+            <p className="seerfar-profile-link">按每家店的店铺档案挑。
+              <button type="button" className="intake-link" onClick={() => setView("desk")}>看或改店铺档案</button></p>
+          </div>
+        ) : view === "board" ? (
           <PipelineBoard candidates={state.candidates} store={deskStore} discoveryView={discoveryView} intakeQueue={intake.queue}
             onOpenCandidate={openDiscoveredCandidate} onEliminateCandidate={eliminateCandidate} onRestoreCandidate={restoreCandidate}
             onRetryIntake={async (candidateId, dataRevision) => { try { return await api.retryIntake(candidateId, dataRevision); } finally { intake.refresh(); } }}

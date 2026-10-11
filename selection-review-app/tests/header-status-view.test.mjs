@@ -231,7 +231,7 @@ test('刷新数据和退出登录收进「维护」，添加我找到的商品�
   assert.doesNotMatch(app, /onAddProduct/u);
   assert.doesNotMatch(app, /setAddOpen/u);
   assert.match(app, /view === "desk" \? \(\s*<IntakePage /u);
-  assert.match(desk, /typeof onAddProduct === "function"/u);
+  assert.doesNotMatch(desk, /onAddProduct/u);
   // 空列表那句话原来指着顶栏的按钮，顶栏那个已经没了。
   assert.doesNotMatch(desk, /点右上角「找一轮新品」/u);
   assert.match(desk, /点右边「下一轮方向」里的「找一轮新品」/u);
