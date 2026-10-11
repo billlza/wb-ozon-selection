@@ -1459,10 +1459,11 @@ export default function App() {
         onAccessResolved={refreshOwnerPermissions} onAccessUnknown={clearOwnerPermissions} />
       {notice ? <div role={notice.type === "error" ? "alert" : "status"} className={`global-notice ${notice.type}`}>{notice.message}</div> : null}
 
-      {/* Piece D: page-wide notices and the runs that did not happen, read from saved records; nothing reruns by itself. */}
-      {DESK_VIEWS.includes(view) && accountOwner ? <GlobalNotices extensionStatus={effectiveExtensionStatus}
+      {/* Piece D: page-wide notices and the runs that did not happen, read from saved records; nothing reruns by itself.
+          The product page shows the plugin, login and slider notices too, but not the desk's list of stopped runs. */}
+      {(DESK_VIEWS.includes(view) || view === "product") && accountOwner ? <GlobalNotices extensionStatus={effectiveExtensionStatus}
         candidates={state.candidates} discoveryView={discoveryView} store={deskStore} loadIntakeQueue={loadIntakeQueue}
-        intakeShownOnPage={view === "desk"}
+        intakeShownOnPage={view === "desk"} showRunTodos={view !== "product"}
         onRetryIntake={async ({ candidateId, dataRevision }) => { try { return await api.retryIntake(candidateId, dataRevision); } finally { await load(true); } }}
         onResumeIntake={async () => { try { return await api.resumeIntake(); } finally { await load(true); } }}
         onStartRound={payload => mutateProductDiscovery(api.startProductDiscovery, payload)} /> : null}
@@ -1593,7 +1594,14 @@ export default function App() {
           onProposeC1OzonAttributes={proposeC1OzonAttributes}
           onLoadC1OzonAttributes={api.getC1OzonAttributes}
           onReadC1ColorDictionary={readC1ColorDictionary}
-          onOpenLegacyCard={() => setView("review")}
+          onContinueSavedDE={continueSavedDE}
+          onDispatchDProductionRound={dispatchDProductionRound}
+          onRollbackProductionAuthorization={rollbackProductionAuthorization}
+          onRecoverDInitialImport={recoverDInitialImport}
+          onReobserveDUnknownOutcome={reobserveDUnknownOutcome}
+          onReconcileDFromPlatformState={reconcileDFromPlatformState}
+          onAuthorizeAccountRead={payload => runAccountRead(api.authorizeAccountRead, payload)}
+          onContinueAccountRead={payload => runAccountRead(api.continueAccountRead, payload)}
           onEliminateCandidate={eliminateCandidate}
           onBack={() => setView("desk")}
         /></Suspense>

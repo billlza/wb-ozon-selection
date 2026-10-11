@@ -17,6 +17,7 @@ import C2FinalAssetsPanel from "./C2FinalAssetsPanel.jsx";
 import FinalProductPlanCard from "./FinalProductPlanCard.jsx";
 import SiblingBatchPreparation from './SiblingBatchPreparation.jsx';
 import Gate1Card from "./Gate1Card.jsx";
+import ProductPublishSection, { showsProductPublish } from "./ProductPublishSection.jsx";
 
 /**
  * One product page for the owner: the six steps of a product, with only the step that is actually open expanded.
@@ -136,6 +137,10 @@ export function skuChoiceSaved(candidate) {
 /** The step the owner is actually on. Supply is confirmed only once the lifecycle froze an A confirmation. */
 export function currentProductStep(candidate) {
   if (candidate?.workflowStatus === "listed") return "readback";
+  // 生产和回读的进度记在 SKU 包上；旧的执行记录不一定跟着走到 D/E，所以这两步先看 SKU 包。
+  const skuPhase = typeof candidate?.lifecycleV11?.skuPackage?.businessPhase === "string" ? candidate.lifecycleV11.skuPackage.businessPhase : "";
+  if (skuPhase.startsWith("E")) return "readback";
+  if (skuPhase.startsWith("D")) return "publish";
   const phase = typeof candidate?.executionRuntime?.businessPhase === "string" ? candidate.executionRuntime.businessPhase : "";
   if (phase.startsWith("E")) return "readback";
   if (phase.startsWith("D")) return "publish";
@@ -872,9 +877,9 @@ export function foldedStepLine(stepKey, step, candidate) {
   if (stepKey === "select" && skuChoiceSaved(candidate)) {
     return `已选定 ${candidate.sourceCapture.selectedSkuIds.length} 个规格，已经锁进这件商品的供货方案。`;
   }
-  if (stepKey === step) return "这一步的详细界面还在旧版页面里，先用「打开旧版A卡」查看。";
+  if (stepKey === step) return "这一步现在没有要你在这里点的东西；需要你处理的事会出现在「需要你处理」里。";
   return productStepPassed(stepKey, step)
-    ? "这一步已经做完了；详细内容还在旧版页面里，用「打开旧版A卡」可以回看。"
+    ? "这一步已经做完了。"
     : "等前面的步骤完成后再开始。";
 }
 
@@ -1654,7 +1659,7 @@ function RecaptureControl({ candidate, disabled = false, onRecapture }) {
  *
  * 它不探测、不读平台：显示什么全部来自服务端已经保存的 bExactCommissionRuntimeView。
  */
-function BetterCommissionEvidenceSection({ candidate, saving, onRecalculate, onOpenLegacyCard }) {
+function BetterCommissionEvidenceSection({ candidate, saving, onRecalculate }) {
   const recalculation = candidate.bExactCommissionRuntimeView;
   const rate = finite(recalculation.commissionRate) === null ? null
     : `${Number((recalculation.commissionRate * 100).toFixed(2))}%`;
@@ -1676,8 +1681,7 @@ function BetterCommissionEvidenceSection({ candidate, saving, onRecalculate, onO
       </button>
       <p className="product-actions-note">重算只用已经保存下来的证据，不会打开平台，也不会产生任何费用。</p>
     </> : <p className="product-actions-note">
-      {"现在还没有可用的更好证据，软件不会自己重试，也不会替你把估算当成实收。"}
-      {typeof onOpenLegacyCard === "function" ? "这一步的其余细节在「打开旧版A卡」里。" : ""}
+      现在还没有可用的更好证据，软件不会自己重试，也不会替你把估算当成实收。
     </p>}
   </section>;
 }
@@ -1744,7 +1748,7 @@ export default function ProductPage({
   siblingBatchExecutionLoading = false,
   onRefreshSiblingBatchExecution = null, onResumeSiblingBatchStock = null,
   siblingSkuIds = [], siblingCandidates = [], onRequestCapture, onReviewCaptureAndRequest, onRecaptureSource,
-  onConfirmProfitStep, onDeclareCargoFacts, onDeclareExtraHandlingFees, onDeclareUniformSupply, onReadOzonPage, onOpenLegacyCard,
+  onConfirmProfitStep, onDeclareCargoFacts, onDeclareExtraHandlingFees, onDeclareUniformSupply, onReadOzonPage,
   onStartImageMatch = null, onCompareImageMatch = null, onJudgeImageMatch = null,
   onStartOzonMatch = null, onCompareOzonMatch = null, onJudgeOzonMatch = null,
   onBack, onEliminateCandidate,
@@ -1758,6 +1762,9 @@ export default function ProductPage({
   onProposeC1OzonAttributes = null, onLoadC1OzonAttributes = null,
   onReadC1ColorDictionary = null,
   onRecalculateBWithExactCommission = null, onRefreshBFeeEvidence = null,
+  onContinueSavedDE = null, onDispatchDProductionRound = null, onRollbackProductionAuthorization = null,
+  onRecoverDInitialImport = null, onReobserveDUnknownOutcome = null, onReconcileDFromPlatformState = null,
+  onAuthorizeAccountRead = null, onContinueAccountRead = null,
   loadingLabel = "正在读取这件商品的找货资料…"
 }) {
   const draft = view?.supplierDraftV1 ?? null;
@@ -1958,8 +1965,6 @@ export default function ProductPage({
       </div>
       <div className="product-header-actions">
         {typeof onBack === "function" ? <button type="button" className="button secondary" onClick={onBack}>返回</button> : null}
-        {typeof onOpenLegacyCard === "function"
-          ? <button type="button" className="button secondary" onClick={onOpenLegacyCard}>打开旧版A卡</button> : null}
         {/* The same 淘汰 as every list, so a product can be dropped from the page the owner is already looking at. */}
         {candidate.workflowStatus === "eliminated"
           ? <span className="product-eliminated-note">已淘汰 · 在选品台的「已淘汰」里可以恢复</span>
@@ -2049,9 +2054,8 @@ export default function ProductPage({
       onConfirm={confirmProfitStep} onDeclareCargoFacts={declareCargoFacts}
       onDeclareExtraHandlingFees={declareExtraHandlingFees} onReadOzonPage={readOzonPage} /> : null}
 
-    {/* 算利润停在条件测算之后，这一步就只剩这一件事可做；它的按钮不能只长在旧版页面上。 */}
+    {/* 算利润停在条件测算之后，这一步就只剩这一件事可做，按钮就在这一页上。 */}
     {recalculationOpen ? <BetterCommissionEvidenceSection candidate={candidate} saving={saving}
-      onOpenLegacyCard={onOpenLegacyCard}
       onRecalculate={() => {
         // 这份记录和眼前这一版资料对不上时，buildBExactCommissionInput 自己会拒绝。
         // 拒绝要变成页面上那句话，不是一个没人接的异常——旧资料绝不会被提交出去。
@@ -2110,8 +2114,14 @@ export default function ProductPage({
     <FinalProductPlanCard candidate={candidate} identity={productionIdentity}
       onSaveProductionOwnerDecision={onSaveProductionOwnerDecision} onSaveFinalPricingReview={onSaveFinalPricingReview}
       onReviseC1FinalPlan={onReviseC1FinalPlan} />
+    <ProductPublishSection candidate={candidate}
+      onContinueSavedDE={onContinueSavedDE} onDispatchDProductionRound={onDispatchDProductionRound}
+      onRollbackProductionAuthorization={onRollbackProductionAuthorization} onRecoverDInitialImport={onRecoverDInitialImport}
+      onReobserveDUnknownOutcome={onReobserveDUnknownOutcome} onReconcileDFromPlatformState={onReconcileDFromPlatformState}
+      onAuthorizeAccountRead={onAuthorizeAccountRead} onContinueAccountRead={onContinueAccountRead} />
     {PRODUCT_STEPS.filter(item => item.key !== "find" && !(showsC1LocalPreparation(candidate) && item.key === "copy") && !(choosing && item.key === "select") &&
-      !((profitOpen || recalculationOpen) && item.key === "profit"))
+      !((profitOpen || recalculationOpen) && item.key === "profit") &&
+      !(showsProductPublish(candidate) && (item.key === "publish" || item.key === "readback")))
       .map(item => <details key={item.key} className="product-folded">
         <summary>{item.title}<span className="product-folded-state">{foldedStepState(item.key, step, candidate)}</span></summary>
         <p>{foldedStepLine(item.key, step, candidate)}</p>
