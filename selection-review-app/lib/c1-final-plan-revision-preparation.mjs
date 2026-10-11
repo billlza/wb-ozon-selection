@@ -10,7 +10,7 @@ import { isRuntimeConfigurationTimestamp } from "./runtime-configuration.mjs";
 import { createC2SoftwareContainer, prepareC2FinalUploadManifest } from "./c2-software-orchestrator.mjs";
 
 const FACT_FIELDS = ["exactSkuVerification", "productAttributes", "platformCategory", "schemaSnapshot", "batteryAssessment", "categoryRestrictions", "platformCompliance"];
-const PREVIOUS_C1_REFERENCE_FIELDS = ["c1AiDraftRequestV1", "c1AiDraftJobRefV1", "c1LocalDraftSourceV1", "c1KeywordPlanningLocalMaterialV1", "c1KeywordPlanningLocalMaterialProductionV1", "c1SoftwareEvidenceV1", "k3KeywordEvidenceSnapshotV1", "k3CurrentBindingV1", "c1ContentReviewV1", "c1EditorialContentReviewV1", "c1ColorDictionaryReadsV1", "c1FinalPlanRevisionPreparation", "c1FinalPlanRevisionCompletion"];
+const PREVIOUS_C1_REFERENCE_FIELDS = ["c1AiDraftRequestV1", "c1AiDraftJobRefV1", "c1LocalDraftSourceV1", "c1KeywordPlanningLocalMaterialV1", "c1KeywordPlanningLocalMaterialProductionV1", "c1SoftwareEvidenceV1", "k3KeywordEvidenceSnapshotV1", "k3CurrentBindingV1", "c1ContentReviewV1", "c1ContentForwardV1", "c1EditorialContentReviewV1", "c1ColorDictionaryReadsV1", "c1FinalPlanRevisionPreparation", "c1FinalPlanRevisionCompletion"];
 const CONTENT_FIELDS = ["seoTitleDraft", "descriptionDraft", "bulletPointsDraft", "searchKeywordsDraft", "seoEvidenceLayer"];
 export class C1FinalPlanRevisionError extends Error {
   constructor(code) { super(code); this.name = "C1FinalPlanRevisionError"; this.code = code; }

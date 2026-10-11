@@ -3,8 +3,9 @@ import { useSubmit } from "./FormRevisionNotice.jsx";
 import { productionAuthorizationInputFromCard } from "../productionAuthorizationInput.js";
 
 /**
- * 「上架」那一下。主人在卡上看完，填货号、（多个仓库时）选仓库、勾一句、点一次。服务端依次保存图片确认、生产授权和
- * 写入前那一次只读核验许可（lib/gate2-listing.mjs）；三条记录各自独立，这里把三件事都写明，不让一个勾悄悄多管一件。
+ * 「上架」那一下。主人在卡上看完，填货号、（多个仓库时）选仓库、勾一句、点一次。服务端依次保存图片确认（文案由软件
+ * 直接送进传图的，连同文案确认）、生产授权和写入前那一次只读核验许可（lib/gate2-listing.mjs）；三条记录各自独立，
+ * 这里把三件事都写明，不让一个勾悄悄多管一件。
  */
 export default function Gate2ListingForm({ candidate, identity, listing }) {
   const sku = candidate.lifecycleV11.skuPackage;
@@ -19,6 +20,8 @@ export default function Gate2ListingForm({ candidate, identity, listing }) {
   const binding = bindings.find(item => item.bindingId === bindingId);
   const store = preparation?.store?.displayName ?? "这个店铺";
   const scope = readiness.ready ? preparation.scope : null;
+  // 软件按「做这件」的许可把文案直接送进了传图的，文案也在这一下确认（服务端记成主人的文案确认）。
+  const copyAtListing = candidate.c1ContentReviewView?.status === "awaiting_listing";
   const canList = identity?.canSaveProductionOwnerDecision === true && readiness.ready && Boolean(binding) &&
     Boolean(merchantSku.trim()) && confirmed && !saving && typeof listing.onList === "function";
   function list(event) {
@@ -48,7 +51,7 @@ export default function Gate2ListingForm({ candidate, identity, listing }) {
     </fieldset> : <p role="status">{readiness.reason}</p>}
     {error ? <p role="alert">{error}</p> : null}
     <button type="submit" className="button primary" disabled={!canList}>{saving ? "正在上架…" : "上架"}</button>
-    <small>点一下依次保存三件事：这些图片作为上架素材；按这张卡写入{store}的授权；写入前读一次店铺后台（只读，最多三次请求，
+    <small>点一下依次保存三件事：{copyAtListing ? "这份文案和这些图片作为上架内容" : "这些图片作为上架素材"}；按这张卡写入{store}的授权；写入前读一次店铺后台（只读，最多三次请求，
       {listing.accountReadHours ?? 24} 小时内有效）。哪一步没过就停在那一步，已保存的照原样留着，软件不会自己再发。</small>
   </form>;
 }

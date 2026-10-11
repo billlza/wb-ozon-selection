@@ -1878,6 +1878,12 @@ test('新版商品页显示实际文案，内容确认前不出现上传入口',
   assert.doesNotMatch(html, /\[object Object\]|type="file"|准备文案请求/u);
   const viewer = await render(props({ candidate: record, productionIdentity: { roles: ['viewer'] }, onConfirmC1Content: forbidden }));
   assert.match(viewer, /disabled=""[^>]*>确认商品内容，进入图片/u);
+  // 软件按「做这件」的许可把文案送进了传图：照样摆出实际文案，但不再要单独确认，说清楚在上架卡上一起确认。
+  const forwarded = await render(props({ candidate: { ...record, c1ContentReviewView: { ...record.c1ContentReviewView,
+    status: 'awaiting_listing', canConfirm: false } }, productionIdentity: { roles: ['owner'] }, onConfirmC1Content: forbidden }));
+  assert.ok(forwarded.includes('Одежда для кошек'));
+  assert.match(forwarded, /你在上架卡上和图片一起看、一起确认，不用在这里单独确认/u);
+  assert.doesNotMatch(forwarded, /确认商品内容，进入图片|尚无新版内容确认记录|与原确认不一致/u);
 });
 
 test('修订稿与原稿明确区分，确认前隐藏付费与图片入口，来源失配不可确认', async () => {

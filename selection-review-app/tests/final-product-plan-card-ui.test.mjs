@@ -381,5 +381,9 @@ test('上架卡：同一张卡，底部换成一次「上架」，三件事写�
   const cardStage = await render({ ...props, listing: { ...listing, stage: 'card' } });
   assert.match(cardStage, />上架<\/button>/);
   assert.match(cardStage, /用现有资料准备新版方案/);
+  // 文案由软件按「做这件」的许可直接送进传图的：这一下连同文案一起确认，写明。
+  const forwarded = { ...props.candidate, c1ContentReviewView: { status: 'awaiting_listing', canConfirm: false } };
+  const copyAtListing = await render({ ...props, candidate: forwarded, listing: { ...listing, candidate: forwarded } });
+  assert.match(copyAtListing, /点一下依次保存三件事：这份文案和这些图片作为上架内容；按这张卡写入/);
   assert.deepEqual(props.candidate, before);
 });

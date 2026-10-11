@@ -4,27 +4,33 @@
  *
  * 这一份只管两件事，都不读不写：
  * 1. 许可（gate1AutopilotGrantV1）：主人点「做这件」时一起存下，或者在商品页上点「让软件接着做」时存下。许可的范围就是
- *    下面四步，全部只用已经保存的资料：不访问平台、不调 AI、不花钱、不改主人签过的东西。重新做一轮关口 1、换了 SKU 包
+ *    下面几步，全部只用已经保存的资料：不访问平台、不调 AI、不花钱、不改主人签过的东西。重新做一轮关口 1、换了 SKU 包
  *    或者商品被淘汰，许可就不再算数。
  * 2. 下一步（planGate1Autopilot）：按已经保存的记录，判断下一步是软件能做的哪一步，还是停在哪儿等主人。
  *
- * 一直停下来等主人的：重新读费用证据（只主人触发）、品牌与权利声明、属性映射、付费生成文案、确认文案、最终素材、
- * 上架确认。软件某一步出错就记下来停住，不自己重试；资料变了（修订号变了）才会再试，主人也可以点「让软件再试一次」。
+ * 一直停下来等主人的：重新读费用证据（只主人触发）、品牌与权利声明、属性映射、付费生成文案、传图、上架确认。
+ * 文案写好后不再单独确认，软件让它进入传图，主人在「上架」卡上和图片一起看（v2 许可才有这一步）。
+ * 软件某一步出错就记下来停住，不自己重试；资料变了（修订号变了）才会再试，主人也可以点「让软件再试一次」。
  */
 export const GATE1_AUTOPILOT_GRANT_SCHEMA_VERSION = 'gate1-autopilot-grant-v1';
 export const GATE1_AUTOPILOT_RECORD_SCHEMA_VERSION = 'gate1-autopilot-v1';
 export const GATE1_AUTOPILOT_VIEW_SCHEMA_VERSION = 'gate1-autopilot-view-v1';
-/** 卡上那句许可说明的版本。做这件的请求带着它，才算主人看过这句话。 */
-export const GATE1_AUTOPILOT_SCOPE_VERSION = 'gate1-autopilot-scope-v1';
+/**
+ * 卡上那句许可说明的版本。做这件的请求带着它，才算主人看过这句话。v2 多了一步「文案写好后直接进入传图」：文案不再单独
+ * 确认，和图片、店铺、价格一起在「上架」卡上看、一起点（lib/gate2-listing.mjs）。v1 的许可照旧算数，只是不含这一步。
+ */
+export const GATE1_AUTOPILOT_SCOPE_VERSION = 'gate1-autopilot-scope-v2';
+const GATE1_AUTOPILOT_SCOPE_VERSIONS = Object.freeze(['gate1-autopilot-scope-v1', GATE1_AUTOPILOT_SCOPE_VERSION]);
 export const GATE1_AUTOPILOT_ACTOR_SOURCE = 'gate1_autopilot';
 export const GATE1_AUTOPILOT_ACTOR_USER_ID = 'selection-review-software';
 export const GATE1_AUTOPILOT_CONSENT_LINE = '点「做这件」之后，重算利润、整理属性和关键词、准备文案请求这几步不花钱，软件自己往下做；' +
-  '要花钱、要你声明品牌与权利、要你确认内容和上架时，它停下来等你。';
+  '文案写好就直接进入传图，文案和图片最后在上架卡上一起看。要花钱、要你声明品牌与权利、要你传图和点「上架」时，它停下来等你。';
 export const GATE1_AUTOPILOT_STEPS = Object.freeze({
   b_exact_recalculation: '用店里的实收费率重算利润',
   c1_supply_backfill: '补齐已采到的供应属性',
   c1_local_material: '整理商品属性与关键词',
-  c1_prepare_copy: '准备文案请求'
+  c1_prepare_copy: '准备文案请求',
+  c1_forward_copy: '把写好的文案送进传图'
 });
 const RAN_STEPS_KEPT = 12;
 const STOP_LINES_SHOWN = 4;
@@ -66,7 +72,7 @@ export function buildGate1AutopilotGrant({ candidateId, sourceRevision, decision
 export function gate1AutopilotGrantCurrent(candidate) {
   const grant = candidate?.gate1AutopilotGrantV1;
   if (!isObject(grant) || grant.schemaVersion !== GATE1_AUTOPILOT_GRANT_SCHEMA_VERSION ||
-      grant.scopeVersion !== GATE1_AUTOPILOT_SCOPE_VERSION) return false;
+      !GATE1_AUTOPILOT_SCOPE_VERSIONS.includes(grant.scopeVersion) || !Array.isArray(grant.scope)) return false;
   if (candidate.workflowStatus === 'eliminated' || isObject(candidate.siblingSourceV1)) return false;
   if (grant.gate1DecidedAt !== null) {
     const decision = candidate.gate1DecisionV1;
@@ -131,7 +137,7 @@ const stop = (code, line) => Object.freeze({ code, line });
  * 下一步。只看已经保存的记录（以及服务端顺手算好的「能不能重算」那份视图），不探测、不读平台。
  * 返回 null：这件商品不在「做这件」和「上架确认」之间（还没确认供货、已经上架、被淘汰、同款各色成员，或不是 Ozon）。
  */
-export function planGate1Autopilot({ candidate, bExactCommissionRuntimeView = null }) {
+export function planGate1Autopilot({ candidate, bExactCommissionRuntimeView = null, c1EditorialPending = false }) {
   if (!isObject(candidate) || candidate.workflowStatus === 'eliminated' || candidate.workflowStatus === 'listed') return null;
   if (isObject(candidate.siblingSourceV1)) return null;
   const lifecycle = isObject(candidate.lifecycleV11) ? candidate.lifecycleV11 : null;
@@ -157,7 +163,12 @@ export function planGate1Autopilot({ candidate, bExactCommissionRuntimeView = nu
   } else if (sku.businessPhase === 'C1') {
     const plan = isObject(sku.c1ProductPlan) ? sku.c1ProductPlan : null;
     if (plan?.status === 'seo_draft_ready') {
-      stops.push(stop('c1_content_review', '文案已经写好，等你看一眼确认，确认后进入图片'));
+      // 文案写好了：有 v2 许可就直接进入传图，文案到「上架」卡上和图片一起看。改版方案、有待采用的修订稿、或者老许可，
+      // 仍旧停下等主人单独确认文案。
+      const forward = granted && candidate.gate1AutopilotGrantV1.scope.includes('c1_forward_copy') && c1EditorialPending !== true &&
+        !lifecycle.c1FinalPlanRevisionPreparation && !lifecycle.c1ContentReviewV1 && !lifecycle.c1ContentForwardV1;
+      if (forward) next = { step: 'c1_forward_copy', skuPackageId: sku.skuPackageId };
+      else stops.push(stop('c1_content_review', '文案已经写好，等你看一眼确认，确认后进入图片'));
     } else if (lifecycle.c1AiDraftJobRefV1) {
       working = '文案正在生成，结果回来后在这件商品的页面上确认';
     } else if (lifecycle.c1AiDraftRequestV1) {
@@ -185,7 +196,9 @@ export function planGate1Autopilot({ candidate, bExactCommissionRuntimeView = nu
     stops.push(isObject(sku.productionConfirmationCard)
       ? stop('gate2', '方案卡已经生成：在上架卡上看一眼，点「上架」')
       : arranged ? stop('gate2', '图片已经排好：在上架卡上看一眼，点「上架」')
-        : stop('c2_assets', '文案已确认：传上架用的图片，排第一张的就是主图'));
+        : stop('c2_assets', lifecycle.c1ContentForwardV1 && !lifecycle.c1ContentReviewV1
+          ? '文案已经写好：传上架用的图片，排第一张的就是主图；文案到上架卡上和图片一起看'
+          : '文案已确认：传上架用的图片，排第一张的就是主图'));
   } else {
     return null;
   }

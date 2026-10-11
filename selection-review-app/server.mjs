@@ -181,7 +181,7 @@ import { buildC1DraftRuntimeView } from "./lib/c1-draft-runtime-view.mjs";
 import { OwnerProductFactsError } from "./lib/owner-product-facts.mjs";
 import { C1AiGatewayError } from "./lib/c1-ai-gateway.mjs";
 import { ConfirmedSupplierInputError } from "./lib/confirmed-supplier-inputs.mjs";
-import { createC1ContentReviewUseCase, buildC1ContentReviewView, C1ContentReviewError } from "./lib/c1-content-review-use-case.mjs";
+import { createC1ContentReviewUseCase, buildC1ContentAcceptanceAtListing, buildC1ContentReviewView, C1ContentReviewError } from "./lib/c1-content-review-use-case.mjs";
 import { createC1EditorialReviewUseCase, buildC1EditorialReviewView, C1EditorialReviewError } from "./lib/c1-editorial-review-use-case.mjs";
 import { C1_LOCAL_DRAFT_FAILURE_CODES } from "./lib/c1-local-draft-source.mjs";
 import { createC1SkuRightsReviewUseCase } from "./lib/c1-sku-rights-review-submission.mjs";
@@ -677,6 +677,11 @@ function gate1AutopilotRecalculationView(document, candidate) {
   }
 }
 
+/** 这件商品有没有一份待主人采用的修订稿。有的话文案留给主人单独确认，软件不把它送进传图。 */
+function c1EditorialPendingFor(candidate) {
+  return c1EditorialProposalBundle?.request?.sourceIdentity?.candidateId === candidate?.id;
+}
+
 function gate1AutopilotErrorCode(error) {
   const code = String(error?.code ?? error?.message ?? "");
   return /^[A-Z][A-Z0-9_]{2,80}$/u.test(code) ? code : "GATE1_AUTOPILOT_STEP_FAILED";
@@ -714,6 +719,10 @@ async function runGate1AutopilotStep(candidate, next) {
     await c1DraftRuntimeServices.prepareLocal({ actor, input: { candidateId, expectedRevision: revision, ...keys } });
     return;
   }
+  if (next.step === "c1_forward_copy") {
+    await c1ContentReviewUseCase.forwardToListing({ actor, input: { candidateId, expectedRevision: revision, ...keys } });
+    return;
+  }
   throw new Error("GATE1_AUTOPILOT_STEP_UNKNOWN");
 }
 
@@ -741,7 +750,8 @@ async function advanceGate1Autopilot(candidateId) {
       const document = await readData();
       const candidate = document.candidates.find(item => item.id === candidateId);
       if (!candidate || !gate1AutopilotGrantCurrent(candidate)) break;
-      const plan = planGate1Autopilot({ candidate, bExactCommissionRuntimeView: gate1AutopilotRecalculationView(document, candidate) });
+      const plan = planGate1Autopilot({ candidate, bExactCommissionRuntimeView: gate1AutopilotRecalculationView(document, candidate),
+        c1EditorialPending: c1EditorialPendingFor(candidate) });
       if (plan?.status !== "running") break;
       const attempt = `${plan.next.step}:${candidate.dataRevision}`;
       if (attempt === previous) {
@@ -805,7 +815,8 @@ async function gate1AutopilotContinueRoute(req, res, pathname) {
     if (Number(current.dataRevision) !== input.dataRevision) {
       throw httpError(409, "商品资料已变化，请刷新后再点。", { code: "revision_conflict", currentRevision: current.dataRevision });
     }
-    const plan = planGate1Autopilot({ candidate: current, bExactCommissionRuntimeView: gate1AutopilotRecalculationView(data, current) });
+    const plan = planGate1Autopilot({ candidate: current, bExactCommissionRuntimeView: gate1AutopilotRecalculationView(data, current),
+      c1EditorialPending: c1EditorialPendingFor(current) });
     if (!plan?.next) {
       throw httpError(409, plan?.line ? `现在没有软件能接着做的步骤：${plan.line}。` : "这件商品现在没有软件能接着做的步骤。",
         { code: "gate1_autopilot_nothing_to_do" });
@@ -4058,7 +4069,7 @@ function publicCandidate(candidate, rules, queueInfo = {}, evidencePacks = [], c
     executionRuntimeView: buildCurrentExecutionRuntimeView(candidate),
     bExactCommissionRuntimeView,
     // 「做这件」之后软件做到了哪一步、停在哪儿等主人（lib/gate1-autopilot.mjs）。只读已保存的记录。
-    gate1AutopilotView: planGate1Autopilot({ candidate, bExactCommissionRuntimeView }),
+    gate1AutopilotView: planGate1Autopilot({ candidate, bExactCommissionRuntimeView, c1EditorialPending: c1EditorialPendingFor(candidate) }),
     // 「上架」那一道确认到了哪一段：等传图、可以预演上架卡、或者卡已生成待授权（lib/gate2-listing.mjs）。卡本身单独取。
     gate2ListingView: buildGate2ListingView(candidate),
     // 「这件的佣金还是估算的」那一块。挂在每一份候选视图上，所以从条件测算一路到上架之前的每一屏都看得见——
@@ -4684,7 +4695,7 @@ async function gate2ListingRoute(req, res, pathname) {
   // 1. 图片确认，生成正式方案卡。卡已经在了（上次停在授权那一步，或老商品）就跳过。
   if (preview.stage === "preview") {
     try {
-      await confirmC2FinalAssetsFor(candidateId, gate2FinalAssetInput(candidate));
+      await confirmC2FinalAssetsFor(candidateId, gate2FinalAssetInput(candidate), { ownerUserId: actor.userId });
     } catch (error) {
       if (!Number.isInteger(error?.status) || error.status >= 500) throw error;
       const result = gate2Stopped(error.status, "final_assets", error.extra?.code ?? "gate2_final_assets_failed",
@@ -4754,7 +4765,7 @@ async function gate2ListingRoute(req, res, pathname) {
 
 /** C2 最终素材确认：主人排定的图片按这个顺序锁定，生成最终商品方案卡；不授权、不派任务、不碰店铺。
  * 原路由和「上架」那一下共用。 */
-async function confirmC2FinalAssetsFor(candidateId, input) {
+async function confirmC2FinalAssetsFor(candidateId, input, { ownerUserId = null } = {}) {
   if (!Number.isInteger(input.dataRevision)) throw httpError(400, "C2素材确认必须提供当前数据修订号");
   if (input.confirmed !== true) throw httpError(400, "必须由主人明确确认当前SKU的最终素材清单和顺序");
   if (!Array.isArray(input.finalUploadAssets) || input.finalUploadAssets.length === 0) {
@@ -4784,6 +4795,19 @@ async function confirmC2FinalAssetsFor(candidateId, input) {
       throw httpError(409, "当前SKU已经生产授权或执行，不能覆盖素材");
     }
     const timestamp = now();
+    // 软件按「做这件」的许可把文案送进了传图的商品：文案只在「上架」卡上和图片一起确认，确认人就是点「上架」的主人。
+    let contentAcceptance = null;
+    if (current.lifecycleV11.c1ContentForwardV1 && !current.lifecycleV11.c1ContentReviewV1 && !ownerUserId) {
+      throw httpError(409, "这件的文案在上架卡上和图片一起确认，请在上架卡上点「上架」", { code: "c1_content_confirmed_at_listing" });
+    }
+    try {
+      contentAcceptance = buildC1ContentAcceptanceAtListing({ candidate: current, ownerUserId, confirmedAt: timestamp });
+    } catch (error) {
+      if (error instanceof C1ContentReviewError) {
+        throw httpError(409, error.code === "C1_CONTENT_FORWARD_CONTENT_CHANGED" ? "文案在送进传图之后变了，需要先重新确认文案" : error.message, { code: error.code });
+      }
+      throw error;
+    }
     let result;
     try {
       const manifest = prepareC2FinalUploadManifest({
@@ -4830,6 +4854,7 @@ async function confirmC2FinalAssetsFor(candidateId, input) {
     }
     current.lifecycleV11 = {
       ...current.lifecycleV11,
+      ...(contentAcceptance ? { c1ContentReviewV1: contentAcceptance } : {}),
       status: "awaiting_owner_business_confirmation",
       skuPackage: structuredClone(result.skuPackage),
       platformWrites: 0
@@ -4865,6 +4890,7 @@ async function confirmC2FinalAssetsFor(candidateId, input) {
       detail: "最终素材与商品方案卡已保存，等待主人确认准确生产范围"
     });
     addHistory(current, "user", "c2SoftwareFinalAssetsConfirmed", `主人确认${result.confirmationCard.c2Assets.finalUploads.length}个最终素材及清单指纹${result.finalManifest.manifestSha256}；已生成通用确认卡；未创建生产授权，零平台写入`, timestamp);
+    if (contentAcceptance) addHistory(current, "user", "c1ContentConfirmedAtListing", "主人在上架卡上确认了软件送进传图的那份文案（和图片同一次保存）；未创建生产授权，零平台写入", timestamp);
     return publicCandidate(current, data.rules);
   });
   return candidate;

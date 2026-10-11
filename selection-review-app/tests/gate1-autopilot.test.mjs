@@ -96,14 +96,33 @@ test("C1：没有当前准备材料就整理，整理好了就准备文案请求
   assert.equal(view.next, null);
 });
 
-test("文案请求准备好之后停在付费那一步；写好之后停在确认；C2 停在素材和方案卡", () => {
+test("文案请求准备好之后停在付费那一步；写好之后进入传图（老许可仍停在确认）；C2 停在素材和方案卡", () => {
   const paid = planGate1Autopilot({ candidate: product({ planStatus: "facts_checked", lifecycle: { c1AiDraftRequestV1: { requestId: "r" } } }) });
   assert.deepEqual([paid.status, paid.stops[0].code], ["waiting_owner", "c1_paid_draft"]);
   const running = planGate1Autopilot({ candidate: product({ planStatus: "facts_checked", lifecycle: {
     c1AiDraftRequestV1: { requestId: "r" }, c1AiDraftJobRefV1: { jobId: "j" } } }) });
   assert.equal(running.status, "working");
-  assert.equal(planGate1Autopilot({ candidate: product({ planStatus: "seo_draft_ready" }) }).stops[0].code, "c1_content_review");
-  assert.equal(planGate1Autopilot({ candidate: product({ phase: "C2" }) }).stops[0].code, "c2_assets");
+  // 文案写好了：v2 许可让它直接进入传图，文案到上架卡上和图片一起看。
+  assert.deepEqual(planGate1Autopilot({ candidate: product({ planStatus: "seo_draft_ready" }) }).next,
+    { step: "c1_forward_copy", skuPackageId: "sku-1", label: "把写好的文案送进传图" });
+  // 老许可（v1）不含这一步；改版方案、有待采用的修订稿、已经确认或已经送过的，都停下等主人确认文案。
+  const v1 = product({ planStatus: "seo_draft_ready" });
+  v1.gate1AutopilotGrantV1 = { ...v1.gate1AutopilotGrantV1, scopeVersion: "gate1-autopilot-scope-v1",
+    scope: ["b_exact_recalculation", "c1_supply_backfill", "c1_local_material", "c1_prepare_copy"] };
+  assert.equal(gate1AutopilotGrantCurrent(v1), true, "v1 许可照旧算数");
+  assert.equal(planGate1Autopilot({ candidate: v1 }).stops[0].code, "c1_content_review");
+  assert.equal(gate1AutopilotMayAct(softwareActor, v1, "c1_forward_copy"), false);
+  assert.equal(planGate1Autopilot({ candidate: product({ planStatus: "seo_draft_ready" }), c1EditorialPending: true }).stops[0].code, "c1_content_review");
+  for (const lifecycle of [{ c1FinalPlanRevisionPreparation: { status: "facts_prepared" } }, { c1ContentReviewV1: { status: "confirmed" } },
+    { c1ContentForwardV1: { status: "forwarded_for_listing" } }]) {
+    assert.equal(planGate1Autopilot({ candidate: product({ planStatus: "seo_draft_ready", lifecycle }) }).stops[0].code, "c1_content_review");
+  }
+  assert.equal(planGate1Autopilot({ candidate: product({ planStatus: "seo_draft_ready", granted: false }) }).stops[0].code, "c1_content_review");
+  assert.deepEqual(planGate1Autopilot({ candidate: product({ phase: "C2" }) }).stops.map(item => [item.code, item.line]),
+    [["c2_assets", "文案已确认：传上架用的图片，排第一张的就是主图"]]);
+  assert.deepEqual(planGate1Autopilot({ candidate: product({ phase: "C2", lifecycle: { c1ContentForwardV1: { status: "forwarded_for_listing" } } }) })
+    .stops.map(item => [item.code, item.line]),
+    [["c2_assets", "文案已经写好：传上架用的图片，排第一张的就是主图；文案到上架卡上和图片一起看"]]);
   // 图排好了（没有还在传的）就是「上架」那一道确认；还有图在传，仍然停在图片这一步。
   const arranged = (status) => product({ phase: "C2", lifecycle: { c2UploadDraft: { revision: 3,
     uploads: [{ assetId: "a1", status: "ready" }, { assetId: "a2", status }], selection: [{ assetId: "a1", order: 1 }] } } });
