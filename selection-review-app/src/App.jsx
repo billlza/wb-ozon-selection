@@ -28,6 +28,8 @@ import OwnerInbox from "./components/OwnerInbox.jsx";
 import IntakePage, { useIntakeQueue } from "./components/IntakePage.jsx";
 import { platformOfStore, storeOptions, storesOfPlatform } from "./intakeView.js";
 import GlobalNotices from "./components/GlobalNotices.jsx";
+import MaintenanceReadOnly from "./components/MaintenanceReadOnly.jsx";
+import ListedProducts from "./components/ListedProducts.jsx";
 const ProductPage = lazy(() => import("./components/ProductPage.jsx"));
 import { deskCounts, discoveredTitleZh, shortProductTitle, storeLabel } from "./selectionDeskView.js";
 import {
@@ -42,11 +44,11 @@ const INITIAL_QUEUE = "codex_processing";
 /** 录入页读「找货中」用的那一个读取函数；放在组件外面，引用不变，轮询不会因为重新渲染而重来。 */
 const loadIntakeQueue = () => api.getIntakeQueue();
 /** The owner's own pages plus the maintenance list; every older page stays reachable under 维护. */
-const DESK_VIEWS = ["desk", "seerfar", "board", "inbox", "maint"];
+const DESK_VIEWS = ["desk", "seerfar", "board", "inbox", "maint", "live"];
 /** Views that read the saved query results, so the read keeps running while the owner is on any of them. */
-const DISCOVERY_VIEWS = ["discovery", "seerfar", "product"];
+const DISCOVERY_VIEWS = ["discovery", "seerfar", "product", "live"];
 /** Views whose product links open one product page. */
-const CANDIDATE_LINK_VIEWS = ["discovery", "desk", "seerfar", "board", "inbox", "product"];
+const CANDIDATE_LINK_VIEWS = ["discovery", "desk", "seerfar", "board", "inbox", "product", "review", "live"];
 const MAINTENANCE_PAGES = [
   { view: "review", label: "今日选品评审" },
   { view: "discovery", label: "软件找商品" },
@@ -54,7 +56,7 @@ const MAINTENANCE_PAGES = [
   { view: "map", label: "全店能力地图" },
   { view: "phase2a", label: "第2A模拟验收" }
 ];
-const VIEW_TITLES = { desk: "录入新商品", seerfar: "Seerfar 自动选品", board: "进行中", inbox: "需要你处理", maint: "维护", product: "商品",
+const VIEW_TITLES = { desk: "录入新商品", seerfar: "Seerfar 自动选品", board: "进行中", inbox: "需要你处理", maint: "维护", live: "在售", product: "商品",
   map: "全店能力地图", phase2a: "第2A模拟验收", accounts: "账户准备", discovery: "软件找商品", review: "今日选品评审" };
 export default function App() {
   const [preparationSaveState] = useState(createPreparationSaveState);
@@ -1473,7 +1475,7 @@ export default function App() {
             targetStore={deskPlatform === "ozon" ? deskStore : null} onSubmitLinks={api.submitIntakeLinks}
             onRetry={api.retryIntake} onResume={api.resumeIntake} onOpenCandidate={openDiscoveredCandidate}
             onOpenSeerfar={() => setView("seerfar")} loadStoreProfiles={api.getStoreProfiles} saveStoreProfile={api.saveStoreProfile}
-            onOpenBoard={() => setView("board")} onOpenMaintenance={() => setView("maint")} />
+            onOpenBoard={() => setView("board")} onOpenLive={() => setView("live")} onOpenMaintenance={() => setView("maint")} />
         ) : view === "seerfar" ? (<>
           <SelectionDesk
             discoveryView={discoveryView}
@@ -1509,13 +1511,15 @@ export default function App() {
         </>) : view === "board" ? (
           <PipelineBoard candidates={state.candidates} store={deskStore} onOpenCandidate={openDiscoveredCandidate}
             onEliminateCandidate={eliminateCandidate} onRestoreCandidate={restoreCandidate} />
+        ) : view === "live" ? (
+          <ListedProducts candidates={state.candidates} store={deskStore} discoveryView={discoveryView} onOpenCandidate={openDiscoveredCandidate} />
         ) : view === "inbox" ? (
           <OwnerInbox candidates={state.candidates} store={deskStore} onOpenCandidate={openDiscoveredCandidate}
             onEliminateCandidate={eliminateCandidate} onRestoreCandidate={restoreCandidate} onSubmitSourceLink={submitSourceLink} />
         ) : (
           <div className="page-panel">
             <h2>维护</h2>
-            <p>这些是以前的页面，行为没有变化。日常判断不需要打开它们。</p>
+            <p>这些是以前的页面，现在只能看，不能改。日常判断不需要打开它们。</p>
             <div className="maint-pages">
               {MAINTENANCE_PAGES.map(page => <button key={page.view} type="button" className="button secondary" onClick={() => setView(page.view)}>{page.label}</button>)}
             </div>
@@ -1609,27 +1613,27 @@ export default function App() {
         {!accountOwner?<p role="status">请先登录主人身份后查看商品发现计划。</p>:<>
           <button type="button" className="button secondary" onClick={()=>setDiscoveryRefresh(value=>value+1)}>刷新发现记录</button>
           {discoveryError?<p role="alert">读取发现记录失败：{discoveryError}</p>:discoveryView?
-            <ProductDiscoveryCard view={discoveryView}
+            <MaintenanceReadOnly><ProductDiscoveryCard view={discoveryView}
               onCreate={payload=>mutateProductDiscovery(api.createProductDiscovery,payload)}
               onAuthorize={payload=>mutateProductDiscovery(api.authorizeProductDiscovery,payload)}
               onContinue={payload=>mutateProductDiscovery(api.continueProductDiscovery,payload)}
               onSelect={payload=>mutateProductDiscovery(api.selectProductDiscovery,payload)}
               onTranslate={payload=>mutateProductDiscovery(api.translateProductDiscovery,payload)}
               onEstimate={payload=>mutateProductDiscovery(api.estimateProductDiscovery,payload)}
-              onOpenCandidate={openDiscoveredCandidate}/>:<p role="status">正在读取当前发现计划和保存的批次…</p>}
+              onOpenCandidate={openDiscoveredCandidate}/></MaintenanceReadOnly>:<p role="status">正在读取当前发现计划和保存的批次…</p>}
         </>}
       </div>:view==='accounts'?<div className="page-panel">
         {!accountOwner?<p role="status">请先登录主人身份后查看账户准备。</p>:<>
           <button type="button" className="button secondary" onClick={()=>setAccountRefresh(value=>value+1)}>重新读取准备记录</button>
           {accountPreparationError?<p role="alert">读取账户准备失败：{accountPreparationError}</p>:accountPreparationView?
-            <OzonAccountPreparationCard view={accountPreparationView}
+            <MaintenanceReadOnly><OzonAccountPreparationCard view={accountPreparationView}
               onCreate={payload=>runAccountPreparation(api.createAccountPreparation,payload)}
               onAuthorize={payload=>runAccountPreparation(api.authorizeAccountDiscovery,payload)}
               onContinue={payload=>runAccountPreparation(api.continueAccountDiscovery,payload)}
-              onSelectWarehouse={payload=>runAccountPreparation(api.selectAccountWarehouse,payload)}/>:<p role="status">正在读取已保存的账户准备…</p>}
+              onSelectWarehouse={payload=>runAccountPreparation(api.selectAccountWarehouse,payload)}/></MaintenanceReadOnly>:<p role="status">正在读取已保存的账户准备…</p>}
         </>}
       </div>:view === "phase2a" ? (
-        <Phase2ASimulation onClose={() => setView("review")} />
+        <MaintenanceReadOnly><Phase2ASimulation onClose={() => setView("review")} /></MaintenanceReadOnly>
       ) : view === "map" ? (
         <ThreeStoreMap
           map={threeStoreMap}
@@ -1661,6 +1665,7 @@ export default function App() {
         />
         {selected ? (
           <div className="review-pane" key={selected.id}>
+            <MaintenanceReadOnly onOpenProduct={() => openDiscoveredCandidate(selected.id)}>
             {detailCandidateId?<>
               {!accountOwner?<p role="status">请先登录主人身份后查看本轮详情准备。</p>:<>
                 <button type="button" className="button secondary" onClick={()=>setProductDetailRefresh(value=>value+1)}>重新读取详情准备</button>
@@ -1717,6 +1722,7 @@ export default function App() {
               productionIdentity={state.runtimeArchitecture?.currentUser}
             /></Suspense>
             <CandidateReview candidate={selected} />
+            </MaintenanceReadOnly>
           </div>
         ) : (
           <main className="candidate-detail empty-detail">这个队列暂时没有商品</main>

@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T16:51:45.083Z",
+  "frozenAt": "2026-10-11T16:57:30.899Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 977,
-      "sha256": "bfd2aa1884afc19aa3f7b5a22a4668f400f1439981a9159552137a9f61d32274",
+      "artifactCount": 982,
+      "sha256": "12b3d485bff2cb73309d1a2835b6f153da9ae752609fa1c99a1dacec95f64f75",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -440,7 +440,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "01f21a80441607b8fb2c71a2ff239839570af7a603a66f5ffa255dff49465f92"
+        "sha256": "0302a098fcbf13266c265b32c6fa3be702d874a88bfd5e17a2d63ad947d27b68"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -1680,7 +1680,7 @@
       },
       {
         "path": "src/App.jsx",
-        "sha256": "a277afbc5d33e9a9a2cb6310d4fca6beabc65193f20345ce37134b87956e91b4"
+        "sha256": "f5361a26d534e3b812006ceea38d6027d397c627b3769834d11102d3db4a5348"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1812,7 +1812,7 @@
       },
       {
         "path": "src/components/IntakePage.jsx",
-        "sha256": "7c8074fb0d5803a64d34d8e6c17148f20e789b89c738a7ffe01d9055027d5239"
+        "sha256": "2c28885207545090a3159186872dd9c97c470b1638d696ccb358a7fe79098bed"
       },
       {
         "path": "src/components/KeywordSoftwareRuntimeCard.jsx",
@@ -1827,8 +1827,16 @@
         "sha256": "f46055fafb13cb6c467f20856f4c654cc4632c3579fcdebd4029b67686299392"
       },
       {
+        "path": "src/components/ListedProducts.jsx",
+        "sha256": "e38be4eaddb5901f1d35e7a181471ba002711bdeba26c152ae733ba2c47112a0"
+      },
+      {
         "path": "src/components/LocalOwnerAccessPanel.jsx",
         "sha256": "0da0382c0fcf000782ee8ce294704049ccb68900f3b1f7a24ad9050879886cb2"
+      },
+      {
+        "path": "src/components/MaintenanceReadOnly.jsx",
+        "sha256": "111449e0c02a0d3c45e3f47dd912754bcc74f138d591a5f3a35a3f0f84c4d4f8"
       },
       {
         "path": "src/components/OperatingRules.jsx",
@@ -1987,6 +1995,10 @@
         "sha256": "2c171b38488fae4a0b89810f6f4af670ac71db92954b53267760a9e7de3ecfb2"
       },
       {
+        "path": "src/listedProductsView.js",
+        "sha256": "993850a2b984e88a581502ee18de9fb7b633532527b5c47bbe2d4c42fb14053e"
+      },
+      {
         "path": "src/main.jsx",
         "sha256": "b66e35a3c35cd68e5504bbe0cbacb429b3ef522d9e5efec457558c092eb52947"
       },
@@ -2032,7 +2044,7 @@
       },
       {
         "path": "src/styles.css",
-        "sha256": "8fae21de7e68305bbb3993f1ea27dbcd89314cf6a8b94334f7916e38decd0628"
+        "sha256": "11b483861c76588fd0a7be9bd49a04e82b39d9d3138e19b99a76047050044a1f"
       },
       {
         "path": "src/supplierImageMatchView.js",
@@ -3307,6 +3319,10 @@
         "sha256": "4b64d1282876730c105006a527e9672a8e701f2e9b6501cb8d55b87c256e8b48"
       },
       {
+        "path": "tests/listed-products-ui.test.mjs",
+        "sha256": "bc4f5f0b8a76b68cb5ff29b350825a5f8746d095a4ee812fa5f30952f98cb27d"
+      },
+      {
         "path": "tests/listing-preparation-review-boundary.test.mjs",
         "sha256": "ba80b5f619bb4b21345dbec05ebcc6379fe388ba1bc9398af9ba85004fad4627"
       },
@@ -3325,6 +3341,10 @@
       {
         "path": "tests/local-process-sandbox-profile.test.mjs",
         "sha256": "174be9492337376c8c18e1be31e88924415cc5178f2aff4116271eb70d27c13f"
+      },
+      {
+        "path": "tests/maintenance-read-only-ui.test.mjs",
+        "sha256": "69f0deea7d32463f90dc3879d91cc063c11ca8f8e9b4daf3f0c2eb6bf6b472d3"
       },
       {
         "path": "tests/market-sample-policy.test.mjs",
@@ -6509,9 +6529,14 @@
         "src/selectionDeskView.js",
         "lib/global-notices.mjs",
         "src/components/GlobalNotices.jsx",
+        "src/components/MaintenanceReadOnly.jsx",
+        "src/components/ListedProducts.jsx",
+        "src/listedProductsView.js",
         "src/components/SourceLinkControl.jsx",
         "tests/global-notices.test.mjs",
         "tests/inbox-notices-ui.test.mjs",
+        "tests/maintenance-read-only-ui.test.mjs",
+        "tests/listed-products-ui.test.mjs",
         "lib/discovery-title-translation.mjs",
         "lib/discovery-title-translation-store.mjs",
         "lib/seerfar-discovery-software-runner.mjs",
