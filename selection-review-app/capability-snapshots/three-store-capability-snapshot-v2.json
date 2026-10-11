@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T17:43:40.140Z",
+  "frozenAt": "2026-10-11T17:45:03.908Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 986,
-      "sha256": "0dc01b4f21b4fe6e022aaf9e0dc5f939cbe83f442f3572678d23e34bc0c0d62a",
+      "sha256": "43d37596aed175edd46aafc9700f9c721356dd6e821e1a55646e5a0b6b73f18d",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -1684,7 +1684,7 @@
       },
       {
         "path": "src/App.jsx",
-        "sha256": "792cc97965c4fee5fdb1eb85c999efc3b72b8f00e9f2cc3fcc839410d4346c28"
+        "sha256": "915e969c197fa2bb26ea93b8fb353342eac416a0a4df45d1f867df2cc808b0b7"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1852,7 +1852,7 @@
       },
       {
         "path": "src/components/OwnerInbox.jsx",
-        "sha256": "606c2b6a0d0c4cb30653a3e1739b9f33b63f6bb7d23079be6848ca9d8010becb"
+        "sha256": "16060766798d497a582954dc830d0bc254b4e59e9c2c0cb719c0a8f8446360ea"
       },
       {
         "path": "src/components/OzonAccountPreparationCard.jsx",
@@ -1908,7 +1908,7 @@
       },
       {
         "path": "src/components/SelectionDesk.jsx",
-        "sha256": "86b5311d28ff255a0ff69cd7f6dadb010608833fbc875924ca45effc29588a79"
+        "sha256": "a161e3196642d0598701241b15edf8175688ce180b27b679c12339a9dc2821b5"
       },
       {
         "path": "src/components/SiblingBatchPreparation.jsx",
@@ -1952,7 +1952,7 @@
       },
       {
         "path": "src/constants.js",
-        "sha256": "b25bd0e0c26c9dec03fe5b3db78b0442f2e48aca8a0f8ba5737ee95ccfae669e"
+        "sha256": "1b482ebfb49900bbcf6fa724947e7cdbf1dc9bea69cd12ec6e2cc558b20b18c3"
       },
       {
         "path": "src/dESoftwareRuntimeView.js",
@@ -2028,7 +2028,7 @@
       },
       {
         "path": "src/selectionDeskView.js",
-        "sha256": "52d78426d9670bd72e7ebe5f40c980fd4df6708973818ebde8c168137a02b257"
+        "sha256": "cb3b333cd1cac7d0b0337a8e30d0f455921977d37ff70c404db106d5c95efaaf"
       },
       {
         "path": "src/siblingBatchAuthorizationInput.js",
@@ -2052,7 +2052,7 @@
       },
       {
         "path": "src/styles.css",
-        "sha256": "3286cc30bf3b473581533eaab3946f7ce483f6e87b698d029217b36d74ebdb8c"
+        "sha256": "63820ed072e490fbf8eb47b1f91ebd85386722c4d63f81b804fb736b05b87f73"
       },
       {
         "path": "src/supplierImageMatchView.js",
@@ -3132,7 +3132,7 @@
       },
       {
         "path": "tests/header-status-view.test.mjs",
-        "sha256": "72d0b985902941d37197a1a2e60bbd3a69ae7afbcce576d1a49884903e0f1b17"
+        "sha256": "adad41a42357c85e8c6254eb13f11a1b62871a54b0fb8dc77d62384648f9c3af"
       },
       {
         "path": "tests/helpers/a-supplier-image-search-fixture.mjs",
@@ -3196,7 +3196,7 @@
       },
       {
         "path": "tests/inbox-notices-ui.test.mjs",
-        "sha256": "2b8fd3a7a8faded4d13d76e96c41999d24495ba349a1bfb30a56a125a4d96a9b"
+        "sha256": "7bad9d6496673284014e7faeb0c8dbc3607ea0de73420c590c55438e3cbee14f"
       },
       {
         "path": "tests/intake-api.test.mjs",
@@ -3212,7 +3212,7 @@
       },
       {
         "path": "tests/intake-page-ui.test.mjs",
-        "sha256": "745c018f66b466a078124b940c8d9d25a295351db4b072edf9a4c976e0c0f07e"
+        "sha256": "8dfa096b0cbb3fd5d339df1795d862904d5a543f6a816696ff3a35264228e54f"
       },
       {
         "path": "tests/intake-pipeline.test.mjs",
@@ -3376,7 +3376,7 @@
       },
       {
         "path": "tests/owner-inbox-board-ui.test.mjs",
-        "sha256": "4118926822275b1a69b6e46fed506f05a1c25754bf66925667a0644f89493828"
+        "sha256": "75fe713d7bdd745a225dba7193c11313c0c3d584c4e0f740bbd3d5321e3aefc2"
       },
       {
         "path": "tests/owner-media-authorization.test.mjs",
@@ -3756,11 +3756,11 @@
       },
       {
         "path": "tests/selection-desk-ui.test.mjs",
-        "sha256": "d09dda1e88468594fb217e17ce2a67ef31bb8f8dce486e1eec9260308d9c3a6f"
+        "sha256": "bbf521bc258f2f9ffe5738374003e14e07cb3f350f5bd3cdfe8dd3b6e0f34d88"
       },
       {
         "path": "tests/selection-desk-view.test.mjs",
-        "sha256": "3248f9c98375c44252e1deda1d049aacd50e2d3331cc9ded57e05f5aa6d2cc78"
+        "sha256": "538660bac46ee323473128f995bd9a9b73df1bef04122df37c195a1c906f9049"
       },
       {
         "path": "tests/sibling-batch-a-b-c1.test.mjs",
