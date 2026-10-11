@@ -1,6 +1,7 @@
 import { adapt1688CaptureToSupplierOption } from './supplier-option.mjs';
 import { readAProductDetailSupplierEvidence } from './a-product-detail-evidence.mjs';
 import { currentSalesSnapshot } from "./discovery-market-snapshot.mjs";
+import { siblingReferencedSalesSnapshot } from "./sibling-sales-snapshot.mjs";
 import { normalizePinduoduoCaptureSource, sourceCaptureFailureDestinationLabel } from "./source-capture.mjs";
 import { STORE_PLATFORMS, isCompleteStoreRef, sameStoreRef } from "./store-binding.mjs";
 
@@ -93,7 +94,8 @@ export function buildRealAConfirmationCard(candidate, options = {}) {
   }
   const before = JSON.stringify(candidate);
   const apiEvidence = readAProductDetailSupplierEvidence(candidate);
-  const sales = apiEvidence?.salesSnapshot ?? newestValidSalesSnapshot(candidate);
+  // A sibling colour shows the snapshot its record names (its family's price basis), not whichever copy is newest.
+  const sales = apiEvidence?.salesSnapshot ?? siblingReferencedSalesSnapshot(candidate) ?? newestValidSalesSnapshot(candidate);
   const capturedSku = selectedCaptureSku(candidate);
   const supplierCapture = apiEvidence?.supplierCapture ?? (isObject(candidate.sourceCapture) && candidate.sourceCapture.mode === "a_supplier_capture"
     ? candidate.sourceCapture

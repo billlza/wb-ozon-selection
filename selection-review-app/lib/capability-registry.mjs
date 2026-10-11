@@ -1790,6 +1790,7 @@ export const CAPABILITY_ARTIFACT_ASSIGNMENTS = Object.freeze([
       "lib/sibling-sku-candidate.mjs",
       "lib/sibling-sku-card-guard.mjs",
       "lib/sibling-batch-a-b-c1.mjs",
+      "lib/sibling-sales-snapshot.mjs",
       "lib/profit-step-review.mjs",
       "src/selectionDeskView.js",
       "lib/global-notices.mjs",

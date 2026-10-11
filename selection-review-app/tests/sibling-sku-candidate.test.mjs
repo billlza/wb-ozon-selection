@@ -258,6 +258,21 @@ test('newer provider snapshot preserves older real page category evidence for B'
   assert.notEqual(child.salesSnapshotsV11[0], real);
 });
 
+test('a new colour is priced on the snapshot the parent itself was priced on, not on a newer copy', () => {
+  const document = fixture();
+  const older = structuredClone(document.candidates[0].salesSnapshotsV11[0]);
+  const newer = { ...structuredClone(older), snapshotId: 'sales:synthetic-newer-copy', currentPrice: 475,
+    collectedAt: new Date(Date.parse(older.collectedAt) + 86_400_000).toISOString() };
+  const parent = document.candidates[0];
+  parent.salesSnapshotsV11 = [older, newer];
+  parent.lifecycleV11.opportunityPackage = { ...parent.lifecycleV11.opportunityPackage, salesSnapshots: [structuredClone(older)] };
+  parent.lifecycleV11.skuPackage.inheritedSalesSnapshotRefs = [older.snapshotId];
+  const child = create(document).candidate;
+  assert.deepEqual(child.salesSnapshotsV11.map(snapshot => snapshot.snapshotId), [older.snapshotId, newer.snapshotId]);
+  assert.equal(child.siblingSourceV1.salesSnapshotId, older.snapshotId);
+  assert.equal(buildRealAConfirmationCard(child).salesReview.snapshotId, older.snapshotId);
+});
+
 test('blackcp child enters the normal owner A confirmation and frozen independent SKU lifecycle', () => {
   const document = fixture();
   const parent = structuredClone(document.candidates[0]);

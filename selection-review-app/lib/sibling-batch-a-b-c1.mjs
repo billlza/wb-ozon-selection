@@ -10,6 +10,7 @@ import { createSoftwareExecutionRuntime, startSoftwareStep, completeExecutionSte
 import { isCommercialMerchantSku, prepareProductionCommercialDraft } from './production-commercial-draft.mjs';
 import { merchantSkuClaimsForStore } from './business-mutation-transaction.mjs';
 import { siblingPlatform, siblingSupplyPreparation } from './sibling-supply-preparation.mjs';
+import { siblingFamilySalesSnapshot, siblingReferencedSalesSnapshot } from './sibling-sales-snapshot.mjs';
 
 const CENTRAL_MODES = new Set(['central_test', 'central_production']);
 const text = value => typeof value === 'string' && value.trim() !== '';
@@ -126,12 +127,17 @@ function projectMember({ document, parent, member, input, guooFilePath }) {
   const reuse = input.shared.reusePriorSupply ? siblingSupplyPreparation(parent, [child]) : null;
   if (reuse && (reuse.gaps.length || reuse.rows[0].unitProductPrice !== member.unitProductPrice)) fail('SIBLING_BATCH_A_QUANTITY_ONE_EVIDENCE_MISSING');
   const common = reuse ? { ...input.shared, quantityOneEvidenceSourceNote: reuse.rows[0].quantityOneEvidenceSourceNote } : input.shared;
-  const projected = { ...withParentCategory(child, parent), targetPlatform: platform };
+  // Every colour is judged on the parent's frozen market snapshot, including colours created before that rule.
+  const family = siblingFamilySalesSnapshot(parent);
+  const siblingSource = family && child.siblingSourceV1.salesSnapshotId !== family.snapshotId
+    ? { ...structuredClone(child.siblingSourceV1), salesSnapshotId: family.snapshotId } : child.siblingSourceV1;
+  if (family && !siblingReferencedSalesSnapshot({ ...child, siblingSourceV1: siblingSource })) fail('SIBLING_BATCH_A_FAMILY_SNAPSHOT_MISSING');
+  const projected = { ...withParentCategory(child, parent), siblingSourceV1: siblingSource, targetPlatform: platform };
   const submission = submissionFor(projected, member, common);
   const withCost = { ...projected, packagingCostRmb: input.shared.packagingCostRmb };
   const contextual = applyLifecycleBEvidenceContext(withCost, { submission, guooFilePath,
     route: input.shared.route }).candidate;
-  return { child, platform, reuse, projected, submission, contextual };
+  return { child, platform, reuse, projected, submission, contextual, siblingSource };
 }
 
 const preparedInputKey = input => JSON.stringify(input);
@@ -195,7 +201,7 @@ export async function commitSiblingBatchABAndC1({ repository, runtimeMode, actor
     const catalogs = document.currentCommissionCatalogs ?? [];
     const at = serverClock();
     const prepared = input.members.map(member => {
-      const { child, platform, reuse, submission, contextual } = projectMember({ document, parent, member, input, guooFilePath });
+      const { child, platform, reuse, submission, contextual, siblingSource } = projectMember({ document, parent, member, input, guooFilePath });
       const profitRule = resolveLifecycleBProfitRule(contextual, document.rules);
       const otherCosts = buildLifecycleBExplicitOtherCosts(contextual, profitRule, { asOf: at });
       const result = runRealAConfirmationToBAndC1({ candidate: contextual, submission,
@@ -203,14 +209,15 @@ export async function commitSiblingBatchABAndC1({ repository, runtimeMode, actor
       if (result.profitModel.result !== 'passed' || result.c1Handoff === null) fail('SIBLING_BATCH_A_B_NOT_PASSED');
       assertCurrentBCommissionEvidence({ bundle: result.systemEvidenceBundle,
         evidencePacks: packs, currentCommissionCatalogs: catalogs, asOf: at });
-      return { child, result, platform, reuse, context: contextual.lifecycleEvidenceContextV11 };
+      return { child, result, platform, reuse, siblingSource, context: contextual.lifecycleEvidenceContextV11 };
     });
     if (newPacks.length) {
       document.evidencePacks = document.evidencePacks ?? [];
       commitLifecycleBEvidencePacks(document, newPacks, { createdAt: at, currentCommissionCatalogs: catalogs,
         createdBy: 'sibling_batch_a_confirmation_system_evidence' });
     }
-    for (const { child, result, context, platform, reuse } of prepared) {
+    for (const { child, result, context, platform, reuse, siblingSource } of prepared) {
+      child.siblingSourceV1 = structuredClone(siblingSource);
       child.targetPlatform = platform;
       child.packagingCostRmb = input.shared.packagingCostRmb;
       child.lifecycleEvidenceContextV11 = structuredClone(context);

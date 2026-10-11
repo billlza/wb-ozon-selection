@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T16:04:37.278Z",
+  "frozenAt": "2026-10-11T16:14:14.026Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 975,
-      "sha256": "a6da88dd8d30215655f19de6d610c1cc950286e591ca97a6d0b4bd9c68be6898",
+      "artifactCount": 976,
+      "sha256": "3b044984e9b2d60d34fe8480d1a0813ed74f8898f1de7d4dde959adc9a588986",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -440,7 +440,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "3299b377c2ff468bc69c805d67717b9ce49ca99b6ff164aee3b793fbf119be9e"
+        "sha256": "72a8d76571294ed469d3ccb511f1f8a43acbc82dcae1a6ddc8f5f843e67505cb"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -1092,7 +1092,7 @@
       },
       {
         "path": "lib/real-a-confirmation-card.mjs",
-        "sha256": "bdad37a611eea4d2a07e3cbdb774b0031092174e00733d46231ebb2aab220633"
+        "sha256": "1999d304fdcce9ed8d6bd9b4eabd76f28ae732f6c3c720fbe042a1ba42a18559"
       },
       {
         "path": "lib/real-c1-preparation.mjs",
@@ -1172,7 +1172,7 @@
       },
       {
         "path": "lib/sibling-batch-a-b-c1.mjs",
-        "sha256": "2a456635f2dc4557c2430825057aa37852abd99785c9ed7f94330fbbaea121cf"
+        "sha256": "cf85217b79f91cb0d058b43b78b608c5184a5f8924ceae2795bac2ed59acb5de"
       },
       {
         "path": "lib/sibling-batch-c1-preparation.mjs",
@@ -1199,8 +1199,12 @@
         "sha256": "b25e65759317ce4e29409c08bbe01131807a259f0df1f82d99d42fc0f24ae630"
       },
       {
+        "path": "lib/sibling-sales-snapshot.mjs",
+        "sha256": "f98f4e543066275e39d7b9c1aaf811f7738e47cf6e03099cd7dfa87daacf2745"
+      },
+      {
         "path": "lib/sibling-sku-candidate.mjs",
-        "sha256": "baa9bbc05633e978b38ca1539b1c1e210a1399fa6673ef1934fe6f3c5d646888"
+        "sha256": "1046d08b36f6cf0d1d545eb1538d27ff5699a7937841b3da7c1d156387b7f3ec"
       },
       {
         "path": "lib/sibling-sku-card-guard.mjs",
@@ -1888,7 +1892,7 @@
       },
       {
         "path": "src/components/SiblingBatchPreparation.jsx",
-        "sha256": "2a852a07676fafed68c00447ca6f46883657b2db3e4c34caa6f68c9b5df4b8c9"
+        "sha256": "9a65e5f622c53623f64e93ef5a268580c286761304a62b8b6c4bf11f5d9025b7"
       },
       {
         "path": "src/components/SiblingPreparationWorkspace.css",
@@ -3720,7 +3724,7 @@
       },
       {
         "path": "tests/sibling-batch-a-b-c1.test.mjs",
-        "sha256": "725e77c7ea88dfdac28d234c0ee379028b4d26f37fe7fa9f0203c5ced098766c"
+        "sha256": "d6fb4c09e425a0bdf5183d3e11ca61846d45fd3f36717b9e5bfadf9831b9c68d"
       },
       {
         "path": "tests/sibling-batch-authorization-input.test.mjs",
@@ -3776,7 +3780,7 @@
       },
       {
         "path": "tests/sibling-sku-candidate.test.mjs",
-        "sha256": "15a6f92791e2239db27cf7d1c8c5d0ac9381a2385c6136f12d2e5288f82288e1"
+        "sha256": "9f521403c102a92d12f818244dfe87f15ae89c92c9ca573fb6b2ede942ec4480"
       },
       {
         "path": "tests/sibling-supply-preparation.test.mjs",
@@ -6492,6 +6496,7 @@
         "lib/sibling-sku-candidate.mjs",
         "lib/sibling-sku-card-guard.mjs",
         "lib/sibling-batch-a-b-c1.mjs",
+        "lib/sibling-sales-snapshot.mjs",
         "lib/profit-step-review.mjs",
         "src/selectionDeskView.js",
         "lib/global-notices.mjs",

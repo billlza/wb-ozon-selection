@@ -1,5 +1,6 @@
 import { createInitialCandidate } from './candidate-initialization.mjs';
 import { currentSalesSnapshot } from './discovery-market-snapshot.mjs';
+import { siblingFamilySalesSnapshot } from './sibling-sales-snapshot.mjs';
 import { normalizeSupplierCaptureSource } from './source-capture.mjs';
 import { inForceSkuUniformSupply } from './sku-choice-estimate.mjs';
 import { isCompleteStoreRef, sameStoreRef, STORE_PLATFORMS } from './store-binding.mjs';
@@ -65,7 +66,8 @@ export function createSiblingSkuCandidate({ document, parentCandidateId, input, 
   if (input.productName !== undefined && input.productName !== productName) {
     fail('SIBLING_NAME_CONFLICT', '商品名称由已采集规格生成，请刷新页面后重新建立');
   }
-  const sales = currentSalesSnapshot(parent);
+  // Each colour is priced on the snapshot the parent itself was priced on; only a parent that froze none falls back to the newest.
+  const sales = siblingFamilySalesSnapshot(parent) ?? currentSalesSnapshot(parent);
   if (!sales) fail('SIBLING_MARKET_EVIDENCE_MISSING', '原商品没有可复用的有效市场快照');
   const salesSnapshots = parent.salesSnapshotsV11.filter(snapshot => validateSalesSnapshot(snapshot).valid);
   const uniform = inForceSkuUniformSupply(parent);

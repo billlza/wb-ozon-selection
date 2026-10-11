@@ -8,6 +8,7 @@ import { siblingBatchReview } from '../siblingBatchReview.js';
 import { siblingBatchAuthorizationInput } from '../siblingBatchAuthorizationInput.js';
 import { siblingMerchantSkuSuggestions, siblingBatchMemberDefaults } from '../siblingBatchFormDefaults.js';
 import { inForceSkuUniformSupply, capturedSkuWeightKg } from '../../lib/sku-choice-estimate.mjs';
+import { siblingFamilySalesSnapshot } from '../../lib/sibling-sales-snapshot.mjs';
 
 const numberOrNull = optionalNumber;
 const executionStatusNames = Object.freeze({ not_started: '未开始', not_sent: '未发送', intent: '已记录发送意图',
@@ -81,7 +82,8 @@ function SiblingBatchPreparationBody({ parent, siblings, preparationSaveState, o
   const workflowAvailable = preparationWorkflowAvailable(workspaceStatus);
   const allAtA = allCreated && review.rows.every(row => !siblings.find(child => child.id === row.candidateId)?.lifecycleV11?.skuPackage);
   const first = siblings.find(child => child.id === review.rows[0].candidateId);
-  const sales = first?.realAConfirmationCard?.salesReview;
+  // Every colour is priced on the snapshot the parent itself was priced on; the server checks the same rule.
+  const sales = siblingFamilySalesSnapshot(parent) ?? first?.realAConfirmationCard?.salesReview;
   const bindings = review.executionBindings;
   const finalInput = siblingBatchAuthorizationInput(parent, siblings, bindingId, { inventoryAction });
   const effectiveStock = row => stockEdits[row.sourceSkuId] ?? (row.stock ?? '');
@@ -323,7 +325,7 @@ function SiblingBatchPreparationBody({ parent, siblings, preparationSaveState, o
     <SiblingPreparationWorkspace parent={parent} siblings={siblings} saveState={preparationSaveState} onCatalog={setWorkspaceCatalog} onValues={workspaceChanged} onPage={setWorkspacePage} onDirty={setWorkspaceDirty} onStageAssets={stageWorkspaceAssets} onSaved={setWorkspaceSaved} onStatus={setWorkspaceStatus} onSupplyPreparation={setWorkspaceSupply} onSaving={setWorkspaceSaving} confirmingSupply={saving} supplyConfirmationReceipt={supplyConfirmationReceipt} formalCopyAdoption={formalCopyAdoption}/>
     <h3>当前正式流程与缺项</h3>
     {workflowAvailable && allAtA && (!workspaceValues || workspacePage===0) ? <form onSubmit={submitA}>
-      <p>当前销售快照：{sales?.title || '缺少有效快照'}。确认前逐行核对数量 1 单价、打包重量、颜色和商家货号；本批不重读供应页。</p>
+      <p>定价用的销售快照（和原商品同一份）：{sales ? `${sales.title}${Number.isFinite(sales.currentPrice) ? `，${sales.currentPrice} ${sales.currency ?? ''}`.trimEnd() : ''}` : '缺少有效快照'}。确认前逐行核对数量 1 单价、打包重量、颜色和商家货号；本批不重读供应页。</p>
       {!workspaceValues ? <><div className="product-batch-common">
         <label>共用目标成交价 RUB<input required type="number" min="0.01" step="0.01" value={draft.shared.targetSalePriceRub}
           onChange={event => sharedField('targetSalePriceRub', event.target.value)} /></label>
