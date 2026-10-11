@@ -154,3 +154,22 @@ test("入参多一个键少一个键都不收", async () => {
   await assert.rejects(useCase.backfill({ actor: owner(), input: missing }),
     invalid("C1_SUPPLY_ATTRIBUTE_BACKFILL_INPUT_INVALID"));
 });
+
+// 「做这件」之后软件自己往下走（lib/gate1-autopilot.mjs）：有许可的软件身份能补，没许可的不能；
+// 计划器认出这件商品该补，和用例的条件是同一套。
+test("有「做这件」许可的软件身份能补齐，没许可的不能；计划器也认出这一步", async () => {
+  const { buildGate1AutopilotGrant, planGate1Autopilot } = await import("../lib/gate1-autopilot.mjs");
+  const software = createActorContext({ userId: "selection-review-software", sessionId: "gate1-autopilot:test",
+    actorType: "software", roles: ["operator"], source: "gate1_autopilot", authenticatedAt: NOW });
+  const ungranted = await candidateAtInputsReady();
+  await assert.rejects(runner(ungranted)(software), rejects("C1_SUPPLY_ATTRIBUTE_BACKFILL_AUTOPILOT_GRANT_REQUIRED"));
+
+  const candidate = await candidateAtInputsReady();
+  candidate.gate1DecisionV1 = { decision: "accept", decidedAt: NOW, roundIndex: 0 };
+  candidate.gate1AutopilotGrantV1 = buildGate1AutopilotGrant({ candidateId: candidate.id, sourceRevision: 1,
+    decision: candidate.gate1DecisionV1, via: "gate1_accept", grantedAt: NOW, grantedBy: "local-owner:test" });
+  assert.equal(planGate1Autopilot({ candidate }).next.step, "c1_supply_backfill");
+  const result = await runner(candidate)(software);
+  assert.ok(result.result.addedAttributeKeys.includes("面料"));
+  assert.equal(planGate1Autopilot({ candidate: result.candidate }).next.step, "c1_local_material");
+});

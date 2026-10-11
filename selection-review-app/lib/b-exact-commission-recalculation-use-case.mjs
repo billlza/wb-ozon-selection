@@ -6,8 +6,13 @@ import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs
 import { BExactCommissionRecalculationError, runSavedConditionalBWithExactEvidence } from "./real-a-b-c1-flow.mjs";
 import { recoverBExactCommissionTechnicalFailure, startSoftwareStep, completeExecutionStep } from "./software-execution-state.mjs";
 import { applyGate1Shortfall } from "./gate1-decision.mjs";
+import { gate1AutopilotMayAct, isGate1AutopilotActor } from "./gate1-autopilot.mjs";
 
-/** Explicit owner action over saved evidence only; no connector or scheduler dependency. */
+/**
+ * Explicit owner action over saved evidence only; no connector or scheduler dependency.
+ * 主人点过「做这件」并许可之后，软件身份也可以做这一步，但只在用的是店里的实收费率时（lib/gate1-autopilot.mjs）：
+ * 官方费率表算出来的结论上不了架，用不用它还是主人的决定。
+ */
 export function createBExactCommissionRecalculationUseCase({ repository, runtimeMode, serverClock }) {
   if (!["local_development", "central_test", "central_production"].includes(runtimeMode) || typeof serverClock !== "function") {
     throw new TypeError("B_EXACT_RECALCULATION_DEPENDENCY_INVALID");
@@ -23,11 +28,13 @@ export function createBExactCommissionRecalculationUseCase({ repository, runtime
           keys.filter(key => key !== "expectedRevision").some(key => typeof input[key] !== "string" || !input[key].trim())) {
         throw new BExactCommissionRecalculationError("B_EXACT_RECALCULATION_INPUT_INVALID");
       }
-      authorizeOperation({ actor, requiredRoles: ["owner"] });
-      if (actor.actorType !== "human" || actor.source !== "authenticated_identity_provider") {
+      const software = isGate1AutopilotActor(actor);
+      const requiredRoles = software ? ["operator"] : ["owner"];
+      authorizeOperation({ actor, requiredRoles });
+      if (!software && (actor.actorType !== "human" || actor.source !== "authenticated_identity_provider")) {
         throw new BExactCommissionRecalculationError("B_EXACT_RECALCULATION_AUTHENTICATED_OWNER_REQUIRED");
       }
-      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: ["owner"],
+      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles,
         action: "b_exact_commission_recalculate", candidateId: input.candidateId, skuPackageId: input.skuPackageId,
         expectedRevision: input.expectedRevision, idempotencyKey: input.idempotencyKey,
         inputFingerprint: fingerprintCanonicalRecord(input), auditEventId: input.auditEventId,
@@ -37,9 +44,15 @@ export function createBExactCommissionRecalculationUseCase({ repository, runtime
               candidate.executionRuntime?.technicalFailure?.failureId !== input.failureId) {
             throw new BExactCommissionRecalculationError("B_EXACT_RECALCULATION_SOURCE_CONFLICT");
           }
+          if (software && !gate1AutopilotMayAct(actor, candidate, "b_exact_recalculation")) {
+            throw new BExactCommissionRecalculationError("B_EXACT_RECALCULATION_AUTOPILOT_GRANT_REQUIRED");
+          }
           if (relatedSoftwareJobs.length !== 0) throw new BExactCommissionRecalculationError("B_EXACT_RECALCULATION_JOBS_PRESENT");
           const otherCosts = buildLifecycleBExplicitOtherCosts(candidate, resolveLifecycleBProfitRule(candidate, rules), { asOf: observedAt });
           const computed = runSavedConditionalBWithExactEvidence({ candidate, evidencePacks, currentCommissionCatalogs, otherCosts, processedAt: observedAt });
+          if (software && computed.systemEvidenceBundle.platformFeeEvidence.commissionEvidenceMode !== "exact") {
+            throw new BExactCommissionRecalculationError("B_EXACT_RECALCULATION_SOFTWARE_EXACT_ONLY");
+          }
           const priorSystemEvidenceBundle = structuredClone(candidate.lifecycleV11.bSystemEvidenceBundle);
           const recovered = recoverBExactCommissionTechnicalFailure(candidate.executionRuntime, {
             failureId: input.failureId, candidateId: input.candidateId, sourceRevision: input.expectedRevision, at: observedAt

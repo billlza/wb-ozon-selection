@@ -67,7 +67,7 @@ test("formal rejected recalculation saves a new profit version and no C1", async
   assert.equal(candidate.workflowStatus, "eliminated");
 });
 
-test("a product the owner chose with 做这件 goes back to him when the recalculation still misses the line", async () => {
+test("a product the owner chose with 做这件 goes back to the owner when the recalculation still misses the line", async () => {
   const f = await fixture({ rejected: true });
   await f.repository.transact(document => {
     document.candidates[0].gate1DecisionV1 = { decision: "accept", decidedAt: f.at };
@@ -276,4 +276,51 @@ test("这次复算会用哪一种费用证据，点之前就说得出来", async
   assert.equal(officialView.commissionEvidenceLabel, B_BETTER_COMMISSION_EVIDENCE_LABELS.official_reference);
   // 说清楚这不是平台实收，免得主人以为可以直接上架。
   assert.match(officialView.message, /不是这个店被扣过的钱/u);
+});
+
+/**
+ * 「做这件」之后软件自己往下走（lib/gate1-autopilot.mjs）：有许可的软件身份可以用店里的实收费率重算；
+ * 没许可不行，只读到官方费率表也不行——那一份要不要用，还是主人的决定。
+ */
+async function grantAutopilot(f) {
+  const { buildGate1AutopilotGrant } = await import("../lib/gate1-autopilot.mjs");
+  await f.repository.transact(document => {
+    const candidate = document.candidates[0];
+    candidate.gate1DecisionV1 = { decision: "accept", decidedAt: f.at, roundIndex: 0 };
+    candidate.gate1AutopilotGrantV1 = buildGate1AutopilotGrant({ candidateId: candidate.id, sourceRevision: candidate.dataRevision,
+      decision: candidate.gate1DecisionV1, via: "gate1_accept", grantedAt: f.at, grantedBy: "owner-b" });
+    return { changed: true, document, result: null };
+  });
+}
+const autopilotActor = at => createActorContext({ userId: "selection-review-software", sessionId: "gate1-autopilot:test",
+  actorType: "software", roles: ["operator"], source: "gate1_autopilot", authenticatedAt: at });
+
+test("有「做这件」许可的软件身份可以用店里的实收费率重算", async () => {
+  const f = await fixture();
+  await grantAutopilot(f);
+  const result = await f.usecase.recalculate({ actor: autopilotActor(f.at), input: f.input });
+  assert.equal(result.result.status, "passed");
+  assert.equal(result.result.commissionEvidenceMode, "exact");
+  const saved = await f.repository.readSnapshot();
+  assert.equal(saved.candidates[0].lifecycleV11.skuPackage.businessPhase, "C1");
+  assert.equal(saved.runtime.operationAudit.at(-1).actor.source, "gate1_autopilot");
+});
+
+test("没有许可的软件身份不能重算，什么都不改", async () => {
+  const f = await fixture();
+  const before = await f.repository.readSnapshot();
+  await assert.rejects(f.usecase.recalculate({ actor: autopilotActor(f.at), input: f.input }), /B_EXACT_RECALCULATION_AUTOPILOT_GRANT_REQUIRED/);
+  assert.deepEqual(await f.repository.readSnapshot(), before);
+  const other = createActorContext({ userId: "selection-review-software", sessionId: "s", actorType: "software", roles: ["operator"],
+    source: "selection_review_state_machine", authenticatedAt: f.at });
+  await assert.rejects(f.usecase.recalculate({ actor: other, input: f.input }), /RUNTIME_OPERATION_FORBIDDEN/);
+});
+
+test("只读到官方费率表时，软件身份即使有许可也不替主人重算", async () => {
+  const f = await fixture();
+  await grantAutopilot(f);
+  await f.repository.transact(document => { makeOfficialCommissionPack(document); return { document, changed: true }; });
+  const before = await f.repository.readSnapshot();
+  await assert.rejects(f.usecase.recalculate({ actor: autopilotActor(f.at), input: f.input }), /B_EXACT_RECALCULATION_SOFTWARE_EXACT_ONLY/);
+  assert.deepEqual(await f.repository.readSnapshot(), before);
 });
