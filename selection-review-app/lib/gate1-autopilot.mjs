@@ -178,9 +178,14 @@ export function planGate1Autopilot({ candidate, bExactCommissionRuntimeView = nu
       }
     }
   } else if (sku.businessPhase === 'C2') {
+    // 图排好了就是「上架」那一道确认：图片、店铺写入和写入前的核验在同一张卡上一次点完（lib/gate2-listing.mjs）。
+    const draft = isObject(lifecycle.c2UploadDraft) ? lifecycle.c2UploadDraft : null;
+    const arranged = Array.isArray(draft?.selection) && draft.selection.length > 0 &&
+      !(Array.isArray(draft.uploads) && draft.uploads.some(upload => upload?.status === 'uploading'));
     stops.push(isObject(sku.productionConfirmationCard)
-      ? stop('gate2', '方案卡已经生成：核对最终定价，确认上架')
-      : stop('c2_assets', '文案已确认：放最终图片，确认素材'));
+      ? stop('gate2', '方案卡已经生成：在上架卡上看一眼，点「上架」')
+      : arranged ? stop('gate2', '图片已经排好：在上架卡上看一眼，点「上架」')
+        : stop('c2_assets', '文案已确认：传上架用的图片，排第一张的就是主图'));
   } else {
     return null;
   }

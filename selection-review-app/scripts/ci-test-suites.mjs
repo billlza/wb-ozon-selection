@@ -29,6 +29,7 @@ export const API_PROCESS_TESTS = Object.freeze([
   "supplier-draft-api.test.mjs",
   "gate1-api.test.mjs",
   "gate1-autopilot-api.test.mjs",
+  "gate2-listing-api.test.mjs",
   "c2-upload-api.test.mjs",
   "collaboration-api.test.mjs",
   "dispatch-api.test.mjs",

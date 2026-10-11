@@ -438,5 +438,9 @@ export const api = {
     request(`/api/candidates/${encodeURIComponent(candidateId)}/gate1/shortfall`, { method: "POST", body: JSON.stringify(payload) }),
   // 做这件之后：老商品点一下让软件接着做不花钱的几步，出过错的点一下再试一次。只做本地资料整理，不付费、不碰平台。
   continueGate1Autopilot: (candidateId, payload) =>
-    request(`/api/candidates/${encodeURIComponent(candidateId)}/gate1/autopilot/continue`, { method: "POST", body: JSON.stringify(payload) })
+    request(`/api/candidates/${encodeURIComponent(candidateId)}/gate1/autopilot/continue`, { method: "POST", body: JSON.stringify(payload) }),
+  // 「上架」卡：按已保存资料预演的那张卡（只读），和点一次「上架」（图片确认、生产授权、写入前的一次只读核验许可）。
+  getGate2Preview: (candidateId, signal) => request(`/api/candidates/${encodeURIComponent(candidateId)}/gate2/preview`, { signal }),
+  listGate2: (candidateId, payload) =>
+    request(`/api/candidates/${encodeURIComponent(candidateId)}/gate2/list`, { method: "POST", body: JSON.stringify(payload) })
 };

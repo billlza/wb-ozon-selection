@@ -361,3 +361,25 @@ test('revision API uses the normal endpoint and preserves explicit service error
     assert.equal(calls.length, 2);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test('上架卡：同一张卡，底部换成一次「上架」，三件事写明；预演阶段不能准备新版方案，也没有分步的生产授权表单', async () => {
+  const props = fixture();
+  props.identity = { authenticated: true, roles: ['owner'], canSaveProductionOwnerDecision: true };
+  props.onReviseC1FinalPlan = forbidden;
+  const before = structuredClone(props.candidate);
+  const listing = { stage: 'preview', previewFingerprint: 'f'.repeat(64), accountReadHours: 24, onList: forbidden, candidate: props.candidate };
+  const html = await render({ ...props, listing });
+  assert.match(html, /<h3>上架前看一眼<\/h3>/);
+  assert.match(html, /点「上架」之前什么都不会保存/);
+  assert.match(html, /<button type="submit" class="button primary" disabled="">上架<\/button>/);
+  assert.match(html, /我看过这张卡。按上面的图片、文案和价格，在[^<]+上架这件商品。/);
+  assert.match(html, /这些图片作为上架素材；按这张卡写入[^<]+的授权；写入前读一次店铺后台（只读，最多三次请求，\s*24 小时内有效）/);
+  assert.match(html, /售价 \d+(\.\d+)? ₽（后台写入 \d+(\.\d+)? 元）· 库存 100 件/);
+  assert.match(html, /value="MERCHANT-OWNER"|本店商品货号/);
+  assert.doesNotMatch(html, /通过进入生产授权|用现有资料准备新版方案/);
+  // 卡已经生成、还没授权（上次停在授权那一步）：照样是「上架」，可以准备新版方案。
+  const cardStage = await render({ ...props, listing: { ...listing, stage: 'card' } });
+  assert.match(cardStage, />上架<\/button>/);
+  assert.match(cardStage, /用现有资料准备新版方案/);
+  assert.deepEqual(props.candidate, before);
+});

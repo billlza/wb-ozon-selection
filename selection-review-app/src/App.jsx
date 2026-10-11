@@ -1211,6 +1211,22 @@ export default function App() {
     }
   }
 
+  // 「上架」那一下：图片确认、生产授权和写入前那一次只读核验依次保存；停在哪一步，服务端那句话照原样告诉主人。
+  async function listGate2(payload) {
+    if (!selected) return;
+    try {
+      const result = await api.listGate2(selected.id, payload);
+      setNotice({ type: "success", message: result.saved?.accountRead
+        ? "已上架：图片、授权和店铺后台核验都已保存，软件正按这张卡写入店铺，结果在下面「上架与回读」里看。"
+        : "图片和上架授权已保存，软件正在接着做；进展在下面「上架与回读」里看。" });
+      await load(true);
+      return result;
+    } catch (error) {
+      setNotice({ type: "error", message: errorMessage(error) });
+      await load(true);
+      throw error;
+    }
+  }
   async function saveProductionOwnerDecision(payload) {
     if (!selected) return;
     try {
@@ -1549,6 +1565,8 @@ export default function App() {
           onAcceptGate1={payload => runProductStep(api.acceptGate1, payload)}
           onSkipGate1={payload => runProductStep(api.skipGate1, payload)}
           onContinueGate1Autopilot={payload => runProductStep(api.continueGate1Autopilot, payload)}
+          onLoadGate2Preview={api.getGate2Preview}
+          onListGate2={listGate2}
           onResolveGate1Shortfall={payload => runProductStep(api.resolveGate1Shortfall, payload)}
           onChooseSkus={payload => runProductStep(api.chooseSourceSkus, payload)}
           onCreateSiblingSku={createSiblingSkuBatch}

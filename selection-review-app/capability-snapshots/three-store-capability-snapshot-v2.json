@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T17:43:40.140Z",
+  "frozenAt": "2026-10-11T18:06:32.296Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 986,
-      "sha256": "0dc01b4f21b4fe6e022aaf9e0dc5f939cbe83f442f3572678d23e34bc0c0d62a",
+      "artifactCount": 991,
+      "sha256": "982d36aafcc7d208a2f29673f1ed87bced94ba669675a08e41426cfbca1e12d3",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -440,7 +440,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "18b612c814bbf9820621a8646d93826271a68f750b172159ff1a77a58245e6f7"
+        "sha256": "231c30e599a07a40d46284b110d2c39432b94e57fe32e53357e61dc385ba9e9f"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -636,7 +636,7 @@
       },
       {
         "path": "lib/gate1-autopilot.mjs",
-        "sha256": "0730d20ba5873c3c2c10a2b7a7ea1587a858bd09bb0e1feee0155beebc740755"
+        "sha256": "9b8e9d00c1747889fd5429fccb1c3a608b57591ea44ddff0c753a376b3f20d09"
       },
       {
         "path": "lib/gate1-decision.mjs",
@@ -653,6 +653,10 @@
       {
         "path": "lib/gate1-service.mjs",
         "sha256": "f43f860a3c63cf4e65d0cbb3f12937a12b6a8cdeff41f738eeb5590373fbf6b4"
+      },
+      {
+        "path": "lib/gate2-listing.mjs",
+        "sha256": "e90a3aaeedc276797d5652c9d3b7f41a8e2c41610ed8fe7bf1ad09195c78511b"
       },
       {
         "path": "lib/global-notices.mjs",
@@ -1620,7 +1624,7 @@
       },
       {
         "path": "scripts/ci-test-suites.mjs",
-        "sha256": "7e1481df8d31c009de253539273ce36166a69db5cfb86fe511e873bf12165e1a"
+        "sha256": "7d6acb816d8640d5773d8f2f68378c20c2ed1e7a026cd1e224e9a4baae7d3be1"
       },
       {
         "path": "scripts/deploy-local-runtime.sh",
@@ -1680,11 +1684,11 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "8363d6f1aa989a4134287ecc24bc7b79d69e6255ea2c0ee91aafd6973b6254f8"
+        "sha256": "67c080eec6635c9d76b59ef6fdb70625fb20a84ccd4bdbd90db9f12798f13cf4"
       },
       {
         "path": "src/App.jsx",
-        "sha256": "792cc97965c4fee5fdb1eb85c999efc3b72b8f00e9f2cc3fcc839410d4346c28"
+        "sha256": "a5606f7365a4b445e353e8e33e7de775ccc9acc5445b26395b23df2e8deeef6f"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1696,7 +1700,7 @@
       },
       {
         "path": "src/api.js",
-        "sha256": "c4421704b7c8fe0fe6fb6b930b85fe997486e770565df6253a64b5cfdc88e1b4"
+        "sha256": "8f82fe23e7df2cd29cb34475f471a0553a8e5fde020e6ae1cbadecfa34e747c8"
       },
       {
         "path": "src/bExactCommissionInput.js",
@@ -1760,7 +1764,7 @@
       },
       {
         "path": "src/components/C2FinalAssetsPanel.jsx",
-        "sha256": "cdfab9e51f478c19d687571061ba4fc6cf915ed5c5b99bc549f7fa5913f51107"
+        "sha256": "10dd3f170eab1e9c532c8dc29e9759721e71ef6f6e92df0448a525cde49b1918"
       },
       {
         "path": "src/components/CandidateDetail.jsx",
@@ -1792,7 +1796,7 @@
       },
       {
         "path": "src/components/FinalProductPlanCard.jsx",
-        "sha256": "eb7f49c0e112b1d0aefd0a6542843825f9ed1dc6865b939e19dfae12741d67e1"
+        "sha256": "2063c78ae1f347f12f5bab3bfa10bfe9e5b69fdeb87a42bd1430a031352f3fa2"
       },
       {
         "path": "src/components/FormRevisionNotice.jsx",
@@ -1805,6 +1809,14 @@
       {
         "path": "src/components/Gate1Card.jsx",
         "sha256": "34f5629163534d6e73257766b403dd550e0397bc213447fc659070217927d4b5"
+      },
+      {
+        "path": "src/components/Gate2ListingCard.jsx",
+        "sha256": "e42c7940d9a2db5912d3243dd48abcce6d43fab724ac535e2cd66e66db2537ab"
+      },
+      {
+        "path": "src/components/Gate2ListingForm.jsx",
+        "sha256": "f58315a3e38a1f83f9ef04ee7c478c28271228ddafa406943644ae06abefe509"
       },
       {
         "path": "src/components/GlobalNotices.jsx",
@@ -1884,7 +1896,7 @@
       },
       {
         "path": "src/components/ProductPage.jsx",
-        "sha256": "93fee12ef1abc393990194693b4449a77049d922a6112cb3a7d38a20ec853bc0"
+        "sha256": "837e7f19b50aaba9e0cf101202ddbeddd8505b97351d74c4f15751d236401de7"
       },
       {
         "path": "src/components/ProductPublishSection.jsx",
@@ -2608,7 +2620,7 @@
       },
       {
         "path": "tests/ci-api-boundary.test.mjs",
-        "sha256": "ee7c22ece74e056c5507722c3a84b0a277c3b2037fbbbd118ce789e346ed1181"
+        "sha256": "d0cd42400c2f3ee0fa7f2b8a2e1a22166244a5dffbca8dabaaec7cc93a4d0d5d"
       },
       {
         "path": "tests/ci-test-policy.test.mjs",
@@ -2860,7 +2872,7 @@
       },
       {
         "path": "tests/final-product-plan-card-ui.test.mjs",
-        "sha256": "39fb8f316856b1f32879b461267566335fa93a504bd8ec86f4cc6813858d293c"
+        "sha256": "d59894695ddec659548f9df1fc5d1442d54832e70e26e57b5979bbe1a3ebcc65"
       },
       {
         "path": "tests/fixtures/a-discovery-contract-fixture.mjs",
@@ -3096,7 +3108,7 @@
       },
       {
         "path": "tests/gate1-autopilot.test.mjs",
-        "sha256": "3e6bc6709a5ce376fa79e17267b677e9f3e3ccf04a5038278142f0147fb627f7"
+        "sha256": "aef2574a1edf7f53151b44e150d71e0dd2518c31ae68fa53ba52fb317e508f7c"
       },
       {
         "path": "tests/gate1-card-ui.test.mjs",
@@ -3113,6 +3125,14 @@
       {
         "path": "tests/gate1-service.test.mjs",
         "sha256": "2a1bb7e23cd27d02e51643c2ab231dfcf0cfcb192d73d367dcf306c20c422353"
+      },
+      {
+        "path": "tests/gate2-listing-api.test.mjs",
+        "sha256": "82f29fe04b5830d361e5e00364ff7180a29b9f63856c1e3a120cbd61f0acfbaa"
+      },
+      {
+        "path": "tests/gate2-listing.test.mjs",
+        "sha256": "8954fcfaef3b788c39912da2d8c16648e0af337bd1170a329ca89a3c8bcef9fd"
       },
       {
         "path": "tests/global-notices.test.mjs",
@@ -3580,7 +3600,7 @@
       },
       {
         "path": "tests/product-page-ui.test.mjs",
-        "sha256": "4b39ec5574ca4dbefc601cd9572506a90ea13d4a756b2e396b4fe1672e1742ff"
+        "sha256": "ccd84a48ec240e770065c00f8e7c2910d404fde5ad24524146dcaeb7db36a2d7"
       },
       {
         "path": "tests/production-authorization-rollback-acceptance.test.mjs",
@@ -5499,6 +5519,10 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/gate2-listing.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/production-authorization.mjs",
           "status": "present_in_integration_source"
         },
@@ -5515,11 +5539,27 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "src/components/Gate2ListingCard.jsx",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "src/components/Gate2ListingForm.jsx",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "src/components/ProductionOwnerDecisionForm.jsx",
           "status": "present_in_integration_source"
         },
         {
           "path": "src/productionAuthorizationInput.js",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/gate2-listing-api.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/gate2-listing.test.mjs",
           "status": "present_in_integration_source"
         },
         {

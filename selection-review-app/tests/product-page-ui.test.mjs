@@ -193,6 +193,18 @@ test('sibling product page shows frozen revision recovery and editable 10096/100
   assert.match(choicesHtml, /填写你确认的准确文字/);
 });
 
+test('单件商品的卡还没授权时，商品页放的是「上架」卡：先按已保存资料取预演，不再出现分步的生产授权表单', async () => {
+  const source = productionOwnerDecisionFixture();
+  const candidate = { ...structuredClone(source.candidate), productionOwnerPreparation: source.preparedView,
+    gate2ListingView: { schemaVersion: 'gate2-listing-view-v1', stage: 'card' } };
+  const html = await render(props({ candidate, onLoadGate2Preview: () => new Promise(() => {}), onListGate2: forbidden }));
+  assert.match(html, /aria-label="上架"><h3>上架<\/h3><p role="status">正在按已保存的资料准备上架卡…<\/p>/u);
+  assert.doesNotMatch(html, /通过进入生产授权|<h3>最终商品方案确认卡<\/h3>/u);
+  // 同款各色或已经授权的不走这张卡（服务端不给 gate2ListingView），照旧显示原来的方案卡。
+  const old = await render(props({ candidate: { ...candidate, gate2ListingView: null } }));
+  assert.match(old, /<h3>最终商品方案确认卡<\/h3>/u);
+});
+
 test('C2 确认后从保存数据显示素材顺序和方案卡，缺少卡片不可宣称生成成功', async () => {
   const finalUploadAssets = finalAssets().map((asset, index) => ({ ...asset,
     fileName: index === 0 ? '首图.png' : '<script>详情.png' }));

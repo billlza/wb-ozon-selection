@@ -4,6 +4,7 @@ import { storeLabel } from "../selectionDeskView.js";
 import { productionAuthorizationInputFromCard } from "../productionAuthorizationInput.js";
 import { buildOzonFinalProductPreview } from "../../lib/ozon-final-product-preview.mjs";
 import ProductionOwnerDecisionForm from "./ProductionOwnerDecisionForm.jsx";
+import Gate2ListingForm from "./Gate2ListingForm.jsx";
 import FinalPricingReviewForm from "./FinalPricingReviewForm.jsx";
 import { useSubmit } from "./FormRevisionNotice.jsx";
 
@@ -78,8 +79,12 @@ function FinalImages({ candidateId, assets }) {
   })}</ol>;
 }
 
-/** Display only: authority, revisions, saved facts and price decisions stay server-owned. */
-export default function FinalProductPlanCard({ candidate, identity, onSaveProductionOwnerDecision, onSaveFinalPricingReview, onReviseC1FinalPlan, provisional = false, editorialPreview = null }) {
+/**
+ * Display only: authority, revisions, saved facts and price decisions stay server-owned.
+ * listing：「上架」那一道确认（lib/gate2-listing.mjs）。这时 candidate 是服务端预演出来的那张卡，底部换成一次「上架」；
+ * listing.candidate 是真正保存着的那一份，调整售价只能对它做。
+ */
+export default function FinalProductPlanCard({ candidate, identity, onSaveProductionOwnerDecision, onSaveFinalPricingReview, onReviseC1FinalPlan, provisional = false, editorialPreview = null, listing = null }) {
   const { saving, error, run } = useSubmit();
   const sku = candidate.lifecycleV11?.skuPackage;
   const card = sku?.productionConfirmationCard;
@@ -90,7 +95,7 @@ export default function FinalProductPlanCard({ candidate, identity, onSaveProduc
   const currentCard = Number.isSafeInteger(card.cardRevision) && card.cardRevision >= 1 &&
     card.status === "awaiting_owner_business_confirmation" && card.ownerDecision === null;
   const authorized = sku.productionAuthorization;
-  const canPrepareRevision = !provisional && currentCard && !authorized && identity?.authenticated === true && identity.roles?.includes("owner") &&
+  const canPrepareRevision = !provisional && listing?.stage !== "preview" && currentCard && !authorized && identity?.authenticated === true && identity.roles?.includes("owner") &&
     typeof onReviseC1FinalPlan === "function";
   function prepareRevision() {
     return run(async () => {
@@ -119,7 +124,8 @@ export default function FinalProductPlanCard({ candidate, identity, onSaveProduc
   const modelMatches = Boolean(profit?.profitModelVersion && profit.profitModelVersion === card.profitResult?.profitModelVersion);
 
   return <section className="product-section final-product-plan-card" aria-label="最终商品方案确认卡">
-    <h3>{provisional ? "新版方案预览 · 文案待验收" : "最终商品方案确认卡"}</h3>
+    <h3>{listing ? "上架前看一眼" : provisional ? "新版方案预览 · 文案待验收" : "最终商品方案确认卡"}</h3>
+    {listing?.stage === "preview" ? <p className="product-section-hint">图片按你排的顺序，第一张是主图。下面就是要写进店铺的全部内容，点「上架」之前什么都不会保存。</p> : null}
     {provisional ? <p role="status">{editorialPreview ? "本页展示原稿的局部修订版与原已确认图片；原模型回执保留。" : "本页展示真实文案与原已确认图片，"}尚未保存新的文案确认、最终方案卡或生产授权。</p> : null}
     {!currentCard && !authorized ? <p className="final-plan-status">历史确认卡和主人决定保持只读。</p> : null}
     {!provisional && !authorized && !readiness.ready ? <div className="final-plan-readiness is-blocked" role="status">
@@ -183,11 +189,13 @@ export default function FinalProductPlanCard({ candidate, identity, onSaveProduc
     </section>
     <p className="product-section-hint">{preview.score.message}</p>
 
-    {!provisional && !authorized && currentCard ? <ProductionOwnerDecisionForm key={`${candidate.id}:${card.cardRevision}`} candidate={candidate}
-      identity={identity} onSave={onSaveProductionOwnerDecision} showReadinessReason={false} /> : null}
+    {!provisional && !authorized && currentCard ? listing
+      ? <Gate2ListingForm key={`${candidate.id}:${listing.previewFingerprint}`} candidate={candidate} identity={identity} listing={listing} />
+      : <ProductionOwnerDecisionForm key={`${candidate.id}:${card.cardRevision}`} candidate={candidate}
+        identity={identity} onSave={onSaveProductionOwnerDecision} showReadinessReason={false} /> : null}
     {!provisional && !authorized && currentCard && onSaveFinalPricingReview ? <details className="final-plan-price-change"><summary>调整售价</summary>
       <p>仅在主动调整售价时使用。保存会重新核验成本及后续确认要求。</p>
-      <FinalPricingReviewForm candidate={candidate} onSave={onSaveFinalPricingReview} disabled={identity?.canSaveProductionOwnerDecision !== true} />
+      <FinalPricingReviewForm candidate={listing?.candidate ?? candidate} onSave={onSaveFinalPricingReview} disabled={identity?.canSaveProductionOwnerDecision !== true} />
     </details> : null}
 
     <details className="final-plan-technical-details"><summary>技术详情与资料记录</summary>

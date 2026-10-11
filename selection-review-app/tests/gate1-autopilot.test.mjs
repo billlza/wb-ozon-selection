@@ -104,6 +104,12 @@ test("文案请求准备好之后停在付费那一步；写好之后停在确�
   assert.equal(running.status, "working");
   assert.equal(planGate1Autopilot({ candidate: product({ planStatus: "seo_draft_ready" }) }).stops[0].code, "c1_content_review");
   assert.equal(planGate1Autopilot({ candidate: product({ phase: "C2" }) }).stops[0].code, "c2_assets");
+  // 图排好了（没有还在传的）就是「上架」那一道确认；还有图在传，仍然停在图片这一步。
+  const arranged = (status) => product({ phase: "C2", lifecycle: { c2UploadDraft: { revision: 3,
+    uploads: [{ assetId: "a1", status: "ready" }, { assetId: "a2", status }], selection: [{ assetId: "a1", order: 1 }] } } });
+  assert.deepEqual(planGate1Autopilot({ candidate: arranged("ready") }).stops.map(item => [item.code, item.line]),
+    [["gate2", "图片已经排好：在上架卡上看一眼，点「上架」"]]);
+  assert.equal(planGate1Autopilot({ candidate: arranged("uploading") }).stops[0].code, "c2_assets");
   assert.equal(planGate1Autopilot({ candidate: product({ phase: "C2", sku: { productionConfirmationCard: { status: "awaiting_owner_business_confirmation" } } }) })
     .stops[0].code, "gate2");
   assert.equal(planGate1Autopilot({ candidate: product({ phase: "D1" }) }), null);

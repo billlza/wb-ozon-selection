@@ -612,6 +612,8 @@ import { createGate1Service } from './lib/gate1-service.mjs';
 import { Gate1Error, applyGate1Shortfall } from './lib/gate1-decision.mjs';
 import { GATE1_AUTOPILOT_ACTOR_SOURCE, GATE1_AUTOPILOT_ACTOR_USER_ID, buildGate1AutopilotGrant, gate1AutopilotGrantCurrent,
   gate1AutopilotRecordAfterRun, planGate1Autopilot } from './lib/gate1-autopilot.mjs';
+import { buildGate2ListingPreview, buildGate2ListingView, c2OwnerListingAsset, gate2AccountReadInput, gate2FinalAssetInput,
+  gate2ListingFingerprint, gate2ProductionInput } from './lib/gate2-listing.mjs';
 import { recordSkipReason } from './lib/store-profile.mjs';
 const gate1Service = createGate1Service({
   readData: () => readData(), mutateData: mutator => mutateData(mutator), now: () => now(), estimateInputs: supplierDraftEstimateInputs,
@@ -1189,14 +1191,7 @@ async function verifyAndAuthorizeStagedC2Assets({ candidate, dataRevision, draft
   const verified = [];
   for (const [index, asset] of selectedC2DraftAssets(draft).entries()) {
     await c2LocalAssetStore.read(asset, { verifyContent: true });
-    const item = {};
-    for (const key of ["assetId", "mediaType", "assetRef", "fileName", "assetVersion", "sha256", "byteSize", "sourceEvidenceRef", "stableUrlEvidenceRef", "sourceType", "width", "height", "order"]) {
-      if (asset[key] !== undefined) item[key] = structuredClone(asset[key]);
-    }
-    // 主人排第一张的就是主图，软件不重排也不改选。
-    verified.push({ ...item, role: index === 0 ? "main_image" : "gallery_image", addedAt: asset.stagedAt,
-      usageAuthorization: { status: "owner_authorized_for_listing", evidenceRef: `owner-confirmation:c2:${candidate.id}:${dataRevision}` }
-    });
+    verified.push(c2OwnerListingAsset(asset, index, { candidateId: candidate.id, dataRevision }));
   }
   return verified;
 }
@@ -4064,6 +4059,8 @@ function publicCandidate(candidate, rules, queueInfo = {}, evidencePacks = [], c
     bExactCommissionRuntimeView,
     // 「做这件」之后软件做到了哪一步、停在哪儿等主人（lib/gate1-autopilot.mjs）。只读已保存的记录。
     gate1AutopilotView: planGate1Autopilot({ candidate, bExactCommissionRuntimeView }),
+    // 「上架」那一道确认到了哪一段：等传图、可以预演上架卡、或者卡已生成待授权（lib/gate2-listing.mjs）。卡本身单独取。
+    gate2ListingView: buildGate2ListingView(candidate),
     // 「这件的佣金还是估算的」那一块。挂在每一份候选视图上，所以从条件测算一路到上架之前的每一屏都看得见——
     // 中间隔着几天，只在出事那一屏说一次，主人会忘；忘了最坏的结果是拿估算费率去上架。佣金换成精确的那一刻
     // 它自己消失（present 为 false），不用谁去清。
@@ -4620,6 +4617,339 @@ function validateStore(store) {
   }
 }
 
+// ── 「上架」那一道确认。主人传好图、排好顺序，在一张卡上看完，点一次「上架」：依次保存图片确认、生产授权和写入前的
+// 一次只读核验许可，三条记录互相独立（AGENTS.md §7、§8.1、§9.1）。卡先按已保存资料预演给主人看；点的时候服务端
+// 再算一遍，指纹不同就什么都不保存。哪一步停下就停在哪一步，已保存的照原样留着，软件不自己重试。
+const GATE2_LISTING_PREVIEW_ROUTE = /^\/api\/candidates\/([^/]+)\/gate2\/preview$/;
+const GATE2_LISTING_ROUTE = /^\/api\/candidates\/([^/]+)\/gate2\/list$/;
+const GATE2_LISTING_INPUT_KEYS = Object.freeze(["dataRevision", "previewFingerprint", "merchantSku", "bindingId", "configurationVersion", "confirmed"]);
+
+function gate2ListingPreviewFor(data, candidate) {
+  return buildGate2ListingPreview({ candidate, configuration: runtimeConfiguration, evidencePacks: data.evidencePacks ?? [],
+    currentCommissionCatalogs: data.currentCommissionCatalogs ?? [], observedAt: now() });
+}
+
+function gate2Stopped(status, stoppedAt, code, message, saved, candidate = null) {
+  return { status, body: { status: "stopped", stoppedAt, code, message, saved, candidate, platformWrites: 0 } };
+}
+
+async function gate2ListingRoute(req, res, pathname) {
+  const previewMatch = pathname.match(GATE2_LISTING_PREVIEW_ROUTE);
+  const listMatch = pathname.match(GATE2_LISTING_ROUTE);
+  if (!previewMatch && !listMatch) return false;
+  if (previewMatch) {
+    if (req.method !== "GET") return false;
+    const data = await readData();
+    const candidate = data.candidates.find(item => item.id === previewMatch[1]);
+    if (!candidate) throw httpError(404, "候选不存在");
+    json(res, 200, { preview: gate2ListingPreviewFor(data, candidate) });
+    return true;
+  }
+  if (req.method !== "POST") return false;
+  const candidateId = listMatch[1];
+  const actor = runtimeIdentityProvider.resolveActor({ request: req });
+  if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    throw httpError(403, "上架只能由主人本人确认");
+  }
+  const input = await requestBody(req);
+  if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length !== GATE2_LISTING_INPUT_KEYS.length ||
+      GATE2_LISTING_INPUT_KEYS.some(key => !Object.hasOwn(input, key)) || input.confirmed !== true || !Number.isInteger(input.dataRevision) ||
+      typeof input.previewFingerprint !== "string" || typeof input.merchantSku !== "string" || !input.merchantSku.trim() ||
+      typeof input.bindingId !== "string" || typeof input.configurationVersion !== "string") {
+    throw httpError(400, "上架请求字段不完整或包含未经允许的字段");
+  }
+  const saved = { finalAssets: false, productionAuthorization: false, accountRead: false };
+  let data = await readData();
+  let candidate = data.candidates.find(item => item.id === candidateId);
+  if (!candidate) throw httpError(404, "候选不存在");
+  if (candidate.dataRevision !== input.dataRevision) {
+    const result = gate2Stopped(409, "check", "gate2_revision_changed", "这件商品的资料刚变过，请看一眼新的上架卡再点。", saved);
+    json(res, result.status, result.body);
+    return true;
+  }
+  const preview = gate2ListingPreviewFor(data, candidate);
+  if (preview.previewFingerprint !== input.previewFingerprint) {
+    const result = gate2Stopped(409, "check", "gate2_card_changed", "上架卡和你看到的那张不一样了，请看一眼新的再点。", saved);
+    json(res, result.status, result.body);
+    return true;
+  }
+  if (!preview.ready) {
+    const result = gate2Stopped(422, "check", preview.gaps[0]?.code ?? "gate2_not_ready", preview.gaps[0]?.message ?? "上架卡还没准备好。", saved);
+    json(res, result.status, result.body);
+    return true;
+  }
+  if (!preview.productionOwnerPreparation.executionBindings.some(item => item.bindingId === input.bindingId && item.configurationVersion === input.configurationVersion)) {
+    throw httpError(409, "仓库选择或配置版本已变化，请重新选择");
+  }
+  // 1. 图片确认，生成正式方案卡。卡已经在了（上次停在授权那一步，或老商品）就跳过。
+  if (preview.stage === "preview") {
+    try {
+      await confirmC2FinalAssetsFor(candidateId, gate2FinalAssetInput(candidate));
+    } catch (error) {
+      if (!Number.isInteger(error?.status) || error.status >= 500) throw error;
+      const result = gate2Stopped(error.status, "final_assets", error.extra?.code ?? "gate2_final_assets_failed",
+        `图片确认没有保存：${error.message}`, saved);
+      json(res, result.status, result.body);
+      return true;
+    }
+    saved.finalAssets = true;
+    data = await readData();
+    candidate = data.candidates.find(item => item.id === candidateId);
+  }
+  const current = gate2ListingPreviewFor(data, candidate);
+  if (current.stage !== "card" || current.previewFingerprint !== input.previewFingerprint || !current.ready) {
+    const result = gate2Stopped(409, "production_authorization", "gate2_card_changed",
+      "图片已经确认、方案卡已生成，但生成的卡和你看到的不一样，所以没有授权上架。请看一眼再点「上架」。", saved, publicCandidate(candidate, data.rules));
+    json(res, result.status, result.body);
+    return true;
+  }
+  // 2. 生产授权，保存后立即接续生产任务（走原有的同一段逻辑）。
+  let decision;
+  try {
+    decision = await saveProductionOwnerDecisionFor({ actor, candidateId, input: gate2ProductionInput({
+      preparation: current.productionOwnerPreparation, merchantSku: input.merchantSku, bindingId: input.bindingId,
+      configurationVersion: input.configurationVersion }) });
+  } catch (error) {
+    if (!Number.isInteger(error?.status) || error.status >= 500) throw error;
+    decision = { status: error.status, body: { code: error.extra?.code ?? null, message: error.message } };
+  }
+  if (decision.status !== 200) {
+    data = await readData();
+    const latest = data.candidates.find(item => item.id === candidateId);
+    const done = saved.finalAssets ? "图片已经确认、方案卡已生成；" : "";
+    const result = gate2Stopped(decision.status, "production_authorization", decision.body.code ?? "gate2_authorization_failed",
+      `${done}上架授权没有保存：${decision.body.message ?? "原因未取得"}`, saved, latest ? publicCandidate(latest, data.rules) : null);
+    json(res, result.status, result.body);
+    return true;
+  }
+  saved.productionAuthorization = true;
+  let executionStatus = decision.body.executionStatus;
+  let accountRead = null;
+  // 3. 写入前读一次店铺后台。只有生产任务确实在等这一次核验时才授权；已经有当前有效的核验就不再要。
+  if (executionStatus === "awaiting_account_read") {
+    data = await readData();
+    candidate = data.candidates.find(item => item.id === candidateId);
+    const readInput = gate2AccountReadInput({ preparation: ozonAccountReadServices.preparation({ candidate, document: data }),
+      authorization: candidate.lifecycleV11.skuPackage.productionAuthorization, observedAt: now() });
+    if (readInput === null) {
+      accountRead = { status: "not_configured" };
+    } else {
+      try {
+        accountRead = await ozonAccountReadServices.authorizeAndRun({ actor, input: readInput });
+        saved.accountRead = true;
+        executionStatus = accountRead.productionStatus ?? executionStatus;
+      } catch (error) {
+        if (!(error instanceof OzonAccountReadError)) throw error;
+        accountRead = { status: "stopped", code: error.code };
+      }
+    }
+  }
+  data = await readData();
+  const latest = data.candidates.find(item => item.id === candidateId);
+  json(res, 200, { status: "listed_for_production", saved, executionStatus, accountRead,
+    candidate: latest ? publicSavedDECandidate(latest, data) : null,
+    platformWrites: decision.body.platformWrites ?? 0 });
+  return true;
+}
+
+/** C2 最终素材确认：主人排定的图片按这个顺序锁定，生成最终商品方案卡；不授权、不派任务、不碰店铺。
+ * 原路由和「上架」那一下共用。 */
+async function confirmC2FinalAssetsFor(candidateId, input) {
+  if (!Number.isInteger(input.dataRevision)) throw httpError(400, "C2素材确认必须提供当前数据修订号");
+  if (input.confirmed !== true) throw httpError(400, "必须由主人明确确认当前SKU的最终素材清单和顺序");
+  if (!Array.isArray(input.finalUploadAssets) || input.finalUploadAssets.length === 0) {
+    throw httpError(400, "必须提供当前SKU的最终上传素材");
+  }
+  if (!Array.isArray(input.approvedAssetIds) || input.approvedAssetIds.length === 0) {
+    throw httpError(400, "必须提供主人确认的素材ID顺序");
+  }
+  const confirmationSnapshot = await readData();
+  const confirmationCandidate = confirmationSnapshot.candidates.find((item) => item.id === candidateId);
+  if (!confirmationCandidate) throw httpError(404, "候选不存在");
+  if (Number(confirmationCandidate.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后重新确认素材");
+  const verifiedFinalUploadAssets = await verifyAndAuthorizeStagedC2Assets({
+    candidate: confirmationCandidate,
+    dataRevision: input.dataRevision,
+    draftRevision: input.draftRevision,
+    assets: input.finalUploadAssets
+  });
+  const candidate = await mutateData((data) => {
+    const current = data.candidates.find((item) => item.id === candidateId);
+    if (!current) throw httpError(404, "候选不存在");
+    if (Number(current.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后重新确认素材");
+    assertCurrentC2UploadDraft(current, { dataRevision: input.dataRevision, draftRevision: input.draftRevision });
+    const skuPackage = current.lifecycleV11?.skuPackage;
+    if (!skuPackage) throw httpError(409, "当前商品缺少新版SKU生命周期包");
+    if (skuPackage.productionAuthorization || skuPackage.productionRecord) {
+      throw httpError(409, "当前SKU已经生产授权或执行，不能覆盖素材");
+    }
+    const timestamp = now();
+    let result;
+    try {
+      const manifest = prepareC2FinalUploadManifest({
+        skuPackage,
+        expectedDataRevision: skuPackage.dataRevision,
+        finalUploadAssets: verifiedFinalUploadAssets,
+        preparedAt: timestamp
+      });
+      if (JSON.stringify(input.approvedAssetIds) !== JSON.stringify(manifest.approvedAssetIds)) {
+        throw new Error("C2_SOFTWARE_OWNER_CONFIRMATION_REQUIRED: 主人确认的素材ID及顺序必须与冻结清单完全一致");
+      }
+      if (input.approvedMainImageAssetId !== manifest.mainImageAssetId || input.approvedVideoDisposition !== manifest.videoDisposition) {
+        throw new Error("C2_SOFTWARE_OWNER_CONFIRMATION_REQUIRED: 主人必须明确确认清单首图与视频处置");
+      }
+      const confirmed = confirmC2SoftwareFinalUploads({
+        skuPackage,
+        expectedDataRevision: skuPackage.dataRevision,
+        finalManifest: manifest,
+        ownerDecision: {
+          status: "confirmed",
+          confirmedBy: "owner",
+          approvedManifestVersion: manifest.schemaVersion,
+          approvedManifestSha256: manifest.manifestSha256,
+          approvedAssetIds: manifest.approvedAssetIds,
+          approvedAuthorizedMediaFingerprint: manifest.authorizedMediaFingerprint,
+          approvedMainImageAssetId: input.approvedMainImageAssetId,
+          approvedVideoDisposition: input.approvedVideoDisposition,
+          confirmationNote: input.confirmationNote || null
+        },
+        confirmedAt: timestamp
+      });
+      const card = createFinalProductPlanConfirmationCard({
+        skuPackage: confirmed.skuPackage,
+        createdAt: timestamp
+      });
+      assertSiblingSkuFinalCard({ ...current, lifecycleV11: { ...current.lifecycleV11, skuPackage: card.skuPackage } });
+      result = {
+        skuPackage: card.skuPackage,
+        confirmationCard: card.confirmationCard,
+        finalManifest: manifest
+      };
+    } catch (error) {
+      throw httpError(422, error.message);
+    }
+    current.lifecycleV11 = {
+      ...current.lifecycleV11,
+      status: "awaiting_owner_business_confirmation",
+      skuPackage: structuredClone(result.skuPackage),
+      platformWrites: 0
+    };
+    current.listingPreparation = {
+      ...(current.listingPreparation || {}),
+      status: "awaiting_owner_business_confirmation",
+      reason: "C2最终素材已按主人确认顺序锁定，最终商品方案卡已生成；尚未生产授权。",
+      decisionItems: ["审核最终商品方案卡并决定通过、退回C阶段或淘汰"],
+      writeOccurred: false,
+      platformWrites: 0
+    };
+    current.listingHandoff = {
+      ...(current.listingHandoff || {}),
+      state: "needs_decision",
+      owner: "listing_task",
+      runId: null,
+      currentStep: "C1+C2完成，等待主人审核最终商品方案卡",
+      blockReason: null,
+      userAction: "请核对精确SKU、利润、事实、SEO、风险和最终素材后决定是否进入生产授权。",
+      decisionItems: ["通过进入生产授权", "退回C阶段修改", "淘汰商品"]
+    };
+    current.processing = { ...queuedProcessing(current.processing), state: "idle" };
+    current.dataRevision = Number(current.dataRevision || 0) + 1;
+    current.updatedAt = timestamp;
+    current.lastModifiedBy = "user";
+    const runtime = current.executionRuntime || createSoftwareExecutionRuntime({
+      candidateId: current.id, dataRevision: input.dataRevision, businessPhase: "C2", at: timestamp
+    });
+    if (runtime.candidateId !== current.id) throw httpError(409, "执行记录与当前商品不一致，请先核对原记录");
+    current.executionRuntime = waitForOwner({ ...runtime, businessPhase: "C2", dataRevision: current.dataRevision }, {
+      stepId: "C2_OWNER_BUSINESS_CONFIRMATION", inputRevision: current.dataRevision, at: timestamp,
+      detail: "最终素材与商品方案卡已保存，等待主人确认准确生产范围"
+    });
+    addHistory(current, "user", "c2SoftwareFinalAssetsConfirmed", `主人确认${result.confirmationCard.c2Assets.finalUploads.length}个最终素材及清单指纹${result.finalManifest.manifestSha256}；已生成通用确认卡；未创建生产授权，零平台写入`, timestamp);
+    return publicCandidate(current, data.rules);
+  });
+  return candidate;
+}
+
+function productionDecisionResponse(status, body) {
+  return { status, body };
+}
+
+/** 主人对最终商品方案卡的生产授权，保存后立即接续生产任务。原路由和「上架」那一下共用；返回 { status, body }。 */
+async function saveProductionOwnerDecisionFor({ actor, candidateId, input }) {
+  if (input?.contractVersion !== PRODUCTION_AUTHORIZATION_VERSION) {
+    return productionDecisionResponse(409, { code: "production_authorization_reconfirmation_required",
+      message: "生产确认方式已更新，请刷新最终确认卡并重新核对本件商品的准确范围。旧商业意见不会自动成为新授权。",
+      externalRequests: 0, platformWrites: 0 });
+  }
+  const allowed = ["contractVersion", "dataRevision", "skuRevision", "cardId", "cardRevision",
+    "sourcePreparationFingerprint", "sourceFinalCardInputFingerprint", "bindingId", "configurationVersion", "merchantSku", "confirmExactScope"];
+  if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length !== allowed.length ||
+      allowed.some(field => !Object.hasOwn(input, field)) || !Number.isInteger(input.dataRevision) || !Number.isInteger(input.cardRevision)) {
+    throw httpError(400, "确认请求字段不完整或包含未经允许的字段");
+  }
+  if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human") {
+    return productionDecisionResponse(503, { message: "正式主人身份来源尚未接通，当前不能保存生产授权。", code: "production_identity_unavailable", externalRequests: 0, platformWrites: 0 });
+  }
+  let transaction;
+  try {
+    transaction = await commitSingleOwnerProductionAuthorization({ repository: businessStateRepository,
+      runtimeMode: runtimeConfiguration.deploymentMode, actor, candidateId, input, serverClock: now,
+      resolveProductionAuthorizationDecision: context => resolveProductionOwnerPreparation({
+        ...context, configuration: runtimeConfiguration
+      }) });
+  } catch (error) {
+    // 钱的闸门。佣金还是估算的时候这一次授权没有落盘，原利润结论也没变——主人要做的就一件事：先复算。
+    // 页面认的是 code 和 ownerNextStep 这两个 ASCII 标记，不靠下面那句中文。
+    if (error instanceof ExactCommissionRequiredForProductionError) {
+      return productionDecisionResponse(422, { code: error.code, ownerNextStep: error.ownerNextStep,
+        commissionMode: error.commissionMode, exactCommissionRequiredForProduction: true,
+        message: "这件商品的平台佣金还是估算的，所以现在的利润结论只是条件测算，不能提交上架。" +
+          "请先在这件商品上做一次「使用精确费用复算」，软件会用平台实际收的那个费率把利润重算一遍；" +
+          "正式 B 通过之后再提交生产授权。本次没有保存任何授权，也没有往平台写任何东西。",
+        externalRequests: 0, platformWrites: 0 });
+    }
+    if (error instanceof ProductionOwnerPreparationError) {
+      const status = /CHANGED|EXPIRED/.test(error.code) ? 409 : /NOT_CONFIGURED/.test(error.code) ? 503 : 422;
+      return productionDecisionResponse(status, { code: error.code, message: error.message, externalRequests: 0, platformWrites: 0 });
+    }
+    const code = String(error.code || error.message).split(":", 1)[0];
+    if (!/^(?:PRODUCTION_OWNER|PRODUCTION_AUTHORIZATION|BUSINESS_MUTATION|RUNTIME_OPERATION)_[A-Z_]{1,100}$/.test(code)) {
+      throw Object.assign(httpError(500, "生产确认保存失败，须核对当前保存记录"), {
+        failureCode: /^[A-Z][A-Z0-9_]{1,100}$/.test(code) ? code : "UNCLASSIFIED_FAILURE"
+      });
+    }
+    const status = /FORBIDDEN|AUTHENTICATED|AUTHORIZER/.test(code) ? 403 : /NOT_FOUND/.test(code) ? 404 : /CONFLICT|DRIFT|GATE_REJECTED/.test(code) ? 409 : 422;
+    throw httpError(status, `生产确认未保存：${code}`);
+  }
+  let executionStatus = "not_started";
+  if (transaction.status === "committed" && transaction.result.softwareJobCreated === true) {
+    try {
+      const execution = await ozonAccountReadServices.continueProduction({ candidateId,
+        expectedRevision: transaction.candidate.dataRevision, jobId: transaction.result.softwareJobRef.jobId });
+      executionStatus = execution.status;
+    } catch (error) {
+      if (!(error instanceof DERuntimeUnavailableError)) throw error;
+      executionStatus = "not_configured";
+    }
+  }
+  let data;
+  try { data = await readData(); }
+  catch { throw httpError(500, "生产确认保存结果待核对，当前未取得独立回读"); }
+  const committed = data.candidates.find(item => item.id === candidateId);
+  if (!committed) throw httpError(500, "生产确认保存结果待核对，当前商品独立回读缺失");
+  const sku = committed.lifecycleV11?.skuPackage;
+  const job = data.runtime?.softwareJobs?.find(item => item.jobId === transaction.result.softwareJobRef?.jobId);
+  return productionDecisionResponse(200, {
+    status: transaction.status, executionStatus, candidate: publicSavedDECandidate(committed, data),
+    productionAuthorization: transaction.result.productionAuthorization, dHandoff: transaction.result.dHandoff,
+    productionPlanCreated: Boolean(sku?.dAssetTransport || sku?.dSoftwareExecution || job?.preparationEvidence),
+    executionIntentCreated: Boolean(sku?.dAssetTransport || sku?.dSoftwareExecution),
+    softwareJobCreated: transaction.result.softwareJobCreated,
+    softwareJobRef: transaction.result.softwareJobRef ?? null,
+    dWritePermissionGranted: false, externalRequests: job?.externalRequestState === "not_sent" ? 0 : job?.attempt === 1 ? "unknown" : 0,
+    platformWrites: sku?.dSoftwareExecution?.platformWrites ?? 0
+  });
+}
 
 async function handleApi(req, res, pathname) {
   assertTrustedApiRequest({
@@ -6460,6 +6790,7 @@ async function handleApi(req, res, pathname) {
 
   // 「做这件」确认卡的三条写入路：POST /api/candidates/:id/gate1/(accept|skip|shortfall)。
   if (await gate1Route(req, res, pathname)) return;
+  if (await gate2ListingRoute(req, res, pathname)) return;
 
   /**
    * The owner drops one product from wherever it is, and takes it back when that was a mistake.
@@ -8576,118 +8907,7 @@ async function handleApi(req, res, pathname) {
   }
   if (req.method === "POST" && genericC2FinalAssetsRoute) {
     const input = await requestBody(req);
-    if (!Number.isInteger(input.dataRevision)) throw httpError(400, "C2素材确认必须提供当前数据修订号");
-    if (input.confirmed !== true) throw httpError(400, "必须由主人明确确认当前SKU的最终素材清单和顺序");
-    if (!Array.isArray(input.finalUploadAssets) || input.finalUploadAssets.length === 0) {
-      throw httpError(400, "必须提供当前SKU的最终上传素材");
-    }
-    if (!Array.isArray(input.approvedAssetIds) || input.approvedAssetIds.length === 0) {
-      throw httpError(400, "必须提供主人确认的素材ID顺序");
-    }
-    const confirmationSnapshot = await readData();
-    const confirmationCandidate = confirmationSnapshot.candidates.find((item) => item.id === genericC2FinalAssetsRoute[1]);
-    if (!confirmationCandidate) throw httpError(404, "候选不存在");
-    if (Number(confirmationCandidate.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后重新确认素材");
-    const verifiedFinalUploadAssets = await verifyAndAuthorizeStagedC2Assets({
-      candidate: confirmationCandidate,
-      dataRevision: input.dataRevision,
-      draftRevision: input.draftRevision,
-      assets: input.finalUploadAssets
-    });
-    const candidate = await mutateData((data) => {
-      const current = data.candidates.find((item) => item.id === genericC2FinalAssetsRoute[1]);
-      if (!current) throw httpError(404, "候选不存在");
-      if (Number(current.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后重新确认素材");
-      assertCurrentC2UploadDraft(current, { dataRevision: input.dataRevision, draftRevision: input.draftRevision });
-      const skuPackage = current.lifecycleV11?.skuPackage;
-      if (!skuPackage) throw httpError(409, "当前商品缺少新版SKU生命周期包");
-      if (skuPackage.productionAuthorization || skuPackage.productionRecord) {
-        throw httpError(409, "当前SKU已经生产授权或执行，不能覆盖素材");
-      }
-      const timestamp = now();
-      let result;
-      try {
-        const manifest = prepareC2FinalUploadManifest({
-          skuPackage,
-          expectedDataRevision: skuPackage.dataRevision,
-          finalUploadAssets: verifiedFinalUploadAssets,
-          preparedAt: timestamp
-        });
-        if (JSON.stringify(input.approvedAssetIds) !== JSON.stringify(manifest.approvedAssetIds)) {
-          throw new Error("C2_SOFTWARE_OWNER_CONFIRMATION_REQUIRED: 主人确认的素材ID及顺序必须与冻结清单完全一致");
-        }
-        if (input.approvedMainImageAssetId !== manifest.mainImageAssetId || input.approvedVideoDisposition !== manifest.videoDisposition) {
-          throw new Error("C2_SOFTWARE_OWNER_CONFIRMATION_REQUIRED: 主人必须明确确认清单首图与视频处置");
-        }
-        const confirmed = confirmC2SoftwareFinalUploads({
-          skuPackage,
-          expectedDataRevision: skuPackage.dataRevision,
-          finalManifest: manifest,
-          ownerDecision: {
-            status: "confirmed",
-            confirmedBy: "owner",
-            approvedManifestVersion: manifest.schemaVersion,
-            approvedManifestSha256: manifest.manifestSha256,
-            approvedAssetIds: manifest.approvedAssetIds,
-            approvedAuthorizedMediaFingerprint: manifest.authorizedMediaFingerprint,
-            approvedMainImageAssetId: input.approvedMainImageAssetId,
-            approvedVideoDisposition: input.approvedVideoDisposition,
-            confirmationNote: input.confirmationNote || null
-          },
-          confirmedAt: timestamp
-        });
-        const card = createFinalProductPlanConfirmationCard({
-          skuPackage: confirmed.skuPackage,
-          createdAt: timestamp
-        });
-        assertSiblingSkuFinalCard({ ...current, lifecycleV11: { ...current.lifecycleV11, skuPackage: card.skuPackage } });
-        result = {
-          skuPackage: card.skuPackage,
-          confirmationCard: card.confirmationCard,
-          finalManifest: manifest
-        };
-      } catch (error) {
-        throw httpError(422, error.message);
-      }
-      current.lifecycleV11 = {
-        ...current.lifecycleV11,
-        status: "awaiting_owner_business_confirmation",
-        skuPackage: structuredClone(result.skuPackage),
-        platformWrites: 0
-      };
-      current.listingPreparation = {
-        ...(current.listingPreparation || {}),
-        status: "awaiting_owner_business_confirmation",
-        reason: "C2最终素材已按主人确认顺序锁定，最终商品方案卡已生成；尚未生产授权。",
-        decisionItems: ["审核最终商品方案卡并决定通过、退回C阶段或淘汰"],
-        writeOccurred: false,
-        platformWrites: 0
-      };
-      current.listingHandoff = {
-        ...(current.listingHandoff || {}),
-        state: "needs_decision",
-        owner: "listing_task",
-        runId: null,
-        currentStep: "C1+C2完成，等待主人审核最终商品方案卡",
-        blockReason: null,
-        userAction: "请核对精确SKU、利润、事实、SEO、风险和最终素材后决定是否进入生产授权。",
-        decisionItems: ["通过进入生产授权", "退回C阶段修改", "淘汰商品"]
-      };
-      current.processing = { ...queuedProcessing(current.processing), state: "idle" };
-      current.dataRevision = Number(current.dataRevision || 0) + 1;
-      current.updatedAt = timestamp;
-      current.lastModifiedBy = "user";
-      const runtime = current.executionRuntime || createSoftwareExecutionRuntime({
-        candidateId: current.id, dataRevision: input.dataRevision, businessPhase: "C2", at: timestamp
-      });
-      if (runtime.candidateId !== current.id) throw httpError(409, "执行记录与当前商品不一致，请先核对原记录");
-      current.executionRuntime = waitForOwner({ ...runtime, businessPhase: "C2", dataRevision: current.dataRevision }, {
-        stepId: "C2_OWNER_BUSINESS_CONFIRMATION", inputRevision: current.dataRevision, at: timestamp,
-        detail: "最终素材与商品方案卡已保存，等待主人确认准确生产范围"
-      });
-      addHistory(current, "user", "c2SoftwareFinalAssetsConfirmed", `主人确认${result.confirmationCard.c2Assets.finalUploads.length}个最终素材及清单指纹${result.finalManifest.manifestSha256}；已生成通用确认卡；未创建生产授权，零平台写入`, timestamp);
-      return publicCandidate(current, data.rules);
-    });
+    const candidate = await confirmC2FinalAssetsFor(genericC2FinalAssetsRoute[1], input);
     return json(res, 200, { candidate });
   }
   if (req.method === "POST" && realDAssetTransportRoute) {
@@ -8991,81 +9211,10 @@ async function handleApi(req, res, pathname) {
   }
   if (req.method === "POST" && (realProductionOwnerDecisionRoute || realProductionAuthorizationRoute)) {
     const input = await requestBody(req);
-    if (input?.contractVersion !== PRODUCTION_AUTHORIZATION_VERSION) {
-      return json(res, 409, { code: "production_authorization_reconfirmation_required",
-        message: "生产确认方式已更新，请刷新最终确认卡并重新核对本件商品的准确范围。旧商业意见不会自动成为新授权。",
-        externalRequests: 0, platformWrites: 0 });
-    }
-    const allowed = ["contractVersion", "dataRevision", "skuRevision", "cardId", "cardRevision",
-      "sourcePreparationFingerprint", "sourceFinalCardInputFingerprint", "bindingId", "configurationVersion", "merchantSku", "confirmExactScope"];
-    if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length !== allowed.length ||
-        allowed.some(field => !Object.hasOwn(input, field)) || !Number.isInteger(input.dataRevision) || !Number.isInteger(input.cardRevision)) {
-      throw httpError(400, "确认请求字段不完整或包含未经允许的字段");
-    }
     const candidateId = (realProductionOwnerDecisionRoute || realProductionAuthorizationRoute)[1];
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human") {
-      return json(res, 503, { message: "正式主人身份来源尚未接通，当前不能保存生产授权。", code: "production_identity_unavailable", externalRequests: 0, platformWrites: 0 });
-    }
-    let transaction;
-    try {
-      transaction = await commitSingleOwnerProductionAuthorization({ repository: businessStateRepository,
-        runtimeMode: runtimeConfiguration.deploymentMode, actor, candidateId, input, serverClock: now,
-        resolveProductionAuthorizationDecision: context => resolveProductionOwnerPreparation({
-          ...context, configuration: runtimeConfiguration
-        }) });
-    } catch (error) {
-      // 钱的闸门。佣金还是估算的时候这一次授权没有落盘，原利润结论也没变——主人要做的就一件事：先复算。
-      // 页面认的是 code 和 ownerNextStep 这两个 ASCII 标记，不靠下面那句中文。
-      if (error instanceof ExactCommissionRequiredForProductionError) {
-        return json(res, 422, { code: error.code, ownerNextStep: error.ownerNextStep,
-          commissionMode: error.commissionMode, exactCommissionRequiredForProduction: true,
-          message: "这件商品的平台佣金还是估算的，所以现在的利润结论只是条件测算，不能提交上架。" +
-            "请先在这件商品上做一次「使用精确费用复算」，软件会用平台实际收的那个费率把利润重算一遍；" +
-            "正式 B 通过之后再提交生产授权。本次没有保存任何授权，也没有往平台写任何东西。",
-          externalRequests: 0, platformWrites: 0 });
-      }
-      if (error instanceof ProductionOwnerPreparationError) {
-        const status = /CHANGED|EXPIRED/.test(error.code) ? 409 : /NOT_CONFIGURED/.test(error.code) ? 503 : 422;
-        return json(res, status, { code: error.code, message: error.message, externalRequests: 0, platformWrites: 0 });
-      }
-      const code = String(error.code || error.message).split(":", 1)[0];
-      if (!/^(?:PRODUCTION_OWNER|PRODUCTION_AUTHORIZATION|BUSINESS_MUTATION|RUNTIME_OPERATION)_[A-Z_]{1,100}$/.test(code)) {
-        throw Object.assign(httpError(500, "生产确认保存失败，须核对当前保存记录"), {
-          failureCode: /^[A-Z][A-Z0-9_]{1,100}$/.test(code) ? code : "UNCLASSIFIED_FAILURE"
-        });
-      }
-      const status = /FORBIDDEN|AUTHENTICATED|AUTHORIZER/.test(code) ? 403 : /NOT_FOUND/.test(code) ? 404 : /CONFLICT|DRIFT|GATE_REJECTED/.test(code) ? 409 : 422;
-      throw httpError(status, `生产确认未保存：${code}`);
-    }
-    let executionStatus = "not_started";
-    if (transaction.status === "committed" && transaction.result.softwareJobCreated === true) {
-      try {
-        const execution = await ozonAccountReadServices.continueProduction({ candidateId,
-          expectedRevision: transaction.candidate.dataRevision, jobId: transaction.result.softwareJobRef.jobId });
-        executionStatus = execution.status;
-      } catch (error) {
-        if (!(error instanceof DERuntimeUnavailableError)) throw error;
-        executionStatus = "not_configured";
-      }
-    }
-    let data;
-    try { data = await readData(); }
-    catch { throw httpError(500, "生产确认保存结果待核对，当前未取得独立回读"); }
-    const committed = data.candidates.find(item => item.id === candidateId);
-    if (!committed) throw httpError(500, "生产确认保存结果待核对，当前商品独立回读缺失");
-    const sku = committed.lifecycleV11?.skuPackage;
-    const job = data.runtime?.softwareJobs?.find(item => item.jobId === transaction.result.softwareJobRef?.jobId);
-    return json(res, 200, {
-      status: transaction.status, executionStatus, candidate: publicSavedDECandidate(committed, data),
-      productionAuthorization: transaction.result.productionAuthorization, dHandoff: transaction.result.dHandoff,
-      productionPlanCreated: Boolean(sku?.dAssetTransport || sku?.dSoftwareExecution || job?.preparationEvidence),
-      executionIntentCreated: Boolean(sku?.dAssetTransport || sku?.dSoftwareExecution),
-      softwareJobCreated: transaction.result.softwareJobCreated,
-      softwareJobRef: transaction.result.softwareJobRef ?? null,
-      dWritePermissionGranted: false, externalRequests: job?.externalRequestState === "not_sent" ? 0 : job?.attempt === 1 ? "unknown" : 0,
-      platformWrites: sku?.dSoftwareExecution?.platformWrites ?? 0
-    });
+    const { status, body } = await saveProductionOwnerDecisionFor({ actor, candidateId, input });
+    return json(res, status, body);
   }
   if (req.method === "POST" && legacyFireTrainFinalAssetsRoute) {
     throw httpError(410, "历史火车素材入口已退役；请使用当前SKU的正式C2素材流程");
