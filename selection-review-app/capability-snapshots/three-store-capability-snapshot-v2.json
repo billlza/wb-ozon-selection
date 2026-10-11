@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T15:16:45.290Z",
+  "frozenAt": "2026-10-11T15:21:36.016Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 967,
-      "sha256": "2f127acbd334838d62c577a843460f758a9acf0c7fcf45a9155de7cb1eb3485f",
+      "artifactCount": 973,
+      "sha256": "1876fcf81e8f016f319b2d92609a858b0b60c983bfdd7fb657ffd575874423ae",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -100,11 +100,11 @@
       },
       {
         "path": "lib/a-discovery-estimate-store.mjs",
-        "sha256": "b6ecf7be69b55bde16097386222bde0218612d6eff9c258f326b5b4e7b0246dc"
+        "sha256": "88f3a354853fbfac1c5defd4e84a51c345c3521b2534594377880a2e7e6534e2"
       },
       {
         "path": "lib/a-discovery-estimate.mjs",
-        "sha256": "c45d1877fbf60a4783083f3321328dd5e0cabd697f3320652d673364bfff4a81"
+        "sha256": "6a466e6764d8594b632b1691fd39d42bf1f78017e70e569e4a414598b15d4714"
       },
       {
         "path": "lib/a-discovery-runtime-services.mjs",
@@ -440,7 +440,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "24420b219b720cfcfe21c1ef769793f29cdde0fdc0fe18f5ac0e9adddf509712"
+        "sha256": "9b7ede2e87c310ddb330a58e246a6b9c61e85f25d71e9425d98589e5f77a78fc"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -453,6 +453,10 @@
       {
         "path": "lib/category-default-dimensions.mjs",
         "sha256": "718d0884ae73fee4e74585e9a13e0064194b4a27a4f3f250df0bce9da752fe52"
+      },
+      {
+        "path": "lib/cel-tariff-reader.mjs",
+        "sha256": "7df43a1539383beaaa2a14d280b8a2c35d57c342a6622b9aba5e1b4fd97a4a51"
       },
       {
         "path": "lib/codex-dispatcher.mjs",
@@ -1279,6 +1283,10 @@
         "sha256": "59c09355dc62930d2434734f73f6183ba215915aaff9f535d26dc5a3b9c15fcf"
       },
       {
+        "path": "lib/wb-rough-estimate.mjs",
+        "sha256": "480ec2f85abb0f35df9c84d69ce92306e9d0890c018d7228d71881dee995572c"
+      },
+      {
         "path": "lib/worker-registry.mjs",
         "sha256": "7dfb1f6d9641ee46ff3983f7706f10376a029ffa2265826fde4333c0097d74e1"
       },
@@ -1600,7 +1608,7 @@
       },
       {
         "path": "scripts/ci-test-suites.mjs",
-        "sha256": "0057c072c68ed06dcb5319ab15e823c2e884b49a31137aceac9ca4286fd45d63"
+        "sha256": "017a5619ac3bf232a966c3e73fdb7f1814f7fc2ab0dd255fcdf8afac2b5b7358"
       },
       {
         "path": "scripts/deploy-local-runtime.sh",
@@ -1660,7 +1668,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "e2f7038c421ee1f674a85d128e8ffacb77a9882c3c64a06601f618df4eea358e"
+        "sha256": "c9c2ab52c0c39b0a0d3299ee55b2fc057c376b712a5f30aad8d0f3c312c1a097"
       },
       {
         "path": "src/App.jsx",
@@ -1676,7 +1684,7 @@
       },
       {
         "path": "src/api.js",
-        "sha256": "2ab84411d1229ceb8a48170b94d1098be30a2a5c75db1aae89e69cd7339a3422"
+        "sha256": "90fbc5af80ea97f49289c2e2c165f0230363c693231783950bd310bf4d169335"
       },
       {
         "path": "src/bExactCommissionInput.js",
@@ -2563,6 +2571,10 @@
         "sha256": "8a8763ca10c64f42e73bbdfab02b01e04f569c5105fd475298049069ebcb795a"
       },
       {
+        "path": "tests/cel-tariff-reader.test.mjs",
+        "sha256": "6861e9f6e1ba90bf5b11f710216a90f789f444902745c26f6987f1d895f585bf"
+      },
+      {
         "path": "tests/ci-api-boundary.test.mjs",
         "sha256": "0e5ac35c6d436c9511bcf06cfe8f22a2538250fbc5c01161258650414ef0da31"
       },
@@ -3093,6 +3105,10 @@
       {
         "path": "tests/helpers/c2-software-fixture.mjs",
         "sha256": "a8cf62ae725b9ec28f2b604baeb846b1916382dd0cebc667c15160fce1747fe9"
+      },
+      {
+        "path": "tests/helpers/cel-wb-workbook-fixture.mjs",
+        "sha256": "8ce481cc3b95f23e16040bff54552fe4aee422109843f3358aa7b6ddd75cc19a"
       },
       {
         "path": "tests/helpers/d-e-saved-api-fixture.mjs",
@@ -3881,6 +3897,14 @@
       {
         "path": "tests/wb-presentation.test.mjs",
         "sha256": "f64859007754d4a932553493eddf968dff67341b4ede39ed2400e0e57fc2ba4d"
+      },
+      {
+        "path": "tests/wb-rough-estimate.test.mjs",
+        "sha256": "394b8aa8b61f1766df9bfa9e7b415f20efb38baf395f5d5fe7b937ed2262ecf0"
+      },
+      {
+        "path": "tests/wb-rough-profit-api.test.mjs",
+        "sha256": "0a74caca0feabb3ad4f7a455462e55e8033f48812d4f08745d7526d63764e40e"
       },
       {
         "path": "tests/worker-registry.test.mjs",
@@ -4703,6 +4727,10 @@
       "verificationStatus": "test_files_present_not_run",
       "artifacts": [
         {
+          "path": "lib/cel-tariff-reader.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/platform-projection.mjs",
           "status": "present_in_integration_source"
         },
@@ -4727,6 +4755,18 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/wb-rough-estimate.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/cel-tariff-reader.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/helpers/cel-wb-workbook-fixture.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "tests/product-core-family.test.mjs",
           "status": "present_in_integration_source"
         },
@@ -4744,6 +4784,14 @@
         },
         {
           "path": "tests/store-registry.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/wb-rough-estimate.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/wb-rough-profit-api.test.mjs",
           "status": "present_in_integration_source"
         }
       ],

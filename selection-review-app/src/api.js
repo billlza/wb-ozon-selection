@@ -45,6 +45,11 @@ export const api = {
   // 录入页（piece B）：平台和店铺名单、店铺档案。贴链接、找货队列和重跑用下面录入流水线那几个。
   // 平台和店铺登记表：{ registryVersion, platforms: [{ platform, label, storeIds }], stores: [{ storeId, platform, label, labelConfirmed, identityConfigured }] }
   getStores: signal => request('/api/stores', { signal }),
+  // WB 粗算：这件放到 WB 卖每件大概赚多少、保本价和过线价。priceRub 换售价，wbSubject 指定 WB 类目号；都可不传。只读。
+  getWbRoughProfit: (candidateId, { priceRub = null, wbSubject = null } = {}, signal) => {
+    const query = new URLSearchParams(Object.entries({ priceRub, wbSubject }).filter(([, value]) => value !== null && value !== ''));
+    return request(`/api/candidates/${encodeURIComponent(candidateId)}/wb-rough-profit${query.size ? `?${query}` : ''}`, { signal });
+  },
   getStoreProfiles: signal => request('/api/store-profiles', { signal }),
   saveStoreProfile: ({ store, baseVersion, values }) => request(`/api/store-profiles/${encodeURIComponent(store)}`, {
     method: 'POST', body: JSON.stringify({ baseVersion, values })

@@ -797,13 +797,18 @@ export const CAPABILITY_NODES = Object.freeze([
       capabilityRef("lib/product-core.mjs", "buildProductCore", "商品中立核心：事实、变体组、素材集，不带平台字段；尚未接入主流程"),
       capabilityRef("lib/platform-projection.mjs", "buildPlatformListingDraft", "从中立核心生成 Ozon / WB 上架草稿并列出缺口；只算不写，尚未接入主流程"),
       capabilityRef("lib/product-core-family.mjs", "assembleProductCoreForFamily", "把原商品和各颜色候选已有的俄文属性、颜色名和最终图收拢成一份核心；只读"),
-      capabilityRef("lib/store-registry.mjs", "listStores", "平台和店铺登记表：店铺属于哪个平台、显示名、身份配没配；GET /api/stores 只读")],
+      capabilityRef("lib/store-registry.mjs", "listStores", "平台和店铺登记表：店铺属于哪个平台、显示名、身份配没配；GET /api/stores 只读"),
+      capabilityRef("lib/cel-tariff-reader.mjs", "readCelWbTariffCatalog", "CEL 资费表 WB 页：Express 一档、Economy 两档，百克进位；版式对不上就停"),
+      capabilityRef("lib/wb-rough-estimate.mjs", "wbRoughProfitForCandidate", "WB 粗算：WB 佣金表 + CEL 物流，和 Ozon 粗算同一套公式，给保本价和过线价；只读，永远是估算")],
     testRefs: [capabilityRef("tests/real-a-b-c1-flow.test.mjs", "test(", "A→B→C1 测试"),
       capabilityRef("tests/product-core.test.mjs", "test(", "中立核心与 Ozon / WB 投影测试"),
       capabilityRef("tests/product-core-family.test.mjs", "test(", "从现有颜色候选组装核心与双平台缺口测试"),
       capabilityRef("tests/store-registry.test.mjs", "test(", "平台与店铺登记表测试"),
-      capabilityRef("tests/store-registry-api.test.mjs", "test(", "GET /api/stores 只读接线测试")],
-    artifactRefs: ["lib/real-a-b-c1-flow.mjs"]
+      capabilityRef("tests/store-registry-api.test.mjs", "test(", "GET /api/stores 只读接线测试"),
+      capabilityRef("tests/cel-tariff-reader.test.mjs", "test(", "CEL 资费表 WB 页读取测试"),
+      capabilityRef("tests/wb-rough-estimate.test.mjs", "test(", "WB 粗算：百克进位、档位边界、背心算例、缺什么说什么"),
+      capabilityRef("tests/wb-rough-profit-api.test.mjs", "test(", "GET /api/candidates/:id/wb-rough-profit 只读接线测试")],
+    artifactRefs: ["lib/real-a-b-c1-flow.mjs", "tests/helpers/cel-wb-workbook-fixture.mjs"]
   }),
 
   capability({

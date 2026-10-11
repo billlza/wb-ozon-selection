@@ -70,6 +70,16 @@ function packageFacts(product, { allowAssumed = false, defaultDimensions = null 
   return { actualKg, sidesCm, volumetricKg, dimensionsBasis: basis, dimensionsLabel: basis === 'category_default' ? defaultDimensions.label : null };
 }
 
+/**
+ * Same rule as the formal B freight (lifecycle-b-input-bundle calculateFreight): a row that says weightRoundingRule
+ * "step" bills the weight rounded up to weightRoundingKg (CEL「百克进位」is 0.1 kg). GUOO rows say "none" and are unchanged.
+ */
+function chargeableWithRounding(kg, tariff) {
+  if (tariff.weightRoundingRule !== 'step' || !finite(tariff.weightRoundingKg) || tariff.weightRoundingKg <= 0) return kg;
+  const steps = Math.ceil(Math.round(kg * 1e6) / 1e6 / tariff.weightRoundingKg - 1e-9);
+  return Math.round(steps * tariff.weightRoundingKg * 1000) / 1000;
+}
+
 function evaluateRoute(row, facts, { priceRub, enforcePriceLimit }) {
   const tariff = row?.evidenceData;
   if (!isObject(tariff) || !nonNegative(tariff.perKgRmb) || !nonNegative(tariff.perParcelRmb)) return { route: row?.route ?? null, feasible: false, reason: 'tariff_row_invalid' };
@@ -82,14 +92,16 @@ function evaluateRoute(row, facts, { priceRub, enforcePriceLimit }) {
   const divisor = volumetric && nonNegative(tariff.volumeDivisorCm3PerKg) && tariff.volumeDivisorCm3PerKg > 0 ? tariff.volumeDivisorCm3PerKg : VOLUME_DIVISOR_CM3_PER_KG;
   const volumetricKg = volumetric ? facts.sidesCm[0] * facts.sidesCm[1] * facts.sidesCm[2] / divisor : null;
   const weightForLimit = facts.actualKg ?? volumetricKg;
-  if (weightForLimit < weight.minKg || weightForLimit > weight.maxKg) return { route: row.route, feasible: false, reason: 'weight_outside_limit' };
+  // CEL WB「＞0.3kg≤20kg」这种下限不含的档位，行上标 weightMinExclusive；GUOO 行不带这个标记，照旧按含下限比。
+  const belowMinimum = tariff.weightMinExclusive === true ? weightForLimit <= weight.minKg : weightForLimit < weight.minKg;
+  if (belowMinimum || weightForLimit > weight.maxKg) return { route: row.route, feasible: false, reason: 'weight_outside_limit' };
   const sum = facts.sidesCm[0] + facts.sidesCm[1] + facts.sidesCm[2];
   if (size.sumMaxCm !== null && sum > size.sumMaxCm) return { route: row.route, feasible: false, reason: 'size_sum_outside_limit' };
   if (size.sideMaxCm !== null && facts.sidesCm.some((side, index) => side > size.sideMaxCm[index])) return { route: row.route, feasible: false, reason: 'side_outside_limit' };
   // Opt-in like the assumed sizes: a parsed band always rides on the route, but rejects only when the caller asks; an unparsed band never rejects.
   const price = parsePriceLimitRub(tariff.declaredValueLimitRub);
   if (enforcePriceLimit && price !== null && (priceRub < price.min || priceRub > price.max)) return { route: row.route, feasible: false, reason: 'price_outside_limit' };
-  const chargeableKg = Math.max(facts.actualKg ?? 0, volumetricKg ?? 0, minimum);
+  const chargeableKg = chargeableWithRounding(Math.max(facts.actualKg ?? 0, volumetricKg ?? 0, minimum), tariff);
   return { route: row.route, feasible: true, reason: null, chargeableWeightRule: tariff.chargeableWeightRule, chargeableKg: Math.round(chargeableKg * 1000) / 1000,
     volumetricKg: volumetricKg === null ? null : Math.round(volumetricKg * 1000) / 1000, freightRmb: roundDownCents(chargeableKg * tariff.perKgRmb + tariff.perParcelRmb),
     perKgRmb: tariff.perKgRmb, perParcelRmb: tariff.perParcelRmb, priceLimitRub: price, ruleVersion: row.ruleVersion ?? null, actualWeightMissing: facts.actualKg === null };
