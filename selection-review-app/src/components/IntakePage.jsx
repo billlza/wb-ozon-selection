@@ -62,7 +62,7 @@ function QueueRow({ row, retrying, onRetry, onOpenCandidate }) {
       <div className="intake-row-actions">
         {row.canRetry
           ? <button type="button" className="button secondary" disabled={retrying}
-            onClick={() => onRetry(row)}>{retrying ? "正在提交…" : "重跑"}</button>
+            onClick={() => onRetry(row)}>{retrying ? "正在提交…" : row.retryLabel}</button>
           : null}
         {row.candidateId
           ? <button type="button" className={`button ${row.ready ? "primary" : "secondary"}`}
@@ -123,10 +123,12 @@ export default function IntakePage({
   const unavailable = intake?.unavailable === true;
   const pause = intakePauseView(intake?.queue);
   const tooMany = parsed.links.length > INTAKE_MAX_LINKS;
+  // 新贴的链接必须说清是给哪家店的；顶栏没选 Ozon 的店（比如在看 WB）时不让提交，后台也不会替你默认。
+  const noStore = targetStore === null;
 
   async function submit(event) {
     event.preventDefault();
-    if (inFlight.current || parsed.links.length === 0 || tooMany) return;
+    if (inFlight.current || parsed.links.length === 0 || tooMany || noStore) return;
     inFlight.current = true;
     setSubmitting(true);
     setSubmitError(null);
@@ -201,11 +203,12 @@ export default function IntakePage({
             {preview ? <span className="intake-preview" role="status">{preview}</span> : null}
           </label>
           <div className="intake-side">
-            <span className="intake-side-label">默认店铺</span>
-            <span className="intake-store">{storeLine}</span>
-            <span className="intake-side-note">这里不用选。上哪家店，到「上架」时再定。</span>
+            <span className="intake-side-label">贴给哪家店</span>
+            <span className="intake-store">{noStore ? "还没选 Ozon 的店" : storeLine}</span>
+            <span className="intake-side-note">{noStore ? "先在顶栏选一家 Ozon 店（Miska 或蛋蛋鼠），才能提交。"
+              : "跟着顶栏选的店走；同一个货源贴给另一家店会另建一件。"}</span>
             <button type="submit" className="button primary intake-submit"
-              disabled={submitting || parsed.links.length === 0 || tooMany || unavailable}>
+              disabled={submitting || parsed.links.length === 0 || tooMany || noStore || unavailable}>
               {submitting ? "正在提交…" : "开始找同款"}
             </button>
           </div>

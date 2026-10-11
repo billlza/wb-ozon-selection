@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T16:01:53.064Z",
+  "frozenAt": "2026-10-11T16:03:12.386Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 969,
-      "sha256": "42134f80ea3145695d26602e5d287fdf657b5e1f170cd04e1a9e1662d4f94bee",
+      "sha256": "a34c30413f6c8a1d540438c72cd87a8c8b2ef604b01531fce19c0ba8060fc7eb",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -1800,7 +1800,7 @@
       },
       {
         "path": "src/components/IntakePage.jsx",
-        "sha256": "ea18101627ea67838084ca97603f379c1f145738897b46a0fb7ae0bbcd7067bb"
+        "sha256": "7c8074fb0d5803a64d34d8e6c17148f20e789b89c738a7ffe01d9055027d5239"
       },
       {
         "path": "src/components/KeywordSoftwareRuntimeCard.jsx",
@@ -1960,7 +1960,7 @@
       },
       {
         "path": "src/intakeView.js",
-        "sha256": "e135027d3f3a77afc36934d050b0bc6c4d3082c3cdff373dbe1a4a97053d2cb7"
+        "sha256": "d1acd03b0f0e71c064d2bc79f6310da5da28260c9bbd121f3b5249fdc98c41bc"
       },
       {
         "path": "src/keywordSoftwareRuntimeView.js",
@@ -3160,7 +3160,7 @@
       },
       {
         "path": "tests/intake-page-ui.test.mjs",
-        "sha256": "8481aca75bd2c91951b5662546e68236a197574997d123e2c4d65abb4cfb05c4"
+        "sha256": "f064968aaf5ecc50e1cfe1f9ac3bb116803cac5f62a742205fbf3c92f4efef12"
       },
       {
         "path": "tests/intake-pipeline.test.mjs",

@@ -38,7 +38,8 @@ export const INTAKE_BLOCKER_HINTS = Object.freeze({
   presale_too_late: "货源是预售，发货比店铺档案里允许的晚。",
   no_source_price: "货源页面上的价没读到，贴一个能一件起订的货源链接，或者不做这件。",
   source_image_missing: "货源页面没读到首图，没法拿图找同款；点「重跑」再读一次。",
-  unknown_outcome: "上一次读货源页没等到结果；点「重跑」就当你知道了，再读一次。",
+  unknown_outcome: "上一次读货源页没等到结果，软件不知道读没读成；先点「核实」记下你知道了，再决定重跑。",
+  source_unknown_reconciled: "上一次读货源页的结果已经核实为没收到，点「重跑」再读一次。",
   source_unreadable: "这次没读成货源页，点「重跑」再读一次。",
   step_not_started: "这一步没能开始，点「重跑」再试一次。"
 });
@@ -210,6 +211,8 @@ export function intakeQueueRows(queueResponse, candidates = []) {
       blockerLine: blocker === null ? null : text(blocker.message) || INTAKE_BLOCKER_HINTS[blockerCode] || "停下来的原因没认出来",
       pageBlocked,
       canRetry: blocker?.retryable === true && !pageBlocked && dataRevision !== null,
+      // 结果未知的第一下只是核实（不重放），后台核实之后才是真的重跑。
+      retryLabel: blockerCode === "unknown_outcome" ? "核实" : "重跑",
       dataRevision,
       roughProfit: roughProfitLine(item?.roughProfit ?? candidate?.roughProfit)
     };
