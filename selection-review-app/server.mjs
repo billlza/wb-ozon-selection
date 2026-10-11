@@ -2108,19 +2108,19 @@ function intakeOwner(req, code) {
   return actor;
 }
 
-/** 「重跑」和「接着找」共用：把计划写回这一件；读货源页结果未知的，同时记下主人知道了（和 source-capture/review 一样）。 */
+/** 「重跑」「核实」和「接着找」共用：把计划写回这一件；「核实」读货源页结果未知的那一次，只记下主人知道没收到结果（和 source-capture/review 一样），不排新作业。 */
 function applyIntakeRestart(current, plan, timestamp, detail) {
   if (plan.acknowledgeSourceUnknown) {
     current.sourceCapture = { ...current.sourceCapture, jobStatus: "failed", reviewedAt: timestamp, reviewedBy: "owner",
       acknowledgement: "no_result_received" };
     addHistory(current, "user", "aSupplierCaptureReviewed",
-      "主人点「重跑」时确认上一次读货源页没有可用结果：服务端没有收到任何采集证据，业务状态没有改变；现在重新读一次", timestamp);
+      "主人在录入页点「核实」：确认上一次读货源页没有可用结果，服务端没有收到任何采集证据，业务状态没有改变；这一下不重读，要再读由主人另点「重跑」", timestamp);
   }
   current.intake = plan.intake;
   current.dataRevision = Number(current.dataRevision || 0) + 1;
   current.updatedAt = timestamp;
   current.lastModifiedBy = "user";
-  addHistory(current, "user", "intakeRestarted", detail, timestamp);
+  addHistory(current, "user", plan.reconcileOnly ? "intakeReconciled" : "intakeRestarted", detail, timestamp);
 }
 
 function intakeStillBeforeGate1(candidate) {
@@ -5319,7 +5319,7 @@ async function handleApi(req, res, pathname) {
           throw httpError(409, "商品资料已变化，请刷新后再贴", { code: "revision_conflict" });
         }
         if (sourceCaptureAwaitsOwnerReview(target.sourceCapture)) {
-          throw httpError(409, "这件上一次读货源页的结果未知，先重跑或核实那一次", { code: "intake_attach_needs_review" });
+          throw httpError(409, "这件上一次读货源页的结果未知，先点「核实」记下那一次", { code: "intake_attach_needs_review" });
         }
         const submittedAt = now();
         const plan = intakeAttachPlan(target, link, { candidates: data.candidates, requestedAt: submittedAt, requestedBy: actor.userId,
@@ -5344,17 +5344,21 @@ async function handleApi(req, res, pathname) {
       scheduleIntakePump(0);
       return json(res, 200, { items: [item], rejected: parsed.rejected });
     }
+    // 新建的一件要说清是哪家店的，不拿默认店铺兜底（AGENTS.md §13.1）；查重也只在这家店里查（§3.2）。
+    if (!Object.hasOwn(input, "targetStore")) {
+      throw httpError(400, "要说清贴给哪家店（Miska 或蛋蛋鼠）", { code: "intake_target_store_required" });
+    }
     const items = await mutateData((data) => {
       const submittedAt = now();
       const batchId = `INB-${randomUUID()}`;
-      const seen = parsed.links.map((link) => ({ link, duplicate: intakeDuplicateOf(data.candidates, link) }));
+      const seen = parsed.links.map((link) => ({ link, duplicate: intakeDuplicateOf(data.candidates, link, input.targetStore) }));
       const fresh = seen.filter((entry) => !entry.duplicate);
       return seen.map(({ link, duplicate }) => {
         if (duplicate) {
           return { candidateId: duplicate.id, created: false, duplicateOfCandidateId: duplicate.id,
             duplicateEliminated: duplicate.workflowStatus === "eliminated", sourceKind: link.sourceKind };
         }
-        const created = createInitialCandidate({ input: { targetStore: input.targetStore ?? "miska", productName: INTAKE_PLACEHOLDER_NAME,
+        const created = createInitialCandidate({ input: { targetStore: input.targetStore, productName: INTAKE_PLACEHOLDER_NAME,
           sourceUrl: link.sourceUrl }, source: "user", id: nextCandidateId(data.candidates, "USR"), timestamp: submittedAt,
           storeBindings: runtimeConfiguration.storeBindings });
         created.intake = newIntakeRecord({ link, submittedAt, submittedBy: actor.userId, batchId,
@@ -5436,11 +5440,13 @@ async function handleApi(req, res, pathname) {
         throw httpError(409, plan.code === "intake_not_retryable" ? "这一步重跑也没用：请换一个货源链接，或者不做这件" : "这件没有停下，不用重跑",
           { code: plan.code });
       }
-      applyIntakeRestart(current, plan, timestamp, `主人点了「重跑」：从「${INTAKE_STEP_LABELS[plan.step]}」这一步重新开始，只排一次，不会自动补跑`);
-      return publicCandidate(current, data.rules);
+      applyIntakeRestart(current, plan, timestamp, plan.reconcileOnly
+        ? `主人点了「核实」：上一次「${INTAKE_STEP_LABELS[plan.step]}」没等到结果，已记下；这一下不排新作业`
+        : `主人点了「重跑」：从「${INTAKE_STEP_LABELS[plan.step]}」这一步重新开始，只排一次，不会自动补跑`);
+      return { candidate: publicCandidate(current, data.rules), reconciled: plan.reconcileOnly };
     });
     scheduleIntakePump(0);
-    return json(res, 202, { candidate, dispatch: null });
+    return json(res, 202, { candidate: candidate.candidate, reconciled: candidate.reconciled, dispatch: null });
   }
 
   if (req.method === "POST" && pathname === "/api/intake/resume") {

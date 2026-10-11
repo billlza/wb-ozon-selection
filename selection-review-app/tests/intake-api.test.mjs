@@ -151,27 +151,37 @@ async function startApi(t, candidates) {
   return api;
 }
 
-test("贴链接：只有主人能贴；新建的一条一件、重复的指回原来那件；插件没连上或没有工作台页面时排着的不开始", async t => {
+test("贴链接：只有主人能贴、要说清贴给哪家店；新建的一条一件、同一家店里重复的指回原来那件；插件没连上或没有工作台页面时排着的不开始", async t => {
   const api = await startApi(t, [existing("SEERFAR-1", { sourceUrl: `${OFFER}?spm=synthetic` })]);
-  const anonymous = await api.post("/api/intake/links", { links: [PDD_A] }, { authenticated: false });
+  const anonymous = await api.post("/api/intake/links", { links: [PDD_A], targetStore: "miska" }, { authenticated: false });
   assert.equal(anonymous.status, 401);
   await api.login();
   assert.equal((await api.post("/api/intake/links", { links: PDD_A })).body.code, "intake_input_invalid");
   assert.equal((await api.post("/api/intake/links", { links: [PDD_A], targetStore: "wb" })).body.code, "intake_input_invalid");
-  const garbage = await api.post("/api/intake/links", { links: ["随便一句话", "https://www.ozon.ru/product/x-1/"] });
+  const noStore = await api.post("/api/intake/links", { links: [PDD_A] });
+  assert.deepEqual([noStore.status, noStore.body.code], [400, "intake_target_store_required"], "不拿默认店铺兜底");
+  assert.equal(JSON.parse(await readFile(api.file, "utf8")).candidates.length, 1);
+  const garbage = await api.post("/api/intake/links", { links: ["随便一句话", "https://www.ozon.ru/product/x-1/"], targetStore: "miska" });
   assert.deepEqual([garbage.status, garbage.body.code, garbage.body.rejected.length], [422, "intake_links_unrecognized", 2]);
-  const many = await api.post("/api/intake/links", { links: Array.from({ length: 21 }, (_, index) => `${PDD_A.slice(0, -2)}${10 + index}`) });
+  const many = await api.post("/api/intake/links", { links: Array.from({ length: 21 }, (_, index) => `${PDD_A.slice(0, -2)}${10 + index}`),
+    targetStore: "miska" });
   assert.equal(many.body.code, "intake_too_many_links");
 
-  const pasted = await api.post("/api/intake/links", { links: [`【拼多多】合成宠物背心 ${PDD_A}&refer=share`, OFFER, "随便一句话"] });
+  const pasted = await api.post("/api/intake/links", { links: [`【拼多多】合成宠物背心 ${PDD_A}&refer=share`, OFFER, "随便一句话"], targetStore: "miska" });
   assert.equal(pasted.status, 201, JSON.stringify(pasted.body));
   const [created, duplicate] = pasted.body.items;
   assert.match(created.candidateId, /^USR-\d{8}-\d{3}$/);
   assert.deepEqual([created.created, created.sourceKind, duplicate], [true, "pinduoduo",
     { candidateId: "SEERFAR-1", created: false, duplicateOfCandidateId: "SEERFAR-1", duplicateEliminated: false, sourceKind: "1688" }]);
   assert.equal(pasted.body.rejected.length, 1);
-  const again = await api.post("/api/intake/links", { links: [PDD_A] });
+  const again = await api.post("/api/intake/links", { links: [PDD_A], targetStore: "miska" });
   assert.deepEqual([again.status, again.body.items[0].candidateId, again.body.items[0].created], [200, created.candidateId, false]);
+  // The same source pasted for the other store is that store's own product (AGENTS.md §3.2).
+  const otherStore = await api.post("/api/intake/links", { links: [PDD_A], targetStore: "dandanshu" });
+  assert.equal(otherStore.status, 201, JSON.stringify(otherStore.body));
+  const [toy] = otherStore.body.items;
+  assert.deepEqual([toy.created, toy.candidateId === created.candidateId], [true, false]);
+  assert.equal((await api.record(toy.candidateId)).targetStore, "dandanshu");
 
   const stored = await api.record(created.candidateId);
   assert.deepEqual([stored.productName, stored.sourceUrl, stored.targetStore, stored.workflowStatus, stored.intake.stage, stored.intake.sourceKind,
@@ -182,7 +192,8 @@ test("贴链接：只有主人能贴；新建的一条一件、重复的指回�
   await new Promise(resolve => setTimeout(resolve, 400));
   const quiet = (await api.queue({ bridge: false })).body;
   assert.deepEqual(quiet.items.map(item => [item.candidateId, item.stage, item.queue, item.batch]),
-    [[created.candidateId, "queued", { position: 1, total: 1 }, { position: 1, total: 1 }]]);
+    [[created.candidateId, "queued", { position: 1, total: 2 }, { position: 1, total: 1 }],
+      [toy.candidateId, "queued", { position: 2, total: 2 }, { position: 1, total: 1 }]]);
   assert.deepEqual([quiet.pendingStart, quiet.pause, quiet.extension.online, quiet.extension.bridge, quiet.extension.login1688],
     [null, null, false, false, "unknown"]);
   assert.equal((await api.record(created.candidateId)).sourceCapture, undefined);
@@ -195,7 +206,7 @@ test("贴链接：只有主人能贴；新建的一条一件、重复的指回�
 test("流水线：读货源页 → 1688 找同款 → Ozon 以图搜 → 粗算；1688 没登录不拦这件，之后的先跳过 1688，主人点「接着找」再补", async t => {
   const api = await startApi(t, []);
   await api.login();
-  const first = (await api.post("/api/intake/links", { links: [PDD_A] })).body.items[0].candidateId;
+  const first = (await api.post("/api/intake/links", { links: [PDD_A], targetStore: "miska" })).body.items[0].candidateId;
   await api.heartbeat();
 
   await api.runSource(first, PDD_A, "合成宠物背心 狗狗衣服");
@@ -222,7 +233,7 @@ test("流水线：读货源页 → 1688 找同款 → Ozon 以图搜 → 粗算�
     ["awaiting_user_direction", [], false], "找同款、粗算都不替主人选规格、确认供货或推进阶段");
 
   // 1688 is known to be logged out: the next product skips that search instead of opening another 1688 tab.
-  const second = (await api.post("/api/intake/links", { links: [PDD_B] })).body.items[0].candidateId;
+  const second = (await api.post("/api/intake/links", { links: [PDD_B], targetStore: "miska" })).body.items[0].candidateId;
   await api.runSource(second, PDD_B, "合成猫窝 冬季");
   await api.failMatch(second, "ozon_image_match", "image_upload_unavailable");
   const skipped = await api.until("第二件找完", async () => {
@@ -247,7 +258,7 @@ test("流水线：读货源页 → 1688 找同款 → Ozon 以图搜 → 粗算�
   assert.equal(api.stderr.join(""), "");
 });
 
-test("停下：整页的事（滑块）整条队停着；主人点「重跑」只重排这一件那一步；不能重跑的说清楚；结果未知的重跑算主人知道了", async t => {
+test("停下：整页的事（滑块）整条队停着；主人点「重跑」只重排这一件那一步；不能重跑的说清楚；结果未知的先「核实」不重放，核实后再点才重读", async t => {
   const api = await startApi(t, [
     seededIntake("SLIDER", PDD_A, { index: 0, size: 2, jobs: { sourceCaptureId: "SCJ-seeded-slider" }, sourceCapture: { captureId: "SCJ-seeded-slider",
       status: "failed", jobStatus: "failed", failureCode: "site_verification_required", mode: "a_supplier_capture", sourceUrl: PDD_A } }),
@@ -283,13 +294,27 @@ test("停下：整页的事（滑块）整条队停着；主人点「重跑」�
   const waiting = await api.record("WAITING");
   assert.equal((await retry("WAITING", { dataRevision: waiting.dataRevision })).body.code, "intake_not_blocked");
 
+  // Unknown outcome: the first press only records that no result came back (AGENTS.md §8.3); nothing is queued.
   const unknown = await api.record("UNKNOWN");
   const acknowledged = await retry("UNKNOWN", { dataRevision: unknown.dataRevision });
   assert.equal(acknowledged.status, 202, JSON.stringify(acknowledged.body));
+  assert.deepEqual([acknowledged.body.reconciled, acknowledged.body.dispatch], [true, null]);
   const settled = await api.record("UNKNOWN");
-  assert.deepEqual([settled.sourceCapture.reviewedBy, settled.sourceCapture.acknowledgement, settled.intake.stage, settled.intake.jobs.sourceCaptureId],
-    ["owner", "no_result_received", "queued", null]);
+  assert.deepEqual([settled.sourceCapture.reviewedBy, settled.sourceCapture.acknowledgement, settled.sourceCapture.captureId,
+    settled.intake.stage, settled.intake.blocker.code, settled.intake.jobs.sourceCaptureId, settled.intake.lastRetry.action],
+  ["owner", "no_result_received", "SCJ-seeded-unknown", "blocked", "source_unknown_reconciled", "SCJ-seeded-unknown", "reconcile"]);
   assert.ok(settled.history.some(entry => entry.action === "aSupplierCaptureReviewed"));
+  assert.equal(settled.history.at(-1).action, "intakeReconciled");
+  const reconciledItem = (await api.queue()).body.items.find(item => item.candidateId === "UNKNOWN");
+  assert.deepEqual([reconciledItem.stage, reconciledItem.blocker.code, reconciledItem.blocker.retryable], ["blocked", "source_unknown_reconciled", true]);
+  // Rereading is the owner's next, separate press.
+  const reread = await retry("UNKNOWN", { dataRevision: settled.dataRevision });
+  assert.equal(reread.status, 202, JSON.stringify(reread.body));
+  assert.equal(reread.body.reconciled, false);
+  const requeued = await api.record("UNKNOWN");
+  assert.deepEqual([requeued.intake.stage, requeued.intake.jobs.sourceCaptureId, requeued.intake.lastRetry.action, requeued.history.at(-1).action],
+    ["queued", null, "rerun", "intakeRestarted"]);
+  assert.equal(requeued.history.filter(entry => entry.action === "aSupplierCaptureReviewed").length, 1, "核实只记一次");
   assert.equal((await api.queue()).body.pendingStart, null, "滑块那一件还停着，整条队照旧停着");
 
   const sliderRetry = await retry("SLIDER", { dataRevision: (await api.record("SLIDER")).dataRevision });

@@ -44,7 +44,8 @@ export const INTAKE_BLOCKERS = Object.freeze({
   presale_too_late: { scope: "item", retryable: false, message: "货源是预售，发货比店铺档案里允许的晚，换有现货的或者你决定照样做" },
   no_source_price: { scope: "item", retryable: false, message: "货源页面上的价没读到，请贴一个能一件起订的货源链接，或者不做这件" },
   source_image_missing: { scope: "item", retryable: true, message: "货源页面没读到首图，没法拿图找同款；点「重跑」再读一次货源页" },
-  unknown_outcome: { scope: "item", retryable: true, message: "上一次读货源页没等到结果，软件不知道读没读成；你点「重跑」就当知道了，再读一次" },
+  unknown_outcome: { scope: "item", retryable: true, message: "上一次读货源页没等到结果，软件不知道读没读成；先点「核实」记下没收到结果，再决定要不要重读" },
+  source_unknown_reconciled: { scope: "item", retryable: true, message: "上一次读货源页没收到结果，已经记下了；要再读一次就点「重跑」" },
   source_unreadable: { scope: "item", retryable: true, message: "这次没读成货源页，点「重跑」再读一次" },
   step_not_started: { scope: "item", retryable: true, message: "这一步没能开始，点「重跑」再试一次" }
 });
@@ -117,11 +118,19 @@ export function candidateSourceIdentities(candidate) {
 /**
  * 这条链接是不是已经有一件商品了（之前贴过，或者 Seerfar 今天也挑到了同一件）。有就返回那一件，不新建、不再找一遍。
  * 淘汰过的也算：留着它就是为了查重（AGENTS.md §3.5），要不要重新看由主人另外决定，这里不会悄悄复活它。
+ * 只认同一家店的：同一个货源贴给另一家店，是那家店自己的一件。
  */
-export function intakeDuplicateOf(candidates, link) {
+export function intakeDuplicateOf(candidates, link, targetStore = null) {
   const wanted = link?.identity || intakeSourceIdentity(link?.sourceUrl);
   if (!wanted) return null;
-  return (Array.isArray(candidates) ? candidates : []).find((candidate) => candidateSourceIdentities(candidate).has(wanted)) || null;
+  return (Array.isArray(candidates) ? candidates : []).find((candidate) => sameStore(candidate, targetStore) &&
+    candidateSourceIdentities(candidate).has(wanted)) || null;
+}
+
+/** 同一个货源进不同店铺是各自的一件（AGENTS.md §3.2、§9.3）；没写店铺的旧商品不知道是哪家，按同一家算，不另建。 */
+function sameStore(candidate, targetStore) {
+  const store = candidate?.targetStore ?? null;
+  return !targetStore || !store || store === targetStore;
 }
 
 export function newIntakeRecord({ link, submittedAt, submittedBy, batchId, batchIndex, batchSize }) {
@@ -154,7 +163,10 @@ const PLUGIN_CODES = new Set(["extension_job_unclaimed", "capture_job_lost", "se
 /** 货源页没读成时说什么。滑块、登录这种主人处理完能接着走；分享链接打不开、没价，要主人换链接。 */
 function sourceCaptureBlocker(record, sourceKind) {
   const step = "capture_source";
-  if (record?.jobStatus === "unknown_outcome" || record?.failureCode === "unknown_outcome") return intakeBlocker("unknown_outcome", { step });
+  if (record?.jobStatus === "unknown_outcome" || record?.failureCode === "unknown_outcome") {
+    // 主人核实过（这里或商品页上）就只剩「要不要再读一次」；没核实的不能直接重放（AGENTS.md §8.3）。
+    return intakeBlocker(record?.acknowledgement === "no_result_received" ? "source_unknown_reconciled" : "unknown_outcome", { step });
+  }
   const code = record?.failureCode;
   if (code === "site_verification_required") return intakeBlocker("slider_required", { step, detail: sourceKind === "pinduoduo" ? "拼多多" : "1688" });
   if (code === "site_login_required") return intakeBlocker(sourceKind === "pinduoduo" ? "login_pinduoduo_required" : "login_1688_required", { step });
@@ -326,6 +338,18 @@ export function intakeRetryPlan(candidate, { requestedAt, requestedBy } = {}) {
   if (!progress || progress.stage !== "blocked" || !progress.blocker) return { ok: false, code: "intake_not_blocked" };
   if (!progress.blocker.retryable) return { ok: false, code: "intake_not_retryable" };
   const step = INTAKE_STEPS.includes(progress.blocker.step) ? progress.blocker.step : "capture_source";
+  if (progress.blocker.code === "unknown_outcome") {
+    // 结果未知先对账：这一下只记下主人知道没收到结果，不排新作业；要再读一次是主人的下一个动作（AGENTS.md §8.3）。
+    return {
+      ok: true,
+      step,
+      reconcileOnly: true,
+      acknowledgeSourceUnknown: candidate.sourceCapture?.captureId === candidate.intake.jobs?.sourceCaptureId &&
+        candidate.sourceCapture?.acknowledgement !== "no_result_received" && !candidate.sourceCapture?.reviewedAt,
+      intake: { ...candidate.intake, stage: "blocked", blocker: intakeBlocker("source_unknown_reconciled", { step }),
+        lastRetry: { step, code: progress.blocker.code, action: "reconcile", requestedAt, requestedBy } }
+    };
+  }
   const jobs = { ...(isObject(candidate.intake.jobs) ? candidate.intake.jobs : {}) };
   // 货源那一步重跑，后面几步跟着重来：新读的货源页可能换了首图。
   const reset = step === "capture_source" ? ["capture_source", "search_1688", "search_ozon"] : [step];
@@ -336,10 +360,10 @@ export function intakeRetryPlan(candidate, { requestedAt, requestedBy } = {}) {
   return {
     ok: true,
     step,
-    acknowledgeSourceUnknown: step === "capture_source" && source?.captureId === candidate.intake.jobs?.sourceCaptureId &&
-      (source?.jobStatus === "unknown_outcome" || source?.failureCode === "unknown_outcome") && !source?.reviewedAt,
+    reconcileOnly: false,
+    acknowledgeSourceUnknown: false,
     intake: { ...candidate.intake, stage: step === "capture_source" ? "queued" : STEP_STAGE[step], blocker: null, jobs, skips,
-      finishedAt: null, lastRetry: { step, code: progress.blocker.code, requestedAt, requestedBy } }
+      finishedAt: null, lastRetry: { step, code: progress.blocker.code, action: "rerun", requestedAt, requestedBy } }
   };
 }
 
@@ -369,8 +393,8 @@ export function intakeAttachPlan(candidate, link, { candidates = [], requestedAt
   if (busy || progress?.waiting || SOURCE_IN_FLIGHT.has(candidate.sourceCapture?.status)) return { ok: false, code: "intake_attach_busy" };
   if (!sourceUnusable(candidate, progress)) return { ok: false, code: "intake_attach_has_source" };
   const wanted = link?.identity || intakeSourceIdentity(link?.sourceUrl);
-  const duplicate = (Array.isArray(candidates) ? candidates : [])
-    .find((other) => other?.id !== candidate.id && wanted && candidateSourceIdentities(other).has(wanted)) || null;
+  const duplicate = (Array.isArray(candidates) ? candidates : []).find((other) => other?.id !== candidate.id && wanted &&
+    sameStore(other, candidate.targetStore ?? null) && candidateSourceIdentities(other).has(wanted)) || null;
   if (duplicate) return { ok: false, code: "intake_attach_duplicate", duplicate };
   return {
     ok: true,

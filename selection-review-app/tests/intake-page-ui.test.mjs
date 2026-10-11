@@ -41,7 +41,7 @@ async function render(props) {
 }
 
 const forbidden = () => { throw new Error('RENDER_MUST_NOT_START_WORK'); };
-const props = (intake, extra = {}) => ({ ownerReady: true, storeLine: 'Ozon · Miska', intake, candidates: [],
+const props = (intake, extra = {}) => ({ ownerReady: true, storeLine: 'Ozon · Miska', targetStore: 'miska', intake, candidates: [],
   onSubmitLinks: forbidden, onRetry: forbidden, onResume: forbidden, onOpenCandidate: forbidden, onOpenSeerfar: forbidden,
   onOpenBoard: forbidden, onOpenMaintenance: forbidden, ...extra });
 const queueItem = (candidateId, stage, extra = {}) => ({ candidateId, title: `合成商品 ${candidateId}`,
@@ -126,6 +126,14 @@ test('队列：阶段、卡点、第几条、粗算，重跑只给只拦这一�
   assert.equal(byId['candidate:p'].canRetry, false, '整页那类事用「接着找」，不给单件重跑');
   assert.equal(byId['candidate:p'].pageBlocked, true);
   assert.equal(byId['candidate:nr'].canRetry, false, '没有当前 dataRevision 就不给按钮');
+  assert.equal(byId['candidate:b'].retryLabel, '重跑');
+  const unknown = intakeQueueRows({ items: [
+    queueItem('candidate:u', 'blocked', { dataRevision: 2, blocker: { code: 'unknown_outcome', message: '', retryable: true, scope: 'item' } }),
+    queueItem('candidate:k', 'blocked', { dataRevision: 3, blocker: { code: 'source_unknown_reconciled', message: '', retryable: true, scope: 'item' } })
+  ] });
+  // 结果未知先核实，不重放；核实以后才是真的重跑。
+  assert.deepEqual(unknown.map(row => row.retryLabel), ['核实', '重跑']);
+  assert.match(unknown[0].blockerLine, /先点「核实」/u);
   assert.match(byId['candidate:nr'].blockerLine, /这一步没能开始/u, '后台没给话时用兜底');
   assert.deepEqual(byId['candidate:nr'].roughProfit, { tone: 'muted', label: '粗算 还缺：Ozon 售价' });
   assert.equal(byId['candidate:x'].stageLabel, '状态没认出来');
@@ -234,6 +242,16 @@ test('录入页：先要求登录；贴链接框、默认店铺、Seerfar 入口
   assert.match(html, />重跑</u);
   assert.match(html, />去确认</u);
   assert.match(html, /粗算 约 ¥12\.00\/件/u);
+});
+
+test('顶栏没选 Ozon 的店时不让提交，也不替你默认一家', async () => {
+  const html = await render(props({ queue: { items: [] }, error: null, unavailable: false, refresh: forbidden }, { targetStore: null }));
+  assert.match(html, /还没选 Ozon 的店/u);
+  assert.match(html, /先在顶栏选一家 Ozon 店（Miska 或蛋蛋鼠），才能提交/u);
+  assert.match(html, /<button type="submit" class="button primary intake-submit" disabled="">/u);
+  const chosen = await render(props({ queue: { items: [] }, error: null, unavailable: false, refresh: forbidden }));
+  assert.match(chosen, /贴给哪家店/u);
+  assert.match(chosen, /同一个货源贴给另一家店会另建一件/u);
 });
 
 test('录入后台没上线、读失败时说清楚，不假装有队列', async () => {

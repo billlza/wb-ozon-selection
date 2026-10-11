@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-11T15:08:59.185Z",
+  "frozenAt": "2026-10-11T15:17:23.614Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 928,
-      "sha256": "64c627fe1b6d85778b5481c4e3a1927bbd989e87f801c8157dbb1ded1b182c64",
+      "sha256": "aa9e2882b682c64b9c59740c9b3b6d670ec989d91ff5ba2f290104081de91c51",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -648,7 +648,7 @@
       },
       {
         "path": "lib/intake-pipeline.mjs",
-        "sha256": "701f5794e1338f6c5330f7df5d9126f2bca7712afe9b0643ba5d8745af80bbcd"
+        "sha256": "1b999300580b81a25f2d02632859995a18416fb819c190b35756bc6aaa46070e"
       },
       {
         "path": "lib/intake-rough-profit.mjs",
@@ -1588,7 +1588,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "99eec0fba5909a7ac6583d3bdba30ed24769bb85ef1f11d7d3ff727f0589ae47"
+        "sha256": "3588f02b12500449c4fe372eedc9d18d649f3b4e0177201bc177ce2a8c7b2b2f"
       },
       {
         "path": "src/App.jsx",
@@ -1716,7 +1716,7 @@
       },
       {
         "path": "src/components/IntakePage.jsx",
-        "sha256": "ea18101627ea67838084ca97603f379c1f145738897b46a0fb7ae0bbcd7067bb"
+        "sha256": "7c8074fb0d5803a64d34d8e6c17148f20e789b89c738a7ffe01d9055027d5239"
       },
       {
         "path": "src/components/KeywordSoftwareRuntimeCard.jsx",
@@ -1864,7 +1864,7 @@
       },
       {
         "path": "src/intakeView.js",
-        "sha256": "e135027d3f3a77afc36934d050b0bc6c4d3082c3cdff373dbe1a4a97053d2cb7"
+        "sha256": "d1acd03b0f0e71c064d2bc79f6310da5da28260c9bbd121f3b5249fdc98c41bc"
       },
       {
         "path": "src/keywordSoftwareRuntimeView.js",
@@ -3020,7 +3020,7 @@
       },
       {
         "path": "tests/intake-api.test.mjs",
-        "sha256": "8ab1f8b2a8a59d8738d11d7c7e3abf57afa49acd410447884476a9c6a3bab96b"
+        "sha256": "8ad9193d92a6a0b0973290bf33eb4e8ba22a91f1a85a1d499a396036989304f1"
       },
       {
         "path": "tests/intake-job-bridge.test.mjs",
@@ -3028,11 +3028,11 @@
       },
       {
         "path": "tests/intake-page-ui.test.mjs",
-        "sha256": "2e61c9ba1e3e34a271ee1f672f0a05a2e7023b8c40ae13b3a01570eb2831d1cd"
+        "sha256": "86738c10c83bb64d2c450e6cee599015a4efe71dd0dbc18b50ec75391797babc"
       },
       {
         "path": "tests/intake-pipeline.test.mjs",
-        "sha256": "318706d3dbba332091df97c85d7f204184f8d0538b5d164164bdc7047af4e4cb"
+        "sha256": "ab7a626dff631450a70e2a9af97d4fb5323af2bb058faeec090c79b0b9bae867"
       },
       {
         "path": "tests/intake-rough-profit.test.mjs",
