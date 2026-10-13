@@ -6,7 +6,7 @@
 
 按提交记录归纳，并对过代码；细节以代码和测试为准。
 
-- 主人要点的只有这几下：「做这件」（关口 1）、A 卡上「选定这些规格」和「确认这套供货，往下做」、「上架」（关口 2）。要花钱、要传图的步骤另外停下等主人。
+- 主人要点的只有这几下：「做这件」（关口 1）、A 卡上「选定这些规格」和「确认这套供货，往下做」、「上架」（关口 2）。「做这件」之后要花钱、要传图的步骤另外停下等主人。「做这件」之前的录入有一处付费不停：以图搜在 Ozon 没找到首图一致的，软件直接请 AI 网关把货源标题翻成俄文搜索词（`server.mjs` 的 `startIntakeOzonWords`，代码注释记的是主人 2026-10-11 的决定）。每次以图搜最多翻一次，只发货源页上的公开标题；一次最多贴 20 条链接，所以每贴一次最多 20 次；主人重跑货源页或以图搜时会再翻一次。
 - 录入：贴拼多多或 1688 链接，软件依次读货源页、在 1688 找同款、在 Ozon 以图搜（没有首图一致的，再用 AI 翻的俄文词搜一次）、粗算。「需要你处理」集中列出插件、登录、滑块问题和没跑成的那一件。
 - 「做这件」确认卡：软件先选 Ozon 同款、1688 同款和货源，主人做或不做。做了就存成找货方案，并申请采这家货源的规格；不确认供货、不下单。卡上可以声明品牌与权利（`lib/gate1-rights-declaration.mjs`），C1 计划生成后软件按声明记下。
 - 点「做这件」时一起存下许可 `gate1AutopilotGrantV1`（`gate1-autopilot-scope-v4`，v1 到 v4 都认；老商品可以在商品页点「让软件接着做」补上）。之后软件身份按许可做不花钱的几步（`lib/gate1-autopilot.mjs`，服务端 `advanceGate1Autopilot`）：`a_read_ozon_benchmark`、`b_exact_recalculation`、`c1_supply_backfill`、`c1_apply_rights`、`c1_local_material`、`c1_prepare_copy`、`c1_forward_copy`。某一步出错就停住，不自己重试；只有主人点「让软件再试一次」或重新「做这件」才再做。
@@ -76,7 +76,7 @@
 
 ### 本轮验证
 
-- 这次只改了文档（`CURRENT.md`、`HANDOFF.md`），代码和 `663f6e2` 一模一样。`663f6e2` 在 GitHub 上两组检查（纯测试、隔离接口测试）都通过了：[CI 第 39 次运行](https://github.com/billlza/wb-ozon-selection/actions/runs/38386114208)。
+- 这次只改了文档（`CURRENT.md`、`HANDOFF.md`，以及 `PROJECT_STATE.md` 的更新日期说明和 §2.3 的 A 行，A 行对齐了代码 `lib/codex-independence.mjs` 里的 `not_complete`），代码和 `663f6e2` 一模一样。`663f6e2` 在 GitHub 上两组检查（纯测试、隔离接口测试）都通过了：[CI 第 39 次运行](https://github.com/billlza/wb-ozon-selection/actions/runs/38386114208)。
 - 本机（Node 22，`NODE_OPTIONS=--throw-deprecation`）在打了 P0-11 补丁的树上跑过一遍：全量纯测试 3332 项、隔离接口测试 332 项全过，构建没有警告，能力快照对得上。
 
 可复现检查（项目锁定依赖，在 `selection-review-app/` 下；CI 用 Node 24）：
