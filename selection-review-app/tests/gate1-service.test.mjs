@@ -20,7 +20,7 @@ const config = { profiles: { miska: { targetStore: 'miska', version: 'miska-synt
 const rule = { pricingPolicyVersion: 'synthetic', minimumUnitProfitRmb: 20, targetMarginRate: 0.15, thresholdPolicy: 'either',
   advertisingReserveRate: 0, returnOpsReserveRate: 0.05, damageLossReserveRate: 0.05, withdrawalFeeRate: 0.02, labelCostRmb: 1.5, fixedOtherRmb: 0 };
 
-function setup(current = candidate(), { storeConfig = config } = {}) {
+function setup(current = candidate(), { storeConfig = config, market = { status: 'no_discovery_evidence', product: null } } = {}) {
   const document = { candidates: [current], rules: {}, runtime: {} };
   const history = [];
   const service = createGate1Service({
@@ -31,7 +31,7 @@ function setup(current = candidate(), { storeConfig = config } = {}) {
       resolveExchangeRate: async () => ({ rubPerCny: 12.5, rateDate: '2026-10-09', sourceRef: 'synthetic-fx' }),
       resolveFreightRows: async () => ({ rows: [], ruleVersion: null }),
       resolveCommission: async () => ({ rate: 0.14, tier: 'synthetic', sourceRef: 'synthetic', gaps: [] }) },
-    readDiscoveryMarketRecord: () => ({ status: 'no_discovery_evidence', product: null }),
+    readDiscoveryMarketRecord: () => structuredClone(market),
     recordSkipReason, storeProfileConfig: storeConfig,
     addHistory: (target, actor, action, detail) => { history.push({ action, detail }); target.history.push({ action }); },
     publicCandidate: value => structuredClone(value),
@@ -50,6 +50,20 @@ test('卡打开时给选项、软件先选的和粗算；缺尺寸就照实说�
   assert.equal(view.preselection.ozonProductId, '9001');
   assert.equal(view.packageFacts.weightBasis, 'declared');
   assert.deepEqual([...view.roughProfit.byPrice['9001'].estimate.missing], ['尺寸']);
+});
+
+test('市场记录不带币种（Seerfar 的就是这样）时，卡上不把它当卢布售价；写明卢布的才用，没有就退回候选上记的卢布预期售价', async () => {
+  // 合成的市场记录：只有售价和币种两项和这条测试有关。
+  const row = currency => ({ status: 'available', product: { productId: '9001', price: 1850, currency, categoryPath: null } });
+  for (const currency of [null, undefined, 'unknown', 'CNY']) {
+    const { document, service } = setup(candidate(), { market: row(currency) });
+    const view = await service.view(document, document.candidates[0]);
+    assert.equal(view.marketPriceRub, null, `币种 ${String(currency)} 不当卢布`);
+  }
+  const fallback = setup(candidate({ expectedPriceRub: 1600 }), { market: row(null) });
+  assert.equal((await fallback.service.view(fallback.document, fallback.document.candidates[0])).marketPriceRub, 1600);
+  const rub = setup(candidate({ expectedPriceRub: 1600 }), { market: row('RUB') });
+  assert.equal((await rub.service.view(rub.document, rub.document.candidates[0])).marketPriceRub, 1850);
 });
 
 test('做这件：方案、关口 1 记录和历史一起写，修订号加一；修订号不对就不写', async () => {

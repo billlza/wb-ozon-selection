@@ -85,6 +85,11 @@ test("做这件之后：有许可的商品软件自己做到付费那一步停�
       "Content-Type": "application/json", ...(authenticated && cookie ? { Cookie: cookie } : {}) }, body: JSON.stringify(body) });
     return { status: response.status, body: await response.json(), cookie: response.headers.get("set-cookie") };
   }
+  async function patch(id, body) {
+    const response = await fetch(`${base}/api/candidates/${encodeURIComponent(id)}`, { method: "PATCH", headers: { Origin: base,
+      "Sec-Fetch-Site": "same-origin", "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify(body) });
+    return { status: response.status, body: await response.json() };
+  }
   async function authenticate(action) {
     const response = await post(`/api/owner-access/${action}`, { password }, { authenticated: false });
     assert.equal(response.status, 200, JSON.stringify(response.body));
@@ -154,7 +159,7 @@ test("做这件之后：有许可的商品软件自己做到付费那一步停�
     assert.equal(providerCalls, 0);
   });
 
-  await t.test("某一步出错：记下来停住；同一份资料上不自己重试；主人点「再试一次」才再做一次", async () => {
+  await t.test("某一步出错：记下来停住，不自己重试；主人之后改了资料也不再试；主人点「再试一次」才再做一次", async () => {
     const candidate = accepted(createSavedLocalPreparationCandidate({ at: new Date().toISOString() }), { grant: true });
     // 让整理材料那一步必然失败：计划里的规格号和 SKU 包对不上。
     candidate.lifecycleV11.skuPackage.c1ProductPlan.identity.supplierSkuId = "SYNTHETIC-OTHER-SKU";
@@ -163,19 +168,29 @@ test("做这件之后：有许可的商品软件自己做到付费那一步停�
     const failed = await until(candidate.id, item => item.gate1AutopilotView?.status === "failed");
     assert.equal(failed.gate1AutopilotView.failure.step, "c1_local_material");
     assert.match(failed.gate1AutopilotView.line, /没有自己重试/u);
+    assert.match(failed.gate1AutopilotView.line, /要它再做一次就点「让软件再试一次」/u);
     const record = (await readDocument()).candidates[0].gate1AutopilotV1;
     assert.equal(record.failure.sourceRevision, candidate.dataRevision);
+    assert.equal(record.failure.grantId, candidate.gate1AutopilotGrantV1.grantId);
     // 出错的记录不加修订号；别的写入（留言不改修订号）之后再看一眼，也不会在同一份资料上重试。
     assert.equal((await readDocument()).candidates[0].dataRevision, candidate.dataRevision);
     assert.equal((await post(`/api/candidates/${encodeURIComponent(candidate.id)}/comments`, { dataRevision: candidate.dataRevision, message: "看一眼" })).status, 201);
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.deepEqual((await readDocument()).candidates[0].gate1AutopilotV1.failure, record.failure);
+    // 主人之后改了别的资料（修订号变了），再有写入让软件看一眼：照样挡着，什么都不再做，运行记录一个字不变（AGENTS.md §8.3）。
+    const edited = await patch(candidate.id, { dataRevision: candidate.dataRevision, notes: "主人补了一句备注" });
+    assert.equal(edited.status, 200, JSON.stringify(edited.body));
+    assert.equal(edited.body.candidate.dataRevision, candidate.dataRevision + 1);
+    assert.equal((await post(`/api/candidates/${encodeURIComponent(candidate.id)}/comments`, { dataRevision: candidate.dataRevision + 1, message: "再看一眼" })).status, 201);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.deepEqual((await readDocument()).candidates[0].gate1AutopilotV1, record);
+    assert.equal((await view(candidate.id)).gate1AutopilotView.status, "failed");
 
-    const retried = await post(continueRoute(candidate.id), { dataRevision: candidate.dataRevision });
+    const retried = await post(continueRoute(candidate.id), { dataRevision: candidate.dataRevision + 1 });
     assert.equal(retried.status, 200, JSON.stringify(retried.body));
     assert.equal(retried.body.autopilot.status, "failed");
     const saved = (await readDocument()).candidates[0];
-    assert.equal(saved.gate1AutopilotV1.failure.sourceRevision, candidate.dataRevision + 1);
+    assert.equal(saved.gate1AutopilotV1.failure.sourceRevision, candidate.dataRevision + 2);
     assert.ok(saved.history.some(item => item.action === "gate1AutopilotContinued" && /再试一次/u.test(item.detail)));
     assert.equal(providerCalls, 0);
   });

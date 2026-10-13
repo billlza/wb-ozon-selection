@@ -1,5 +1,6 @@
 import { gate1BrandRisk, gate1OzonOptions, gate1Preselection, gate1SupplierOptions } from './gate1-preselect.mjs';
 import { buildGate1RoughProfit, gate1PackageFacts } from './gate1-rough-profit.mjs';
+import { marketRowPriceRub } from './a-discovery-estimate.mjs';
 import {
   Gate1Error, applyGate1Elimination, buildGate1Acceptance, buildGate1Skip, gate1Marker, gate1Open, gate1ShortfallPending,
   normalizeGate1AcceptInput, normalizeGate1ShortfallInput, normalizeGate1SkipInput, reopenGate1Round
@@ -52,7 +53,9 @@ export function createGate1Service({ readData, mutateData, now, estimateInputs, 
     const preselection = gate1Preselection(candidate);
     const market = readDiscoveryMarketRecord({ document, candidate });
     const product = market?.status === 'available' ? market.product : null;
-    const marketPriceRub = positive(product?.price) ? product.price : positive(candidate.expectedPriceRub) ? candidate.expectedPriceRub : null;
+    // 市场记录只有自己写明是卢布才算；Seerfar 的记录不带币种（P0-13），这时只认候选上已经按卢布记下的预期售价
+    // （主人填的，或上一轮「做这件」定下的），都没有就让卡上问主人。
+    const marketPriceRub = marketRowPriceRub(product) ?? (positive(candidate.expectedPriceRub) ? candidate.expectedPriceRub : null);
     const categoryPath = product?.categoryPath ?? null;
     const packageFacts = gate1PackageFacts({
       capturedWeightGrams: capturedWeightGrams(candidate), marketWeightGrams: product?.weightGrams ?? null,

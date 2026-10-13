@@ -1,5 +1,5 @@
 import { normalizeSupplierCaptureSource } from './source-capture.mjs';
-import { estimateDiscoveredProduct, parseSizeLimitCm, parseWeightLimitKg, pricingGuidance, roundDownCents } from './a-discovery-estimate.mjs';
+import { estimateDiscoveredProduct, marketRowPriceRub, parseSizeLimitCm, parseWeightLimitKg, pricingGuidance, roundDownCents } from './a-discovery-estimate.mjs';
 
 /**
  * The owner's own supply plan for one product, before any extension capture exists.
@@ -318,7 +318,8 @@ export function buildSupplierDraftEstimate({ draft, storeRule, fx, commission, c
       tiers: Array.isArray(commissionTiers?.tiers) ? commissionTiers.tiers : [],
       costs: { allInPurchaseRmb: draft.allInPurchaseRmb, nonPurchaseFixedRmb: estimate.ceiling.nonPurchaseFixedRmb },
       policy: estimate.costPolicy,
-      marketPriceRub: typeof marketProduct?.price === 'number' && Number.isFinite(marketProduct.price) ? marketProduct.price : null
+      // 「同款市场价」只在市场记录自己写明是卢布时出现；Seerfar 的记录不带币种（P0-13），就不摆这一格。
+      marketPriceRub: marketRowPriceRub(marketProduct)
     });
   return Object.freeze({
     schemaVersion: SUPPLIER_DRAFT_ESTIMATE_SCHEMA_VERSION,

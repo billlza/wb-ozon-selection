@@ -179,7 +179,8 @@ export default function RealAConfirmationCard({ card, onSubmit, disabled = false
         {sales ? (
           <>
             <span>{sales.title}</span>
-            <span>当前价格 {sales.currentPrice} {sales.currency} · {SELLER_LABELS[sales.sellerType] || sales.sellerType}</span>
+            <span>当前价格 {sales.currentPrice} {sales.currency === "unknown" ? "（币种未知）" : sales.currency} · {SELLER_LABELS[sales.sellerType] || sales.sellerType}</span>
+            {sales.currencyEvidenced === false && sales.currencyGapReason ? <span role="note">{sales.currencyGapReason}</span> : null}
             <span>采集于 {new Date(sales.collectedAt).toLocaleString("zh-CN")} · 身份证据 {sales.sellerIdentityStatus}</span>
           </>
         ) : <span>没有有效销售快照，不能确认进入B。</span>}

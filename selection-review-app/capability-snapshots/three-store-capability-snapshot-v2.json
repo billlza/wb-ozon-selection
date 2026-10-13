@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-13T01:35:13.069Z",
+  "frozenAt": "2026-10-13T10:15:33.333Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 994,
-      "sha256": "3242e976a9de57335e0807cee41dba4efb5207cca27f78f51d43c9929d6d3a00",
+      "sha256": "d14010b8cffc0c6357b7c24aedd444236d5c57230c6d92516612756c22d0636a",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -104,7 +104,7 @@
       },
       {
         "path": "lib/a-discovery-estimate.mjs",
-        "sha256": "6a466e6764d8594b632b1691fd39d42bf1f78017e70e569e4a414598b15d4714"
+        "sha256": "f0d534c443e823fe5e297fd6154ed091ce2a6df6f88812134df2cc3eaf74cb1f"
       },
       {
         "path": "lib/a-discovery-runtime-services.mjs",
@@ -588,7 +588,7 @@
       },
       {
         "path": "lib/discovery-market-snapshot.mjs",
-        "sha256": "283dbcdf236f938ff057db6b9a6aaf7d9773b48c6bf77a9049d070ad5badb68e"
+        "sha256": "50d3313d9c8b357bb9ca4b71ec2ba6666632476d97e05843c481ade264837641"
       },
       {
         "path": "lib/discovery-title-translation-store.mjs",
@@ -636,7 +636,7 @@
       },
       {
         "path": "lib/gate1-autopilot.mjs",
-        "sha256": "3a89cdb468683c011f9090855289cdb5889a777fed751695c5a6fe8275aaf34d"
+        "sha256": "4831e9ef9fa4fe68e4bcc447bf486d7a1f723e3010c51f4408f4280f38c87e9c"
       },
       {
         "path": "lib/gate1-decision.mjs",
@@ -656,7 +656,7 @@
       },
       {
         "path": "lib/gate1-service.mjs",
-        "sha256": "8aa39aa4c2133fa01aa0d6885de8892412d71373beeabc2d41157efe22b521ad"
+        "sha256": "0c7a06d0c600d2fb944b326db8ef262de04c1b30006eb6e20397ff1fc837829c"
       },
       {
         "path": "lib/gate2-listing.mjs",
@@ -1088,7 +1088,7 @@
       },
       {
         "path": "lib/profit-step-review.mjs",
-        "sha256": "820b15186c655c97bd7cb38dac0c9477239707abcbd20ea4469bab6e2f4a2662"
+        "sha256": "e8655ab343ee128dd2ebca79d6d69d7d0b61f96a1e6a65a135f94e3fcb2eef28"
       },
       {
         "path": "lib/profit-threshold-policy.mjs",
@@ -1104,7 +1104,7 @@
       },
       {
         "path": "lib/real-a-confirmation-card.mjs",
-        "sha256": "1999d304fdcce9ed8d6bd9b4eabd76f28ae732f6c3c720fbe042a1ba42a18559"
+        "sha256": "112c550ce23c8d7d14f627b92b2f466c15fd0ba183cd05d8f1c7666895b3a394"
       },
       {
         "path": "lib/real-c1-preparation.mjs",
@@ -1136,7 +1136,7 @@
       },
       {
         "path": "lib/sales-snapshot.mjs",
-        "sha256": "387f48fc790de768be2ee2a51103f150d9d3bf917dfa5c462d17aa0e458116d2"
+        "sha256": "e220e8acfa16cc090ebe144e0bcaa1cee306aed776c13cf2a280c7b6f51c6c6b"
       },
       {
         "path": "lib/seerfar-discovery-contract.mjs",
@@ -1276,7 +1276,7 @@
       },
       {
         "path": "lib/supplier-draft.mjs",
-        "sha256": "49c4d4a35826c96ab906086ab3dffad9c0a263a522226a18d71ad6e332e034c1"
+        "sha256": "db01315b8d04250562181d92eed945f1f6f7359e7b9619f125a91ab4730bdc39"
       },
       {
         "path": "lib/supplier-image-match-source.mjs",
@@ -1688,7 +1688,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "00ccd7f48f13cde7f39db08a6d37de274903269c69d7bf0e98f3a36ea663b30f"
+        "sha256": "bb97e46e9dc5e561167600eff125452d8d5d9a51ce0c7e018b21963ae3581184"
       },
       {
         "path": "src/App.jsx",
@@ -1900,7 +1900,7 @@
       },
       {
         "path": "src/components/ProductPage.jsx",
-        "sha256": "ce4aa97fe5c185db0944b926cd1fb8ee7c4afad362b737d3aab3356d3e6c9f0b"
+        "sha256": "b42bd078d4dc479cfe2b8a2aaa55423e8a7d5e58560ebb6a2a21ee837e70e0c7"
       },
       {
         "path": "src/components/ProductPublishSection.jsx",
@@ -1916,7 +1916,7 @@
       },
       {
         "path": "src/components/RealAConfirmationCard.jsx",
-        "sha256": "0dd62138edbfc0f3928cb8b10f8df27206be05b08b5d87c2addfc60fc11f611a"
+        "sha256": "f4a201f1e3007ed977cea91f8b1d385afa7be846e4eb3dc5f1d719140bdeda75"
       },
       {
         "path": "src/components/SeerfarWebRoundCard.jsx",
@@ -2800,7 +2800,7 @@
       },
       {
         "path": "tests/discovery-market-snapshot.test.mjs",
-        "sha256": "c3e16d65f1c455dbbf4e2eda4d49ae0164a76e549376f334e4ef26c3cba4e186"
+        "sha256": "423e2d4dca7a6f46b33d91fc89a5887cd1fe8c79458bd936740fc4f3c00ee891"
       },
       {
         "path": "tests/discovery-title-translation.test.mjs",
@@ -3112,11 +3112,11 @@
       },
       {
         "path": "tests/gate1-autopilot-api.test.mjs",
-        "sha256": "dee8c3e63da2448e8833abee0c1a1ad5664d7a6b5417e39c5b91bebe7df48633"
+        "sha256": "01cd1dd03b7335a1baa9d4fbb7c8ae586f868e484ea3281eef272806e35502f4"
       },
       {
         "path": "tests/gate1-autopilot.test.mjs",
-        "sha256": "f2ffd3f74d679ec1985a71f4e58d2d27a59c4774e3a8432d7386a0b95f8864c1"
+        "sha256": "654179b8f6305ea8ae8aac33b77adfdd444467ff23bd0faf4213523b6b0ca262"
       },
       {
         "path": "tests/gate1-card-ui.test.mjs",
@@ -3136,7 +3136,7 @@
       },
       {
         "path": "tests/gate1-service.test.mjs",
-        "sha256": "926c923b3e148226e7dce8e231087dc47314ed672fae157d22421f23dc3ed034"
+        "sha256": "c7bd8c6798158a6dd4dc04c82c11048bb53b3674d996c3d5b2d01f5a61a2347e"
       },
       {
         "path": "tests/gate2-listing-api.test.mjs",
@@ -3516,7 +3516,7 @@
       },
       {
         "path": "tests/ozon-sales-capture-api.test.mjs",
-        "sha256": "7231ae09916a524914372ebc947596b43a7450f022f09da3186690c9509c3af5"
+        "sha256": "be1e7859b9ec7daa1154b62a17b0a28e1c62c44225cef4ac0f0a31a3319698f5"
       },
       {
         "path": "tests/ozon-same-product-match.test.mjs",
@@ -3612,7 +3612,7 @@
       },
       {
         "path": "tests/product-page-ui.test.mjs",
-        "sha256": "e007a0cc6fdcbc136fb0f74a9d518bc81d396949d9a951fb7da97509c9da6440"
+        "sha256": "25f0bdc3baf157696202732a30adbfccfebde4edc5debad268f5739a1805f20a"
       },
       {
         "path": "tests/production-authorization-rollback-acceptance.test.mjs",
@@ -3668,7 +3668,7 @@
       },
       {
         "path": "tests/profit-step-review.test.mjs",
-        "sha256": "3afb2c7cb22d84bd85a10871a7fd48b3336a1cb30c2549e394a12652982e9133"
+        "sha256": "978d097bdd339578b0c9c147657c1451db2987e86d91794a5fb8b17adf764d18"
       },
       {
         "path": "tests/real-13c-final-assets.test.mjs",
@@ -3936,7 +3936,7 @@
       },
       {
         "path": "tests/supplier-draft.test.mjs",
-        "sha256": "56866f823b8a98ec1454f60db86bb5b731f260d5cb73d678d6f0d9bf0ac9c985"
+        "sha256": "c1889214b05e24cfacd99a279e481682a13119ab605fd1a8b644f3ebdf0c15cf"
       },
       {
         "path": "tests/supplier-image-match-api.test.mjs",

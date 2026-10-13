@@ -254,6 +254,24 @@ test('找货不再有手填表：没有方案时这一节让位给「做这件�
   assert.match(saved, /采购上限 ¥60\.12 · GUOO Economy Small · 计费 1\.3 公斤 · 运费 ¥54\.50 · 佣金 14%/);
 });
 
+test('Seerfar 的售价没有币种：市场快照和对标都照实写「币种未知」，不写成卢布；算利润那里说清为什么不能确认', async () => {
+  const unknown = { ...marketSnapshot, currency: 'unknown', priceCurrencySource: 'provider_unreported' };
+  const saved = await render(props({ view: { supplierDraftV1: draft, supplierDraftEstimateV1: okEstimate, marketSnapshot: unknown } }));
+  assert.match(saved, /市场快照：Seerfar 2026-09-10 · 售价 1850（币种未知） · 30 天销量 330 · 评价 371/u);
+  assert.doesNotMatch(saved, /1850 卢布/u);
+
+  const why = '这个售价来自 Seerfar 的查询结果，Seerfar 没有说明它是卢布还是别的币种，软件不拿它算正式利润。先读一次这个 Ozon 商品页，用页面上的售价。';
+  const benchmark = { ...profitReview().benchmark, currency: 'unknown', currencyEvidenced: false };
+  const html = await render(profitProps({ benchmark, submissionBase: null,
+    baseGaps: [{ field: 'salesReview.currency', label: '对标售价的币种', why }] }));
+  assert.match(html, /1457（币种未知）/u);
+  assert.match(html, /标题里写着 8XL，售价 1457（币种未知），所以先上同规格的这一个/u);
+  assert.doesNotMatch(html, /1457 卢布/u);
+  assert.ok(html.includes(`<b>对标售价的币种</b>：${why}`), '缺的那一项和原因照实列出来');
+  assert.match(html, /<button type="button" class="button primary" disabled[^>]*>确认这套供货，往下做<\/button>/u);
+  assert.doesNotMatch(html, /RENDER_MUST_NOT_START_WORK/u);
+});
+
 test('没有可走线路时按资费表原话给出折叠或按大件的提示', async () => {
   const html = await render(props({ view: { supplierDraftV1: draft, supplierDraftEstimateV1: blockedEstimate, marketSnapshot } }));
   assert.match(html, /当前尺寸重量没有可走的国欧线路，需折叠到单边 ≤60 厘米，或按大件重量（≥2\.001 公斤）重新申报。/);

@@ -4,6 +4,7 @@ import {
   SEERFAR_CATEGORY_DETAIL_COLLECTOR_MODE,
   SEERFAR_CATEGORY_DETAIL_COLLECTOR_VERSION,
   SEERFAR_CATEGORY_DETAIL_SOURCE,
+  SEERFAR_PRICE_CURRENCY_UNREPORTED,
   UNKNOWN,
   validateSalesSnapshot
 } from './sales-snapshot.mjs';
@@ -55,9 +56,11 @@ export function readDiscoveryMarketRecord({ document, candidate }) {
 }
 
 /**
- * One SalesSnapshot built from one saved market row. Ozon quotes in roubles, which is why the estimate module already
- * calls the same figure priceRub; the snapshot records that the currency came from the platform convention and not
- * from the provider, because the provider's own record leaves the currency field empty.
+ * One SalesSnapshot built from one saved market row. The provider's record leaves the currency empty (the Seerfar
+ * contract pins it to null), so the snapshot keeps the number it reported and says the unit is unknown. Until a
+ * contract or a page read proves the unit, this price is not a formal price basis: the A confirmation refuses it and
+ * the owner reads the Ozon page instead (P0-13, 2026-10-13). Snapshots written before then said RUB by platform
+ * convention; they stay as they were saved.
  */
 export function buildDiscoveryMarketSalesSnapshot({ product, receipt, result = null }) {
   if (!isObject(product) || !isObject(receipt)) throw new TypeError('DISCOVERY_MARKET_SNAPSHOT_INPUT_INVALID');
@@ -84,8 +87,8 @@ export function buildDiscoveryMarketSalesSnapshot({ product, receipt, result = n
     title: product.title,
     imageRefs: text(product.imageUrl) === null ? [] : [product.imageUrl],
     currentPrice: product.price,
-    currency: 'RUB',
-    priceCurrencySource: 'ozon_platform_currency',
+    currency: UNKNOWN,
+    priceCurrencySource: SEERFAR_PRICE_CURRENCY_UNREPORTED,
     categoryPath: category ?? UNKNOWN,
     attributes: {},
     marketMetrics: {

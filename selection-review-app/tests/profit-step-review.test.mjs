@@ -7,6 +7,7 @@ import {
   buildOwnerSkuUniformSupplyRecord, buildSkuChoiceTable, inForceSkuUniformSupply
 } from '../lib/sku-choice-estimate.mjs';
 import { buildDiscoveryMarketSalesSnapshot } from '../lib/discovery-market-snapshot.mjs';
+import { collectRealOzonSalesSnapshot } from '../lib/sales-snapshot.mjs';
 import { buildRealAConfirmationCard, validateRealAConfirmationSubmission } from '../lib/real-a-confirmation-card.mjs';
 import {
   PROFIT_STEP_SCHEMA_VERSION, benchmarkAttributeMatch, buildProfitStepReview, groupQueuedSpecifications,
@@ -66,7 +67,18 @@ const marketProduct = {
   categoryPath: { cnTitlePath: '宠物用品 > 宠物服装和靴子 > 宠物服装' }, reviewCount: 94, reviewRating: 4.9,
   providerRecordRef: 'seerfar:category_detail:synthetic#product-13'
 };
-const snapshot = buildDiscoveryMarketSalesSnapshot({
+// 对标快照是真实读过的那个 Ozon 商品页：页面上读到的售价带着卢布。Seerfar 投影出来的那一份不带币种，
+// 2026-10-13 起不能拿来确认（P0-13），那条路下面单独有一个测试。
+const snapshot = collectRealOzonSalesSnapshot({
+  sourceMode: 'real_ozon_page_observation', technicalStatus: 'completed',
+  snapshotId: 'sales-snapshot:ozon:3605840795:OPR-synthetic-profit-step', marketScope: 'ozon_general_market',
+  sellerIdentitySignals: [], sellerIdentityEvidenceRef: 'ozon-loaded-page-widgets:OPR-synthetic-profit-step:seller',
+  productUrl: marketProduct.productUrl, title: marketProduct.title, imageRefs: [marketProduct.imageUrl],
+  currentPrice: marketProduct.price, currency: 'RUB', categoryPath: 'Товары для животных > Для собак > Одежда',
+  attributes: {}, collectedAt: '2026-09-11T02:54:12.318Z',
+  evidenceRef: 'ozon-loaded-page-widgets:OPR-synthetic-profit-step:3605840795'
+});
+const seerfarSnapshot = buildDiscoveryMarketSalesSnapshot({
   product: marketProduct,
   receipt: { receiptId: 'a-discovery-receipt:synthetic:0:0', completedAt: '2026-09-11T02:54:12.318Z' }
 });
@@ -379,6 +391,27 @@ test('资料缺一样就不许提交，缺的是什么如实列出来', () => {
   const review = reviewOf();
   assert.deepEqual(profitStepGaps(review, ''), [{ field: 'supplierSkuId', label: '先上哪一个', why: '先在上面指定一个变体先上架。' }]);
   assert.equal(profitStepSubmission(review, '', { comparabilityConfirmed: true, supplyConfirmed: true }), null);
+});
+
+test('对标只有 Seerfar 的售价（不带币种）：这一步先说出来，不组装一份服务端会拒绝的提交', () => {
+  const review = reviewOf({ candidateExtra: { salesSnapshotsV11: [structuredClone(seerfarSnapshot)] } });
+  assert.equal(review.benchmark.currency, 'unknown');
+  assert.equal(review.benchmark.currencyEvidenced, false);
+  const gap = review.baseGaps.find(item => item.field === 'salesReview.currency');
+  assert.ok(gap, JSON.stringify(review.baseGaps));
+  assert.equal(gap.label, '对标售价的币种');
+  assert.match(gap.why, /Seerfar 没有说明它是卢布还是别的币种，软件不拿它算正式利润。先读一次这个 Ozon 商品页/u);
+  assert.equal(review.submissionBase, null);
+  assert.equal(profitStepSubmission(review, 'sku-8xl-yellow', { comparabilityConfirmed: true, supplyConfirmed: true }), null);
+  // 规格的利润照样摆出来：缺的只是正式价格依据，不是这一步本身。
+  assert.equal(review.passCount, 5);
+
+  // 读过页面之后（页面快照更新），同一件商品就没有这一条了。
+  const read = reviewOf({ candidateExtra: { salesSnapshotsV11: [structuredClone(seerfarSnapshot),
+    { ...structuredClone(snapshot), collectedAt: '2026-09-14T05:09:52.551Z' }] } });
+  assert.equal(read.benchmark.currencyEvidenced, true);
+  assert.equal(read.baseGaps.some(item => item.field === 'salesReview.currency'), false);
+  assert.notEqual(read.submissionBase, null);
 });
 
 test('还没选定规格、或者已经确认过的商品，都没有这一步', () => {

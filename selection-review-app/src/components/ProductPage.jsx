@@ -277,6 +277,12 @@ export function captureStatusLine(candidate) {
   return `当前采集状态：${textOf(capture.status) || "未取得"}。`;
 }
 
+/** 价格带单位。币种是 unknown（Seerfar 的售价就是这样，服务商没给币种）时照实说「币种未知」，不当成卢布。 */
+function priceWithUnit(amount, currency) {
+  if (currency === "RUB") return `${amount} 卢布`;
+  return textOf(currency) === "" || currency === "unknown" ? `${amount}（币种未知）` : `${amount} ${currency}`;
+}
+
 function marketSnapshotLine(snapshot) {
   if (!isObject(snapshot)) return null;
   const day = dayOf(snapshot.collectedAt);
@@ -284,7 +290,7 @@ function marketSnapshotLine(snapshot) {
   const window = isObject(metrics.salesWindow) && metrics.salesWindow.startDate && metrics.salesWindow.endDate
     ? `${metrics.salesWindow.startDate} 至 ${metrics.salesWindow.endDate}`
     : "30 天";
-  const price = finite(snapshot.currentPrice) === null ? "未取得" : `${snapshot.currentPrice} ${snapshot.currency === "RUB" ? "卢布" : snapshot.currency}`;
+  const price = finite(snapshot.currentPrice) === null ? "未取得" : priceWithUnit(snapshot.currentPrice, snapshot.currency);
   return `市场快照：Seerfar ${day ?? "时间未取得"} · 售价 ${price} · ${window}销量 ${count(metrics.salesCount)} · 评价 ${count(metrics.reviewCount)}`;
 }
 
@@ -712,7 +718,7 @@ export function profitStepSuggestionLine(review) {
   if (!isObject(benchmark) || textOf(benchmark.matchedValue) === "") {
     return "对标那款商品的标题里没写规格，软件判断不出该先上哪一个，你自己定。";
   }
-  const price = finite(benchmark.currentPrice) === null ? "" : `，售价 ${benchmark.currentPrice} 卢布`;
+  const price = finite(benchmark.currentPrice) === null ? "" : `，售价 ${priceWithUnit(benchmark.currentPrice, benchmark.currency)}`;
   const same = finite(benchmark.sameAttributeCount) ?? 0;
   const rest = same > 1
     ? `这一套里同规格的有 ${same} 个，建议里挑的是其中最赚的一个，具体哪个你自己定。`
@@ -1729,7 +1735,7 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
           <b>对标就是你在「做这件」卡上认的那个 Ozon 同款</b>
           <p>
             {`Ozon ${textOf(benchmark.productNumber) || "编号未取得"}「${textOf(benchmark.title) || "标题未取得"}」`}
-            {finite(benchmark.currentPrice) === null ? "" : ` ${benchmark.currentPrice} ${benchmark.currency === "RUB" ? "卢布" : benchmark.currency ?? ""}`}
+            {finite(benchmark.currentPrice) === null ? "" : ` ${priceWithUnit(benchmark.currentPrice, benchmark.currency)}`}
             {textOf(benchmark.collectedOn) ? `，页面读于 ${benchmark.collectedOn}` : ""}。可比不可比你在那张卡上已经说过了，这里不再问。
           </p>
         </span>
@@ -1740,7 +1746,7 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
           <b>这两件商品是可比的同类</b>
           <p>
             {`对标：Ozon ${textOf(benchmark.productNumber) || "编号未取得"}「${textOf(benchmark.title) || "标题未取得"}」`}
-            {finite(benchmark.currentPrice) === null ? "" : ` ${benchmark.currentPrice} ${benchmark.currency === "RUB" ? "卢布" : benchmark.currency ?? ""}`}
+            {finite(benchmark.currentPrice) === null ? "" : ` ${priceWithUnit(benchmark.currentPrice, benchmark.currency)}`}
             {textOf(benchmark.collectedOn) ? `，快照采于 ${benchmark.collectedOn}` : ""}。
           </p>
           <p>{`你的货：${supplySiteName(supply.productUrl)} ${textOf(supply.offerId) || "编号未取得"}`}

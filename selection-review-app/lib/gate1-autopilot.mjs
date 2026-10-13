@@ -15,8 +15,10 @@
  * lib/gate1-rights-declaration.mjs）。
  * v4 许可起，1688 规格采回来以后，软件用主人自己的浏览器读一次主人在卡上认的那个 Ozon 同款页面（只看，不写），
  * 算利润要的类目和对标价格就有了。这是唯一一步要打开平台的：许可里单独存一份公开页面读取授权（publicRead），锁定
- * 网站、动作、商品编号、次数（一次）、阶段和修订号（AGENTS.md §8.1）；读不成就停下说清楚，不自己再读。
- * 软件某一步出错就记下来停住，不自己重试；资料变了（修订号变了）才会再试，主人也可以点「让软件再试一次」。
+ * 网站、动作、商品编号、次数（一次）、阶段和修订号（AGENTS.md §8.1）；建读页面作业的那个事务里就按它扣掉一次
+ * （debitGate1PublicRead），次数用完就不建作业、零外部请求；读不成就停下说清楚，不自己再读。
+ * 软件某一步出错就记下来停住，不自己重试；主人之后改了别的资料（修订号变了）也不再试这一步（AGENTS.md §8.3）。
+ * 只有主人点「让软件再试一次」，或者重新点「做这件」换了一份许可，软件才会再做这一步。
  */
 import { gate1RightsDeclarationCurrent } from './gate1-rights-declaration.mjs';
 import { canonicalOzonCapturePageUrl, ozonCapturePageProductId } from './ozon-page-capture-job.mjs';
@@ -52,6 +54,7 @@ export const GATE1_AUTOPILOT_STEPS = Object.freeze({
 export const GATE1_PUBLIC_READ_SCHEMA_VERSION = 'gate1-public-read-v1';
 export const GATE1_PUBLIC_READ_EXCLUDES = Object.freeze(['store_backend', 'login_required_page', 'platform_write', 'paid_call']);
 const RAN_STEPS_KEPT = 12;
+const PUBLIC_READS_KEPT = 12;
 const STOP_LINES_SHOWN = 4;
 const LOCAL_MATERIAL_VERSION = 'c1-local-preparation-v2';
 
@@ -197,6 +200,46 @@ function realPageSnapshotOf(candidate, productId) {
 const readInFlight = capture => ['waiting_extension', 'capturing'].includes(capture?.status) ||
   ['queued', 'claimed'].includes(capture?.jobStatus);
 
+/** 许可里那份公开页面读取授权；没有、形状不对或者次数不是正整数，就当没有。 */
+function publicReadOf(grant) {
+  const read = isObject(grant?.publicRead) ? grant.publicRead : null;
+  return read?.schemaVersion === GATE1_PUBLIC_READ_SCHEMA_VERSION && read.site === 'www.ozon.ru' &&
+    read.action === 'read_product_page' && read.stage === 'A' && Number.isInteger(read.maxReads) && read.maxReads > 0 ? read : null;
+}
+
+/** 这份许可下软件已经排过几次读页面：建作业那一刻就记一次，后来读没读成都算。 */
+function publicReadsUsed(candidate, grant) {
+  const reads = candidate.gate1AutopilotV1?.publicReads;
+  return (Array.isArray(reads) ? reads : []).filter(item => item?.grantId === grant.grantId).length;
+}
+
+/**
+ * 建读页面作业的那个事务里调用：软件要读认下的那个 Ozon 同款页面之前，按许可里的公开页面读取授权扣一次
+ * （AGENTS.md §8.1）。许可不算数、已经确认过供货、没有这份授权、要读的不是授权里那一页，或者次数已经用完，就不给读：
+ * 调用方这时不建作业，也就没有任何外部请求。扣下的这一次和作业写在同一个事务里，作业建了次数就一定扣了；
+ * 作业后来没人领、或者没读成，这一次也不退。返回 { ok: true, record }（要存回去的运行记录），或者 { ok: false, code }。
+ */
+export function debitGate1PublicRead(candidate, { productId, captureId, at }) {
+  const refuse = code => Object.freeze({ ok: false, code });
+  if (!gate1AutopilotGrantCurrent(candidate)) return refuse('GATE1_PUBLIC_READ_GRANT_NOT_CURRENT');
+  const grant = candidate.gate1AutopilotGrantV1;
+  const read = publicReadOf(grant);
+  if (read === null || !grant.scope.includes('a_read_ozon_benchmark') || read.candidateId !== candidate.id) {
+    return refuse('GATE1_PUBLIC_READ_NOT_AUTHORIZED');
+  }
+  if (isObject(candidate.lifecycleV11?.aConfirmationReceipt) || isObject(candidate.lifecycleV11?.skuPackage)) {
+    return refuse('GATE1_PUBLIC_READ_STAGE_CLOSED');
+  }
+  if (String(productId ?? '') !== read.productId) return refuse('GATE1_PUBLIC_READ_TARGET_MISMATCH');
+  if (publicReadsUsed(candidate, grant) >= read.maxReads) return refuse('GATE1_PUBLIC_READ_EXHAUSTED');
+  if (text(captureId) === null || text(at) === null) throw new Error('GATE1_PUBLIC_READ_DEBIT_INPUT_INVALID');
+  // 还没有运行记录时，补成和 gate1AutopilotRecordAfterRun 写出来的同一个形状。
+  const record = isObject(candidate.gate1AutopilotV1) ? candidate.gate1AutopilotV1 : { lastRunAt: null, ranSteps: [], failure: null };
+  const publicReads = [...(Array.isArray(record.publicReads) ? record.publicReads : []),
+    { grantId: grant.grantId, productId: read.productId, captureId, at, sourceRevision: candidate.dataRevision }].slice(-PUBLIC_READS_KEPT);
+  return Object.freeze({ ok: true, record: { ...record, schemaVersion: GATE1_AUTOPILOT_RECORD_SCHEMA_VERSION, publicReads } });
+}
+
 /**
  * 确认供货之前那一次读页面。许可里有 publicRead、认下的就是那个商品、还没读到过它：等「做这件」那一下申请的 1688
  * 采集采回规格（采集控制同一时刻只给一个作业），软件读一次。读过一次就不再读：还在读就说在读，没读成就停下等主人。
@@ -204,16 +247,18 @@ const readInFlight = capture => ['waiting_extension', 'capturing'].includes(capt
 function benchmarkReadPlan(candidate, granted) {
   if (!granted || isObject(candidate.lifecycleV11?.aConfirmationReceipt)) return null;
   const grant = candidate.gate1AutopilotGrantV1;
-  const read = isObject(grant.publicRead) && grant.publicRead.schemaVersion === GATE1_PUBLIC_READ_SCHEMA_VERSION ? grant.publicRead : null;
+  const read = publicReadOf(grant);
   if (read === null || !grant.scope.includes('a_read_ozon_benchmark') || read.candidateId !== candidate.id ||
       String(candidate.gate1DecisionV1?.picks?.ozon?.id ?? '') !== read.productId) return null;
   if (realPageSnapshotOf(candidate, read.productId)) return null;
   const capture = isObject(candidate.salesCapture) ? candidate.salesCapture : null;
   const ran = (Array.isArray(candidate.gate1AutopilotV1?.ranSteps) ? candidate.gate1AutopilotV1.ranSteps : [])
     .some(item => item?.step === 'a_read_ozon_benchmark' && Date.parse(item.at) >= Date.parse(grant.grantedAt));
-  // 读失败时那条记录会整份重写（不带 queuedBy），所以「是不是读的这一页」看商品编号，「读没读过」看软件自己的运行记录。
+  // 读失败时那条记录会整份重写（不带 queuedBy），所以「是不是读的这一页」看商品编号；「读没读过」先看建作业时扣下的次数
+  // （和作业同一个事务），再看软件自己的运行记录（扣次数之前的老记录只有这一样）。
+  const used = publicReadsUsed(candidate, grant) >= read.maxReads;
   const same = capture !== null && capture.productId === read.productId;
-  if (ran || (same && capture.queuedBy === GATE1_AUTOPILOT_ACTOR_SOURCE)) {
+  if (used || ran || (same && capture.queuedBy === GATE1_AUTOPILOT_ACTOR_SOURCE)) {
     if (same && readInFlight(capture)) return { working: '软件正在读你认的那个 Ozon 同款页面' };
     const reason = same ? text(capture.reason) : null;
     return { stop: stop('a_ozon_read_failed', `软件读了一次你认的那个 Ozon 同款页面，没读到${reason ? `（${reason.replace(/[。.]+$/u, '')}）` : ''}；` +
@@ -221,6 +266,18 @@ function benchmarkReadPlan(candidate, granted) {
   }
   if (readInFlight(capture) || candidate.sourceCapture?.status !== 'captured_waiting_owner_selection') return null;
   return { next: { step: 'a_read_ozon_benchmark', productId: read.productId, productUrl: read.productUrl } };
+}
+
+/**
+ * 存下的出错记录挡不挡这一步。挡的是同一步，而且一直挡着：主人之后改了别的资料（修订号变了）也照样挡（AGENTS.md §8.3）。
+ * 只有两种情况放开：主人点「让软件再试一次」（那条路会清掉这条记录），或者出错时那份许可已经换成了新的（主人重新点了
+ * 「做这件」）。改法之前存下的记录没有许可编号，能确定它出在现在这份许可之前才放开，分不清就照样挡。
+ * 没有许可时软件本来就不会自己做，这里不挡，页面照常让主人点「让软件接着做」。
+ */
+function failureBlocks(saved, next, grant) {
+  if (!isObject(saved) || next === null || saved.step !== next.step || !isObject(grant)) return false;
+  if (text(saved.grantId) !== null) return saved.grantId === grant.grantId;
+  return !(Date.parse(saved.at) < Date.parse(grant.grantedAt));
 }
 
 /**
@@ -304,9 +361,7 @@ export function planGate1Autopilot({ candidate, bExactCommissionRuntimeView = nu
 
   const record = isObject(candidate.gate1AutopilotV1) ? candidate.gate1AutopilotV1 : null;
   const savedFailure = isObject(record?.failure) ? record.failure : null;
-  // 出错只挡住同一份资料上的同一步；资料变了（修订号变了）就是新的输入，软件可以再试一次。
-  const failure = next !== null && savedFailure?.step === next.step && savedFailure.sourceRevision === candidate.dataRevision
-    ? savedFailure : null;
+  const failure = failureBlocks(savedFailure, next, candidate.gate1AutopilotGrantV1) ? savedFailure : null;
   const ranSteps = (Array.isArray(record?.ranSteps) ? record.ranSteps : []).slice(-RAN_STEPS_KEPT)
     .map(item => Object.freeze({ step: item.step, label: GATE1_AUTOPILOT_STEPS[item.step] ?? item.step, at: item.at ?? null }));
   const label = next === null ? null : GATE1_AUTOPILOT_STEPS[next.step];
@@ -314,7 +369,7 @@ export function planGate1Autopilot({ candidate, bExactCommissionRuntimeView = nu
   let line;
   if (failure !== null) {
     status = 'failed';
-    line = `软件${label}时出错停下了（${failure.code}），没有自己重试`;
+    line = `软件${label}时出错停下了（${failure.code}），没有自己重试；之后改了资料它也不会自己再试，要它再做一次就点「让软件再试一次」`;
   } else if (next !== null && granted) {
     status = 'running';
     line = `软件正在${label}`;
@@ -343,7 +398,12 @@ export function planGate1Autopilot({ candidate, bExactCommissionRuntimeView = nu
   });
 }
 
-/** 这一次软件做完的几步，追加进记录；只留最近几条。 */
+/** 软件某一步出错的那条记录。记下出错时那份许可的编号，换了许可才不再挡（见 failureBlocks）。 */
+export function gate1AutopilotFailure({ candidate, step, code, at }) {
+  return { step, code, at, sourceRevision: candidate.dataRevision, grantId: text(candidate.gate1AutopilotGrantV1?.grantId) };
+}
+
+/** 这一次软件做完的几步，追加进记录；只留最近几条。读页面扣下的次数原样留着。 */
 export function gate1AutopilotRecordAfterRun(record, { ranSteps = [], failure = null, at }) {
   const previous = isObject(record) ? record : {};
   const kept = [...(Array.isArray(previous.ranSteps) ? previous.ranSteps : []), ...ranSteps].slice(-RAN_STEPS_KEPT);
@@ -351,6 +411,7 @@ export function gate1AutopilotRecordAfterRun(record, { ranSteps = [], failure = 
     schemaVersion: GATE1_AUTOPILOT_RECORD_SCHEMA_VERSION,
     lastRunAt: at,
     ranSteps: kept,
-    failure: failure === null ? (ranSteps.length ? null : previous.failure ?? null) : failure
+    failure: failure === null ? (ranSteps.length ? null : previous.failure ?? null) : failure,
+    ...(Array.isArray(previous.publicReads) ? { publicReads: previous.publicReads } : {})
   };
 }

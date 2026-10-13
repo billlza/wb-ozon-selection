@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  GATE1_AUTOPILOT_ACTOR_SOURCE, GATE1_AUTOPILOT_ACTOR_USER_ID, buildGate1AutopilotGrant, gate1AutopilotGrantCurrent,
-  gate1AutopilotMayAct, gate1AutopilotRecordAfterRun, isGate1AutopilotActor, planGate1Autopilot
+  GATE1_AUTOPILOT_ACTOR_SOURCE, GATE1_AUTOPILOT_ACTOR_USER_ID, buildGate1AutopilotGrant, debitGate1PublicRead, gate1AutopilotFailure,
+  gate1AutopilotGrantCurrent, gate1AutopilotMayAct, gate1AutopilotRecordAfterRun, isGate1AutopilotActor, planGate1Autopilot
 } from "../lib/gate1-autopilot.mjs";
 
 const AT = "2026-10-11T10:00:00.000Z";
@@ -149,14 +149,42 @@ test("没有许可时，不花钱的那一步摆出来让主人决定要不要�
   assert.match(view.line, /整理商品属性与关键词/u);
 });
 
-test("出错只挡同一份资料上的同一步：修订号变了就再试；不会自己重试同一份", () => {
-  const failed = product({ extra: { gate1AutopilotV1: gate1AutopilotRecordAfterRun(null, {
-    failure: { step: "c1_local_material", code: "C1_LOCAL_PREPARATION_IDENTITY_INVALID", at: AT, sourceRevision: 7 }, at: AT }) } });
+test("出错一直挡住同一步：之后改了资料（修订号变了）也不再试；主人点「让软件再试一次」或者重新点「做这件」换了许可，才再做", () => {
+  const failed = product();
+  failed.gate1AutopilotV1 = gate1AutopilotRecordAfterRun(null, { failure: gate1AutopilotFailure({ candidate: failed,
+    step: "c1_local_material", code: "C1_LOCAL_PREPARATION_IDENTITY_INVALID", at: AT }), at: AT });
+  assert.deepEqual({ ...failed.gate1AutopilotV1.failure }, { step: "c1_local_material", code: "C1_LOCAL_PREPARATION_IDENTITY_INVALID",
+    at: AT, sourceRevision: 7, grantId: failed.gate1AutopilotGrantV1.grantId });
   const view = planGate1Autopilot({ candidate: failed });
   assert.equal(view.status, "failed");
   assert.match(view.line, /C1_LOCAL_PREPARATION_IDENTITY_INVALID/u);
+  assert.match(view.line, /之后改了资料它也不会自己再试，要它再做一次就点「让软件再试一次」/u);
+  // 主人之后改了别的资料（修订号变了）：照样挡着，软件不自己再试（AGENTS.md §8.3）。
   failed.dataRevision = 8;
-  assert.equal(planGate1Autopilot({ candidate: failed }).status, "running");
+  assert.equal(planGate1Autopilot({ candidate: failed }).status, "failed");
+  assert.equal(planGate1Autopilot({ candidate: failed }).next.step, "c1_local_material");
+  // 「让软件再试一次」那条路清掉出错记录，才再做。
+  const retried = { ...failed, gate1AutopilotV1: { ...failed.gate1AutopilotV1, failure: null } };
+  assert.equal(planGate1Autopilot({ candidate: retried }).status, "running");
+  // 重新点了「做这件」：换了一份许可，上一份许可下的出错不再挡。
+  const again = { ...decision, decidedAt: "2026-10-12T00:00:00.000Z", roundIndex: 1 };
+  const reaccepted = { ...failed, gate1DecisionV1: again, gate1AutopilotGrantV1: buildGate1AutopilotGrant({ candidateId: "cand-1",
+    sourceRevision: 8, decision: again, via: "gate1_accept", grantedAt: again.decidedAt, grantedBy: "owner" }) };
+  assert.equal(planGate1Autopilot({ candidate: reaccepted }).status, "running");
+  // 别的一步出的错不挡这一步。
+  const other = product();
+  other.gate1AutopilotV1 = gate1AutopilotRecordAfterRun(null, { failure: gate1AutopilotFailure({ candidate: other,
+    step: "c1_prepare_copy", code: "X", at: AT }), at: AT });
+  assert.equal(planGate1Autopilot({ candidate: other }).status, "running");
+});
+
+test("改法之前存下的出错记录没有许可编号：能确定出在现在这份许可之前才放开，分不清就照样挡", () => {
+  const legacy = at => product({ extra: { gate1AutopilotV1: { schemaVersion: "gate1-autopilot-v1", lastRunAt: AT, ranSteps: [],
+    failure: { step: "c1_local_material", code: "C1_LOCAL_PREPARATION_IDENTITY_INVALID", at, sourceRevision: 6 } } } });
+  assert.equal(planGate1Autopilot({ candidate: legacy("2026-10-11T09:00:00.000Z") }).status, "running", "许可之前出的错");
+  assert.equal(planGate1Autopilot({ candidate: legacy(AT) }).status, "failed", "和许可同一刻，分不清");
+  assert.equal(planGate1Autopilot({ candidate: legacy("2026-10-12T00:00:00.000Z") }).status, "failed", "许可之后出的错");
+  assert.equal(planGate1Autopilot({ candidate: legacy("not-a-time") }).status, "failed", "时间读不出来");
 });
 
 test("补齐供应属性只在冻结快照里还没有页面属性、又是同一次采集时才做", () => {
@@ -318,4 +346,65 @@ test("规格采回来以后软件读一次认下的 Ozon 同款；在读就说�
   // 许可之前的那次运行记录不算这一轮读过。
   const before = { ...ran, ranSteps: [{ ...ran.ranSteps[0], at: "2026-10-11T09:00:00.000Z" }] };
   assert.equal(planGate1Autopilot({ candidate: choosing({ extra: { gate1AutopilotV1: before } }) }).next.step, "a_read_ozon_benchmark");
+});
+
+test("软件读认下的 Ozon 同款页面，建作业那一刻按许可扣一次：扣过就不再读，作业后来没读成也不退", () => {
+  const at = "2026-10-11T10:10:00.000Z";
+  const candidate = choosing();
+  const grantId = candidate.gate1AutopilotGrantV1.grantId;
+  const debit = debitGate1PublicRead(candidate, { productId: OZON_ID, captureId: "OPR-1", at });
+  assert.equal(debit.ok, true);
+  assert.deepEqual(debit.record, { schemaVersion: "gate1-autopilot-v1", lastRunAt: null, ranSteps: [], failure: null,
+    publicReads: [{ grantId, productId: OZON_ID, captureId: "OPR-1", at, sourceRevision: 9 }] });
+  assert.equal(candidate.gate1AutopilotV1, undefined, "只返回要存的记录，不改传进来的商品");
+  const debited = { ...candidate, gate1AutopilotV1: debit.record };
+  assert.deepEqual({ ...debitGate1PublicRead(debited, { productId: OZON_ID, captureId: "OPR-2", at }) },
+    { ok: false, code: "GATE1_PUBLIC_READ_EXHAUSTED" });
+
+  // 读页面失败时那条记录整份重写（不带 queuedBy），软件的运行记录也可能没来得及存：只凭扣下的那一次，就不再排读页面。
+  const failedRead = planGate1Autopilot({ candidate: { ...debited, salesCapture: { captureId: "OPR-1", productId: OZON_ID,
+    status: "failed", jobStatus: "failed", reason: "页面要求登录。" } } });
+  assert.deepEqual([failedRead.status, failedRead.next, failedRead.stops[0].code], ["waiting_owner", null, "a_ozon_read_failed"]);
+  const inFlight = planGate1Autopilot({ candidate: { ...debited, salesCapture: { captureId: "OPR-1", productId: OZON_ID,
+    status: "waiting_extension", jobStatus: "queued" } } });
+  assert.deepEqual([inFlight.status, inFlight.next], ["working", null]);
+  // 跑完记运行记录、主人点「让软件再试一次」清出错：扣下的次数都原样留着。
+  const after = gate1AutopilotRecordAfterRun(debit.record, { ranSteps: [{ step: "a_read_ozon_benchmark", at, sourceRevision: 9 }], at });
+  assert.deepEqual(after.publicReads, debit.record.publicReads);
+  assert.deepEqual(gate1AutopilotRecordAfterRun(after, { failure: { step: "x", code: "Y", at }, at }).publicReads, debit.record.publicReads);
+  // 上一份许可下扣的不算这一份的：重新点「做这件」换了许可，又有一次。
+  const again = { ...pickedDecision, decidedAt: "2026-10-12T00:00:00.000Z", roundIndex: 1 };
+  const reaccepted = { ...debited, dataRevision: 12, gate1DecisionV1: again, gate1AutopilotGrantV1: buildGate1AutopilotGrant({
+    candidateId: "cand-1", sourceRevision: 11, decision: again, via: "gate1_accept", grantedAt: again.decidedAt, grantedBy: "owner" }) };
+  assert.equal(debitGate1PublicRead(reaccepted, { productId: OZON_ID, captureId: "OPR-3", at: again.decidedAt }).ok, true);
+  // 已有的运行记录原样带着，只往后加这一次。
+  const withRuns = { ...candidate, gate1AutopilotV1: { schemaVersion: "gate1-autopilot-v1", lastRunAt: AT,
+    ranSteps: [{ step: "c1_local_material", at: AT, sourceRevision: 3 }], failure: null } };
+  const kept = debitGate1PublicRead(withRuns, { productId: OZON_ID, captureId: "OPR-4", at }).record;
+  assert.deepEqual([kept.lastRunAt, kept.ranSteps, kept.publicReads.length], [AT, withRuns.gate1AutopilotV1.ranSteps, 1]);
+});
+
+test("不给读的几种：许可不算数、已经确认过供货、许可里没有读页面授权、要读的不是认下的那一页；一个都不扣", () => {
+  const at = "2026-10-11T10:10:00.000Z";
+  const refused = (candidate, productId = OZON_ID) => {
+    const result = debitGate1PublicRead(candidate, { productId, captureId: "OPR-1", at });
+    assert.equal(result.ok, false);
+    assert.equal(Object.hasOwn(result, "record"), false);
+    return result.code;
+  };
+  assert.equal(refused(choosing({ granted: false })), "GATE1_PUBLIC_READ_GRANT_NOT_CURRENT");
+  assert.equal(refused(choosing({ extra: { workflowStatus: "eliminated" } })), "GATE1_PUBLIC_READ_GRANT_NOT_CURRENT");
+  assert.equal(refused(choosing({ extra: { lifecycleV11: { aConfirmationReceipt: { decision: "confirm" } } } })), "GATE1_PUBLIC_READ_STAGE_CLOSED");
+  assert.equal(refused(choosing({ extra: { lifecycleV11: { skuPackage: { skuPackageId: "sku-1" } } } })), "GATE1_PUBLIC_READ_STAGE_CLOSED");
+  assert.equal(refused(choosing(), "1234567"), "GATE1_PUBLIC_READ_TARGET_MISMATCH");
+  const without = choosing();
+  const { publicRead: _omitted, ...grantWithoutRead } = without.gate1AutopilotGrantV1;
+  assert.equal(refused({ ...without, gate1AutopilotGrantV1: grantWithoutRead }), "GATE1_PUBLIC_READ_NOT_AUTHORIZED");
+  const zero = choosing();
+  assert.equal(refused({ ...zero, gate1AutopilotGrantV1: { ...zero.gate1AutopilotGrantV1,
+    publicRead: { ...zero.gate1AutopilotGrantV1.publicRead, maxReads: 0 } } }), "GATE1_PUBLIC_READ_NOT_AUTHORIZED");
+  const v3 = choosing();
+  assert.equal(refused({ ...v3, gate1AutopilotGrantV1: { ...v3.gate1AutopilotGrantV1, scopeVersion: "gate1-autopilot-scope-v3",
+    scope: v3.gate1AutopilotGrantV1.scope.filter(step => step !== "a_read_ozon_benchmark") } }), "GATE1_PUBLIC_READ_NOT_AUTHORIZED");
+  assert.throws(() => debitGate1PublicRead(choosing(), { productId: OZON_ID, captureId: "", at }), /GATE1_PUBLIC_READ_DEBIT_INPUT_INVALID/);
 });

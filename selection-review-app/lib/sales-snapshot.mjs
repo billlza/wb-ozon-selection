@@ -20,6 +20,13 @@ export const SEERFAR_CATEGORY_DETAIL_SNAPSHOT_KEYS = Object.freeze([
 ]);
 const SEERFAR_MARKET_METRIC_KEYS = Object.freeze(["salesCount", "salesWindow", "revenue", "reviewCount", "reviewRating"]);
 export const UNKNOWN = "unknown";
+/**
+ * 查询结果里售价的币种从哪来。Seerfar 的商品记录不带币种（合同里 currency 固定是 null），所以新写的快照记成
+ * 「服务商没给」，币种保持 unknown。2026-10-13 之前写的快照记的是「按平台惯例当成卢布」——那是软件补的，
+ * 不是证据；这些旧快照原样保留、照样校验通过，但它们的卢布不算有证据的币种（见 salesSnapshotCurrencyEvidenced）。
+ */
+export const SEERFAR_PRICE_CURRENCY_UNREPORTED = "provider_unreported";
+export const SEERFAR_PRICE_CURRENCY_ASSUMED = "ozon_platform_currency";
 
 export function extractOzonProductId(value) {
   try {
@@ -110,8 +117,13 @@ function validateSeerfarCategoryDetailSnapshot(snapshot, errors) {
     push(errors, "collectorMode", "查询结果快照必须声明只读的品类查询采集模式");
   }
   if (snapshot.sellerType !== UNKNOWN) push(errors, "sellerType", "查询结果没有卖家身份证据，只能是unknown");
-  if (snapshot.priceCurrencySource !== "ozon_platform_currency") {
-    push(errors, "priceCurrencySource", "必须写明售价币种依据的是平台币种约定");
+  if (snapshot.priceCurrencySource === SEERFAR_PRICE_CURRENCY_UNREPORTED) {
+    if (snapshot.currency !== UNKNOWN) push(errors, "currency", "服务商没给币种时，币种只能是unknown");
+  } else if (snapshot.priceCurrencySource === SEERFAR_PRICE_CURRENCY_ASSUMED) {
+    // 旧快照：当时按平台惯例写成了 RUB。只认它原来的样子，不让新写入再走这条路以外的组合。
+    if (snapshot.currency !== "RUB") push(errors, "currency", "旧版按平台惯例记录的币种只能是RUB");
+  } else {
+    push(errors, "priceCurrencySource", "必须写明售价币种从哪来：服务商没给，或旧版按平台惯例记录");
   }
   const metrics = snapshot.marketMetrics;
   if (!isObject(metrics)) {
@@ -260,6 +272,15 @@ export function validateSalesSnapshot(snapshot) {
   if (snapshot.source === SEERFAR_CATEGORY_DETAIL_SOURCE) validateSeerfarCategoryDetailSnapshot(snapshot, errors);
   else if (snapshot.source !== undefined) push(errors, "source", "销售快照来源类型无效");
   return { valid: errors.length === 0, errors };
+}
+
+/**
+ * 这份快照的售价币种有没有证据：页面或接口明确给出的三位币种代码才算。unknown 不算；旧版 Seerfar 快照里
+ * 按平台惯例补上的 RUB 也不算——服务商自己没说。没有证据的币种不能当正式价格依据（A 确认、同款各色定价）。
+ */
+export function salesSnapshotCurrencyEvidenced(snapshot) {
+  if (!isObject(snapshot) || !/^[A-Z]{3}$/.test(String(snapshot.currency))) return false;
+  return snapshot.priceCurrencySource !== SEERFAR_PRICE_CURRENCY_ASSUMED;
 }
 
 export function attachTerraAuxiliaryDraft(snapshot, draft) {

@@ -396,6 +396,11 @@ export function buildProfitStepReview({
     baseGaps.push(gap('storeRef', '店铺', '这件商品还没有绑定到一个完整的店铺。'));
   }
   if (sales === null) baseGaps.push(gap('salesReview.snapshotId', '对标商品的快照', '还没有这件商品的对标 Ozon 商品快照。'));
+  // 售价币种没有证据（比如 Seerfar 的售价）就不拿它当正式价格：和服务端 A 确认同一句话，提前说，不让他白点一次。
+  else if (sales.currencyEvidenced !== true) {
+    baseGaps.push(gap('salesReview.currency', '对标售价的币种',
+      textOf(sales.currencyGapReason) ?? '这份对标快照里的售价没有可核对的币种，不能拿它算正式利润。'));
+  }
   if (productUrl === null || captureId === null) {
     baseGaps.push(gap('supplierCapture', '1688 采集记录', '这一次的 1688 采集记录不完整，重新采集一次再来。'));
   }
@@ -482,6 +487,7 @@ export function buildProfitStepReview({
       title: sales.title ?? null,
       currentPrice: finite(sales.currentPrice),
       currency: textOf(sales.currency),
+      currencyEvidenced: sales.currencyEvidenced === true,
       collectedOn: dayOf(sales.collectedAt),
       snapshotId: sales.snapshotId ?? null,
       matchedAttributeKey: match?.attributeKey ?? null,

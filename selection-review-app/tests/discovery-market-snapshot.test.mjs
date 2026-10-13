@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { createSeerfarDiscoveryRuntimeFixture } from './fixtures/seerfar-discovery-runtime-fixture.mjs';
 import { buildDiscoveryMarketSalesSnapshot, currentSalesSnapshot, discoveryMarketSnapshotId,
   ensureDiscoveryMarketSalesSnapshot, readDiscoveryMarketRecord } from '../lib/discovery-market-snapshot.mjs';
-import { validateSalesSnapshot } from '../lib/sales-snapshot.mjs';
-import { buildRealAConfirmationCard } from '../lib/real-a-confirmation-card.mjs';
+import { salesSnapshotCurrencyEvidenced, validateSalesSnapshot } from '../lib/sales-snapshot.mjs';
+import { buildRealAConfirmationCard, validateRealAConfirmationSubmission } from '../lib/real-a-confirmation-card.mjs';
 
 // The whole test runs on the synthetic discovery fixture's own saved records. Nothing is read from a platform.
 const category = { fullCategoryId: ['100_200'], titlePath: 'Товары для дома > Органайзеры',
@@ -39,8 +39,11 @@ test('已保存的查询回执可以直接投影成一条销售快照，每个�
   assert.equal(snapshot.snapshotId, discoveryMarketSnapshotId({ receiptId: record.receipt.receiptId, marketProductId: String(SKU) }));
   assert.equal(snapshot.platform, 'ozon');
   assert.equal(snapshot.currentPrice, 1850);
-  assert.equal(snapshot.currency, 'RUB');
-  assert.equal(snapshot.priceCurrencySource, 'ozon_platform_currency');
+  // Seerfar 的记录不带币种：数字照它给的存，单位如实记成未知，不按平台惯例补成卢布（P0-13）。
+  assert.equal(record.product.currency, null);
+  assert.equal(snapshot.currency, 'unknown');
+  assert.equal(snapshot.priceCurrencySource, 'provider_unreported');
+  assert.equal(salesSnapshotCurrencyEvidenced(snapshot), false);
   assert.equal(snapshot.categoryPath, '家居用品 > 收纳整理');
   assert.equal(snapshot.collectedAt, record.receipt.completedAt);
   assert.equal(snapshot.sellerType, 'unknown');
@@ -67,6 +70,9 @@ test('未声明的字段、错误的采集模式和缺失的证据引用都会�
   invalid({ evidenceRefs: [snapshot.evidenceRef, snapshot.evidenceRef] }, 'evidenceRefs');
   invalid({ sellerType: 'cross_border_cn' }, 'sellerType');
   invalid({ priceCurrencySource: 'provider_declared' }, 'priceCurrencySource');
+  // 服务商没给币种，就不能同时写着卢布；旧版「按平台惯例」只认它当初写下的卢布。
+  invalid({ currency: 'RUB' }, 'currency');
+  invalid({ priceCurrencySource: 'ozon_platform_currency' }, 'currency');
   invalid({ marketMetrics: { ...snapshot.marketMetrics, salesCount: 12.5 } }, 'marketMetrics.salesCount');
   invalid({ marketMetrics: { ...snapshot.marketMetrics, reviewRating: -1 } }, 'marketMetrics.reviewRating');
   invalid({ marketMetrics: { ...snapshot.marketMetrics, extra: 1 } }, 'marketMetrics');
@@ -107,7 +113,7 @@ test('没有查询回执的候选不产生任何快照，也不会被改动', as
   assert.equal(ensureDiscoveryMarketSalesSnapshot({ document, candidate: orphan }).status, 'receipt_missing');
 });
 
-test('投影出的快照直接满足A确认卡的销售快照要求，卡片仍然零业务写入', async t => {
+test('投影出的快照能在A确认卡上显示，卡片仍然零业务写入；售价没有币种，卡上如实标出', async t => {
   const { document, candidate } = await importedDiscoveryCandidate(t);
   assert.equal(buildRealAConfirmationCard(candidate).salesReview, null);
   ensureDiscoveryMarketSalesSnapshot({ document, candidate });
@@ -116,8 +122,50 @@ test('投影出的快照直接满足A确认卡的销售快照要求，卡片仍�
   assert.equal(card.salesReview.snapshotId, candidate.salesSnapshotsV11[0].snapshotId);
   assert.equal(card.salesReview.source, 'seerfar_category_detail');
   assert.equal(card.salesReview.currentPrice, 1850);
+  assert.equal(card.salesReview.currency, 'unknown');
+  assert.equal(card.salesReview.currencyEvidenced, false);
+  assert.match(card.salesReview.currencyGapReason, /Seerfar 没有说明它是卢布还是别的币种/u);
   assert.equal(card.salesReview.marketMetrics.salesCount, 330);
   assert.equal(card.salesReview.marketMetrics.reviewCount, 371);
   assert.deepEqual(card.boundaries, { candidateWrites: 0, platformAccesses: 0, platformWrites: 0, taskDispatches: 0, automationStarted: false });
   assert.equal(JSON.stringify(candidate), before);
+});
+
+test('币种没有证据的售价不能确认成正式价格依据：A确认当场拒绝，并说出要读一次Ozon页面；淘汰不受影响', async t => {
+  const { document, candidate } = await importedDiscoveryCandidate(t);
+  ensureDiscoveryMarketSalesSnapshot({ document, candidate });
+  const card = buildRealAConfirmationCard(candidate);
+  const confirm = validateRealAConfirmationSubmission(card, { decision: 'confirm', sourceCandidateId: card.sourceCandidateId,
+    sourceDataRevision: card.sourceDataRevision, dataRevision: card.sourceDataRevision,
+    salesReview: { snapshotId: card.salesReview.snapshotId, comparability: 'comparable', validityStatus: 'current' } });
+  assert.equal(confirm.valid, false);
+  const currency = confirm.errors.find(error => error.field === 'salesReview.currency');
+  assert.ok(currency, JSON.stringify(confirm.errors));
+  assert.equal(currency.label, '对标售价的币种');
+  assert.match(currency.reason, /先读一次这个 Ozon 商品页，用页面上的售价/u);
+
+  const reject = validateRealAConfirmationSubmission(card, { decision: 'reject', sourceCandidateId: card.sourceCandidateId,
+    sourceDataRevision: card.sourceDataRevision, dataRevision: card.sourceDataRevision });
+  assert.equal(reject.valid, true);
+});
+
+test('2026-10-13 之前写下的旧快照（按平台惯例记成卢布）原样有效，但它的卢布不算有证据的币种', async t => {
+  const { document, candidate } = await importedDiscoveryCandidate(t);
+  const fresh = buildDiscoveryMarketSalesSnapshot(readDiscoveryMarketRecord({ document, candidate }));
+  const legacy = { ...structuredClone(fresh), currency: 'RUB', priceCurrencySource: 'ozon_platform_currency' };
+  // 历史不改写：旧记录照样通过校验，照样能被找到、显示、当成页面地址来源。
+  assert.deepEqual(validateSalesSnapshot(legacy), { valid: true, errors: [] });
+  assert.equal(salesSnapshotCurrencyEvidenced(legacy), false);
+  candidate.salesSnapshotsV11 = [legacy];
+  assert.equal(currentSalesSnapshot(candidate).snapshotId, legacy.snapshotId);
+  const card = buildRealAConfirmationCard(candidate);
+  assert.equal(card.salesReview.currency, 'RUB');
+  assert.equal(card.salesReview.currencyEvidenced, false);
+  assert.match(card.salesReview.currencyGapReason, /Seerfar/u);
+  // 页面真实读到的卢布才算有证据。
+  const pageRead = { ...structuredClone(legacy), snapshotId: 'sales-snapshot:real-page-read' };
+  for (const key of ['source', 'priceCurrencySource', 'marketMetrics', 'evidenceRefs']) delete pageRead[key];
+  Object.assign(pageRead, { collectorMode: 'real_page_read_only', collectorVersion: 'real-ozon-sales-snapshot-v1' });
+  assert.equal(validateSalesSnapshot(pageRead).valid, true);
+  assert.equal(salesSnapshotCurrencyEvidenced(pageRead), true);
 });

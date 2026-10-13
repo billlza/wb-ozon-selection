@@ -269,6 +269,16 @@ function roundLadderPrices(thresholdRub, marketRub) {
 }
 
 /**
+ * The rouble price of one saved market row, or null when the row itself does not say its price is in roubles.
+ * Seerfar rows carry currency null because the provider does not report it, so for them this is null (P0-13,
+ * 2026-10-13): the 「做这件」 card asks the owner for the target price and the 找货 guidance leaves out 「同款市场价」,
+ * instead of quietly treating the number as roubles.
+ */
+export function marketRowPriceRub(product) {
+  return isObject(product) && product.currency === 'RUB' && finite(product.price) && product.price > 0 ? product.price : null;
+}
+
+/**
  * The four things the owner asked to see beside the 找货 form: the price that breaks even, the cheapest price that
  * reaches this store's own profit threshold (and which of the two thresholds it reached), what the same product sells
  * for today and what that price would earn, and a short ladder of prices with the profit each one leaves.

@@ -606,8 +606,8 @@ function seerfarSelectionView(document, operationResult = null) {
 // ── 「做这件」确认卡（关口 1）：软件先选同款和货源、粗算、品牌提示；做 / 不做 / 利润没过线之后怎么办。逻辑在 lib/gate1-*.mjs。
 import { createGate1Service } from './lib/gate1-service.mjs';
 import { Gate1Error, applyGate1Shortfall } from './lib/gate1-decision.mjs';
-import { GATE1_AUTOPILOT_ACTOR_SOURCE, GATE1_AUTOPILOT_ACTOR_USER_ID, buildGate1AutopilotGrant, gate1AutopilotGrantCurrent,
-  gate1AutopilotRecordAfterRun, planGate1Autopilot } from './lib/gate1-autopilot.mjs';
+import { GATE1_AUTOPILOT_ACTOR_SOURCE, GATE1_AUTOPILOT_ACTOR_USER_ID, buildGate1AutopilotGrant, debitGate1PublicRead,
+  gate1AutopilotFailure, gate1AutopilotGrantCurrent, gate1AutopilotRecordAfterRun, planGate1Autopilot } from './lib/gate1-autopilot.mjs';
 import { buildGate2ListingPreview, buildGate2ListingView, c2OwnerListingAsset, gate2AccountReadInput, gate2FinalAssetInput,
   gate2ListingFingerprint, gate2ProductionInput } from './lib/gate2-listing.mjs';
 import { recordSkipReason } from './lib/store-profile.mjs';
@@ -650,7 +650,8 @@ async function gate1Route(req, res, pathname) {
 // ── 「做这件」之后不花钱的几步由软件自己往下走。哪一步、停在哪儿，判断都在 lib/gate1-autopilot.mjs，这里只照着做。
 // 某件商品的写入请求成功之后（主人点了什么、插件回了结果），看一眼这件商品：许可还算数、下一步是软件能做的，就以那个
 // 软件身份做这一步，做完再看下一步，直到停在要主人做的地方。同一件商品同一时间只跑一个；某一步出错就记下来停住，
-// 不自己重试；被别的写入抢先（修订号变了）就放下，那次写入之后会再看一次。
+// 不自己重试，主人之后改了别的资料也不再试这一步，只等主人点「让软件再试一次」；被别的写入抢先（修订号变了）不算出错，
+// 就放下，那次写入之后会再看一次。
 const GATE1_AUTOPILOT_CONTINUE_ROUTE = /^\/api\/candidates\/([^/]+)\/gate1\/autopilot\/continue$/;
 const GATE1_AUTOPILOT_MAX_STEPS = 6;
 const GATE1_AUTOPILOT_CONFLICT_CODES = new Set(["BUSINESS_MUTATION_REVISION_CONFLICT", "BUSINESS_MUTATION_IDEMPOTENCY_CONFLICT",
@@ -775,7 +776,7 @@ async function advanceGate1Autopilot(candidateId) {
       if (plan?.status !== "running") break;
       const attempt = `${plan.next.step}:${candidate.dataRevision}`;
       if (attempt === previous) {
-        failure = { step: plan.next.step, code: "GATE1_AUTOPILOT_NO_PROGRESS", at: now(), sourceRevision: candidate.dataRevision };
+        failure = gate1AutopilotFailure({ candidate, step: plan.next.step, code: "GATE1_AUTOPILOT_NO_PROGRESS", at: now() });
         break;
       }
       previous = attempt;
@@ -784,7 +785,7 @@ async function advanceGate1Autopilot(candidateId) {
       } catch (error) {
         const code = gate1AutopilotErrorCode(error);
         if (GATE1_AUTOPILOT_CONFLICT_CODES.has(code)) break;
-        failure = { step: plan.next.step, code, at: now(), sourceRevision: candidate.dataRevision };
+        failure = gate1AutopilotFailure({ candidate, step: plan.next.step, code, at: now() });
         console.error(`GATE1_AUTOPILOT_STEP_FAILED: ${plan.next.step} ${code}`);
         break;
       }
@@ -1934,6 +1935,16 @@ async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedP
         throw httpError(409, "当前商品已有任务等待或运行，不能读这个 Ozon 页面", { code: "candidate_busy" });
       }
       const timestamp = now();
+      if (bySoftware) {
+        // 软件按「做这件」的许可读页面：在建作业的同一个事务里按许可扣掉这一次。次数用完或许可不算数，就不建作业，
+        // 一个外部请求都不发（AGENTS.md §8.1）。
+        const debit = debitGate1PublicRead(current, { productId: session.expectedProductId, captureId: session.captureId, at: timestamp });
+        if (!debit.ok) {
+          throw httpError(409, "「做这件」许可里那一次读 Ozon 同款页面已经用过或者不再算数，软件不再读；要读请主人在「算利润」里自己点。",
+            { code: debit.code.toLowerCase() });
+        }
+        current.gate1AutopilotV1 = debit.record;
+      }
       current.salesCapture = {
         captureId: session.captureId,
         jobId: session.captureId,

@@ -238,7 +238,8 @@ sourceRef: 'ozon-official-commission:2025-12-01:sha256:synthetic', gaps: [] };
 
 test('保存找货资料后同时给出保本价、达标价、市场价利润和价格阶梯，口径与利润判断同一套', () => {
   const draft = draftFrom({ dimensionsCm: { length: 40, width: 21, height: 4 } });
-  const marketProduct = { productId: '2107989735', price: 1666, categoryPath: { cnTitlePath: '宠物用品 > 宠物躺床' } };
+  // 这一条市场记录自己写明了卢布（Seerfar 的记录不写，见下一个测试）。
+  const marketProduct = { productId: '2107989735', price: 1666, currency: 'RUB', categoryPath: { cnTitlePath: '宠物用品 > 宠物躺床' } };
   const result = buildSupplierDraftEstimate({ draft, storeRule, fx, commission, commissionTiers: TIERS,
     tariffRows: TARIFF_ROWS, assumptions, estimatedAt: at, marketProduct });
   const guidance = result.pricingGuidance;
@@ -258,11 +259,24 @@ test('保存找货资料后同时给出保本价、达标价、市场价利润�
   assert.ok(['unit_profit', 'margin', 'both'].includes(guidance.threshold.basis));
   assert.ok(guidance.threshold.unitProfitRmb >= storeRule.minimumUnitProfitRmb ||
     guidance.threshold.marginRate >= storeRule.targetMarginRate);
-  // 市场价 is the Seerfar snapshot price of this very product, never the owner's typed target price.
+  // 市场价 is the market record's own rouble price of this very product, never the owner's typed target price.
   assert.equal(guidance.market.priceRub, 1666);
   assert.notEqual(guidance.market.priceRub, draft.targetSalePriceRub);
   assert.ok(guidance.ladder.length >= 3);
   assert.deepEqual(guidance.ladder.map(entry => entry.priceRub), [...guidance.ladder.map(entry => entry.priceRub)].sort((a, b) => a - b));
+});
+
+test('市场记录没写币种（Seerfar 的记录就是这样）时，不摆「同款市场价」，保本价和达标价照给', () => {
+  const draft = draftFrom({ dimensionsCm: { length: 40, width: 21, height: 4 } });
+  for (const currency of [null, undefined, 'CNY']) {
+    const marketProduct = { productId: '2107989735', price: 1666, currency, categoryPath: { cnTitlePath: '宠物用品 > 宠物躺床' } };
+    const guidance = buildSupplierDraftEstimate({ draft, storeRule, fx, commission, commissionTiers: TIERS,
+      tariffRows: TARIFF_ROWS, assumptions, estimatedAt: at, marketProduct }).pricingGuidance;
+    assert.equal(guidance.status, 'ok', String(currency));
+    assert.equal(guidance.market, null, String(currency));
+    assert.equal(guidance.ladder.some(entry => entry.label === '同款市场价' || entry.priceRub === 1666), false, String(currency));
+    assert.ok(guidance.breakEven.priceRub > 0 && guidance.threshold.priceRub > 0, String(currency));
+  }
 });
 
 test('没有官方费率档位、或估算本身就不完整时，一个定价指引都不给', () => {
