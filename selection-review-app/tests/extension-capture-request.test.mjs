@@ -85,7 +85,10 @@ test("每个插件回执码都有一句给主人的话，且覆盖桥接脚本�
   assert.match(captureStartMessage({ accepted: false, code: "capture_busy" }), /另一件商品/);
   assert.match(captureStartMessage({ accepted: false, code: "extension_identity_rejected" }), /白名单/);
   assert.match(captureStartMessage({ accepted: false, code: "background_unavailable" }), /重新加载插件/);
-  for (const code of ["request_origin_invalid", "start_signal_invalid", "capture_job_invalid", "capture_job_not_claimed"]) {
+  assert.match(captureStartMessage({ accepted: false, code: "tab_cleanup_failed" }), /没能自动关上.*关掉.*重新加载插件/u);
+  assert.match(captureStartMessage({ accepted: false, code: "tab_creation_unconfirmed" }), /重新加载插件/u);
+  for (const code of ["request_origin_invalid", "start_signal_invalid", "capture_job_invalid", "capture_job_not_claimed",
+    "tab_cleanup_failed", "tab_creation_unconfirmed"]) {
     assert.match(captureStartMessage({ accepted: false, code }), /不会自动重试/, `${code} 必须说明软件不会自动重试`);
   }
   const unknown = captureStartMessage({ accepted: false, code: "something_new" });

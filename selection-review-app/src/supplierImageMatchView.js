@@ -11,6 +11,15 @@ export const IMAGE_MATCH_SIMILARITY_LABELS = Object.freeze({
   identical: "首图一致", similar: "很像", different: "不像", unknown: "无法比对"
 });
 export const IMAGE_MATCH_JUDGEMENT_LABELS = Object.freeze({ exact: "是同款", near: "近似款", wrong: "不是" });
+/** 比对首图半路断了时服务端记下的原因，和 lib/image-match-record.mjs 的 IMAGE_MATCH_COMPARISON_INTERRUPTED 逐字对齐。 */
+export const IMAGE_MATCH_COMPARISON_INTERRUPTED = "comparison_interrupted";
+
+/** 比对断了的那一份：结果都在、一条也没比，说清楚为什么，以及下一步点什么。 */
+export function interruptedComparisonLine(record) {
+  return record?.status === "compared" && record.comparison?.sourceError === IMAGE_MATCH_COMPARISON_INTERRUPTED
+    ? `读回的 ${record.results.length} 条在比对首图时中断了（服务重启或保存出错），一条都还没比；点「重新比对」再比一次，或者直接逐条判断。`
+    : null;
+}
 const SIMILARITY_ORDER = Object.freeze(["identical", "similar", "unknown", "different"]);
 // 拿哪家的价格去比：拼多多比的是拼单价，1688 比的是主人给的那一家；Ozon 主图搜出来的没有人民币进价可比。
 const PRICE_BASE_LABELS = Object.freeze({ pinduoduo: "拼多多", 1688: "你给的这家" });
@@ -32,6 +41,8 @@ function quantityLine(value) {
 }
 
 function statusLine(record, counts) {
+  const interrupted = interruptedComparisonLine(record);
+  if (interrupted !== null) return interrupted;
   switch (record.status) {
     case "waiting_extension": return "已经排队，等插件领取……";
     case "searching": return "插件正在你 Chrome 里登录的 1688 上搜图……";

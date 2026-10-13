@@ -120,8 +120,8 @@ function createDExecutionIntentDraft({
   if (!exactJson(ownerExecutionDecision.platformWritePrice, request.platformWritePrice)) {
     throw new Error("D_EXECUTION_OWNER_SCOPE_MISMATCH: 后台写入价格与授权执行请求不一致");
   }
-  if (ownerExecutionDecision.stock !== 100 || request.stock !== 100) {
-    throw new Error("D_EXECUTION_OWNER_SCOPE_MISMATCH: 新品库存必须精确锁定为100");
+  if (!Number.isSafeInteger(request.stock) || request.stock < 0 || ownerExecutionDecision.stock !== request.stock) {
+    throw new Error("D_EXECUTION_OWNER_SCOPE_MISMATCH: 新品库存与授权执行请求不一致");
   }
   const decisionAssetIds = ownerExecutionDecision.finalUploadAssetIds;
   const requestAssetIds = Array.isArray(request.finalUploads) ? request.finalUploads.map((asset) => asset.assetId) : [];

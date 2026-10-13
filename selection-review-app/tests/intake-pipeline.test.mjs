@@ -195,6 +195,45 @@ test("排队：按贴进来的先后和行序；插件一次一个，在等插�
   assert.deepEqual(pickWork(nextIntakeWork([itemOnly, third])), ["Q3", "capture_source"], "只拦一件的不挡后面的");
 });
 
+test("正在比对首图是服务端自己在比、不占插件：这一件等比完，后面要插件的照常排；比对中断的不当成没找到，不花 AI 翻词", () => {
+  const read = withJobs(intakeCandidate("CMP1", { index: 0, size: 2 }), { sourceCaptureId: "S" }, { sourceCapture: captured("S") });
+  const comparingSupplier = withJobs(read, { supplierMatchId: "IMJ-C" }, { supplierImageMatch: { captureId: "IMJ-C", status: "comparing", jobStatus: "completed" } });
+  assert.deepEqual(pick(intakeProgress(comparingSupplier)), ["searching_1688", null, null, false]);
+  const later = intakeCandidate("CMP2", { index: 1, size: 2 });
+  assert.deepEqual(pickWork(nextIntakeWork([comparingSupplier, later])), ["CMP2", "capture_source"], "比对中不挡后面那件读货源页");
+  const comparingOzon = withJobs(read, { supplierMatchId: "I", ozonMatchId: "OMJ-C" }, {
+    supplierImageMatch: { captureId: "I", status: "compared", jobStatus: "completed" },
+    ozonImageMatch: { captureId: "OMJ-C", searchBy: "image", status: "comparing", jobStatus: "completed" } });
+  assert.deepEqual(pick(intakeProgress(comparingOzon)), ["searching_ozon", null, null, false]);
+  assert.deepEqual(pickWork(nextIntakeWork([comparingOzon, later])), ["CMP2", "capture_source"]);
+
+  const interrupted = { captureId: "OMJ-C", searchBy: "image", status: "compared", jobStatus: "completed",
+    comparison: { sourceError: "comparison_interrupted" }, results: [{ productId: "1", similarity: "unknown", compareError: "comparison_interrupted" }] };
+  assert.equal(ozonImageSearchFoundNothing(interrupted), false);
+  assert.equal(intakeProgress({ ...comparingOzon, ozonImageMatch: interrupted }).next, "estimate", "比对没做完，不为它花一次 AI");
+});
+
+test("插件来领时资料变了、领取被拒：这一步没开始，停在这一件上等主人点「重跑」，不挡后面的", () => {
+  const base = intakeCandidate("CLM1", { index: 0, size: 2 });
+  const sourceRejected = withJobs(base, { sourceCaptureId: "SCJ-R" },
+    { sourceCapture: { captureId: "SCJ-R", status: "failed", jobStatus: "failed", failureCode: "claim_rejected" } });
+  assert.deepEqual(pickBlocker(intakeProgress(sourceRejected).blocker), ["step_not_started", "item", true, "capture_source"]);
+  const read = withJobs(base, { sourceCaptureId: "S" }, { sourceCapture: captured("S") });
+  const supplierRejected = withJobs(read, { supplierMatchId: "IMJ-R" },
+    { supplierImageMatch: { captureId: "IMJ-R", status: "failed", jobStatus: "failed", failureCode: "claim_rejected" } });
+  assert.deepEqual(pickBlocker(intakeProgress(supplierRejected).blocker), ["step_not_started", "item", true, "search_1688"]);
+  const ozonRejected = withJobs(read, { supplierMatchId: "I", ozonMatchId: "OMJ-R" }, {
+    supplierImageMatch: { captureId: "I", status: "compared", jobStatus: "completed" },
+    ozonImageMatch: { captureId: "OMJ-R", searchBy: "image", status: "failed", jobStatus: "failed", failureCode: "claim_rejected" } });
+  assert.deepEqual(pickBlocker(intakeProgress(ozonRejected).blocker), ["step_not_started", "item", true, "search_ozon"],
+    "没搜就不算没找到，不去翻俄文词");
+  const later = intakeCandidate("CLM2", { index: 1, size: 2 });
+  assert.deepEqual(pickWork(nextIntakeWork([sourceRejected, later])), ["CLM2", "capture_source"], "只拦这一件");
+  const blocked = { ...supplierRejected, intake: { ...supplierRejected.intake, stage: "blocked", blocker: intakeProgress(supplierRejected).blocker } };
+  const rerun = intakeRetryPlan(blocked, { requestedAt: "t", requestedBy: "owner-1" });
+  assert.deepEqual([rerun.ok, rerun.step, rerun.intake.jobs.supplierMatchId], [true, "search_1688", null]);
+});
+
 test("1688 登录状态：最近一次 1688 找同款说要登录就是过期；主人点「接着找」之后不算", () => {
   const read = withJobs(intakeCandidate("L1"), { sourceCaptureId: "S" }, { sourceCapture: captured("S") });
   const login = withJobs(read, { supplierMatchId: "I1" },

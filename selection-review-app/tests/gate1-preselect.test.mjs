@@ -56,10 +56,38 @@ test('货源取最便宜又确定能一件起订的；起批量没读到或多�
 
 test('价格说明里的运费：包邮是 0，写了几元就是几元，看不懂就是 null', () => {
   assert.equal(domesticShippingFromPriceNote('包邮'), 0);
+  assert.equal(domesticShippingFromPriceNote('全国包邮'), 0);
+  assert.equal(domesticShippingFromPriceNote('免运费'), 0);
   assert.equal(domesticShippingFromPriceNote('运费5元'), 5);
   assert.equal(domesticShippingFromPriceNote('运费 ¥3.5'), 3.5);
+  assert.equal(domesticShippingFromPriceNote('运费：0元'), 0);
+  assert.equal(domesticShippingFromPriceNote('运费5元，满2件包邮'), 5);
   assert.equal(domesticShippingFromPriceNote('满2件减1元'), null);
   assert.equal(domesticShippingFromPriceNote(null), null);
+});
+
+test('不包邮、有条件的包邮、只给下限的运费都不当成读懂了', () => {
+  for (const note of ['不包邮', '非包邮', '满2件包邮', '满99元包邮', '偏远地区不包邮', '包邮（偏远地区除外）', '部分地区包邮',
+    '指定地区包邮', '2件以上包邮', '运费5元起', '运费5-8元', '运费 5~8 元']) {
+    assert.equal(domesticShippingFromPriceNote(note), null, note);
+  }
+});
+
+test('读到运费的货源先挑：没读到运费的那家只按货价看着便宜，不抢先；一家都没读到才按货价挑', () => {
+  const mixed = gate1SupplierOptions({ supplierImageMatch: record([
+    offer(1, { priceCny: 12, priceNote: '不包邮' }),
+    offer(2, { priceCny: 16, priceNote: '运费3元' }),
+    offer(3, { priceCny: 18, priceNote: '包邮' })
+  ]) });
+  const byId = Object.fromEntries(mixed.map(row => [row.offerId, row]));
+  assert.equal(byId['1'].shippingKnown, false);
+  assert.equal(byId['1'].domesticShippingRmb, null);
+  assert.equal(cheapestMoqOne(mixed).offerId, '3');
+  const unknownOnly = gate1SupplierOptions({ supplierImageMatch: record([
+    offer(4, { priceCny: 14, priceNote: '满2件包邮' }),
+    offer(5, { priceCny: 11, priceNote: null })
+  ]) });
+  assert.equal(cheapestMoqOne(unknownOnly).offerId, '5');
 });
 
 test('每一格标软件先选的还是你改过', () => {

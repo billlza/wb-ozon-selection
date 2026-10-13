@@ -437,7 +437,8 @@
           "$ref": "#/$defs/money"
         },
         "stock": {
-          "const": 100
+          "type": "integer",
+          "minimum": 0
         },
         "finalUploads": {
           "type": "array",
@@ -545,7 +546,8 @@
               "minLength": 1
             },
             "stock": {
-              "const": 100
+              "type": "integer",
+              "minimum": 0
             }
           }
         },
@@ -568,7 +570,8 @@
               "$ref": "#/$defs/money"
             },
             "expectedStock": {
-              "const": 100
+              "type": "integer",
+              "minimum": 0
             },
             "expectedImageCount": {
               "type": "integer",
@@ -987,7 +990,8 @@
               "minLength": 1
             },
             "stock": {
-              "const": 100
+              "type": "integer",
+              "minimum": 0
             }
           }
         },

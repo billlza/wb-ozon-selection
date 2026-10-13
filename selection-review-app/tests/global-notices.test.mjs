@@ -44,6 +44,20 @@ test('the live answer of this tab wins over a stale server flag', () => {
     .map(notice => notice.key), ['plugin_offline']);
 });
 
+test('a plugin holding new jobs for a page it opened says so instead of "not connected"', () => {
+  // The server only hears "background not ready" and reports the plugin offline; this tab knows the real reason.
+  const notices = globalNotices({ extensionStatus: { code: 'tab_left_open' }, queueExtension: { online: false, login1688: 'ok' },
+    candidates: [blocked('a', 'plugin_offline', true), candidate('c')], store: 'miska' });
+  assert.deepEqual(notices.map(notice => notice.key), ['plugin_held']);
+  assert.match(notices[0].title, /没能自动关上/u);
+  assert.match(notices[0].detail, /关掉/u);
+  assert.match(notices[0].detail, /1 件在等/u);
+  assert.match(notices[0].detail, /点「接着找」才会再跑/u, 'the notice never promises an automatic rerun');
+  const unconfirmed = globalNotices({ extensionStatus: { code: 'tab_unconfirmed' }, queueExtension: { online: false } });
+  assert.deepEqual(unconfirmed.map(notice => notice.key), ['plugin_held']);
+  assert.match(unconfirmed[0].detail, /重新加载插件/u);
+});
+
 test('1688 login expired comes from the queue flag or from a saved blocker, and only once', () => {
   const fromFlag = globalNotices({ extensionStatus: { code: 'connected' }, queueExtension: { online: true, login1688: 'expired' } });
   assert.deepEqual(fromFlag.map(notice => notice.key), ['login_1688_expired']);

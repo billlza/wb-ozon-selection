@@ -161,6 +161,7 @@ const STOP_MESSAGES = Object.freeze({
   extension_job_unclaimed: "这次读页面的作业在等待期限内没有被插件领取，已经停下，软件不会自动重试",
   unknown_outcome: "插件领取了这次读页面，但在执行期限内没有回传可验证结果，这次的结果未知",
   capture_job_lost: "评审台服务重启了，这次读页面不会再有结果，需要重新读一次",
+  claim_rejected: "插件来领这次读页面时，这件商品的资料已经变了，这次没有读；要读就重新读一次",
   extension_version_mismatch: "本次读页面要求的插件版本与当前插件版本不一致"
 });
 

@@ -157,7 +157,8 @@ export function newIntakeRecord({ link, submittedAt, submittedBy, batchId, batch
 }
 
 const SOURCE_IN_FLIGHT = new Set(["waiting_extension", "capturing", "extension_version_mismatch"]);
-const MATCH_IN_FLIGHT = new Set(["waiting_extension", "searching", "comparing"]);
+/** 等插件的那两种。「正在比对首图」是服务端自己在比，不占插件：这一件等比完，后面的照常排。 */
+const MATCH_IN_FLIGHT = new Set(["waiting_extension", "searching"]);
 const JOB_IN_FLIGHT = new Set(["queued", "claimed", "claim_pending"]);
 /** 作业排了却没被领取、或者服务重启丢了：插件那头的事，整页提示。 */
 const PLUGIN_CODES = new Set(["extension_job_unclaimed", "capture_job_lost", "service_restarted_before_claim", "extension_not_installed",
@@ -175,6 +176,8 @@ function sourceCaptureBlocker(record, sourceKind) {
   if (code === "site_login_required") return intakeBlocker(sourceKind === "pinduoduo" ? "login_pinduoduo_required" : "login_1688_required", { step });
   if (code === "short_link_resolution_failed") return intakeBlocker("share_link_unresolved", { step });
   if (code === "exact_price_unavailable") return intakeBlocker("no_source_price", { step });
+  // 插件来领时这件商品的资料已经变了，领取被拒、什么也没读：这一步没开始，主人点「重跑」再排一次（AGENTS.md §8.3）。
+  if (code === "claim_rejected") return intakeBlocker("step_not_started", { step });
   if (PLUGIN_CODES.has(code)) return intakeBlocker("plugin_offline", { step });
   return intakeBlocker("source_unreadable", { step, detail: text(record?.reason, 120) });
 }
@@ -197,6 +200,7 @@ function matchBlocker(record, step) {
   if (record?.status !== "failed" || record?.jobStatus === "unknown_outcome") return null;
   if (record.failureCode === "site_verification_required") return intakeBlocker("slider_required", { step, detail: step === "search_1688" ? "1688" : "Ozon" });
   if (PLUGIN_CODES.has(record.failureCode)) return intakeBlocker("plugin_offline", { step });
+  if (record.failureCode === "claim_rejected") return intakeBlocker("step_not_started", { step });
   return null;
 }
 
@@ -208,6 +212,9 @@ export function ozonImageSearchFoundNothing(record) {
   if (!isObject(record) || record.searchBy !== "image" || record.jobStatus === "unknown_outcome") return false;
   if (record.status === "failed") return true;
   if (record.status !== "compared") return false;
+  // 比对半路断了（IMAGE_MATCH_COMPARISON_INTERRUPTED，lib/image-match-record.mjs；那边连着图片解码库，这里不 import）：
+  // 首图还没比，说不上没找到，不为它花一次 AI 翻词；主人点「重新比对」再看。
+  if (record.comparison?.sourceError === "comparison_interrupted") return false;
   const results = Array.isArray(record.results) ? record.results : [];
   const judgedSame = Object.values(isObject(record.judgements) ? record.judgements : {}).some((entry) => entry?.judgement === "exact");
   return !judgedSame && !results.some((item) => item?.similarity === "identical");
@@ -255,6 +262,7 @@ export function intakeProgress(candidate, { login1688Expired = false } = {}) {
   const supplier = candidate.supplierImageMatch;
   if (jobs.supplierMatchId && supplier?.captureId === jobs.supplierMatchId) {
     if (MATCH_IN_FLIGHT.has(supplier.status) || JOB_IN_FLIGHT.has(supplier.jobStatus)) return idle("searching_1688", { waiting: true });
+    if (supplier.status === "comparing") return idle("searching_1688");
     const blocker = matchBlocker(supplier, "search_1688");
     if (blocker) return blocked(blocker);
   }
@@ -265,6 +273,7 @@ export function intakeProgress(candidate, { login1688Expired = false } = {}) {
     // 以图搜没找到，已经用 AI 翻的俄文词又搜了一次：等这一次，结果就是这件在 Ozon 上的结果。
     if (ozon?.captureId === jobs.ozonTextMatchId) {
       if (MATCH_IN_FLIGHT.has(ozon.status) || JOB_IN_FLIGHT.has(ozon.jobStatus)) return idle("searching_ozon", { waiting: true });
+      if (ozon.status === "comparing") return idle("searching_ozon");
       const blocker = matchBlocker(ozon, "search_ozon_words");
       if (blocker) return blocked(blocker);
     }
@@ -277,6 +286,7 @@ export function intakeProgress(candidate, { login1688Expired = false } = {}) {
   if (words?.status === "completed" && words.query) return idle("searching_ozon", { next: "search_ozon_words" });
   if (jobs.ozonMatchId && ozon?.captureId === jobs.ozonMatchId) {
     if (MATCH_IN_FLIGHT.has(ozon.status) || JOB_IN_FLIGHT.has(ozon.jobStatus)) return idle("searching_ozon", { waiting: true });
+    if (ozon.status === "comparing") return idle("searching_ozon");
     const blocker = matchBlocker(ozon, "search_ozon");
     if (blocker) return blocked(blocker);
     if (!words && ozonImageSearchFoundNothing(ozon)) return idle("searching_ozon", { next: "ozon_words" });

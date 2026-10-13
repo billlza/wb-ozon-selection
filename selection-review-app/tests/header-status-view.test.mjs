@@ -19,6 +19,8 @@ import { runtimeArchitectureView } from '../src/runtimeArchitectureView.js';
 const EXTENSION_STATES = [
   extensionConnectionStatus({ liveVersion: EXPECTED_EXTENSION_VERSION, backgroundReady: true }),
   extensionConnectionStatus({ liveVersion: EXPECTED_EXTENSION_VERSION, backgroundReady: false }),
+  extensionConnectionStatus({ liveVersion: EXPECTED_EXTENSION_VERSION, backgroundReady: false, heldBy: 'tab_cleanup_failed' }),
+  extensionConnectionStatus({ liveVersion: EXPECTED_EXTENSION_VERSION, backgroundReady: false, heldBy: 'tab_creation_unconfirmed' }),
   extensionConnectionStatus({ liveVersion: '0.9.1', backgroundReady: true }),
   extensionConnectionStatus({ cachedVersion: EXPECTED_EXTENSION_VERSION }),
   extensionConnectionStatus({ cachedVersion: '0.9.1' }),
@@ -59,7 +61,8 @@ test('三条状态都正常时，顶栏只剩一个圆点和「一切正常」',
 test('插件那条线的每一种不正常都还说得出来，而且说的是它影响什么', () => {
   // 先证明枚举本身没有漏：这些输入确实覆盖了 extensionConnectionStatus 能返回的全部 code。
   assert.deepEqual(new Set(EXTENSION_STATES.map(status => status.code)),
-    new Set(['connected', 'background_unavailable', 'reload_required', 'page_refresh_required', 'disconnected']));
+    new Set(['connected', 'background_unavailable', 'tab_left_open', 'tab_unconfirmed', 'reload_required', 'page_refresh_required',
+      'disconnected']));
   const said = new Map();
   for (const extensionStatus of EXTENSION_STATES) {
     const view = headerStatusIndicator({ extensionStatus, captureControl: IDLE_CONTROL, runtimeArchitecture: LOCAL_RUNTIME });
@@ -78,6 +81,8 @@ test('插件那条线的每一种不正常都还说得出来，而且说的是�
   assert.equal(said.get('background_unavailable'), '插件后台没有响应，现在发不出采集任务');
   assert.match(said.get('reload_required'), /旧版本.*重新加载/u);
   assert.match(said.get('page_refresh_required'), /刷新这一页/u);
+  assert.match(said.get('tab_left_open'), /没能自动关上.*关掉/u);
+  assert.match(said.get('tab_unconfirmed'), /重新加载插件/u);
   // 认不出来的 code 也算不正常：「不知道」不能显示成「一切正常」。
   for (const unknown of [{ code: 'brand_new_failure' }, { code: '' }, {}, null]) {
     const view = headerStatusIndicator({ extensionStatus: unknown, captureControl: IDLE_CONTROL, runtimeArchitecture: LOCAL_RUNTIME });

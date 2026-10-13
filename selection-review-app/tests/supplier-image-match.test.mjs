@@ -15,11 +15,13 @@ import {
   supplierImageMatchInFlight,
   supplierImageMatchJudged,
   supplierImageMatchResultsRecorded,
+  supplierImageMatchRules,
   supplierImageMatchSearchUrl,
   supplierImageMatchSource,
   supplierImageMatchStartBlocker,
   supplierImageMatchStopMessage
 } from "../lib/supplier-image-match.mjs";
+import { IMAGE_MATCH_COMPARISON_INTERRUPTED } from "../lib/image-match-record.mjs";
 
 // Every id, title, shop and picture address below is synthetic; no real 1688 or Pinduoduo data is used.
 const IMAGE = "https://img.pddpic.com/garner-api-new/synthetic-main.jpeg";
@@ -345,4 +347,24 @@ test("a failed search keeps business state unchanged, and a claimed search witho
   const odd = supplierImageMatchFailed(queued(), "page_exploded", { timestamp: OBSERVED, detail: "细节" });
   assert.equal(odd.failureCode, "system_error");
   assert.ok(odd.reason.endsWith("：细节"));
+});
+
+test("a comparison cut off midway keeps the results and judgements, marks each one interrupted, and leaves any other record alone", () => {
+  const recorded = supplierImageMatchResultsRecorded(queued(), sanitizeSupplierImageMatchEvidence(rawEvidence(), IMAGE), OBSERVED);
+  const judged = supplierImageMatchJudged(recorded, { offerId: "700000000000", judgement: "near", judgedAt: OBSERVED, judgedBy: "owner:synthetic" });
+  const settled = supplierImageMatchRules.comparisonInterrupted(judged, { at: "2026-10-09T08:00:09.000Z" });
+  assert.equal(settled.status, "compared");
+  assert.deepEqual(settled.comparison, { version: "dhash-64-v1", comparedAt: null, interruptedAt: "2026-10-09T08:00:09.000Z",
+    sourceFingerprint: null, sourceError: IMAGE_MATCH_COMPARISON_INTERRUPTED });
+  assert.equal(settled.results.length, judged.results.length);
+  assert.ok(settled.results.every(item => item.similarity === "unknown" && item.compareError === IMAGE_MATCH_COMPARISON_INTERRUPTED &&
+    item.fingerprint === null && item.distance === null));
+  assert.deepEqual(settled.judgements, judged.judgements, "the owner's judgements survive the interruption");
+  assert.equal(supplierImageMatchComparisonRequested(settled).status, "comparing", "重新比对 stays available");
+  for (const record of [queued(), settled, supplierImageMatchFailed(queued(), "timeout", { timestamp: OBSERVED }), null]) {
+    assert.equal(supplierImageMatchRules.comparisonInterrupted(record, { at: OBSERVED }), null);
+  }
+  const rejected = supplierImageMatchFailed(queued(), "claim_rejected", { timestamp: OBSERVED });
+  assert.deepEqual([rejected.failureCode, rejected.jobStatus, rejected.writeOccurred], ["claim_rejected", "failed", false]);
+  assert.match(rejected.reason, /资料已经变了，这次没有搜/);
 });

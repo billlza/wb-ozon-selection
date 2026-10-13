@@ -61,6 +61,16 @@ const MAINTENANCE_PAGES = [
 ];
 const VIEW_TITLES = { desk: "录入新商品", seerfar: "Seerfar 自动选品", board: "进行中", inbox: "需要你处理", maint: "维护", live: "在售", paidround: "Seerfar 付费查一轮", product: "商品",
   map: "全店能力地图", phase2a: "第2A模拟验收", accounts: "账户准备", discovery: "软件找商品", review: "今日选品评审" };
+/** Why an authorized batch stopped before its first request, in the owner's words; the code stays visible when unknown. */
+function batchNotSentReason(code) {
+  const value = typeof code === 'string' ? code : '';
+  if (value === 'DE_RUNTIME_UNAVAILABLE_BATCH_IMPORT') return '这台服务没有接上 Ozon 店铺的生产写入（没有配置写入凭证）';
+  if (/^(?:OZON_DE_PREFLIGHT_EVIDENCE_BATCH_LIMIT_|OZON_PRODUCT_IMPORT_BATCH_LIMIT_EVIDENCE_)/.test(value)) {
+    return 'Ozon「一次最多导入 100 件」这条官方规定的核对记录过期或读不出来，需要技术维护重新核对';
+  }
+  return value === '' ? '发送前的核验没有通过' : `发送前的核验没有通过（${value}）`;
+}
+
 export default function App() {
   const [preparationSaveState] = useState(createPreparationSaveState);
   const [state, setState] = useState({
@@ -232,16 +242,19 @@ export default function App() {
       .catch(error=>{if(!controller.signal.aborted)setProductDraftError(errorMessage(error));});
     return ()=>{controller.abort();productDraftReads.current.cancel();};
   },[view,accountOwnerId,selectedId,productDraftRefresh,productRevision]);
+  /**
+   * 商品页上的一次写。写不是读：服务端答复了，答复就归调用方，不走读防抖——「确认这套供货」连发的第二次写曾被页面刷新
+   * 作废成 null，服务端存好了、页面却说凑不齐（src/formState.js 的 runMutation）。只有把返回的视图放上页面这一步看当前页。
+   */
   async function runProductStep(action,payload){
     const ownerId=accountOwnerId,candidateId=selectedId;
-    const result=await productDraftReads.current.run(()=>action(candidateId,payload),next=>{
-      if(accountContext.current.ownerId===ownerId&&accountContext.current.view==='product'&&next?.supplierDraftV1!==undefined){
-        setProductDraftView(next);
-      }
-    },{protect:true});
-    await load(true);
-    setProductDraftRefresh(value=>value+1);
-    return result;
+    const current=()=>accountContext.current.ownerId===ownerId&&accountContext.current.view==='product';
+    try{
+      return await runMutation(()=>action(candidateId,payload),{
+        reads:productDraftReads.current,isCurrent:current,
+        publish(next){if(next?.supplierDraftV1!==undefined)setProductDraftView(next);}
+      });
+    }finally{await load(true);setProductDraftRefresh(value=>value+1);}
   }
   /**
    * 申请插件采集 on the product page. Two things separate it from runProductStep: the write never passes through the
@@ -374,7 +387,7 @@ export default function App() {
   }));
   const effectiveExtensionStatus = useMemo(() => {
     // The page bridge answered for this exact tab, so its verdict wins; only an unanswered ping falls back to the heartbeat.
-    if (["connected", "background_unavailable", "reload_required"].includes(extensionStatus.code)) {
+    if (["connected", "background_unavailable", "tab_left_open", "tab_unconfirmed", "reload_required"].includes(extensionStatus.code)) {
       return extensionStatus;
     }
     return extensionConnectionStatus({
@@ -405,7 +418,8 @@ export default function App() {
       window.clearTimeout(responseTimer);
       setExtensionStatus(extensionConnectionStatus({
         liveVersion,
-        backgroundReady: event.data.backgroundReady === true
+        backgroundReady: event.data.backgroundReady === true,
+        heldBy: typeof event.data.heldBy === "string" ? event.data.heldBy : ""
       }));
     }
     window.addEventListener("message", onMessage);
@@ -669,7 +683,11 @@ export default function App() {
     setBatchExecution({ parentId: selectedId, view: result.executionView });
     setBatchExecutionError(null);
     await load(true);
-    setNotice({ type: 'success', message: `整批 ${result.batch.members.length} 个规格的生产授权已原子保存；请查看逐项导入、库存与 E 回读结果。` });
+    // Saved but stopped before any request: say so, and why, instead of the plain "saved" that reads as on its way.
+    setNotice(result.executionStatus === 'prewrite_blocked'
+      ? { type: 'error', message: `整批 ${result.batch.members.length} 个规格的生产授权已保存，但这次没有发给 Ozon：` +
+          `${batchNotSentReason(result.reasonCode)}。平台上什么都没写，软件也不会自己再发。` }
+      : { type: 'success', message: `整批 ${result.batch.members.length} 个规格的生产授权已原子保存；请查看逐项导入、库存与 E 回读结果。` });
     return result;
   }
 
@@ -1597,6 +1615,7 @@ export default function App() {
           onDeclareCargoFacts={payload => runProductStep(api.declareCargoFacts, payload)}
           onDeclareExtraHandlingFees={payload => runProductStep(api.declareExtraHandlingFees, payload)}
           onDeclareUniformSupply={payload => runProductStep(api.declareSkuUniformSupply, payload)}
+          onReviseDraftDimensions={payload => runProductStep(api.reviseSupplierDraftDimensions, payload)}
           onRequestCapture={payload => requestProductCapture(payload)}
           onReviewCaptureAndRequest={payload => reviewCaptureAndRequest(payload)}
           onRecaptureSource={payload => recaptureProductSource(payload)}

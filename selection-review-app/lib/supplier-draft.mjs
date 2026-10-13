@@ -3,8 +3,11 @@ import { estimateDiscoveredProduct, parseSizeLimitCm, parseWeightLimitKg, pricin
 
 /**
  * The owner's own supply plan for one product, before any extension capture exists.
- * Everything here is declared by the owner and labelled as such: `provenance: 'owner_declared'` and `declaredBy:
- * 'owner'` travel with the record so no later card can present these numbers as captured platform evidence.
+ * `declaredBy: 'owner'` travels with the record: the owner saved this plan. Who gave each number is recorded too.
+ * The plan the owner typed by hand is `provenance: 'owner_declared'` throughout. The plan saved from the 「做这件」
+ * card mixes numbers the software read (the 1688 search card price, a Seerfar weight, …) with the few the owner typed,
+ * so it carries `fieldSources` per field and is `owner_accepted_software_read` — no later card may present a number
+ * the software read as one the owner declared (AGENTS.md §4.4, §5.3).
  * The module validates and arithmetically closes the declaration; it invents no price, freight or weight.
  */
 export const SUPPLIER_DRAFT_SCHEMA_VERSION = 'supplier-draft-v1';
@@ -42,6 +45,19 @@ function nonNegative(value, label, code) {
   return value;
 }
 
+/** 包装长宽高（厘米），三项都要、都大于 0，多一项也不收。 */
+function normalizeDimensionsCm(value) {
+  if (!isObject(value)) reject('包装尺寸必须填写长宽高', 'supplier_draft_dimensions_invalid');
+  for (const key of Object.keys(value)) {
+    if (!DIMENSION_KEYS.includes(key)) reject('包装尺寸包含未声明字段', 'supplier_draft_dimensions_invalid');
+  }
+  const dimensionsCm = {};
+  for (const key of DIMENSION_KEYS) {
+    dimensionsCm[key] = positive(value[key], `包装${DIMENSION_LABELS[key]}`, 'supplier_draft_dimensions_invalid');
+  }
+  return dimensionsCm;
+}
+
 /** Closed input: an undeclared key is a rejected submission, never a silently ignored one. */
 export function normalizeSupplierDraftInput(input) {
   if (!isObject(input)) reject('找货资料必须是对象', 'supplier_draft_input_invalid');
@@ -58,14 +74,7 @@ export function normalizeSupplierDraftInput(input) {
   const goodsPriceRmb = cents(positive(input.goodsPriceRmb, '货价', 'supplier_draft_goods_price_invalid'));
   const domesticShippingRmb = cents(nonNegative(input.domesticShippingRmb, '国内运费', 'supplier_draft_domestic_shipping_invalid'));
   const packedWeightKg = positive(input.packedWeightKg, '打包重量', 'supplier_draft_weight_invalid');
-  if (!isObject(input.dimensionsCm)) reject('包装尺寸必须填写长宽高', 'supplier_draft_dimensions_invalid');
-  for (const key of Object.keys(input.dimensionsCm)) {
-    if (!DIMENSION_KEYS.includes(key)) reject('包装尺寸包含未声明字段', 'supplier_draft_dimensions_invalid');
-  }
-  const dimensionsCm = {};
-  for (const key of DIMENSION_KEYS) {
-    dimensionsCm[key] = positive(input.dimensionsCm[key], `包装${DIMENSION_LABELS[key]}`, 'supplier_draft_dimensions_invalid');
-  }
+  const dimensionsCm = normalizeDimensionsCm(input.dimensionsCm);
   const targetSalePriceRub = positive(input.targetSalePriceRub, '目标成交价RUB', 'supplier_draft_target_price_invalid');
   let note = null;
   if (input.note !== undefined && input.note !== null && input.note !== '') {
@@ -89,11 +98,36 @@ export function normalizeSupplierDraftInput(input) {
   });
 }
 
-/** The saved record. `provenance` and `declaredBy` are part of the data, not of the presentation layer. */
-export function buildSupplierDraftV1(normalized, { declaredAt }) {
+/**
+ * Where each number of a plan saved from the 「做这件」 card came from: `owner` is typed by the owner on that card,
+ * anything else is what the software read there. Closed on both sides, so a caller cannot slip in a source no page
+ * knows how to say out loud.
+ */
+export const SUPPLIER_DRAFT_FIELD_SOURCES = Object.freeze({
+  goodsPriceRmb: Object.freeze({ '1688_image_search': '1688 搜图卡片上的价' }),
+  domesticShippingRmb: Object.freeze({ '1688_price_note': '1688 价格说明里写的运费' }),
+  packedWeightKg: Object.freeze({ captured: '采到的规格里最重的那个', seerfar: 'Seerfar 记录的同类商品重量', declared: '之前存下的重量' }),
+  dimensionsCm: Object.freeze({ captured: '采到的尺寸', seerfar_volume: 'Seerfar 记录的同类商品尺寸' }),
+  targetSalePriceRub: Object.freeze({ ozon_match: 'Ozon 同款现价', market_record: '市场记录的售价' })
+});
+export const SUPPLIER_DRAFT_OWNER_ORIGIN_LABEL = '你填的';
+
+function normalizeFieldSources(fieldSources) {
+  const keys = Object.keys(SUPPLIER_DRAFT_FIELD_SOURCES);
+  if (!isObject(fieldSources) || Object.keys(fieldSources).length !== keys.length ||
+      keys.some(key => fieldSources[key] !== 'owner' && !Object.hasOwn(SUPPLIER_DRAFT_FIELD_SOURCES[key], fieldSources[key]))) {
+    throw new SupplierDraftError(500, '找货方案的字段来源无效', 'supplier_draft_field_sources_invalid');
+  }
+  return Object.freeze(Object.fromEntries(keys.map(key => [key, fieldSources[key]])));
+}
+
+/** The saved record. `provenance`, `declaredBy` and `fieldSources` are part of the data, not of the presentation layer. */
+export function buildSupplierDraftV1(normalized, { declaredAt, fieldSources = null } = {}) {
   if (typeof declaredAt !== 'string' || !Number.isFinite(Date.parse(declaredAt))) {
     throw new SupplierDraftError(500, '保存找货资料缺少有效时间', 'supplier_draft_clock_invalid');
   }
+  const sources = fieldSources === null ? null : normalizeFieldSources(fieldSources);
+  const ownerOnly = sources === null || Object.values(sources).every(source => source === 'owner');
   return Object.freeze({
     schemaVersion: SUPPLIER_DRAFT_SCHEMA_VERSION,
     declaredBy: 'owner',
@@ -108,8 +142,66 @@ export function buildSupplierDraftV1(normalized, { declaredAt }) {
     dimensionsCm: { ...normalized.dimensionsCm },
     targetSalePriceRub: normalized.targetSalePriceRub,
     note: normalized.note,
-    provenance: 'owner_declared'
+    provenance: ownerOnly ? 'owner_declared' : 'owner_accepted_software_read',
+    ...(sources === null ? {} : { fieldSources: sources })
   });
+}
+
+/**
+ * 主人把方案里的包装尺寸改成实际的。「做这件」存下的尺寸常是 Seerfar 记录的同类商品尺寸，不是这件货量过的包装
+ * （AGENTS.md §5.3）；主人量过或问过供应商之后在商品页上改。只换长宽高，这一项从此记成主人填的，别的数和它们的来源
+ * 一个不动；返回新的一份方案，原来那份不改。输入是封闭的：只收修订号和长宽高。
+ */
+export const SUPPLIER_DRAFT_DIMENSIONS_INPUT_KEYS = Object.freeze(['dataRevision', 'dimensionsCm']);
+
+export function normalizeSupplierDraftDimensionsInput(input) {
+  if (!isObject(input) || Object.keys(input).some(key => !SUPPLIER_DRAFT_DIMENSIONS_INPUT_KEYS.includes(key))) {
+    reject('改包装尺寸只接受当前数据修订号和长宽高', 'supplier_draft_field_forbidden');
+  }
+  if (!Number.isInteger(input.dataRevision) || input.dataRevision < 0) {
+    reject('改包装尺寸必须提供当前数据修订号', 'supplier_draft_revision_required');
+  }
+  return Object.freeze({ dataRevision: input.dataRevision, dimensionsCm: Object.freeze(normalizeDimensionsCm(input.dimensionsCm)) });
+}
+
+export function reviseSupplierDraftDimensions(draft, { dimensionsCm, revisedAt, gate1Decision = null }) {
+  if (!isObject(draft) || draft.schemaVersion !== SUPPLIER_DRAFT_SCHEMA_VERSION) {
+    throw new SupplierDraftError(409, '这件商品还没有找货方案，先在「做这件」卡上点「做这件」', 'supplier_draft_missing');
+  }
+  if (typeof revisedAt !== 'string' || !Number.isFinite(Date.parse(revisedAt))) {
+    throw new SupplierDraftError(500, '保存找货资料缺少有效时间', 'supplier_draft_clock_invalid');
+  }
+  const dimensions = normalizeDimensionsCm(dimensionsCm);
+  const sources = Object.fromEntries(Object.values(supplierDraftOrigins(draft, { gate1Decision }))
+    .map(origin => [origin.field, origin.source]));
+  sources.dimensionsCm = 'owner';
+  const normalizedSources = normalizeFieldSources(sources);
+  return Object.freeze({
+    ...draft,
+    dimensionsCm: { ...dimensions },
+    provenance: Object.values(normalizedSources).every(source => source === 'owner') ? 'owner_declared' : 'owner_accepted_software_read',
+    fieldSources: normalizedSources,
+    dimensionsRevisedAt: revisedAt
+  });
+}
+
+/**
+ * Who gave each number of a saved plan, as the page has to say it: `{ field, source, owner, label }`.
+ * A plan without `fieldSources` was typed by hand — every number is the owner's — unless it is the plan a 「做这件」
+ * decision saved before the plan carried its own sources: that decision kept them as `factSources`, written in the
+ * same instant as the plan, so the decision of that very instant still says truthfully where each number came from.
+ */
+export function supplierDraftOrigins(draft, { gate1Decision = null } = {}) {
+  let sources = isObject(draft?.fieldSources) ? draft.fieldSources : null;
+  if (sources === null && gate1Decision?.decision === 'accept' && isObject(gate1Decision.factSources) &&
+      typeof draft?.declaredAt === 'string' && gate1Decision.decidedAt === draft.declaredAt) {
+    sources = gate1Decision.factSources;
+  }
+  return Object.freeze(Object.fromEntries(Object.keys(SUPPLIER_DRAFT_FIELD_SOURCES).map(field => {
+    const source = sources?.[field] ?? 'owner';
+    const label = source === 'owner' ? SUPPLIER_DRAFT_OWNER_ORIGIN_LABEL : SUPPLIER_DRAFT_FIELD_SOURCES[field][source] ?? '软件读的数';
+    return [field, Object.freeze({ field, source, owner: source === 'owner', label })];
+  })));
 }
 
 /** The declared package as the estimate module reads a product: millimetres, grams, and the owner's target price. */

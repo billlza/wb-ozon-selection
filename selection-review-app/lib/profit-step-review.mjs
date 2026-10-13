@@ -1,4 +1,5 @@
 import { pricingGuidance, roundDownCents } from './a-discovery-estimate.mjs';
+import { supplierDraftOrigins } from './supplier-draft.mjs';
 
 /**
  * 算利润 — the step between 选定 and 文案素材.
@@ -247,7 +248,7 @@ export function quantityOneEvidenceNote({ capture, sku, label }) {
  * 拿不出那句话的时候，如实说是哪一种拿不出来。原来只有一种情形，所以原来只有一句话；现在有第二种，
  * 而那一句对第二种情形是假的——页面明明报了 1 件价，让主人再去采一次只会让他白跑。
  */
-function quantityOneEvidenceWhy({ capture, sku }) {
+function quantityOneEvidenceWhy({ capture, sku, priceOrigin = null }) {
   const MISSING = '这一次采集没有读到「一件起订」的报价，软件不会替你写这句话；重新采集一次这个 1688 页面再来。';
   if (sku?.priceBasis !== 'owner_declared') return MISSING;
   const quote = quantityOnePageQuote(capture);
@@ -257,7 +258,9 @@ function quantityOneEvidenceWhy({ capture, sku }) {
     return '这一次采集读到的「一件起订」报价不止一个价，软件不会替你挑一个当凭据；重新采集一次这个 1688 页面再来。';
   }
   const priceCny = finite(sku?.priceCny);
-  return `页面报的 1 件价是 ¥${quote.priceCny.toFixed(2)}，你在「找货」里填的货价是 ` +
+  // 「做这件」存下的货价是软件从 1688 搜图卡片上读的，不是主人填的，照实说。
+  const declared = priceOrigin?.owner === false ? `「找货」方案里的货价（${priceOrigin.label}）是` : '你在「找货」里填的货价是';
+  return `页面报的 1 件价是 ¥${quote.priceCny.toFixed(2)}，${declared} ` +
     `${priceCny === null ? '空的' : `¥${priceCny.toFixed(2)}`}。页面没有按规格分列价格，` +
     '所以这个规格的单价只能靠页面那个 1 件价撑着；两个数不一样，这份采集就撑不住你要提交的价。' +
     '把「找货」里的货价改成和页面一致，或者重新采集一次这个 1688 页面。';
@@ -385,6 +388,8 @@ export function buildProfitStepReview({
   const captureId = textOf(card?.supplierCapture?.captureId);
   const dimensions = isObject(draft?.dimensionsCm) ? draft.dimensionsCm : {};
   const unitDomesticFreight = finite(draft?.domesticShippingRmb);
+  // 方案里每个数是谁给的。「做这件」存下的方案大多是软件读的，只有主人在卡上补的才算「你填的」。
+  const origins = supplierDraftOrigins(draft, { gate1Decision: candidate.gate1DecisionV1 ?? null });
   const baseGaps = [];
   if (!isObject(card)) baseGaps.push(gap('card', '这件商品的确认资料', '服务端现在拿不出这件商品的确认资料，先回到上一步刷新一次。'));
   if (card !== null && card.storeBindingStatus !== 'bound') {
@@ -421,7 +426,7 @@ export function buildProfitStepReview({
     if (unitProductPrice === null || unitProductPrice <= 0) gaps.push(gap('unitProductPrice', '这个规格的货价', '这一次采集没有读到这个规格自己的价格。'));
     if (weightKg === null || weightKg <= 0) gaps.push(gap('weightKg', '这个规格的重量', '这一次采集没有读到这个规格自己的重量，运费和利润都算不出来。'));
     if (note === null) gaps.push(gap('quantityOneEvidenceSourceNote', '一件可买的凭据',
-      quantityOneEvidenceWhy({ capture, sku: row })));
+      quantityOneEvidenceWhy({ capture, sku: row, priceOrigin: origins.goodsPriceRmb })));
     return {
       sourceSkuId: id,
       label: row.label,
@@ -496,7 +501,10 @@ export function buildProfitStepReview({
       // 找货里只填了货价和国内运费，到手就是这两项相加；这一步照这份声明报 0，不另外猜一笔钱出来。
       otherPurchaseCosts: unitDomesticFreight === null ? null : 0,
       dimensionsCm: { length: finite(dimensions.length), width: finite(dimensions.width), height: finite(dimensions.height) },
-      targetSalePriceRub
+      targetSalePriceRub,
+      origins,
+      // 点「确认这套供货」之前要让主人看见：哪几个数不是他填的，是软件读来的。
+      softwareRead: Object.values(origins).filter(item => !item.owner).map(item => ({ field: item.field, label: item.label }))
     },
     submissionBase: baseGaps.length > 0 ? null : {
       dataRevision: candidate.dataRevision,

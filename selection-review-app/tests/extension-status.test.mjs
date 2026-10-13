@@ -42,6 +42,22 @@ test("extension handshake exposes bridge and background state separately", () =>
   assert.equal(EXTENSION_CAPTURE_ACK_TIMEOUT_MS, 8000);
 });
 
+test("a plugin that answers but holds new jobs for a page it opened says which, not that its background is silent", () => {
+  const leftOpen = extensionConnectionStatus({ liveVersion: EXPECTED_EXTENSION_VERSION, backgroundReady: false, heldBy: "tab_cleanup_failed" });
+  assert.equal(leftOpen.code, "tab_left_open");
+  assert.match(leftOpen.label, /没关上.*关掉它就能接着采集/u);
+  const unconfirmed = extensionConnectionStatus({ liveVersion: EXPECTED_EXTENSION_VERSION, backgroundReady: false, heldBy: "tab_creation_unconfirmed" });
+  assert.equal(unconfirmed.code, "tab_unconfirmed");
+  assert.match(unconfirmed.label, /重新加载插件/u);
+  // Only this tab's live answer can name a held page; a ready plugin, an old one, an unknown reason or the heartbeat cannot.
+  assert.equal(extensionConnectionStatus({ liveVersion: EXPECTED_EXTENSION_VERSION, backgroundReady: true, heldBy: "tab_cleanup_failed" }).code, "connected");
+  assert.equal(extensionConnectionStatus({ liveVersion: "1.2.6", backgroundReady: false, heldBy: "tab_cleanup_failed" }).code, "reload_required");
+  assert.equal(extensionConnectionStatus({ liveVersion: EXPECTED_EXTENSION_VERSION, backgroundReady: false, heldBy: "something_else" }).code,
+    "background_unavailable");
+  assert.equal(extensionConnectionStatus({ heldBy: "tab_cleanup_failed",
+    serverHeartbeat: { fresh: true, version: EXPECTED_EXTENSION_VERSION, backgroundReady: false } }).code, "background_unavailable");
+});
+
 test("historical sales capture failure is separated from the current extension status", () => {
   const presentation = salesCaptureFailurePresentation({
     reason: "未检测到本机商品采集扩展或扩展尚未重载",

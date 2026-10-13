@@ -473,3 +473,49 @@ test('D retains exact identity, currency, price, warehouse stock, media count an
     assert.deepEqual(result.immediateReadback, observation);
   }
 });
+
+test('D writes, records and reads back the stock the owner locked; 100 is only the prefilled default (review P0-5)', async () => {
+  const { authorization, prepared, executionContext } = await preparedFixture({ stock: 37 });
+  assert.equal(authorization.lockedScope.stock, 37);
+  assert.equal(prepared.status, 'ready', JSON.stringify(prepared.gaps));
+  const request = prepared.executableRequest;
+  assert.deepEqual([request.stock, request.inventoryWrite.stock, request.independentReadback.expectedStock], [37, 37, 37]);
+  assert.notEqual(request.executionKey, (await preparedFixture()).prepared.executableRequest.executionKey);
+  const attempt = beginDSoftwareExecution({ preparedExecution: prepared, startedAt: '2026-08-22T07:20:00.000Z' });
+  const run = observation => executeDSoftwareAttempt({ executionAttempt: attempt, executionContext,
+    executeSellerApi: async sent => ({ status: 'accepted', productId: '910001', offerId: sent.merchantSku,
+      requestReceiptRef: 'receipt:synthetic:import-37', inventoryReceiptRef: 'receipt:synthetic:stock-37' }),
+    readbackSellerApi: async () => observation, completedAt: '2026-08-22T07:25:00.000Z' });
+  const written = await run(exactObservation(request, { saleStatus: 'unknown' }));
+  assert.equal(written.status, 'succeeded');
+  assert.equal(written.productionRecord.stockWritten, 37);
+  assert.equal(written.productionRecord.expectedStock, 37);
+  // A platform showing the old fixed 100 did not get what the owner authorized.
+  const hundred = exactObservation(request, { saleStatus: 'unknown', currentStock: 100 });
+  hundred.inventoryObservation.rows[0].freeStock = 100;
+  const mismatch = await run(hundred);
+  assert.equal(mismatch.status, 'unknown_outcome');
+  assert.equal(mismatch.productionRecord, null);
+  assert.ok(mismatch.reason.includes('currentStock'), mismatch.reason);
+  const verified = await runSystemCreatedEReadback({ productionRecord: written.productionRecord,
+    readPlatform: async () => exactObservation(written.productionRecord,
+      { moderationStatus: 'approved', validationStatus: 'success', saleStatus: 'on_sale' }),
+    verifiedAt: '2026-08-22T08:00:00.000Z' });
+  assert.equal(verified.status, 'verified');
+
+  // The store adapter sends the locked count, and refuses before any request when the stock write disagrees with it.
+  const inputs = projectProductionPlanInputs(executionContext.productionPlan);
+  const adapterCapabilities = capabilities(inputs.store, inputs.finalUploads, inputs);
+  adapterCapabilities.warehouseId = adapterCapabilities.inventoryWrite.warehouseId;
+  const calls = [];
+  const adapter = createStoreIsolatedOzonSellerApiDEAdapter({ adapterCapabilities, executionContext,
+    requestJson: async ({ endpoint }) => { calls.push(endpoint); return { result: { task_id: 702 } }; } });
+  const drifted = { ...structuredClone(request), inventoryWrite: { ...structuredClone(request.inventoryWrite), stock: 100 } };
+  const refused = await adapter.executeSellerApi(drifted, { persistCheckpoint: async () => {} });
+  assert.equal(refused.status, 'rejected_before_write');
+  assert.equal(refused.message, '新品库存必须与授权锁定的数量一致');
+  assert.deepEqual(calls, []);
+  const parked = await adapter.executeSellerApi(request, { persistCheckpoint: async () => {} });
+  assert.equal(parked.status, 'waiting_platform');
+  assert.deepEqual(calls, ['/v3/product/import']);
+});

@@ -1,6 +1,6 @@
 import { normalizeOzonSearchQuery, suggestedOzonSearchQuery } from "../lib/ozon-search-query.mjs";
 import { SUPPLIER_IMAGE_MATCH_SOURCE_LABELS, supplierImageMatchSource } from "../lib/supplier-image-match-source.mjs";
-import { IMAGE_MATCH_JUDGEMENT_LABELS, IMAGE_MATCH_SIMILARITY_LABELS } from "./supplierImageMatchView.js";
+import { IMAGE_MATCH_JUDGEMENT_LABELS, IMAGE_MATCH_SIMILARITY_LABELS, interruptedComparisonLine } from "./supplierImageMatchView.js";
 
 /**
  * 商品页「在 Ozon 找同款」那一块要显示的东西，全部从服务端保存的 candidate.ozonImageMatch、这件商品的首图和它自己的
@@ -19,6 +19,8 @@ const finite = value => (typeof value === "number" && Number.isFinite(value) ? v
 
 function statusLine(record, counts) {
   const byImage = record.searchBy === "image";
+  const interrupted = interruptedComparisonLine(record);
+  if (interrupted !== null) return interrupted;
   switch (record.status) {
     case "waiting_extension": return "已经排队，等插件领取……";
     case "searching": return byImage ? "插件正在 Ozon 上用首图搜……" : `插件正在 Ozon 上搜「${record.query}」……`;

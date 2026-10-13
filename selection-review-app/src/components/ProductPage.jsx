@@ -288,7 +288,7 @@ function marketSnapshotLine(snapshot) {
   return `市场快照：Seerfar ${day ?? "时间未取得"} · 售价 ${price} · ${window}销量 ${count(metrics.salesCount)} · 评价 ${count(metrics.reviewCount)}`;
 }
 
-function estimateLines(estimateRecord) {
+function estimateLines(estimateRecord, origins = null) {
   if (!isObject(estimateRecord)) return { headline: "填好上面的资料并保存后，这里显示采购上限和利润。", detail: null, warning: null };
   const estimate = estimateRecord.estimate ?? {};
   const warning = isObject(estimateRecord.routeBlock) ? estimateRecord.routeBlock : null;
@@ -302,7 +302,7 @@ function estimateLines(estimateRecord) {
     : `${chosen.route} · 计费 ${chosen.chargeableKg} 公斤 · 运费 ${money(chosen.freightRmb)}${estimate.freight?.oversize === true ? "（超抛）" : ""}`;
   const headline = profit === null
     ? `采购上限 ${ceiling ?? "未取得"} · ${freight}`
-    : `按你填的到手总价 ${money(profit.allInPurchaseRmb)}：单件利润 ${money(profit.unitProfitRmb)} · 利润率 ${percent(profit.marginRate) ?? "未取得"} · ${profit.passes ? "达到本店利润门槛" : "没到本店利润门槛"}`;
+    : `按${draftPurchaseLabel(origins)}到手总价 ${money(profit.allInPurchaseRmb)}：单件利润 ${money(profit.unitProfitRmb)} · 利润率 ${percent(profit.marginRate) ?? "未取得"} · ${profit.passes ? "达到本店利润门槛" : "没到本店利润门槛"}`;
   const detail = `采购上限 ${ceiling ?? "未取得"} · ${freight} · 佣金 ${percent(estimate.commission?.rate) ?? "未取得"}`;
   return { headline, detail: profit === null ? null : detail, warning };
 }
@@ -346,7 +346,7 @@ export function thresholdBasisLine(guidance) {
  * would earn, and a short ladder. The commission rate on each line is the official one for that price band, which is
  * why a line above the band edge carries a different rate; the page computes none of it.
  */
-function PricingGuidance({ guidance }) {
+function PricingGuidance({ guidance, purchaseLabel = "你填的" }) {
   if (!isObject(guidance)) {
     return <div className="product-pricing" aria-label="定价指引">
       <h4>定价指引</h4>
@@ -382,7 +382,7 @@ function PricingGuidance({ guidance }) {
     <p className="product-pricing-provenance">
       口径：成交收入按已保存的官方汇率 1 元 ≈ {finite(guidance.rubPerCny) === null ? "未取得" : guidance.rubPerCny} 卢布折算，
       扣官方佣金（超过档位分界线会换一档费率）、退货运营和破损丢失储备、提现费，再扣国际运费、包材、贴标，
-      最后扣你填的到手总价 {money(guidance.allInPurchaseRmb) ?? "未取得"}（其余固定成本合计 {money(guidance.nonPurchaseFixedRmb) ?? "未取得"}）。
+      最后扣{purchaseLabel}到手总价 {money(guidance.allInPurchaseRmb) ?? "未取得"}（其余固定成本合计 {money(guidance.nonPurchaseFixedRmb) ?? "未取得"}）。
     </p>
   </div>;
 }
@@ -397,32 +397,113 @@ const PENDING = "待补";
 const yuanOr = value => money(value) ?? PENDING;
 
 /**
+ * 找货方案里这一项是谁给的（服务端那份 supplierDraftOriginsV1，或「算利润」那份 review.supply.origins）。
+ * 主人自己给的照旧说「你填的」；「做这件」存下的方案大多是软件读的数，照实说从哪读的，不许冒充主人填的
+ * （AGENTS.md §4.4）。服务端没给来源时按主人填的说，和以前一字不差。
+ */
+export function draftOrigin(origins, field) {
+  const origin = isObject(origins) ? origins[field] : null;
+  return isObject(origin) && origin.owner === false && textOf(origin.label) !== ""
+    ? { owner: false, label: origin.label } : { owner: true, label: "你填的" };
+}
+
+/** 「到手总价」是谁给的：货价和国内运费都是主人填的才说「你填的」，否则说是找货方案里的。 */
+function draftPurchaseLabel(origins) {
+  return draftOrigin(origins, "goodsPriceRmb").owner && draftOrigin(origins, "domesticShippingRmb").owner ? "你填的" : "找货方案的";
+}
+
+/**
  * 「你填的」那个小标记。
  * 每一格数字都要能说出自己是采到的还是主人声明的，所以这里只认服务端给的 basis，不去猜、也不去认来源字符串。
  * `captured` 和没有 basis 的格子一个字都不加——2026-09-16 之前的表长什么样，没签字的表还长什么样。
+ * 声明补进来的数是找货方案里的；方案里那个数是软件读的（「做这件」存下的），就标「按找货方案」，不说「你填的」。
  */
-function declaredMark(basis) {
-  if (basis === "owner_declared") return <span className="product-sku-declared">{" · 你填的"}</span>;
-  return basis === "mixed" ? <span className="product-sku-declared">{" · 部分你填的"}</span> : null;
+function declaredMark(basis, origin = null) {
+  const owner = origin?.owner !== false;
+  if (basis === "owner_declared") return <span className="product-sku-declared">{owner ? " · 你填的" : " · 按找货方案"}</span>;
+  return basis === "mixed" ? <span className="product-sku-declared">{owner ? " · 部分你填的" : " · 部分按找货方案"}</span> : null;
 }
 
 /**
  * 同一个标记的纯文字版。要拼进一整句话里的时候用它：拆成相邻的两个文本节点，服务端渲染会在中间插进一段注释，
  * 那句话就不再是一句话了。
  */
-function declaredText(basis) {
-  return basis === "owner_declared" ? "（你填的）" : basis === "mixed" ? "（部分你填的）" : "";
+function declaredText(basis, origin = null) {
+  const owner = origin?.owner !== false;
+  if (basis === "owner_declared") return owner ? "（你填的）" : "（按找货方案）";
+  return basis === "mixed" ? (owner ? "（部分你填的）" : "（部分按找货方案）") : "";
 }
 
 /**
  * 这个规格的货价是哪儿来的。
  * 只有页面真的按规格给了价，才可以说「这个规格在 1688 页面上自己的价」。主人签过同重同价之后，页面从来没有给过
- * 这个规格一个价，那句话就是软件替页面说的——所以这里照实换成他自己填的那一个数。
+ * 这个规格一个价，那句话就是软件替页面说的——所以这里照实换成找货方案里那一个数，并说清楚那个数是谁给的。
  */
-export function profitStepPriceOriginText(basis) {
-  return basis === "owner_declared"
-    ? "（页面没有按规格分列价格，这是你在「找货」里填的）"
-    : "（这个规格在 1688 页面上自己的价）";
+export function profitStepPriceOriginText(basis, origin = null) {
+  if (basis !== "owner_declared") return "（这个规格在 1688 页面上自己的价）";
+  return origin?.owner === false
+    ? `（页面没有按规格分列价格，这是「找货」方案里的货价：${origin.label}）`
+    : "（页面没有按规格分列价格，这是你在「找货」里填的）";
+}
+
+/**
+ * 「找货」里那一句：方案里的每个数是谁给的。手填的方案每个数都是主人的，这句话不出现；
+ * 「做这件」存下的方案逐项说清楚哪几个是软件读的，主人才知道哪几个要自己核对。
+ */
+export function draftOriginsLine(draft, origins) {
+  if (!isObject(draft)) return null;
+  const dimensions = isObject(draft.dimensionsCm) ? draft.dimensionsCm : {};
+  const size = ["length", "width", "height"].every(key => finite(dimensions[key]) !== null)
+    ? `${dimensions.length}×${dimensions.width}×${dimensions.height} 厘米` : null;
+  const fields = [
+    ["goodsPriceRmb", "货价", money(draft.goodsPriceRmb)],
+    ["domesticShippingRmb", "国内运费", money(draft.domesticShippingRmb)],
+    ["packedWeightKg", "打包重量", finite(draft.packedWeightKg) === null ? null : `${draft.packedWeightKg} 公斤`],
+    ["dimensionsCm", "包装", size],
+    ["targetSalePriceRub", "目标成交价", finite(draft.targetSalePriceRub) === null ? null : `${draft.targetSalePriceRub} 卢布`]
+  ];
+  if (fields.every(([field]) => draftOrigin(origins, field).owner)) return null;
+  return `方案里的数：${fields.map(([field, name, value]) => `${name} ${value ?? "未取得"}（${draftOrigin(origins, field).label}）`).join(" · ")}。`;
+}
+
+/** 改包装尺寸那一份提交：当前修订号和长宽高三个大于 0 的数，缺一个就不交。 */
+export function draftDimensionsPayload(form, dataRevision) {
+  if (!Number.isInteger(dataRevision)) return null;
+  const dimensionsCm = {};
+  for (const key of ["length", "width", "height"]) {
+    const value = String(form?.[key] ?? "").trim();
+    if (!NUMBER_PATTERN.test(value) || !(Number(value) > 0)) return null;
+    dimensionsCm[key] = Number(value);
+  }
+  return { dataRevision, dimensionsCm };
+}
+
+/**
+ * 包装尺寸改成实际的。只在方案里的尺寸不是主人给的时候出现：「做这件」存下的尺寸常是 Seerfar 记录的同类商品尺寸，
+ * 不是这件货量过的包装（AGENTS.md §5.3）。改了之后这一项记成「你填的」，运费和利润按新尺寸重算；不派任务、不碰平台。
+ */
+function DraftDimensionsControl({ dimensions, dataRevision, saving, onRevise, idPrefix }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState(() => ({ length: String(dimensions?.length ?? ""), width: String(dimensions?.width ?? ""),
+    height: String(dimensions?.height ?? "") }));
+  if (typeof onRevise !== "function") return null;
+  if (!open) {
+    return <button type="button" className="button secondary" disabled={saving} onClick={() => setOpen(true)}>改成实际尺寸</button>;
+  }
+  const payload = draftDimensionsPayload(form, dataRevision);
+  return <div className="product-draft-dimensions" role="group" aria-label="改成实际的包装尺寸">
+    {[["length", "长"], ["width", "宽"], ["height", "高"]].map(([key, name]) => <label key={key} className="product-field"
+      htmlFor={`${idPrefix}-${key}`}>
+      <span className="product-field-label">{`${name}（厘米）`}</span>
+      <input id={`${idPrefix}-${key}`} type="number" min="0" step="0.1" inputMode="decimal" value={form[key]} disabled={saving}
+        onChange={event => setForm(current => ({ ...current, [key]: event.target.value }))} />
+    </label>)}
+    {payload === null ? <span className="product-field-error" role="alert">长宽高都填大于 0 的厘米数</span> : null}
+    <span className="gate1-actions">
+      <button type="button" className="button primary" disabled={saving || payload === null} onClick={() => onRevise(payload)}>保存尺寸</button>
+      <button type="button" className="button secondary" disabled={saving} onClick={() => setOpen(false)}>取消</button>
+    </span>
+  </div>;
 }
 
 /** The one-line conclusion, in the table's own two numbers. */
@@ -495,10 +576,15 @@ export function skuWeightGapNotice(table) {
  * 重量本来就该一样，可他在「找货」里填过的数，软件不许自己拿来用——所以这里给他一个签字的地方，而不是替他签。
  * 没有缺项、或者他还没在「找货」里填那两个数的时候，这一块不出现：没有事要他做。
  */
-export function skuUniformSupplyNotice(step) {
+export function skuUniformSupplyNotice(step, origins = null) {
   if (!isObject(step)) return null;
   const basis = isObject(step.basis) ? step.basis : {};
-  const declared = `${basis.packedWeightKg} 公斤 / ${money(basis.goodsPriceRmb) ?? "—"}`;
+  // 找货方案里这两个数是谁给的：都是主人填的，照旧说「你填的」；「做这件」存下的方案里是软件读的，逐个说从哪读的。
+  const weightOrigin = draftOrigin(origins, "packedWeightKg");
+  const priceOrigin = draftOrigin(origins, "goodsPriceRmb");
+  const typed = weightOrigin.owner && priceOrigin.owner;
+  const declared = typed ? `${basis.packedWeightKg} 公斤 / ${money(basis.goodsPriceRmb) ?? "—"}`
+    : `${basis.packedWeightKg} 公斤（${weightOrigin.label}）/ ${money(basis.goodsPriceRmb) ?? "—"}（${priceOrigin.label}）`;
   if (step.declared === true) {
     const weight = Number.isInteger(step.appliedWeightCount) ? step.appliedWeightCount : 0;
     const price = Number.isInteger(step.appliedPriceCount) ? step.appliedPriceCount : 0;
@@ -506,10 +592,11 @@ export function skuUniformSupplyNotice(step) {
       .filter(Boolean).join(" 和 ");
     return {
       mode: "declared",
-      heading: "这些规格按你填的算",
+      heading: typed ? "这些规格按你填的算" : "这些规格按找货方案算",
       message: `你声明过这 ${step.total} 个规格是同一件货的不同规格。${filled === ""
         ? "这一次采到的重量和货价都齐全，所以这份声明一行都没有用上——表里的数字全是采到的。"
-        : `所以${filled}用的是你在「找货」里填的 ${declared}，表里标成「你填的」；采到了真实数字的规格还是按采到的算。`}`,
+        : typed ? `所以${filled}用的是你在「找货」里填的 ${declared}，表里标成「你填的」；采到了真实数字的规格还是按采到的算。`
+          : `所以${filled}用的是「找货」方案里的 ${declared}，表里标成「按找货方案」；采到了真实数字的规格还是按采到的算。`}`,
       buttonLabel: "撤回这个声明",
       uniform: false
     };
@@ -528,10 +615,13 @@ export function skuUniformSupplyNotice(step) {
     mode: "offer",
     heading: "这些规格是同一件货吗？",
     message: `这一次采集里${parts}，那几行的运费和利润只能写「${PENDING}」。如果这 ${step.total} 个规格就是同一件货的` +
-      `不同规格（比如只差颜色），点下面这个按钮，就是你声明：它们同重同价，按你在「找货」里填的 ${declared} 算。` +
-      `这是你自己填的数，不是采到的，表里会照实标成「你填的」；采到了真实重量或货价的规格仍然按采到的算。` +
+      (typed
+        ? `不同规格（比如只差颜色），点下面这个按钮，就是你声明：它们同重同价，按你在「找货」里填的 ${declared} 算。` +
+          "这是你自己填的数，不是采到的，表里会照实标成「你填的」；采到了真实重量或货价的规格仍然按采到的算。"
+        : `不同规格（比如只差颜色），点下面这个按钮，就是你声明：它们同重同价，按「找货」方案里的 ${declared} 算。` +
+          "这两个数不是这次采到的，是你点「做这件」时认下的，表里会照实标成「按找货方案」；采到了真实重量或货价的规格仍然按采到的算。") +
       `${lapsed === "" ? "" : `（${lapsed}）`}`,
-    buttonLabel: "这些规格同重同价，按我填的算",
+    buttonLabel: typed ? "这些规格同重同价，按我填的算" : "这些规格同重同价，按找货方案算",
     uniform: true
   };
 }
@@ -634,12 +724,33 @@ export function profitStepSuggestionLine(review) {
  * Owner ruling 2026-09-13: 以采集到的页面价为准，但要把它和「找货」里填的货价的差额标出来。
  * 两者相同就没有差额可说，这句话也就不出现。
  */
-export function profitStepPriceDeltaLine(spec) {
+export function profitStepPriceDeltaLine(spec, origin = null) {
   const delta = spec?.priceDelta ?? null;
   if (!isObject(delta)) return null;
   const direction = delta.deltaRmb > 0 ? "贵" : "便宜";
+  if (origin?.owner === false) {
+    return `「找货」方案里的货价是 ${money(delta.declaredRmb)}（${origin.label}）；这一步按这个规格自己的页面价 ${money(delta.pageRmb)} 算，` +
+      `页面价比方案里的${direction} ${money(Math.abs(delta.deltaRmb))}。`;
+  }
   return `你在「找货」里填的货价是 ${money(delta.declaredRmb)}；这一步按这个规格自己的页面价 ${money(delta.pageRmb)} 算，` +
     `页面价比你填的${direction} ${money(Math.abs(delta.deltaRmb))}。`;
+}
+
+/**
+ * 「确认这套供货」之前要让主人看见：这一套里哪几个数不是他填的，是软件读来的。点确认就是他认了这些数
+ * （AGENTS.md §4.4 的主人供货确认），所以必须在按钮之前说，而不是让「你填的」替软件说话。
+ * 货价和打包重量只有按找货方案补进来（同重同价）时才是方案里的数；采到的规格价和重量不在这里。
+ */
+export function profitStepSoftwareReadItems(review, spec) {
+  const origins = review?.supply?.origins ?? null;
+  return [
+    ["goodsPriceRmb", "货价", spec?.priceBasis === "owner_declared"],
+    ["domesticShippingRmb", "国内运费", true],
+    ["packedWeightKg", "打包重量", spec?.weightBasis === "owner_declared"],
+    ["dimensionsCm", "包装尺寸", true],
+    ["targetSalePriceRub", "目标成交价", true]
+  ].filter(([field, , used]) => used && !draftOrigin(origins, field).owner)
+    .map(([field, name]) => ({ field, name, label: draftOrigin(origins, field).label }));
 }
 
 /** Where the official rate ladder changes gear, read from the official table itself. */
@@ -931,17 +1042,20 @@ export function foldedStepState(stepKey, step, candidate) {
 }
 
 /** Where every number in the table came from, in the owner's words and the records' own values. */
-function SkuChoiceSources({ table }) {
+function SkuChoiceSources({ table, origins = null }) {
   const source = table.sources;
   const parts = source.reserveParts;
+  const price = draftOrigin(origins, "targetSalePriceRub");
+  const weight = draftOrigin(origins, "packedWeightKg");
+  const goods = draftOrigin(origins, "goodsPriceRmb");
   return <dl className="product-pricing-facts product-sku-sources" aria-label="数字来源">
-    <div><dt>目标售价</dt><dd>{RUB(source.targetSalePriceRub)} · 你填的</dd></div>
+    <div><dt>目标售价</dt><dd>{`${RUB(source.targetSalePriceRub)} · ${price.label}`}</dd></div>
     <div><dt>央行汇率</dt><dd>{finite(source.rubPerCny) === null ? "未取得"
       : `1 元 ≈ ${source.rubPerCny} 卢布${textOf(source.fxRateDate) ? ` · ${source.fxRateDate}` : ""}`}</dd></div>
-    <div><dt>Ozon 官方佣金</dt><dd>{percent(source.commissionRate) ?? "未取得"} · 按你填的售价所在档</dd></div>
+    <div><dt>Ozon 官方佣金</dt><dd>{`${percent(source.commissionRate) ?? "未取得"} · ${price.owner ? "按你填的售价所在档" : "按目标售价所在档"}`}</dd></div>
     <div><dt>物流线路</dt><dd>{source.routes.length === 0 ? "未取得"
       : `${source.routes.join(" / ")}${textOf(source.tariffRuleVersion) ? ` · ${source.tariffRuleVersion} 资费` : ""}`}</dd></div>
-    <div><dt>国内运费</dt><dd>{money(source.domesticShippingRmb) ?? "未取得"} · 你填的</dd></div>
+    <div><dt>国内运费</dt><dd>{`${money(source.domesticShippingRmb) ?? "未取得"} · ${draftOrigin(origins, "domesticShippingRmb").label}`}</dd></div>
     {/* 这笔钱是这件商品自己声明的，不是一个项目假设值；还没声明过的时候必须说出来，不能让它冒充一个签过字的数。 */}
     <div><dt>每单额外操作费</dt><dd>{money(source.packagingRmbDefault) ?? "未取得"}
       {source.extraHandlingDeclared === true ? " · 你声明的" : " · 还没声明，暂按这个数"}</dd></div>
@@ -952,8 +1066,8 @@ function SkuChoiceSources({ table }) {
       ? `（有 ${table.weightMissingCount} 个规格页面没给，运费和利润留空）` : ""}</dd></div>
     {/* 签过字才有这一行：这张表里哪几个数不是采到的，是主人自己声明的。没签字的时候这一行不存在。 */}
     {isObject(table.uniformSupply) ? <div><dt>{"你声明的同重同价"}</dt><dd>
-      {`${table.uniformSupply.appliedWeightSkuIds.length} 个规格按你填的 ${table.uniformSupply.packedWeightKg} 公斤算运费，`}
-      {`${table.uniformSupply.appliedPriceSkuIds.length} 个规格按你填的 ${money(table.uniformSupply.goodsPriceRmb)} 算货价`}
+      {`${table.uniformSupply.appliedWeightSkuIds.length} 个规格按${weight.owner ? "你填的" : `找货方案里的（${weight.label}）`} ${table.uniformSupply.packedWeightKg} 公斤算运费，`}
+      {`${table.uniformSupply.appliedPriceSkuIds.length} 个规格按${goods.owner ? "你填的" : `找货方案里的（${goods.label}）`} ${money(table.uniformSupply.goodsPriceRmb)} 算货价`}
       {dayOf(table.uniformSupply.declaredAt) ? ` · ${dayOf(table.uniformSupply.declaredAt)} 你声明的` : " · 你声明的"}
     </dd></div> : null}
   </dl>;
@@ -965,14 +1079,14 @@ function SkuChoiceSources({ table }) {
  * platform; the checkboxes are local until that button is pressed.
  */
 function SkuChoiceSection({ candidate, table, chosen, saving, recapturable = false, onRecapture, onToggle, onToggleAll,
-  onSubmit, uniformStep = null, onDeclareUniformSupply = null }) {
+  onSubmit, uniformStep = null, onDeclareUniformSupply = null, origins = null }) {
   const capture = candidate.sourceCapture;
   const swing = skuChoiceSwing(table);
   const allState = selectAllState(chosen, table.rows);
   const columns = table.columns.length > 0 ? table.columns : ["规格"];
   const savedIds = Array.isArray(capture.selectedSkuIds) ? capture.selectedSkuIds : [];
   const gap = skuWeightGapNotice(table);
-  const uniform = skuUniformSupplyNotice(uniformStep);
+  const uniform = skuUniformSupplyNotice(uniformStep, origins);
   return <section className="product-section product-sku-choice" aria-label="选规格">
     <h3>选哪个规格上架</h3>
     {/* 一个重量都没采到时，「按利润挑」这句话就是假的，不能照说。 */}
@@ -1054,8 +1168,8 @@ function SkuChoiceSection({ candidate, table, chosen, saving, recapturable = fal
                 ? table.columns.map((key, index) => <td key={key}>{textOf(row.values[index]) || "—"}</td>)
                 : <td>{row.label}</td>}
               {/* 主人的原话：表里要标明「你填的」而不是「采到的」。这两个数只要不是这次采到的，就当场说出来。 */}
-              <td>{yuanOr(row.priceCny)}{declaredMark(row.priceBasis)}</td>
-              <td>{finite(row.chargeableKg) === null ? PENDING : `${row.chargeableKg} 公斤`}{declaredMark(row.weightBasis)}</td>
+              <td>{yuanOr(row.priceCny)}{declaredMark(row.priceBasis, draftOrigin(origins, "goodsPriceRmb"))}</td>
+              <td>{finite(row.chargeableKg) === null ? PENDING : `${row.chargeableKg} 公斤`}{declaredMark(row.weightBasis, draftOrigin(origins, "packedWeightKg"))}</td>
               <td>{yuanOr(row.freightRmb)}</td>
               {/* 待补 is not a profit, so it never wears the profit's colour. */}
               <td className={row.unitProfitRmb === null ? "product-sku-pending" : "product-sku-profit"}>{yuanOr(row.unitProfitRmb)}</td>
@@ -1082,7 +1196,7 @@ function SkuChoiceSection({ candidate, table, chosen, saving, recapturable = fal
       <RecaptureControl candidate={candidate} disabled={saving} onRecapture={onRecapture} />
     </div> : null}
 
-    <SkuChoiceSources table={table} />
+    <SkuChoiceSources table={table} origins={origins} />
 
     <p className="product-sku-foot">
       <strong>选完之后会发生什么：</strong>{"软件把你选中的规格锁进这件商品的供货方案，商品页的进度条从「选定」走到「算利润」。这一步"}
@@ -1443,7 +1557,8 @@ export function CommissionEstimateBlock({ estimate, authorized, saving, onAuthor
  * click and collect the server's 422.
  */
 function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep = null, commissionEstimate = null, gate1Pick = null,
-  dataRevision, saving, onConfirm, onDeclareCargoFacts, onDeclareExtraHandlingFees, onReadOzonPage }) {
+  dataRevision, saving, onConfirm, onDeclareCargoFacts, onDeclareExtraHandlingFees, onReadOzonPage,
+  onReviseDraftDimensions = null, noticeAt = null, error = null, notice = null }) {
   const [firstPick, setFirstPick] = useState(null);
   const [comparabilityTicked, setComparability] = useState(false);
   const [commissionEstimateTicked, setCommissionEstimateTicked] = useState(false);
@@ -1468,12 +1583,20 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
   const supply = review.supply ?? {};
   const breakdown = spec?.breakdown ?? null;
   const queued = (finite(review.passCount) ?? 0) - (spec === null ? 0 : 1);
-  const deltaLine = profitStepPriceDeltaLine(spec);
+  // 找货方案里的数是谁给的：「做这件」存下的大多是软件读的，下面每一处都照实说，只有主人给的才说「你填的」。
+  const origins = supply.origins ?? null;
+  const priceOrigin = draftOrigin(origins, "goodsPriceRmb");
+  const weightOrigin = draftOrigin(origins, "packedWeightKg");
+  const shippingOrigin = draftOrigin(origins, "domesticShippingRmb");
+  const dimensionsOrigin = draftOrigin(origins, "dimensionsCm");
+  const softwareRead = profitStepSoftwareReadItems(review, spec);
+  const deltaLine = profitStepPriceDeltaLine(spec, priceOrigin);
   const breakLine = extraHandlingFeeBreakLine(spec);
   const appliedLine = extraHandlingFeeAppliedLine(review);
   const dimensions = supply.dimensionsCm ?? {};
   const size = [dimensions.length, dimensions.width, dimensions.height].every(value => finite(value) !== null)
-    ? `${dimensions.length}×${dimensions.width}×${dimensions.height} 厘米` : "未取得";
+    ? `${dimensions.length}×${dimensions.width}×${dimensions.height} 厘米${dimensionsOrigin.owner ? "" : `（${dimensionsOrigin.label}）`}`
+    : "未取得";
 
   return <section className="product-section product-profit" aria-label="算利润">
     <h3>算利润</h3>
@@ -1574,8 +1697,8 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
                   {index === 0 && isFirst ? <b>{" · 先上"}</b> : null}
                 </td>)
                 : <td>{row.label}{isFirst ? <b>{" · 先上"}</b> : null}</td>}
-              <td>{yuanOr(row.priceCny)}{declaredMark(row.priceBasis)}</td>
-              <td>{finite(row.chargeableKg) === null ? PENDING : `${row.chargeableKg} 公斤`}{declaredMark(row.weightBasis)}</td>
+              <td>{yuanOr(row.priceCny)}{declaredMark(row.priceBasis, priceOrigin)}</td>
+              <td>{finite(row.chargeableKg) === null ? PENDING : `${row.chargeableKg} 公斤`}{declaredMark(row.weightBasis, weightOrigin)}</td>
               <td>{yuanOr(row.freightRmb)}</td>
               <td>{finite(row.breakEvenRub) === null ? PENDING : RUB(row.breakEvenRub)}</td>
               <td>{finite(row.thresholdRub) === null ? PENDING : RUB(row.thresholdRub)}</td>
@@ -1621,8 +1744,8 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
             {textOf(benchmark.collectedOn) ? `，快照采于 ${benchmark.collectedOn}` : ""}。
           </p>
           <p>{`你的货：${supplySiteName(supply.productUrl)} ${textOf(supply.offerId) || "编号未取得"}`}
-            {spec === null ? "，还没指定变体" : ` ${spec.label}，货价 ${money(spec.priceCny) ?? PENDING}${declaredText(spec.priceBasis)}` +
-              `，打包 ${spec.weightKg} 公斤${declaredText(spec.weightBasis)} · ${size}`}。</p>
+            {spec === null ? "，还没指定变体" : ` ${spec.label}，货价 ${money(spec.priceCny) ?? PENDING}${declaredText(spec.priceBasis, priceOrigin)}` +
+              `，打包 ${spec.weightKg} 公斤${declaredText(spec.weightBasis, weightOrigin)} · ${size}`}。</p>
         </span>
       </label>}
       <div className="product-profit-check product-profit-supply">
@@ -1630,15 +1753,17 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
           <b>链接、规格、成本、包装是同一套采购方案</b>
           <p>{textOf(supply.productUrl) || "1688 链接未取得"}</p>
           <p>
-            {`货价 ${spec === null ? PENDING : money(spec.priceCny)}${profitStepPriceOriginText(spec?.priceBasis)}`}
-            {` ＋ 国内运费 ${money(supply.unitDomesticFreight) ?? PENDING}（你填的）`}
+            {`货价 ${spec === null ? PENDING : money(spec.priceCny)}${profitStepPriceOriginText(spec?.priceBasis, priceOrigin)}`}
+            {` ＋ 国内运费 ${money(supply.unitDomesticFreight) ?? PENDING}（${shippingOrigin.label}）`}
             {` ＋ 其他采购费用 ${money(supply.otherPurchaseCosts) ?? PENDING}`}
             {` ＝ 到手 ${spec === null ? PENDING : money(spec.actualPurchaseCost)}`}
-            {`；打包 ${spec === null ? PENDING : `${spec.weightKg} 公斤${declaredText(spec.weightBasis)}`} · ${size}。`}
+            {`；打包 ${spec === null ? PENDING : `${spec.weightKg} 公斤${declaredText(spec.weightBasis, weightOrigin)}`} · ${size}。`}
           </p>
           {/* 这句话说的是软件替你报了 ¥0；报不出来的时候它就不能说，缺什么由下面那张缺项单说。 */}
           {supply.otherPurchaseCosts !== 0 ? null
-            : <p className="product-profit-note">{"其他采购费用按 ¥0.00 算：你在「找货」里只填了货价和国内运费，到手就是这两项相加。"}</p>}
+            : <p className="product-profit-note">{priceOrigin.owner && shippingOrigin.owner
+              ? "其他采购费用按 ¥0.00 算：你在「找货」里只填了货价和国内运费，到手就是这两项相加。"
+              : "其他采购费用按 ¥0.00 算：「找货」方案里只有货价和国内运费，到手就是这两项相加；还有别的采购花费的话，先问清楚再确认。"}</p>}
           {deltaLine === null ? null : <p className="product-profit-delta">{deltaLine}</p>}
           {spec === null || textOf(spec.quantityOneEvidenceSourceNote) === "" ? null
             : <p className="product-profit-note">{`会一起记下来的核对说明：${spec.quantityOneEvidenceSourceNote}`}</p>}
@@ -1657,6 +1782,20 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
     {/* 八、精确佣金读不到时的那一条出路。只有服务端真的这么回过才出现，别的时候这一块根本不存在。 */}
     <CommissionEstimateBlock estimate={commissionEstimate} authorized={commissionEstimateAuthorized}
       saving={saving} onAuthorize={setCommissionEstimateTicked} />
+
+    {/* 点确认之前说清楚：这一套里哪几个数是软件读的，不是主人填的。点下去就是他认了这些数（AGENTS.md §4.4）。
+        尺寸是 Seerfar 记录的同类商品尺寸时，给一个改成实际尺寸的地方：运费和利润按改过的重算，确认的就是实际的。 */}
+    {softwareRead.length === 0 ? null : <div className="product-profit-software-read" role="note" aria-label="软件读来的数">
+      <h4>这几个数是软件读来的，不是你填的</h4>
+      <ul>{softwareRead.map(item => <li key={item.field}><b>{item.name}</b>：{item.label}</li>)}</ul>
+      <p>{softwareRead.some(item => item.field === "dimensionsCm")
+        ? "点「确认这套供货」就是你认了这些数。包装尺寸决定国际运费：手上有这件货实际的包装尺寸（量过或问过供应商），先点「改成实际尺寸」改掉，运费和利润会按它重算。"
+        : "点「确认这套供货」就是你认了这些数；拿不准的先问一下供应商再确认。"}</p>
+      {softwareRead.some(item => item.field === "dimensionsCm")
+        ? <DraftDimensionsControl dimensions={dimensions} dataRevision={dataRevision} saving={saving}
+          onRevise={onReviseDraftDimensions} idPrefix="profit-draft-dimensions" /> : null}
+      <StepResult at="dimensions" noticeAt={noticeAt} error={error} notice={notice} />
+    </div>}
 
     {/* 凑不齐的东西如实列出来，按钮就不给点；软件不会替主人补一个像样的数字上去。 */}
     {state.gaps.length === 0 ? null : <div className="product-profit-gaps" role="alert">
@@ -1824,6 +1963,7 @@ export default function ProductPage({
   onRefreshSiblingBatchExecution = null, onResumeSiblingBatchStock = null,
   siblingSkuIds = [], siblingCandidates = [], onRequestCapture, onReviewCaptureAndRequest, onRecaptureSource,
   onConfirmProfitStep, onDeclareCargoFacts, onDeclareExtraHandlingFees, onDeclareUniformSupply, onReadOzonPage,
+  onReviseDraftDimensions = null,
   onStartImageMatch = null, onCompareImageMatch = null, onJudgeImageMatch = null,
   onStartOzonMatch = null, onCompareOzonMatch = null, onJudgeOzonMatch = null,
   onBack, onEliminateCandidate,
@@ -1843,6 +1983,8 @@ export default function ProductPage({
   loadingLabel = "正在读取这件商品的找货资料…"
 }) {
   const draft = view?.supplierDraftV1 ?? null;
+  // 方案里每个数是谁给的（服务端算好）。只有主人给的数才说「你填的」。
+  const draftOrigins = view?.supplierDraftOriginsV1 ?? null;
   const marketSnapshot = view?.marketSnapshot ?? null;
   const skuTable = view?.skuChoiceTableV1 ?? null;
   const profitReview = view?.profitStepV1 ?? null;
@@ -1876,7 +2018,9 @@ export default function ProductPage({
   // 页面不自己判断状态，也不去探测——有这份记录才有这一块。
   const recalculationOpen = !profitOpen && isObject(candidate?.bExactCommissionRuntimeView) &&
     typeof onRecalculateBWithExactCommission === "function";
-  const estimate = estimateLines(view?.supplierDraftEstimateV1 ?? null);
+  const estimate = estimateLines(view?.supplierDraftEstimateV1 ?? null, draftOrigins);
+  const originsLine = draftOriginsLine(draft, draftOrigins);
+  const dimensionsSoftwareRead = draft !== null && !draftOrigin(draftOrigins, "dimensionsCm").owner;
   const reviewRequired = captureNeedsOwnerReview(candidate);
   const recapturable = captureRecaptureReady(candidate);
   // 采到之后该看的地方是上面那张规格表，所以重读的入口跟着它走；规格表不在场时它才留在「1688 采集」块里。
@@ -1938,9 +2082,19 @@ export default function ProductPage({
    * 同重同价声明。它只记下主人对这一次采集说的那句话：缺的重量和货价按他在「找货」里填的算。采到了真实数字的规格
    * 仍然按采到的算，重新采集之后这句话自动失效。不下单、不联系供应商、不碰平台。
    */
+  const uniformTyped = draftOrigin(draftOrigins, "packedWeightKg").owner && draftOrigin(draftOrigins, "goodsPriceRmb").owner;
   const declareUniformSupply = payload => run(onDeclareUniformSupply, payload, payload?.uniform === true
-    ? "已记下你的声明：没采到重量和货价的规格按你在「找货」里填的算，表里标着「你填的」；采到了真实数字的规格不受影响。"
-    : "已撤回这个声明：没采到重量和货价的规格回到「待补」，不再按你填的数算。");
+    ? uniformTyped
+      ? "已记下你的声明：没采到重量和货价的规格按你在「找货」里填的算，表里标着「你填的」；采到了真实数字的规格不受影响。"
+      : "已记下你的声明：没采到重量和货价的规格按「找货」方案里的数算，表里标着「按找货方案」；采到了真实数字的规格不受影响。"
+    : uniformTyped ? "已撤回这个声明：没采到重量和货价的规格回到「待补」，不再按你填的数算。"
+      : "已撤回这个声明：没采到重量和货价的规格回到「待补」，不再按找货方案的数算。");
+  /**
+   * 包装尺寸改成实际的。只换找货方案里的长宽高，这一项记成主人填的；服务端按新尺寸重算估算、规格表和利润。
+   * 结果显示在那个按钮旁边。不下单、不联系供应商、不碰平台。
+   */
+  const reviseDraftDimensions = payload => run(onReviseDraftDimensions, payload,
+    "已把包装尺寸改成你填的实际尺寸，运费和利润已按新尺寸重算；没有下单、没有联系供应商、也没有向 Ozon 写任何东西。", "dimensions");
   /**
    * 读一次这个 Ozon 商品页。目标地址不从这里传：服务端只认这件商品自己已经保存的那个地址。回来的那句话是服务端
    * 和插件实际说的（含插件自己的拒绝码），页面原样显示，不改写、不概括，也不承诺重试。
@@ -1993,6 +2147,14 @@ export default function ProductPage({
       ? "找货方案由上面的「做这件」卡存下：软件先选好同款和货源，你在卡上点「做这件」。"
       : "这是你在「做这件」卡上认下的方案。下面的数字按它算；要换货源或改售价，等正式利润算完，没过线时卡会回来。"}</p>
     <StepResult at="find" noticeAt={noticeAt} error={error} notice={notice} />
+    {/* 方案里哪几个数是软件读的：「做这件」存下的方案逐项说清楚，主人才知道哪几个要自己核对。手填的方案不出这一句。 */}
+    {originsLine === null ? null : <p className="product-result-provenance">{originsLine}</p>}
+    {dimensionsSoftwareRead && typeof onReviseDraftDimensions === "function" ? <div className="product-draft-dimensions-row">
+      <span className="product-actions-note">包装尺寸不是这件货量过的；手上有实际尺寸（量过或问过供应商）就改成实际的，运费和利润会按它重算。</span>
+      <DraftDimensionsControl dimensions={draft.dimensionsCm} dataRevision={candidate.dataRevision} saving={saving}
+        onRevise={reviseDraftDimensions} idPrefix="find-draft-dimensions" />
+      <StepResult at="dimensions" noticeAt={noticeAt} error={error} notice={notice} />
+    </div> : null}
 
     <div className="product-result" aria-label="找货结果">
       <p className="product-result-market">{snapshotLine ?? "市场快照：还没有本商品的查询结果快照。"}</p>
@@ -2005,7 +2167,8 @@ export default function ProductPage({
       {nextHint ? <p className="product-next-hint">{nextHint}</p> : null}
     </div>
 
-    {draft === null ? null : <PricingGuidance guidance={view?.supplierDraftEstimateV1?.pricingGuidance ?? null} />}
+    {draft === null ? null : <PricingGuidance guidance={view?.supplierDraftEstimateV1?.pricingGuidance ?? null}
+      purchaseLabel={draftPurchaseLabel(draftOrigins)} />}
 
     <div className={`product-capture${highlight === "capture" ? " product-next" : ""}`} aria-label="插件采集">
       <h4>{supplySiteName(candidate.sourceCapture?.sourceUrl || draft?.sourceUrl)} 采集</h4>
@@ -2129,7 +2292,7 @@ export default function ProductPage({
       </section>
       : <SkuChoiceSection candidate={candidate} table={skuTable} chosen={chosen} saving={saving}
         recapturable={recapturable} onRecapture={recapture}
-        uniformStep={uniformStep} onDeclareUniformSupply={declareUniformSupply}
+        uniformStep={uniformStep} onDeclareUniformSupply={declareUniformSupply} origins={draftOrigins}
         onToggle={(id, checked) => { setChosen(current => toggleLocalSupplierSkuSelection(current, id, checked)); setNotice(null); }}
         onToggleAll={checked => { setChosen(checked ? skuTable.rows.map(row => String(row.sourceSkuId)) : []); setNotice(null); }}
         onSubmit={() => run(onChooseSkus, skuChoicePayload(skuTable, chosen, candidate.dataRevision),
@@ -2155,7 +2318,9 @@ export default function ProductPage({
       }}
       dataRevision={candidate.dataRevision} saving={saving}
       onConfirm={confirmProfitStep} onDeclareCargoFacts={declareCargoFacts}
-      onDeclareExtraHandlingFees={declareExtraHandlingFees} onReadOzonPage={readOzonPage} /> : null}
+      onDeclareExtraHandlingFees={declareExtraHandlingFees} onReadOzonPage={readOzonPage}
+      onReviseDraftDimensions={typeof onReviseDraftDimensions === "function" ? reviseDraftDimensions : null}
+      noticeAt={noticeAt} error={error} notice={notice} /> : null}
 
     {/* 算利润停在条件测算之后，这一步就只剩这一件事可做，按钮就在这一页上。 */}
     {recalculationOpen ? <BetterCommissionEvidenceSection candidate={candidate} saving={saving}

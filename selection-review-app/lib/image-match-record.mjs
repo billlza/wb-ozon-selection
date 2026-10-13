@@ -9,6 +9,8 @@ import { IMAGE_FINGERPRINT_VERSION, classifyImageSimilarity, imageFingerprintDis
  */
 export const IMAGE_MATCH_JUDGEMENTS = Object.freeze(["exact", "near", "wrong"]);
 export const IMAGE_MATCH_JUDGEMENT_LABELS = Object.freeze({ exact: "是同款", near: "近似款", wrong: "不是" });
+/** 比对首图半路断了（服务重启、写盘出错）时每条结果和整份比对记下的原因：没比完，不是比过了不像。 */
+export const IMAGE_MATCH_COMPARISON_INTERRUPTED = "comparison_interrupted";
 const HISTORY_LIMIT = 5;
 const IN_FLIGHT = Object.freeze(["waiting_extension", "searching"]);
 
@@ -197,6 +199,22 @@ export function createImageMatchRules({ field, idKey, schemaVersion, codes, stop
     };
   }
 
+  /**
+   * 比对首图半路断了：结果原样留着，每条记成「无法比对」并写明是中断，主人可以点「重新比对」或者直接逐条判断。
+   * 软件不自己再比一次（AGENTS.md §8.3）。不在比对中的记录返回 null，什么也不改。
+   */
+  function comparisonInterrupted(record, { at }) {
+    if (!isObject(record) || record.status !== "comparing") return null;
+    return {
+      ...record,
+      status: "compared",
+      comparison: { version: IMAGE_FINGERPRINT_VERSION, comparedAt: null, interruptedAt: at, sourceFingerprint: null,
+        sourceError: IMAGE_MATCH_COMPARISON_INTERRUPTED },
+      results: (Array.isArray(record.results) ? record.results : []).map(item => ({ ...item, fingerprint: null, distance: null,
+        similarity: "unknown", compareError: IMAGE_MATCH_COMPARISON_INTERRUPTED }))
+    };
+  }
+
   /** 主人对其中一条的判断。只认这次结果里真有的那一条；clear 撤回判断。 */
   function judged(record, { itemId, judgement, judgedAt, judgedBy }) {
     if (!isObject(record) || !["comparing", "compared"].includes(record.status)) throw new Error(codes.notJudgeable);
@@ -209,5 +227,5 @@ export function createImageMatchRules({ field, idKey, schemaVersion, codes, stop
   }
 
   return Object.freeze({ field, idKey, inFlight, startBlocker, stopMessage, failureCode, queuedRecord, resultsRecorded, failed,
-    computeComparison, comparisonRequested, comparisonApplied, judged });
+    computeComparison, comparisonRequested, comparisonApplied, comparisonInterrupted, judged });
 }

@@ -5,7 +5,13 @@ export const EXTENSION_LAST_SEEN_KEY = "selection-review-extension-last-seen";
 export const EXTENSION_CAPTURE_ACK_TIMEOUT_MS = 8000;
 export const EXTENSION_STATUS_RESPONSE_TIMEOUT_MS = 5000;
 
-export function extensionConnectionStatus({ liveVersion = "", cachedVersion = "", backgroundReady = false, serverHeartbeat = null } = {}) {
+// The background answers but holds new jobs back for a tab it opened (bridge `heldBy`): say which, and what clears it.
+const TAB_HOLD_STATUS = Object.freeze({
+  tab_cleanup_failed: { code: "tab_left_open", label: "插件上次打开的页面没关上 · 关掉它就能接着采集" },
+  tab_creation_unconfirmed: { code: "tab_unconfirmed", label: "插件上次开页面时 Chrome 没回话 · 请重新加载插件" }
+});
+
+export function extensionConnectionStatus({ liveVersion = "", cachedVersion = "", backgroundReady = false, heldBy = "", serverHeartbeat = null } = {}) {
   const live = String(liveVersion || "").trim();
   const heartbeatVersion = serverHeartbeat?.fresh === true
     ? String(serverHeartbeat.version || "").trim()
@@ -19,11 +25,12 @@ export function extensionConnectionStatus({ liveVersion = "", cachedVersion = ""
     if (activeVersion !== EXPECTED_EXTENSION_VERSION) {
       return { code: "reload_required", label: `插件代码已更新 · 请重新加载（当前v${activeVersion}，需要v${EXPECTED_EXTENSION_VERSION}）` };
     }
-    // A background that answers the handshake is connected and waiting for work; only a silent background is a problem.
-    // Whether one capture then succeeds is reported by that capture's own result, never by this status line.
-    return activeBackgroundReady
-      ? { code: "connected", label: "插件已连接 · 等待采集任务" }
-      : { code: "background_unavailable", label: `插件已安装 · 后台暂未响应 · 请核对后台连接（v${activeVersion}）` };
+    // A background that answers the handshake is connected and waiting for work; only a silent background, or one holding
+    // new work back for a tab it opened, is a problem. Whether one capture then succeeds is reported by that capture's own
+    // result, never by this status line.
+    if (activeBackgroundReady) return { code: "connected", label: "插件已连接 · 等待采集任务" };
+    const held = live && Object.hasOwn(TAB_HOLD_STATUS, heldBy) ? TAB_HOLD_STATUS[heldBy] : null;
+    return held ? { ...held } : { code: "background_unavailable", label: `插件已安装 · 后台暂未响应 · 请核对后台连接（v${activeVersion}）` };
   }
   if (cached === EXPECTED_EXTENSION_VERSION) {
     return { code: "page_refresh_required", label: "插件已安装 · 当前页面需要刷新" };

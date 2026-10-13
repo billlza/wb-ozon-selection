@@ -32,7 +32,7 @@ export async function productionOwnerDecisionHttpFixture() {
 
 /** Real server subprocess with password identity and a loopback dependency tripwire. No transport is injected into production. */
 export async function startSavedDEApi(t, { directory, port, document, binding, productionBindings=[binding], services = [], accountReadServices = [], discoveryBindings=[], credentialBindings = [], ossConfiguration = null, dictionaryResponder = null, browserOrigin = null,
-  identityProvider = "local_owner_password", catalogDirectory = null }) {
+  identityProvider = "local_owner_password", catalogDirectory = null, batchLimitEvidenceDirectory = null }) {
   const allocated = allocatedTestPorts();
   const dependencyPort = allocated.gateway;
   if (port !== allocated.api && port !== allocated.second) {
@@ -76,7 +76,9 @@ export async function startSavedDEApi(t, { directory, port, document, binding, p
       await rm(directory, { recursive: true, force: true });
     }
   });
-  const env = { ...process.env, ...(catalogDirectory?{SELECTION_REVIEW_BATCH_CATALOG_DIRECTORY:catalogDirectory}:{}), SELECTION_REVIEW_API_PORT: String(port), SELECTION_REVIEW_DATA_FILE: dataFile,
+  const env = { ...process.env, ...(catalogDirectory?{SELECTION_REVIEW_BATCH_CATALOG_DIRECTORY:catalogDirectory}:{}),
+    ...(batchLimitEvidenceDirectory ? { SELECTION_REVIEW_BATCH_LIMIT_EVIDENCE_DIRECTORY: batchLimitEvidenceDirectory } : {}),
+    SELECTION_REVIEW_API_PORT: String(port), SELECTION_REVIEW_DATA_FILE: dataFile,
     SELECTION_REVIEW_PUBLIC_ORIGIN:base,SELECTION_REVIEW_ALLOWED_ORIGINS:browserOrigin ? `${base},${browserOrigin}` : base,
     SELECTION_REVIEW_IDENTITY_PROVIDER: identityProvider, SELECTION_REVIEW_OWNER_IDENTITY_FILE: path.join(privateDirectory, "owner.json"),
     SELECTION_REVIEW_STORE_BINDINGS_JSON: JSON.stringify([{ targetStore: binding.storeRef.stableStoreId, platform: binding.platform, storeRef: binding.storeRef }]),

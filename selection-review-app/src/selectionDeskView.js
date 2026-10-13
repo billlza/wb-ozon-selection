@@ -3,6 +3,7 @@ import { orderCandidates } from "./candidateViews.js";
 import { errorMessage, safeImageUrl, safeWebUrl } from "./formState.js";
 import { INTAKE_BLOCKER_LABELS, UNSOURCED_BLOCKER_CODES } from "../lib/global-notices.mjs";
 import { gate1Open, gate1ShortfallPending } from "../lib/gate1-decision.mjs";
+import { supplierDraftOrigins } from "../lib/supplier-draft.mjs";
 import { gate1ShortfallView } from "./gate1View.js";
 import { INTAKE_BLOCKER_HINTS, INTAKE_STAGE_LABELS, roughProfitLine } from "./intakeView.js";
 
@@ -287,8 +288,11 @@ function draftAttention(candidate) {
   }
   const profit = isObject(record.profitAtDeclaredPurchase) ? record.profitAtDeclaredPurchase : null;
   if (profit?.passes !== true) {
+    // 「做这件」存下的方案里，货价和运费多半是软件读的，不能说成「你填的」。
+    const origins = supplierDraftOrigins(candidate.supplierDraftV1, { gate1Decision: candidate.gate1DecisionV1 ?? null });
+    const purchase = origins.goodsPriceRmb.owner && origins.domesticShippingRmb.owner ? "你填的" : "找货方案的";
     return { step: "draft_blocked", chip: "找货已填 · 未过线",
-      reason: `按你填的到手总价没到本店利润门槛：单件利润 ${money(profit?.unitProfitRmb)} · 利润率 ${percent(profit?.marginRate)}`,
+      reason: `按${purchase}到手总价没到本店利润门槛：单件利润 ${money(profit?.unitProfitRmb)} · 利润率 ${percent(profit?.marginRate)}`,
       action: { key: "draft", label: "去改找货" } };
   }
   return { step: "draft_passes", chip: `找货已填 · 过线 单件利润 ${money(profit.unitProfitRmb)}`,

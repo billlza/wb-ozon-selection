@@ -85,7 +85,9 @@ export const CAPTURE_START_REJECTION_MESSAGES = Object.freeze({
   request_origin_invalid: "插件认为这条开始提示不是来自本机评审台页面，因此拒绝领取；请用 http://127.0.0.1:4317 打开页面后重新申请一次采集，软件不会自动重试",
   start_signal_invalid: "插件认为这条开始提示的格式不对，因此拒绝领取；请按 Cmd+Shift+R 强制刷新页面后重新申请一次采集，软件不会自动重试",
   capture_job_invalid: "插件去服务端领取时，服务端判定这个采集作业已经不能领取，这次没有开始；请重新申请一次采集，软件不会自动重试",
-  capture_job_not_claimed: "插件收到了开始提示，但没有完成领取，这次采集没有开始；请重新申请一次采集，软件不会自动重试"
+  capture_job_not_claimed: "插件收到了开始提示，但没有完成领取，这次采集没有开始；请重新申请一次采集，软件不会自动重试",
+  tab_cleanup_failed: "插件上次打开的一个页面没能自动关上，这次没有开始；把插件刚才打开的那个页面关掉再点一次，分不清是哪个就到 chrome://extensions 重新加载插件，软件不会自动重试",
+  tab_creation_unconfirmed: "插件上次开页面时 Chrome 一直没回话，这次没有开始；请到 chrome://extensions 重新加载插件后再点一次，软件不会自动重试"
 });
 
 const CAPTURE_START_UNKNOWN_MESSAGE = "插件没有确认领取这次采集，也没有说明原因；请查看上面的插件状态后重新申请一次采集，软件不会自动重试";

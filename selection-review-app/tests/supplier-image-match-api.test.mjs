@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { allocatedTestPorts, stopApiProcess } from "./helpers/api-process-lifecycle.mjs";
 import { isImageMatchJob, isOzonImageMatchJob, validateImageMatchRequest, validateOzonImageMatchRequest } from "../extension/1688-capture/capture-request.js";
-import { supplierImageMatchSearchUrl } from "../lib/supplier-image-match.mjs";
+import { queuedSupplierImageMatchRecord, sanitizeSupplierImageMatchEvidence, supplierImageMatchResultsRecorded,
+  supplierImageMatchSearchUrl, supplierImageMatchSource } from "../lib/supplier-image-match.mjs";
 import { ozonSearchUrl } from "../lib/ozon-same-product-match.mjs";
 
 // Every candidate, offer, title and picture address below is synthetic. The service is told not to fetch any picture.
@@ -298,6 +299,53 @@ test("找同款失败如实停下：没登录、空页面、别的图、没领�
   const lost = await api.record("IMG-2");
   assert.deepEqual([lost.supplierImageMatch.status, lost.supplierImageMatch.failureCode], ["failed", "capture_job_lost"]);
   assert.equal(lost.sourceCapture.status, "captured_waiting_owner_selection");
+});
+
+test("插件来领时资料已经变了：当场收成明确失败、放开采集控制，主人马上能再找；比对首图半路断了的，重启后记成比对中断、结果留着可重新比对", async t => {
+  // 上一个进程比对到一半就没了的那一份：结果读回来了，首图还没比。
+  const interrupted = candidate("IMG-CMP");
+  const queuedRecord = queuedSupplierImageMatchRecord(null, { captureId: "IMJ-synthetic-cmp", source: supplierImageMatchSource(interrupted).source,
+    requiredExtensionVersion: "1.4.1", authorizedBy: "owner:synthetic", authorizedAt: "2026-10-09T08:00:00.000Z", candidateRevision: 1 });
+  interrupted.supplierImageMatch = supplierImageMatchResultsRecorded({ ...queuedRecord, status: "searching", jobStatus: "claimed", attempt: 1 },
+    sanitizeSupplierImageMatchEvidence(evidence(), IMAGE), "2026-10-09T08:00:05.000Z");
+  interrupted.supplierImageMatch.judgements = { "700000000000": { judgement: "near", judgedAt: "2026-10-09T08:00:06.000Z", judgedBy: "owner:synthetic" } };
+  const api = await startApi(t, [candidate("IMG-3"), interrupted]);
+  await api.login();
+
+  const settled = await api.record("IMG-CMP");
+  assert.equal(settled.supplierImageMatch.status, "compared", "重启后不会一直停在「正在比对首图」");
+  assert.equal(settled.supplierImageMatch.comparison.sourceError, "comparison_interrupted");
+  assert.ok(settled.supplierImageMatch.results.every(entry => entry.similarity === "unknown" && entry.compareError === "comparison_interrupted"));
+  assert.equal(settled.supplierImageMatch.judgements["700000000000"].judgement, "near", "主人的判断留着");
+  assert.equal(settled.history.at(-1).action, "supplierImageMatchCompareInterrupted");
+  assert.equal(settled.dataRevision, 2);
+  const recompare = await api.compare("IMG-CMP", { dataRevision: settled.dataRevision, captureId: "IMJ-synthetic-cmp" });
+  assert.equal(recompare.status, 202, JSON.stringify(recompare.body));
+  const recompared = await api.settled("IMG-CMP", "compared");
+  assert.equal(recompared.supplierImageMatch.comparison.sourceError, "fetch_disabled", "主人点了才再比一次");
+
+  const queued = await api.start("IMG-3", { dataRevision: 1 });
+  assert.equal(queued.status, 202, JSON.stringify(queued.body));
+  // 排队之后有人改了这件商品：修订号变了，这次作业不能再领。
+  const document = await api.readDocument();
+  const edited = document.candidates.find(entry => entry.id === "IMG-3");
+  edited.dataRevision += 1;
+  edited.ownerNote = "synthetic owner edit while queued";
+  await writeFile(api.dataFile, JSON.stringify(document));
+  const claim = await api.claim(queued.body.captureJob.jobId);
+  assert.deepEqual([claim.status, claim.body.code], [409, "revision_conflict"]);
+  const closed = await api.record("IMG-3");
+  const match = closed.supplierImageMatch;
+  assert.deepEqual([match.status, match.jobStatus, match.failureCode, match.attempt, match.writeOccurred],
+    ["failed", "failed", "claim_rejected", 0, false], "不再停在「等插件」");
+  assert.match(match.reason, /资料已经变了，这次没有搜/);
+  assert.equal(closed.dataRevision, edited.dataRevision + 1);
+  assert.equal(closed.history.at(-1).action, "supplierImageMatchStopped");
+  assert.equal((await api.health()).captureControl.status, "idle");
+  assert.equal((await api.claim(queued.body.captureJob.jobId)).status, 409, "被拒的作业不会再被领走");
+  const again = await api.start("IMG-3", { dataRevision: closed.dataRevision });
+  assert.equal(again.status, 202, JSON.stringify(again.body));
+  assert.equal(api.stderr.join(""), "");
 });
 
 test("找同款三个入口共用一条作业链：1688 货源用它自己的首图搜，结果里标出就是这一家；没有货源采集的 Ozon 商品用 Ozon 主图搜", async t => {

@@ -43,15 +43,22 @@ function rankedRows(record, idKey) {
       (finite(left.item.distance) ?? 99) - (finite(right.item.distance) ?? 99) || left.order - right.order);
 }
 
+/** 整句只说「包邮」这一件事，才算一件也包邮；「不包邮」「满 2 件包邮」「偏远不包邮」都不算。 */
+const UNCONDITIONAL_FREE_SHIPPING = /^(?:全国)?(?:包邮|免运费|免邮费?)$/u;
+
 /**
  * 1688 搜图结果每条带一句价格说明，比如「运费5元」「包邮」。读得懂就给出国内运费，读不懂就是 null——不猜。
+ * 写明「运费 X 元」就是 X；「X 元起」「X-Y 元」只是下限，不算读懂。没写金额时，只有整句就是「包邮」才是 0。
  */
 export function domesticShippingFromPriceNote(note) {
   const value = text(note);
   if (value === "") return null;
-  if (/包邮|免运费/u.test(value)) return 0;
-  const match = value.match(/运费\s*[¥￥]?\s*(\d+(?:\.\d+)?)\s*元?/u);
-  return match ? Math.round(Number(match[1]) * 100) / 100 : null;
+  const match = value.match(/运费\s*[:：]?\s*[¥￥]?\s*(\d+(?:\.\d+)?)\s*元?/u);
+  if (match) {
+    const rest = value.slice(match.index + match[0].length);
+    return /^\s*(?:起|[-~～至到])/u.test(rest) ? null : Math.round(Number(match[1]) * 100) / 100;
+  }
+  return UNCONDITIONAL_FREE_SHIPPING.test(value.replace(/[\s，,。.、；;：:!！·]/gu, "")) ? 0 : null;
 }
 
 /** 一件起订：1688 页面写着起批量 1 才算；没读到起批量的不算，留给主人打开页面核对。 */
@@ -104,11 +111,14 @@ export function gate1SupplierOptions(candidate) {
 }
 
 /**
- * 最便宜又能一件起订的那一家：只在同款候选里挑，按货价加读得出的国内运费排；没读到价格的不算。
+ * 最便宜又能一件起订的那一家：只在同款候选里挑，按货价加国内运费排；没读到价格的不算。
  * 一件起订是供货方案的硬门禁（AGENTS.md §4.3），所以起批量没读到的也不算。
+ * 运费没读到的那几家只按货价，比不出真便宜：有读到运费的就只在这几家里挑，一家都没读到才退回去按货价挑（卡上再问运费）。
  */
 export function cheapestMoqOne(options) {
-  return options.filter(row => row.moqOne && row.allInPurchaseRmb !== null)
+  const eligible = options.filter(row => row.moqOne && row.allInPurchaseRmb !== null);
+  const known = eligible.filter(row => row.shippingKnown === true);
+  return (known.length ? known : eligible)
     .reduce((best, row) => (best === null || row.allInPurchaseRmb < best.allInPurchaseRmb ? row : best), null);
 }
 

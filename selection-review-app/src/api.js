@@ -182,6 +182,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  // 包装尺寸改成实际的：只换找货方案里的长宽高，这一项记成主人填的，估算按新尺寸重算。不派任务、不联系供应商、不碰平台。
+  reviseSupplierDraftDimensions: (candidateId, payload) =>
+    request(`/api/candidates/${encodeURIComponent(candidateId)}/lifecycle/supplier-draft-dimensions`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
   // 选定 the captured specifications of one product. It only records the owner's choice and freezes it into this
   // product's supply plan: no dispatch, no supplier contact, no platform write.
   chooseSourceSkus: (candidateId, payload) =>

@@ -23,7 +23,10 @@ import { createDiscoveryTitleTranslator, DiscoveryTitleTranslationError } from '
 import { createADiscoveryTitleTranslationUseCase } from './lib/discovery-title-translation-store.mjs';
 import { createADiscoveryEstimateInputs, createADiscoveryEstimateUseCase } from './lib/a-discovery-estimate-store.mjs';
 import { ensureDiscoveryMarketSalesSnapshot, readDiscoveryMarketRecord, currentSalesSnapshot } from './lib/discovery-market-snapshot.mjs';
-import { SupplierDraftError, buildSupplierDraftEstimate, buildSupplierDraftV1, normalizeSupplierDraftInput } from './lib/supplier-draft.mjs';
+import {
+  SupplierDraftError, buildSupplierDraftEstimate, buildSupplierDraftV1, normalizeSupplierDraftDimensionsInput, normalizeSupplierDraftInput,
+  reviseSupplierDraftDimensions, supplierDraftOrigins
+} from './lib/supplier-draft.mjs';
 import {
   SKU_UNIFORM_SUPPLY_LABEL, buildSkuChoiceTable, buildSkuUniformSupplyStep,
   buildOwnerSkuUniformSupplyRecord, inForceSkuUniformSupply, readSkuUniformSupplyDeclaration
@@ -144,10 +147,6 @@ import { adaptLegacyCandidateToOpportunity } from "./lib/legacy-candidate-adapte
 import { buildRealLifecycleEntryPreview } from "./lib/real-lifecycle-entry-preview.mjs";
 import { buildRealAConfirmationCard, validateRealAConfirmationSubmission } from "./lib/real-a-confirmation-card.mjs";
 import { resolveConfiguredStoreRef, assertCandidateStoreBinding, sameStoreRef } from "./lib/store-binding.mjs";
-import {
-  AStageTerraGatewayError,
-  runAStageTerraAssist
-} from "./lib/a-stage-terra-gateway.mjs";
 import { applyLifecycleBEvidenceContext } from "./lib/lifecycle-b-evidence-context.mjs";
 import { runRealAConfirmationWithSystemEvidence } from "./lib/real-a-b-evidence-orchestration.mjs";
 import { GuooRouteComparisonError, appendGuooRouteComparison, assertGuooComparisonReadyForEvidence,
@@ -260,10 +259,9 @@ import {
   codexDispatchGate,
   completeExecutionStep,
   createSoftwareExecutionRuntime,
-  openExceptionCase,
   recordExceptionMaintenanceStarted,
+  releaseATerraAssistBlock,
   startSoftwareStep,
-  startThirdPartyAiStep,
   simulateNormalSoftwarePath,
   waitForOwner
 } from "./lib/software-execution-state.mjs";
@@ -305,7 +303,7 @@ import { createRepositoryBackedOzonDEPreflightEvidenceReader } from "./lib/ozon-
 import { createOzonAccountReadBindingResolver } from "./lib/ozon-account-read-preparation.mjs";
 import { createOzonAccountReadEvidenceSource } from "./lib/ozon-account-read-evidence.mjs";
 import { loadOzonDEProtocolCatalog } from "./lib/ozon-de-protocol-catalog.mjs";
-import { loadOzonProductImportBatchLimitEvidence } from "./lib/ozon-product-import-batch-limit.mjs";
+import { assertOzonProductImportBatchLimitCurrent, loadOzonProductImportBatchLimitEvidence } from "./lib/ozon-product-import-batch-limit.mjs";
 import { createOzonAccountReadServices } from "./lib/ozon-account-read-services.mjs";
 import { createConfiguredOzonAccountDiscoveryRuntime } from './lib/ozon-account-discovery-runtime.mjs';
 import { OzonAccountReadError } from "./lib/ozon-account-read-contract.mjs";
@@ -343,8 +341,6 @@ const automationConcurrencyLimit = Math.min(
 const codexOfflineEnabled = codexOfflineModeFromEnvironment(process.env);
 const explicitDispatchDeliveryEnabled = dispatchDeliveryEnabledFromEnvironment(process.env);
 const LEGACY_DISPATCH_CHANNEL_DISABLED = "旧派发通道已停用：当前不派发 Codex 任务，历史派发只读。";
-const aiGatewayUrl = runtimeConfiguration.aiGatewayUrl;
-const aiGatewayDeploymentMode = runtimeConfiguration.deploymentMode;
 const allowedReviewOrigins = new Set(runtimeConfiguration.allowedOrigins);
 const trustedServiceOrigins = new Set([
   runtimeConfiguration.publicOrigin,
@@ -900,9 +896,13 @@ const ozonAccountEvidenceSource = createOzonAccountReadEvidenceSource({ reposito
   protocolCatalog: await loadOzonDEProtocolCatalog() });
 let batchLimitEvidencePromise = null;
 const loadBatchLimitEvidence = () => {
-  batchLimitEvidencePromise ??= loadOzonProductImportBatchLimitEvidence();
+  // The checked-in records by default; a test points this at its own folder, the same way as the batch catalogs.
+  batchLimitEvidencePromise ??= loadOzonProductImportBatchLimitEvidence(process.env.SELECTION_REVIEW_BATCH_LIMIT_EVIDENCE_DIRECTORY
+    ? { directory: process.env.SELECTION_REVIEW_BATCH_LIMIT_EVIDENCE_DIRECTORY } : undefined);
   return batchLimitEvidencePromise;
 };
+// Batch import can only send with a store credential; without one a batch is saved and reported as not sent.
+const dBatchImportWired = runtimeConfiguration.ozonDECredentialBindings.length > 0;
 const ozonDEPreflightProvider = createOzonDEPreflightProvider({ serverClock: now,
   verifySourceSnapshot: ozonAccountEvidenceSource.verifySnapshot,
   loadBatchLimitEvidence,
@@ -915,7 +915,7 @@ const deRuntimeServices = createDEProductionRuntimeServices({
   repository: businessStateRepository, runtimeMode: runtimeConfiguration.deploymentMode,
   serverClock: now, workerRegistry, deServiceBindings: runtimeConfiguration.deServiceBindings,
   productionBindings: runtimeConfiguration.productionBindings,
-  requestJson: runtimeConfiguration.ozonDECredentialBindings.length > 0 ? ozonDETransport.requestJson : null,
+  requestJson: dBatchImportWired ? ozonDETransport.requestJson : null,
   inspectPlatform: ozonDEPreflightProvider.inspectPlatform,
   loadAdapterCapabilities: ozonDEPreflightProvider.loadAdapterCapabilities,
   loadBatchMemberEvidence: ozonDEPreflightProvider.loadBatchMemberEvidence,
@@ -1619,6 +1619,41 @@ async function enqueueASupplierCaptureJob({ candidateId, requestRevision, reques
   return { candidate, captureJob: sourceCaptureJobPublic(session), duplicate: false };
 }
 
+/**
+ * 领取在事务里被拒：期限刚好到了、这件商品的资料在排队后变了、或者记录已经不是这次作业的。插件拿到的是错误，不会去读。
+ * 以前这里只删了内存里的会话、清掉了到期计时器，持久记录却还停在「等插件」：这件商品再也读不了、搜不了，录入流水线也一直
+ * 以为插件被占着，只有重启服务才解开。现在把仍属于这次作业、仍在等插件的那份记录当场收成明确失败，主人点一下就能重新排。
+ * 写盘本身出错时插件同样拿到错误，但这次领取有没有落盘说不准，按「结果未知」收（AGENTS.md §8.3）。收口自己也写不进去时
+ * 只记日志，留给服务重启时的收口，不重试。
+ */
+function claimRejectionCode(error) {
+  if (error?.extra?.code === "candidate_not_found") return null;
+  if (error?.extra?.code === "capture_job_expired") return "extension_job_unclaimed";
+  if (typeof error?.status === "number") return "claim_rejected";
+  return "unknown_outcome";
+}
+
+async function closeRejectedCaptureClaim(session, error, { recordOf, inFlight, close, label }) {
+  const code = claimRejectionCode(error);
+  if (code === null) return;
+  // 被拒的领取没有把作业交给插件：这一次没有执行，次数照实记 0。
+  if (code !== "unknown_outcome") session.attempt = 0;
+  try {
+    await mutateDataWhenChanged((data) => {
+      const current = data.candidates.find((item) => item.id === session.candidateId);
+      const record = current ? recordOf(current) : null;
+      if (record?.captureId !== session.captureId || !inFlight(record)) return { changed: false };
+      close(current, code);
+      return { changed: true };
+    });
+  } catch (closeError) {
+    console.error(`${label}领取被拒后收口没写进去，留给服务重启时收口`, closeError);
+  }
+}
+
+const captureRecordWaiting = (record) => ["waiting_extension", "capturing"].includes(record?.status) ||
+  ["queued", "claimed"].includes(record?.jobStatus);
+
 function claimASupplierCaptureJob(captureId, extensionVersion, extensionOrigin) {
   const operation = sourceCaptureJobClaimQueue.then(async () => {
     const session = sourceCaptureSessions.get(captureId);
@@ -1675,6 +1710,8 @@ function claimASupplierCaptureJob(captureId, extensionVersion, extensionOrigin) 
       session.jobStatus = "unknown_outcome";
       session.consumedAt = Date.now();
       sourceCaptureSessions.delete(session.captureId);
+      await closeRejectedCaptureClaim(session, error, { label: "1688采集", recordOf: (current) => current.sourceCapture,
+        inFlight: captureRecordWaiting, close: (current, code) => markSourceCaptureFailure(current, session, code) });
       throw error;
     }
     session.expiresAt = Date.now() + SOURCE_CAPTURE_JOB_EXECUTION_TTL_MS;
@@ -1793,6 +1830,44 @@ async function reconcileOzonPageReadJobsAfterRestart() {
       closed.push(current.id);
     }
     return { changed: closed.length > 0, result: closed };
+  });
+}
+
+/**
+ * Older builds called Terra right after an Ozon page read and, when it failed, wrote that failure into the product's own
+ * execution state, where it refused A confirmation, B recalculation and C2 confirmation with no way to clear it. Terra only
+ * ever produced a reference draft, so those records are taken out once here and archived next to the AI record itself;
+ * nothing is retried, no model is called and no business conclusion changes. A record that will not validate stays put.
+ */
+async function releaseATerraAssistBlocksAfterRestart() {
+  return mutateDataWhenChanged((data) => {
+    const released = [];
+    const timestamp = now();
+    for (const current of data.candidates) {
+      let outcome = null;
+      try {
+        outcome = releaseATerraAssistBlock(current.executionRuntime, { at: timestamp });
+      } catch (error) {
+        console.error(`A_TERRA_BLOCK_RELEASE_SKIPPED: ${current.id} ${String(error?.message || error).slice(0, 120)}`);
+      }
+      if (outcome === null) continue;
+      current.executionRuntime = outcome.runtime;
+      current.aStageAi = {
+        ...(current.aStageAi ?? {}),
+        releasedRuntimeBlock: {
+          technicalFailure: outcome.releasedTechnicalFailure,
+          exceptionCase: outcome.releasedExceptionCase,
+          releasedAt: timestamp
+        }
+      };
+      current.dataRevision = Number(current.dataRevision || 0) + 1;
+      current.updatedAt = timestamp;
+      current.lastModifiedBy = "system";
+      addHistory(current, "system", "aTerraAssistBlockReleased",
+        "AI 辅助整理失败只影响参考草稿，不再挡住这件商品；原记录已存档，没有重试、没有调用模型，业务结论未改变", timestamp);
+      released.push(current.id);
+    }
+    return { changed: released.length > 0, result: released };
   });
 }
 
@@ -1948,6 +2023,8 @@ function claimOzonPageReadJob(captureId, extensionVersion, extensionOrigin) {
       session.jobStatus = "unknown_outcome";
       session.consumedAt = Date.now();
       salesCaptureSessions.delete(session.captureId);
+      await closeRejectedCaptureClaim(session, error, { label: "Ozon读页面", recordOf: (current) => current.salesCapture,
+        inFlight: captureRecordWaiting, close: (current, code) => markOzonPageReadFailure(current, session, code) });
       throw error;
     }
     session.expiresAt = Date.now() + SOURCE_CAPTURE_JOB_EXECUTION_TTL_MS;
@@ -2075,17 +2152,24 @@ function scheduleImageMatchJobExpiry(session, expectedStatus, timeoutMs) {
   sourceCaptureJobTimers.set(session.captureId, timer);
 }
 
-/** 同上：会话只活在建立它的进程里，重启时每一条还在等插件的记录都不可能再有结果。 */
+/**
+ * 同上：会话只活在建立它的进程里，重启时每一条还在等插件的记录都不可能再有结果。「正在比对首图」也一样：比对跑在
+ * 已经没了的那个进程里，记录不收口就永远停在比对中，所以记成比对中断，结果留着，等主人点「重新比对」。
+ */
 async function reconcileImageMatchJobsAfterRestart() {
   return mutateDataWhenChanged((data) => {
     const closed = [];
+    const timestamp = now();
     for (const current of data.candidates) {
       for (const kind of Object.values(IMAGE_MATCH_KINDS)) {
         const record = current[kind.field];
         if (!record || typeof record.captureId !== "string" || imageMatchSessions.has(record.captureId)) continue;
-        if (!kind.rules.inFlight(record)) continue;
-        markImageMatchFailure(kind, current, "capture_job_lost");
-        closed.push(`${current.id}（${kind.site}）`);
+        if (kind.rules.inFlight(record)) {
+          markImageMatchFailure(kind, current, "capture_job_lost");
+          closed.push(`${current.id}（${kind.site}）`);
+        } else if (!imageMatchComparisonsInFlight.has(record.captureId) && markImageMatchComparisonInterrupted(kind, current, timestamp)) {
+          closed.push(`${current.id}（${kind.site}，比对中断）`);
+        }
       }
     }
     return { changed: closed.length > 0, result: closed };
@@ -2617,6 +2701,8 @@ function claimImageMatchJob(captureId, extensionVersion, extensionOrigin) {
       session.jobStatus = "unknown_outcome";
       session.consumedAt = Date.now();
       imageMatchSessions.delete(session.captureId);
+      await closeRejectedCaptureClaim(session, error, { label: kind.logLabel, recordOf: (current) => current[kind.field],
+        inFlight: kind.rules.inFlight, close: (current, code) => markImageMatchFailure(kind, current, code) });
       throw error;
     }
     session.expiresAt = Date.now() + SOURCE_CAPTURE_JOB_EXECUTION_TTL_MS;
@@ -2665,11 +2751,36 @@ async function runImageMatchComparison(kind, candidateId, captureId) {
       return { changed: true };
     });
   } catch (error) {
-    // The record stays at "comparing"; the owner's 重新比对 is the only way forward, never an automatic retry.
+    // Never compared again automatically: the record is settled as interrupted, its results kept and marked 无法比对, so the
+    // product shows why and offers 重新比对 instead of sitting at "comparing" with nothing left to finish it.
     console.error(`${kind.logLabel}首图比对失败`, error);
+    await settleInterruptedImageMatchComparison(kind, candidateId, captureId).catch((closeError) => {
+      console.error(`${kind.logLabel}首图比对中断后没能记下，留给服务重启时收口`, closeError);
+    });
   } finally {
     imageMatchComparisonsInFlight.delete(captureId);
   }
+}
+
+function markImageMatchComparisonInterrupted(kind, current, timestamp) {
+  const settled = kind.rules.comparisonInterrupted(current[kind.field], { at: timestamp });
+  if (settled === null) return false;
+  current[kind.field] = settled;
+  current.dataRevision = Number(current.dataRevision || 0) + 1;
+  current.updatedAt = timestamp;
+  current.lastModifiedBy = "system";
+  addHistory(current, "system", `${kind.historyPrefix}CompareInterrupted`,
+    `${kind.site} 找同款读回的 ${settled.results.length} 条结果在比对首图时中断了，都记成「无法比对」；结果和主人的判断都留着，` +
+    "要比就点「重新比对」，软件不自己再比，业务状态没有改变", timestamp);
+  return true;
+}
+
+async function settleInterruptedImageMatchComparison(kind, candidateId, captureId) {
+  return mutateDataWhenChanged((data) => {
+    const current = data.candidates.find((item) => item.id === candidateId);
+    if (current?.[kind.field]?.captureId !== captureId) return { changed: false };
+    return { changed: markImageMatchComparisonInterrupted(kind, current, now()) };
+  });
 }
 
 function salesCaptureSession(candidateId, captureId = "") {
@@ -3993,6 +4104,8 @@ async function supplierDraftView(document, candidate) {
     candidateId: candidate.id,
     dataRevision: candidate.dataRevision,
     supplierDraftV1: draft === null ? null : structuredClone(draft),
+    // 方案里每个数是谁给的：页面只许把主人自己给的数说成「你填的」，软件读的照实说从哪读的。
+    supplierDraftOriginsV1: draft === null ? null : supplierDraftOrigins(draft, { gate1Decision: candidate.gate1DecisionV1 ?? null }),
     supplierDraftEstimateV1: estimate,
     skuChoiceTableV1: table,
     // 同重同价声明那一小块：这一批采到的规格缺不缺重量和货价、主人签过没有、签的是不是这一次。它自己不算钱。
@@ -4211,165 +4324,6 @@ function projectC1PaidKeywordSoftwareJob(candidate, runtime) {
     failureClass: job.failureClass,
     automaticRetryAllowed: job.automaticRetryAllowed === true
   };
-}
-
-function aiFailureDisposition(error) {
-  const code = String(error?.code || "A_TERRA_UNEXPECTED_FAILURE");
-  const layer = String(error?.layer || "integration");
-  if (code === "MODEL_OUTPUT_SCHEMA_MISMATCH" || layer === "output_schema" || layer === "receipt") {
-    return { type: "exception_case", reasonCode: "output_schema_mismatch" };
-  }
-  const unknownOutcome = Boolean(error?.jobId) && ["gateway_status", "inference"].includes(layer);
-  return {
-    type: "technical_failure",
-    kind: unknownOutcome ? "unknown_outcome" : "external_dependency"
-  };
-}
-
-async function enrichCapturedSalesSnapshotWithTerra(candidateId, expectedRevision, snapshotId) {
-  const snapshotData = await readData();
-  const source = snapshotData.candidates.find((item) => item.id === candidateId);
-  if (!source || Number(source.dataRevision) !== Number(expectedRevision)) {
-    throw httpError(409, "销售快照保存后商品资料发生变化，Terra辅助整理未启动");
-  }
-  const salesSnapshot = (source.salesSnapshotsV11 || []).find((item) => item.snapshotId === snapshotId);
-  if (!salesSnapshot) throw httpError(409, "刚保存的销售快照不存在，Terra辅助整理未启动");
-  if ((salesSnapshot.auxiliaryDrafts || []).some((item) => item.provider === "terra")) {
-    return publicCandidate(source, snapshotData.rules, {}, snapshotData.evidencePacks || [], snapshotData.currentCommissionCatalogs ?? []);
-  }
-
-  let assisted;
-  try {
-    assisted = await runAStageTerraAssist({
-      candidate: source,
-      snapshot: salesSnapshot,
-      gatewayUrl: aiGatewayUrl,
-      gatewayDeploymentMode: aiGatewayDeploymentMode
-    });
-  } catch (error) {
-    const failure = error instanceof AStageTerraGatewayError
-      ? error
-      : new AStageTerraGatewayError("A_TERRA_UNEXPECTED_FAILURE", "integration", String(error?.message || error));
-    return mutateData((data) => {
-      const current = data.candidates.find((item) => item.id === candidateId);
-      if (!current) throw httpError(404, "候选不存在");
-      if (Number(current.dataRevision) !== Number(expectedRevision)) {
-        throw httpError(409, "Terra失败回写前商品资料已变化，本轮异常状态未覆盖新数据");
-      }
-      const timestamp = now();
-      const base = current.executionRuntime || createSoftwareExecutionRuntime({
-        candidateId: current.id,
-        dataRevision: current.dataRevision,
-        businessPhase: "A",
-        stepId: "A_TERRA_SALES_ASSIST",
-        at: timestamp
-      });
-      const disposition = aiFailureDisposition(failure);
-      current.executionRuntime = disposition.type === "exception_case"
-        ? openExceptionCase(base, {
-          exceptionId: `exception:${current.id}:${current.dataRevision}:a-terra`,
-          reasonCode: disposition.reasonCode,
-          failureLayer: failure.layer || "integration",
-          evidenceRefs: [salesSnapshot.evidenceRef],
-          softwareJobId: failure.jobId || null,
-          sourceRevision: current.dataRevision,
-          at: timestamp
-        })
-        : blockExecutionForTechnicalFailure(base, {
-          failureId: `technical-failure:${current.id}:${current.dataRevision}:a-terra`,
-          kind: disposition.kind,
-          errorCode: failure.code,
-          failureLayer: failure.layer || "integration",
-          evidenceRefs: [salesSnapshot.evidenceRef],
-          softwareJobId: failure.jobId || null,
-          sourceRevision: current.dataRevision,
-          at: timestamp
-        });
-      current.aStageAi = {
-        status: "failed",
-        taskType: "sales_comparability_assist",
-        model: "gpt-5.6-terra",
-        jobId: failure.jobId || null,
-        attempt: 1,
-        failure: {
-          code: failure.code,
-          layer: failure.layer,
-          safeMessageKey: disposition.type === "exception_case"
-            ? `exception.${disposition.reasonCode}`
-            : `technical_failure.${disposition.kind}`
-        },
-        businessStateEffect: "unchanged",
-        stoppedAt: timestamp
-      };
-      current.dataRevision += 1;
-      current.updatedAt = timestamp;
-      current.lastModifiedBy = "system";
-      addHistory(current, "system", "aTerraAssistFailed", `Terra辅助整理在${failure.layer}层停止；A阶段业务结论未改变，未换模型、未重试`, timestamp);
-      return publicCandidate(current, data.rules, {}, data.evidencePacks || [], data.currentCommissionCatalogs ?? []);
-    });
-  }
-
-  return mutateData((data) => {
-    const current = data.candidates.find((item) => item.id === candidateId);
-    if (!current) throw httpError(404, "候选不存在");
-    if (Number(current.dataRevision) !== Number(expectedRevision)) {
-      throw httpError(409, "Terra结果返回前商品资料已变化，本轮结果未保存");
-    }
-    const index = (current.salesSnapshotsV11 || []).findIndex((item) => item.snapshotId === snapshotId);
-    if (index < 0) throw httpError(409, "Terra结果对应的销售快照不存在");
-    const timestamp = assisted.receipt.completedAt || now();
-    current.salesSnapshotsV11[index] = structuredClone(assisted.snapshot);
-    const base = current.executionRuntime || createSoftwareExecutionRuntime({
-      candidateId: current.id,
-      dataRevision: current.dataRevision,
-      businessPhase: "A",
-      stepId: "A_TERRA_SALES_ASSIST",
-      at: timestamp
-    });
-    const running = startThirdPartyAiStep(base, {
-      stepId: "A_TERRA_SALES_ASSIST",
-      inputRevision: current.dataRevision,
-      inferenceJobId: assisted.jobId,
-      at: assisted.receipt.requestedAt || timestamp
-    });
-    current.executionRuntime = completeExecutionStep(running, {
-      outputRevision: current.dataRevision + 1,
-      inferenceReceiptId: assisted.receiptId,
-      at: timestamp
-    });
-    current.inferenceReceiptsV1 ||= [];
-    if (!current.inferenceReceiptsV1.some((item) => item.receiptId === assisted.receiptId)) {
-      current.inferenceReceiptsV1.push({
-        receiptId: assisted.receiptId,
-        jobId: assisted.jobId,
-        model: "gpt-5.6-terra",
-        taskType: "sales_comparability_assist",
-        attempt: 1,
-        evidenceRefs: structuredClone(assisted.receipt.evidenceRefs || []),
-        requestHash: assisted.receipt.requestHash,
-        outputSchemaHash: assisted.receipt.outputSchemaHash || null,
-        validation: structuredClone(assisted.receipt.validation),
-        usage: assisted.receipt.usage ?? "unknown",
-        completedAt: timestamp
-      });
-    }
-    current.aStageAi = {
-      status: "completed",
-      taskType: "sales_comparability_assist",
-      model: "gpt-5.6-terra",
-      jobId: assisted.jobId,
-      receiptId: assisted.receiptId,
-      attempt: 1,
-      authoritative: false,
-      businessStateEffect: "unchanged",
-      completedAt: timestamp
-    };
-    current.dataRevision += 1;
-    current.updatedAt = timestamp;
-    current.lastModifiedBy = "system";
-    addHistory(current, "system", "aTerraAssistCompleted", "Terra已基于公开销售快照生成不可覆盖真实字段的A阶段辅助草稿；未作商业决定、未唤醒Codex", timestamp);
-    return publicCandidate(current, data.rules, {}, data.evidencePacks || [], data.currentCommissionCatalogs ?? []);
-  });
 }
 
 async function continueC1SoftwareWhenEvidenceReady(candidateId, expectedRevision, { reportConfigurationBlock = false } = {}) {
@@ -6023,7 +5977,7 @@ async function handleApi(req, res, pathname) {
     if (!Number.isInteger(input.dataRevision) || input.dataRevision !== session.dataRevision) throw httpError(409, "Ozon采集修订号不一致");
     if (!["captured", "failed"].includes(input.status)) throw httpError(400, "Ozon采集状态无效");
 
-    let candidate = await mutateData((data) => {
+    const candidate = await mutateData((data) => {
       const current = data.candidates.find((item) => item.id === session.candidateId);
       if (!current) throw httpError(404, "候选不存在");
       if (Number(current.dataRevision) !== session.dataRevision) throw httpError(409, "商品资料已变化，本次Ozon采集结果已拒绝");
@@ -6155,21 +6109,11 @@ async function handleApi(req, res, pathname) {
       addHistory(current, "system", "ozonSalesSnapshotCaptured", `已保存Ozon商品${session.expectedProductId}的当前销售快照；未推进业务阶段`, timestamp);
       return publicCandidate(current, data.rules);
     });
-    // The lease ends the moment the result is durably recorded, before anything optional runs on top of it. Held open
-    // across the Terra step, a throw there would leave the session alive and its timer would later close this very
-    // record as "no result received" — overwriting the snapshot that had in fact just been saved.
+    // The lease ends the moment the result is durably recorded. Reading a page is read-only and nothing else runs on
+    // top of it: an AI tidy-up costs money and the owner only asked for a read, so no model is called from here.
     session.consumedAt = Date.now();
     clearSourceCaptureJobTimer(session.captureId);
     salesCaptureSessions.delete(session.captureId);
-    // 软件按「做这件」许可读的那一次只读页面，不顺手叫 AI 整理：AI 调用要花钱，只能主人自己点。
-    if (input.status === "captured" && candidate.salesCapture?.status === "verified" && candidate.salesCapture?.snapshotId &&
-        candidate.salesCapture.queuedBy !== GATE1_AUTOPILOT_ACTOR_SOURCE) {
-      candidate = await enrichCapturedSalesSnapshotWithTerra(
-        candidate.id,
-        candidate.dataRevision,
-        candidate.salesCapture.snapshotId
-      );
-    }
     return json(res, 200, { candidate, dispatch: null }, chromeExtensionCors(req));
   }
 
@@ -7306,6 +7250,65 @@ async function handleApi(req, res, pathname) {
     const savedCandidate = savedDocument.candidates.find((item) => item.id === candidateId);
     if (!savedCandidate) throw httpError(404, "候选不存在");
     return json(res, 200, await supplierDraftView(savedDocument, savedCandidate));
+  }
+
+  /**
+   * 包装尺寸改成实际的。「做这件」存下的尺寸常是 Seerfar 记录的同类商品尺寸，不是这件货量过的包装（AGENTS.md §5.3）；
+   * 主人量过或问过供应商之后在商品页上改。只换方案里的长宽高，这一项从此记成主人填的，按新尺寸重算估算；
+   * 供货方案冻结（A 已确认）之后不能再改。不派任务、不联系供应商、不向平台写任何东西，也不形成利润结论。
+   */
+  const supplierDraftDimensionsRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/supplier-draft-dimensions$/);
+  if (req.method === "POST" && supplierDraftDimensionsRoute) {
+    const actor = runtimeIdentityProvider.resolveActor({ request: req });
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+      throw httpError(403, "请先登录主人身份后再改包装尺寸。");
+    }
+    const candidateId = decodeURIComponent(supplierDraftDimensionsRoute[1]);
+    try {
+      const input = normalizeSupplierDraftDimensionsInput(await readJsonRequestBody(req, { maxBytes: 4096, requireJsonContentType: true }));
+      const frozen = candidate => Boolean(candidate.lifecycleV11?.aConfirmationReceipt || candidate.lifecycleV11?.skuPackage);
+      const snapshot = await readData();
+      const seen = snapshot.candidates.find((item) => item.id === candidateId);
+      if (!seen) throw httpError(404, "候选不存在");
+      if (Number(seen.dataRevision) !== input.dataRevision) {
+        throw httpError(409, "商品资料已变化，请刷新后再改包装尺寸", { currentRevision: seen.dataRevision });
+      }
+      if (frozen(seen)) throw httpError(409, "这件商品的供货方案已经确认冻结，包装尺寸不能再改", { code: "supplier_draft_frozen" });
+      const timestamp = now();
+      const draft = reviseSupplierDraftDimensions(seen.supplierDraftV1 ?? null,
+        { dimensionsCm: input.dimensionsCm, revisedAt: timestamp, gate1Decision: seen.gate1DecisionV1 ?? null });
+      const estimate = await supplierDraftEstimate(snapshot, seen, draft);
+      await mutateData((data) => {
+        const current = data.candidates.find((item) => item.id === candidateId);
+        if (!current) throw httpError(404, "候选不存在");
+        if (Number(current.dataRevision) !== input.dataRevision) {
+          throw httpError(409, "商品资料已变化，请刷新后再改包装尺寸", { currentRevision: current.dataRevision });
+        }
+        if (frozen(current)) throw httpError(409, "这件商品的供货方案已经确认冻结，包装尺寸不能再改", { code: "supplier_draft_frozen" });
+        if (activeDispatchForCandidate(data, current.id)) throw httpError(409, "当前商品已有任务正在等待或运行");
+        const before = current.supplierDraftV1?.dimensionsCm ?? null;
+        current.supplierDraftV1 = structuredClone(draft);
+        current.supplierDraftEstimateV1 = estimate === null ? null : structuredClone(estimate);
+        // 老卡片读的是这一列，和保存找货方案那条路一样一起改。
+        current.dimensionsCm = { ...draft.dimensionsCm };
+        current.dataRevision = Number(current.dataRevision || 0) + 1;
+        current.updatedAt = timestamp;
+        current.lastModifiedBy = "user";
+        assertSafeBusinessMutationCandidate(current, "businessMutation.candidate");
+        const size = value => value ? `${value.length}×${value.width}×${value.height} 厘米` : "未取得";
+        addHistory(current, "user", "supplierDraftDimensionsRevised",
+          `主人把找货方案的包装尺寸从 ${size(before)} 改成实际的 ${size(draft.dimensionsCm)}，这一项记成主人填的；` +
+          "估算已按新尺寸重算。未派发任务、未联系供应商、未向平台写入任何内容，也未形成利润结论。", timestamp);
+        return current.dataRevision;
+      });
+      const savedDocument = await readData();
+      const savedCandidate = savedDocument.candidates.find((item) => item.id === candidateId);
+      if (!savedCandidate) throw httpError(404, "候选不存在");
+      return json(res, 200, await supplierDraftView(savedDocument, savedCandidate));
+    } catch (error) {
+      if (error instanceof SupplierDraftError) throw httpError(error.status, error.message, { code: error.code });
+      throw error;
+    }
   }
 
   const realAConfirmationRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/a-confirm$/);
@@ -9243,12 +9246,19 @@ async function handleApi(req, res, pathname) {
       throw httpError(403, '请先登录主人身份后确认整批准确范围');
     }
     const input = await readJsonRequestBody(req, { maxBytes: 65536, requireJsonContentType: true });
+    // A new batch is sent on one official fact, Ozon's 100 products per import request. Where batches can be sent at all,
+    // a batch is only created while the checked record of that fact is current (review P0-4).
+    const limitEvidence = dBatchImportWired ? await loadBatchLimitEvidence().catch(() => null) : null;
     let batch;
     try {
       batch = await commitBatchOwnerProductionAuthorization({ repository: businessStateRepository,
         runtimeMode: runtimeConfiguration.deploymentMode, actor, input,
-        configuration: runtimeConfiguration, serverClock: now });
+        configuration: runtimeConfiguration, serverClock: now,
+        newBatchGate: dBatchImportWired ? at => assertOzonProductImportBatchLimitCurrent(limitEvidence, at) : null });
     } catch (error) {
+      if (error?.code === 'D_BATCH_IMPORT_LIMIT_NOT_CURRENT') {
+        return json(res, 409, { code: error.code, message: error.ownerMessage, externalRequests: 0, platformWrites: 0 });
+      }
       if (error instanceof ExactCommissionRequiredForProductionError) {
         return json(res, 422, { code: error.code, ownerNextStep: error.ownerNextStep,
           message: '批次中有规格仍需使用精确佣金完成正式利润复算；整批授权未保存。',
@@ -9273,7 +9283,9 @@ async function handleApi(req, res, pathname) {
       execution = await deRuntimeServices.continueAuthorizedBatchImport({ batchId: batch.batchId });
     } catch (error) {
       const code = String(error.code || error.message).split(':', 1)[0];
-      if (!/^(?:D_BATCH_SERVICE_|DE_RUNTIME_UNAVAILABLE_BATCH_IMPORT)/.test(code)) throw error;
+      // The limit record can still run out between the save and the send; that stops before any request, like the rest.
+      if (!/^(?:D_BATCH_SERVICE_|DE_RUNTIME_UNAVAILABLE_BATCH_IMPORT|OZON_DE_PREFLIGHT_EVIDENCE_BATCH_LIMIT_|OZON_PRODUCT_IMPORT_BATCH_LIMIT_EVIDENCE_)/
+        .test(code)) throw error;
       const saved = await readData();
       const job = saved.runtime?.dBatchImportJobs?.find(value => value.batchId === batch.batchId);
       if (job?.chunks.some(chunk => chunk.status !== 'not_sent')) throw error;
@@ -11167,6 +11179,10 @@ const lostOzonPageReads = await reconcileOzonPageReadJobsAfterRestart();
 if (lostOzonPageReads?.length) {
   console.log(`Ozon读页面作业已随服务重启收口为失败（不会再有结果，需要重新读一次）：${lostOzonPageReads.join("、")}`);
 }
+const releasedTerraBlocks = await releaseATerraAssistBlocksAfterRestart();
+if (releasedTerraBlocks?.length) {
+  console.log(`AI 辅助整理失败不再挡住这些商品（原记录已存档，业务结论未改变）：${releasedTerraBlocks.join("、")}`);
+}
 // The same closure for 找同款 (1688 and Ozon): a record still waiting on the extension would refuse every later search of that product.
 const lostImageMatches = await reconcileImageMatchJobsAfterRestart();
 const lostSeerfarWebRounds = await seerfarWebRounds.reconcileRoundsAfterRestart();
@@ -11175,7 +11191,7 @@ if (lostSeerfarWebRounds?.length) {
   console.log(`Seerfar 榜单作业已随服务重启收口为失败（不会再有结果，需要重新收一轮）：${lostSeerfarWebRounds.join("、")}`);
 }
 if (lostImageMatches?.length) {
-  console.log(`找同款作业已随服务重启收口为失败（不会再有结果，需要重新找一次）：${lostImageMatches.join("、")}`);
+  console.log(`找同款作业已随服务重启收口（等插件的记为失败，需要重新找一次；比对中断的结果留着，可以重新比对）：${lostImageMatches.join("、")}`);
 }
 // 重启之前已经有许可、还有不花钱的步骤没做完的商品，开门后各看一眼。读不出来就不看，不挡服务开门。
 try {

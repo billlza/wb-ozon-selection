@@ -9,6 +9,8 @@ on:
   pull_request:
     branches:
       - main
+      # 合进流程改造分支之前，PR 本身也先跑一遍。
+      - "integration/**"
 
 permissions:
   contents: read

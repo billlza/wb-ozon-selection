@@ -36,14 +36,18 @@ function assertBatchInput(input) {
   assertNoProductionSecrets(input, 'dBatchAuthorizationInput');
 }
 
-/** One owner decision, one transaction, one independent authorization per member. */
+/**
+ * One owner decision, one transaction, one independent authorization per member. `newBatchGate`, when given, is asked
+ * before a new batch is created (never on a replay of a saved one) and throws when that batch could not be sent now.
+ */
 export async function commitBatchOwnerProductionAuthorization({ repository, runtimeMode, actor, input,
-  configuration, serverClock }) {
+  configuration, serverClock, newBatchGate = null }) {
   assertBusinessStateRepositoryBoundary(repository);
   if (CENTRAL_MODES.has(runtimeMode)) assertCentralPersistenceBoundary(repository);
   authorizeOperation({ actor, requiredRoles: ['owner'] });
   if (actor.actorType !== 'human' || actor.source !== 'authenticated_identity_provider' ||
-      typeof serverClock !== 'function' || !configuration) throw new Error('D_BATCH_AUTHORIZATION_CONTEXT_INVALID');
+      typeof serverClock !== 'function' || !configuration ||
+      (newBatchGate !== null && typeof newBatchGate !== 'function')) throw new Error('D_BATCH_AUTHORIZATION_CONTEXT_INVALID');
   assertBatchInput(input);
   const inputFingerprint = fingerprintCanonicalRecord({ actorId: actor.userId, input });
   const batchId = `d-batch:${inputFingerprint.slice(0, 32)}`;
@@ -55,6 +59,8 @@ export async function commitBatchOwnerProductionAuthorization({ repository, runt
       if (prior.inputFingerprint !== inputFingerprint) throw new Error('D_BATCH_REPLAY_CONFLICT');
       return { changed: false, result: structuredClone(prior) };
     }
+    // A batch that could not be sent is not created at all: it would hold its products with nothing to send them.
+    newBatchGate?.(serverClock());
     const byCandidateId=new Map();
     for(const candidate of document.candidates){
       if(byCandidateId.has(candidate.id))throw new Error('D_BATCH_CANDIDATE_NOT_UNIQUE');

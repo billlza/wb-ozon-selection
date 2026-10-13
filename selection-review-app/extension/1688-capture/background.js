@@ -222,7 +222,10 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
   let alarmPending = null;
   let activeCapture = null;
   const seenCaptureIds = new Set();
-  let cleanupBlocked = "";
+  // A tab this worker opened and cannot yet account for: one Chrome would not close ("tab_cleanup_failed", with its id),
+  // or one Chrome was still creating when its job ran out of time ("tab_creation_unconfirmed"). While it is set no new
+  // job starts — one Chrome profile, one controlling job at a time — and it clears itself the moment the tab is gone.
+  let strayTab = null;
   let lastHeartbeat = { ok: false, code: "heartbeat_not_observed", observedAt: null };
   let lastCaptureCode = "";
   const version = chromeApi.runtime.getManifest().version;
@@ -230,16 +233,50 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
     // Transport health TTL matches the existing local heartbeat contract, not product evidence age.
     const fresh = lastHeartbeat.ok && Date.parse(clock()) - Date.parse(lastHeartbeat.observedAt) <= 75000;
     return {
-      accepted: fresh && !cleanupBlocked,
-      backgroundReady: !cleanupBlocked,
+      accepted: fresh && !strayTab,
+      backgroundReady: !strayTab,
       serviceConnected: fresh,
-      code: cleanupBlocked || (lastHeartbeat.ok && !fresh ? "heartbeat_stale" : lastHeartbeat.code),
+      code: strayTab?.code || (lastHeartbeat.ok && !fresh ? "heartbeat_stale" : lastHeartbeat.code),
       observedAt: lastHeartbeat.observedAt,
       captureActive: Boolean(activeCapture),
       lastCaptureCode,
       version
     };
   };
+
+  // Chrome rejects tabs.get for a tab that no longer exists, and answers it for a tab that is still open. No answer
+  // within 3s proves nothing, so that counts as still open.
+  async function tabGone(id) {
+    let timer;
+    const gone = await Promise.race([
+      Promise.resolve().then(() => chromeApi.tabs.get(id)).then(() => false, () => true),
+      new Promise((resolve) => { timer = jobTimerOptions.setTimer(() => resolve(false), 3000); })
+    ]);
+    jobTimerOptions.clearTimer(timer);
+    return gone;
+  }
+
+  // Every tab a job opened is closed when the job ends. One that is already gone counts as closed: the owner closes the
+  // Seerfar tab after searching in it, or a capture tab by hand, and Chrome then refuses to remove it. Treating that
+  // refusal as a stuck tab turned every later job away as "busy" until the plugin was reloaded (review P0-9, 2026-10-12).
+  async function closeOwnedTab(id) {
+    let timer;
+    const closed = await Promise.race([
+      Promise.resolve().then(() => chromeApi.tabs.remove(id)).then(() => true, () => false),
+      new Promise((resolve) => { timer = jobTimerOptions.setTimer(() => resolve(false), 3000); })
+    ]);
+    jobTimerOptions.clearTimer(timer);
+    if (closed || await tabGone(id)) return;
+    strayTab = { code: "tab_cleanup_failed", tabId: id };
+    lastCaptureCode = "tab_cleanup_failed";
+  }
+
+  // Looks again at the one tab that could not be closed. Only Chrome's own tab list is read: no page, no network.
+  async function settleStrayTab() {
+    const stray = strayTab;
+    if (!Number.isInteger(stray?.tabId)) return;
+    if (await tabGone(stray.tabId) && strayTab === stray) strayTab = null;
+  }
 
   async function sendResult(payload, result) {
     if (isSeerfarWebJob(payload)) {
@@ -299,9 +336,7 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
     } finally {
       jobTimerOptions.clearTimer(deadlineTimer);
       cancellation.abort();
-      if (tabId !== null) {
-        try { await chromeApi.tabs.remove(tabId); } catch { cleanupBlocked = "tab_cleanup_failed"; lastCaptureCode = "tab_cleanup_failed"; }
-      }
+      if (tabId !== null) await closeOwnedTab(tabId);
     }
     try {
       await sendResult(payload, result);
@@ -320,18 +355,6 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
     const cancellation = new AbortController();
     const { signal } = cancellation;
     const assertNotCancelled = () => { if (signal.aborted) throw failure("timeout"); };
-    const closeOwnedTab = async (id) => {
-      let closeTimer;
-      try {
-        await Promise.race([
-          chromeApi.tabs.remove(id),
-          new Promise((_resolve, reject) => {
-            closeTimer = jobTimerOptions.setTimer(() => reject(failure("tab_cleanup_failed")), 3000);
-          })
-        ]);
-      } catch { cleanupBlocked = "tab_cleanup_failed"; lastCaptureCode = "tab_cleanup_failed"; }
-      finally { jobTimerOptions.clearTimer(closeTimer); }
-    };
     // 40s includes tab creation, navigation, extraction and final browser identity readback. A 1688 detail page is
     // heavy and Chrome throttles the background tab it loads in, so the first real capture (2026-09-12) ran out of the
     // earlier 30s budget with the page still loading. With a 3s tab close and one 10s result POST this still finishes
@@ -394,11 +417,19 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       }
       return validatedCollectedResult(execution?.[0]?.result, resolved, payload);
     };
+    const running = capture();
     try {
-      result = await Promise.race([capture(), deadline]);
+      result = await Promise.race([running, deadline]);
     } catch (error) {
       result = { status: "failed", failureCode: safeFailureCode(error?.code), observedAt: clock() };
-      if (signal.aborted && tabId === null) cleanupBlocked = "tab_creation_unconfirmed";
+      if (signal.aborted && tabId === null) {
+        // Out of time before Chrome said whether the tab was made. capture() still closes a tab that turns up late, so
+        // no new job starts until that call has finished; a late tab that will not close then holds it by its own id.
+        const hold = { code: "tab_creation_unconfirmed", tabId: null };
+        strayTab = hold;
+        const release = () => { if (strayTab === hold) strayTab = null; };
+        running.then(release, release);
+      }
     } finally {
       jobTimerOptions.clearTimer(deadlineTimer);
       if (tabId !== null) await closeOwnedTab(tabId);
@@ -419,9 +450,10 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
     if (heartbeatPending) return heartbeatPending;
     heartbeatPending = (async () => {
       try {
+        await settleStrayTab();
         const response = await fetchImpl(`${API_ORIGIN}/api/extension/heartbeat`, {
           method: "POST", headers: { "Content-Type": "application/json" }, signal: AbortSignal.timeout(10000),
-          body: JSON.stringify({ version, backgroundReady: !cleanupBlocked, observedAt: clock() })
+          body: JSON.stringify({ version, backgroundReady: !strayTab, observedAt: clock() })
         });
         if (!response.ok) throw failure([401, 403].includes(response.status) ? "extension_identity_rejected" : "heartbeat_unavailable");
         const body = await response.json();
@@ -491,16 +523,28 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       return false;
     }
     if (message.type === BACKGROUND_PING) {
-      sendResponse(status()); // No network, no lease claim, no capture from a health inquiry.
+      // No network, no lease claim, no capture from a health inquiry. A tab that would not close is looked up again in
+      // Chrome's tab list, so the next inquiry already sees it gone once the owner has closed it.
+      if (strayTab) void settleStrayTab();
+      sendResponse(status());
       return false;
     }
     if (!validateCaptureStartSignal(message).ok) {
       sendResponse({ accepted: false, code: "start_signal_invalid" });
       return false;
     }
-    if (activeCapture || cleanupBlocked) {
+    if (activeCapture) {
       sendResponse({ accepted: false, code: "capture_busy" });
       return false;
+    }
+    if (strayTab) {
+      // The owner may have closed that tab a moment ago: look once, and turn the job away with the real reason, not "busy".
+      void settleStrayTab().then(() => {
+        if (activeCapture) return { accepted: false, code: "capture_busy" };
+        if (strayTab) return { accepted: false, code: strayTab.code };
+        return claimCapture(message);
+      }).then(sendResponse);
+      return true;
     }
     void claimCapture(message).then(sendResponse);
     return true;

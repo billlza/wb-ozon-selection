@@ -1262,6 +1262,99 @@ test('可比同类勾上才能提交，供货那一套摆出来由最后那个�
   assert.doesNotMatch(declared, /<p class="product-profit-delta">/u);
 });
 
+/* 「做这件」卡把软件读到的数（1688 搜图卡片价、价格说明里的运费、Seerfar 的尺寸……）存进找货方案。2026-10-12 审查：
+ * 页面原来一律说「你填的」，主人在「确认这套供货」时以为这些数是自己核过的。现在逐项照实说，确认前列出来。 */
+const gate1Origins = (overrides = {}) => Object.fromEntries(Object.entries({
+  goodsPriceRmb: ['1688_image_search', '1688 搜图卡片上的价'], domesticShippingRmb: ['1688_price_note', '1688 价格说明里写的运费'],
+  packedWeightKg: ['seerfar', 'Seerfar 记录的同类商品重量'], dimensionsCm: ['seerfar_volume', 'Seerfar 记录的同类商品尺寸'],
+  targetSalePriceRub: ['ozon_match', 'Ozon 同款现价'], ...overrides
+}).map(([field, [source, label]]) => [field, { field, source, owner: source === 'owner', label }]));
+
+test('「做这件」存下的方案：软件读的数不说成「你填的」，确认前列出来，Seerfar 的尺寸当场能改成实际的', async () => {
+  const { profitStepPriceDeltaLine } = await pageModule();
+  const origins = gate1Origins();
+  const supply = { ...profitReview().supply, origins };
+  const html = await render(profitProps({ supply }, { onReviseDraftDimensions: forbidden }));
+  assert.match(html, /货价 ¥41\.50（这个规格在 1688 页面上自己的价） ＋ 国内运费 ¥3\.50（1688 价格说明里写的运费）/u);
+  assert.match(html, /打包 0\.24 公斤 · 25×22×2\.5 厘米（Seerfar 记录的同类商品尺寸）/u);
+  assert.match(html, /其他采购费用按 ¥0\.00 算：「找货」方案里只有货价和国内运费/u);
+  assert.match(html, /<p class="product-profit-delta">「找货」方案里的货价是 ¥20\.50（1688 搜图卡片上的价）；/u);
+  assert.doesNotMatch(html, /（你填的）|你在「找货」里填的货价/u);
+  // 确认按钮之前把软件读的几项列出来：采到的规格价和重量不算，方案里的运费、尺寸、售价算。
+  assert.match(html, /<h4>这几个数是软件读来的，不是你填的<\/h4>/u);
+  assert.match(html, /<li><b>国内运费<\/b>：1688 价格说明里写的运费<\/li>/u);
+  assert.match(html, /<li><b>包装尺寸<\/b>：Seerfar 记录的同类商品尺寸<\/li>/u);
+  assert.match(html, /<li><b>目标成交价<\/b>：Ozon 同款现价<\/li>/u);
+  assert.doesNotMatch(html, /<li><b>货价<\/b>/u);
+  assert.match(html, /先点「改成实际尺寸」改掉，运费和利润会按它重算/u);
+  assert.match(html, /<button type="button" class="button secondary">改成实际尺寸<\/button>/u);
+  assert.equal(profitStepPriceDeltaLine({ priceDelta: { pageRmb: 20.2, declaredRmb: 20.5, deltaRmb: -0.3 } }, origins.goodsPriceRmb),
+    '「找货」方案里的货价是 ¥20.50（1688 搜图卡片上的价）；这一步按这个规格自己的页面价 ¥20.20 算，页面价比方案里的便宜 ¥0.30。');
+
+  // 同重同价补进来的货价和重量是方案里的数：方案里是软件读的，就标「按找货方案」，并列进确认前那几项。
+  const declared = await render(profitProps({ supply, specifications: profitReview().specifications.map(item =>
+    item.sourceSkuId === 'sku-8xl-yellow' ? { ...item, priceCny: 20.5, unitProductPrice: 20.5, actualPurchaseCost: 24, priceDelta: null,
+      priceBasis: 'owner_declared', weightBasis: 'owner_declared' } : item) }, { onReviseDraftDimensions: forbidden }));
+  assert.match(declared, /货价 ¥20\.50（页面没有按规格分列价格，这是「找货」方案里的货价：1688 搜图卡片上的价）/u);
+  assert.match(declared, /打包 0\.24 公斤（按找货方案） · 25×22×2\.5 厘米（Seerfar 记录的同类商品尺寸）/u);
+  assert.match(declared, /<li><b>货价<\/b>：1688 搜图卡片上的价<\/li>/u);
+  assert.match(declared, /<li><b>打包重量<\/b>：Seerfar 记录的同类商品重量<\/li>/u);
+
+  // 主人自己改过尺寸、补过运费：那两项是他的，不再列，也不再给改尺寸的按钮。
+  const typed = await render(profitProps({ supply: { ...supply, origins: gate1Origins({ dimensionsCm: ['owner', '你填的'],
+    domesticShippingRmb: ['owner', '你填的'] }) } }, { onReviseDraftDimensions: forbidden }));
+  assert.match(typed, /国内运费 ¥3\.50（你填的）/u);
+  assert.match(typed, /打包 0\.24 公斤 · 25×22×2\.5 厘米。/u);
+  assert.doesNotMatch(typed, /<li><b>包装尺寸<\/b>/u);
+  assert.doesNotMatch(typed, /改成实际尺寸/u);
+  // 手填的方案（服务端没给来源）一个字都不变：这一块整块不出现。
+  assert.doesNotMatch(await render(profitProps()), /这几个数是软件读来的/u);
+});
+
+test('找货、选规格和同重同价按方案里每个数的来源说话；改尺寸只交修订号和长宽高', async () => {
+  const { skuUniformSupplyNotice } = await pageModule();
+  const origins = gate1Origins();
+  const gate1Draft = { ...draft, fieldSources: Object.fromEntries(Object.entries(origins).map(([key, value]) => [key, value.source])),
+    provenance: 'owner_accepted_software_read' };
+  const html = await render(props({
+    candidate: candidate({ sourceCapture: waitingCapture() }),
+    view: { supplierDraftV1: gate1Draft, supplierDraftOriginsV1: origins, supplierDraftEstimateV1: okEstimate, marketSnapshot,
+      skuChoiceTableV1: choiceTable() },
+    onChooseSkus: forbidden, onReviseDraftDimensions: forbidden
+  }));
+  assert.match(html, /按找货方案的到手总价 ¥18\.86：单件利润/u);
+  assert.match(html, /方案里的数：货价 ¥15\.90（1688 搜图卡片上的价） · 国内运费 ¥2\.96（1688 价格说明里写的运费）/u);
+  assert.match(html, /包装 75×21×4 厘米（Seerfar 记录的同类商品尺寸）/u);
+  assert.match(html, /包装尺寸不是这件货量过的；手上有实际尺寸/u);
+  assert.match(html, /<dt>目标售价<\/dt><dd>1600 卢布 · Ozon 同款现价<\/dd>/u);
+  assert.match(html, /<dt>Ozon 官方佣金<\/dt><dd>14% · 按目标售价所在档<\/dd>/u);
+  assert.match(html, /<dt>国内运费<\/dt><dd>¥3\.50 · 1688 价格说明里写的运费<\/dd>/u);
+  assert.doesNotMatch(html, /按你填的到手总价|· 你填的</u);
+
+  const step = { declared: false, offered: true, total: 3, weightGapCount: 3, priceGapCount: 0, lapsedReason: '',
+    basis: { packedWeightKg: 0.2, goodsPriceRmb: 18 }, dataRevision: 4 };
+  const offer = skuUniformSupplyNotice(step, origins);
+  assert.match(offer.message, /按「找货」方案里的 0\.2 公斤（Seerfar 记录的同类商品重量）\/ ¥18\.00（1688 搜图卡片上的价） 算/u);
+  assert.match(offer.message, /是你点「做这件」时认下的，表里会照实标成「按找货方案」/u);
+  assert.equal(offer.buttonLabel, '这些规格同重同价，按找货方案算');
+  const declared = skuUniformSupplyNotice({ ...step, declared: true, appliedWeightCount: 3, appliedPriceCount: 0 }, origins);
+  assert.equal(declared.heading, '这些规格按找货方案算');
+  assert.doesNotMatch(declared.message, /你填的/u);
+  // 来源都是主人的（手填的方案），说法和以前一字不差。
+  assert.equal(skuUniformSupplyNotice(step).buttonLabel, '这些规格同重同价，按我填的算');
+
+  const { readFile } = await import('node:fs/promises');
+  const page = await readFile(fileURLToPath(new URL('../src/components/ProductPage.jsx', import.meta.url)), 'utf8');
+  assert.match(page, /export function draftDimensionsPayload\(form, dataRevision\)/u);
+  const app = await readFile(fileURLToPath(new URL('../src/App.jsx', import.meta.url)), 'utf8');
+  assert.match(app, /onReviseDraftDimensions=\{payload => runProductStep\(api\.reviseSupplierDraftDimensions, payload\)\}/u);
+  // 商品页上的写走 runMutation，不走读防抖：第二次写的回执不会被页面刷新作废成 null（审查 P0-10）。
+  const runProductStep = app.match(/async function runProductStep\(action,payload\)\{[\s\S]*?\n  \}/u);
+  assert.ok(runProductStep);
+  assert.match(runProductStep[0], /runMutation\(\(\)=>action\(candidateId,payload\)/u);
+  assert.doesNotMatch(runProductStep[0], /productDraftReads\.current\.run\(/u);
+});
+
 test('资料凑不齐就如实列出来并禁用提交，页面不替主人补一个像样的数字', async () => {
   const { profitStepSubmitState } = await pageModule();
   const gaps = [{ field: 'unitDomesticFreight', label: '国内运费', why: '你在「找货」里还没有填国内运费，包邮请填 0。' }];

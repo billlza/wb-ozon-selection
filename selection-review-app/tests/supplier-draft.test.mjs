@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SUPPLIER_DRAFT_INPUT_KEYS, SupplierDraftError, buildSupplierDraftEstimate, buildSupplierDraftV1,
-  normalizeSupplierDraftInput, supplierDraftEstimateProduct, supplierDraftRouteBlock } from '../lib/supplier-draft.mjs';
+  normalizeSupplierDraftDimensionsInput, normalizeSupplierDraftInput, reviseSupplierDraftDimensions, supplierDraftEstimateProduct,
+  supplierDraftOrigins, supplierDraftRouteBlock } from '../lib/supplier-draft.mjs';
 import { roundDownCents } from '../lib/a-discovery-estimate.mjs';
 
 // Everything below is synthetic: stand-in tariff rows, a stand-in store rule, a stand-in rate. No catalogs, no network.
@@ -72,6 +73,80 @@ test('保存的找货方案是主人声明资料，到手总价等于货价加�
     'goodsPriceRmb', 'note', 'offerId', 'packedWeightKg', 'provenance', 'schemaVersion', 'sourceUrl', 'sourceUrlType', 'targetSalePriceRub']);
   assert.deepEqual(supplierDraftEstimateProduct(draft), { productId: null, price: 1850, categoryPath: null,
     weightGrams: 1300, volumeLitres: null, dimensionMm: '750x210x40' });
+});
+
+test('「做这件」存的方案逐项记来源：软件读的数不写成主人声明，只有主人在卡上补的那一项算「你填的」', () => {
+  const fieldSources = { goodsPriceRmb: '1688_image_search', domesticShippingRmb: 'owner', packedWeightKg: 'seerfar',
+    dimensionsCm: 'seerfar_volume', targetSalePriceRub: 'ozon_match' };
+  const draft = buildSupplierDraftV1(normalizeSupplierDraftInput(input()), { declaredAt: at, fieldSources });
+  assert.equal(draft.declaredBy, 'owner');
+  assert.equal(draft.provenance, 'owner_accepted_software_read');
+  assert.deepEqual({ ...draft.fieldSources }, fieldSources);
+  const origins = supplierDraftOrigins(draft);
+  assert.deepEqual(Object.values(origins).map(item => [item.field, item.owner, item.label]), [
+    ['goodsPriceRmb', false, '1688 搜图卡片上的价'], ['domesticShippingRmb', true, '你填的'],
+    ['packedWeightKg', false, 'Seerfar 记录的同类商品重量'], ['dimensionsCm', false, 'Seerfar 记录的同类商品尺寸'],
+    ['targetSalePriceRub', false, 'Ozon 同款现价']]);
+  // 五项都是主人填的，照旧是主人声明。
+  const typed = buildSupplierDraftV1(normalizeSupplierDraftInput(input()), { declaredAt: at,
+    fieldSources: Object.fromEntries(Object.keys(fieldSources).map(key => [key, 'owner'])) });
+  assert.equal(typed.provenance, 'owner_declared');
+  // 来源只收已知的几种，少一项、多一项、写错一项都是程序错误，不存。
+  for (const bad of [{ ...fieldSources, goodsPriceRmb: 'guess' }, { ...fieldSources, extra: 'owner' },
+    { goodsPriceRmb: 'owner' }, 'owner']) {
+    assert.throws(() => buildSupplierDraftV1(normalizeSupplierDraftInput(input()), { declaredAt: at, fieldSources: bad }),
+      error => error instanceof SupplierDraftError && error.code === 'supplier_draft_field_sources_invalid');
+  }
+});
+
+test('手填的老方案每一项都是你填的；「做这件」先前存下、还没带来源的方案，按同一时刻那份关口 1 记录照实说', () => {
+  const legacy = draftFrom();
+  assert.equal(Object.values(supplierDraftOrigins(legacy)).every(item => item.owner && item.label === '你填的'), true);
+  const factSources = { goodsPriceRmb: '1688_image_search', domesticShippingRmb: '1688_price_note', packedWeightKg: 'captured',
+    dimensionsCm: 'owner', targetSalePriceRub: 'market_record' };
+  const decision = { decision: 'accept', decidedAt: at, factSources };
+  const origins = supplierDraftOrigins(legacy, { gate1Decision: decision });
+  assert.equal(origins.packedWeightKg.label, '采到的规格里最重的那个');
+  assert.equal(origins.dimensionsCm.owner, true);
+  // 不是同一时刻存下的方案（之后主人又手填过一次），关口 1 那份记录就不替它说话。
+  assert.equal(supplierDraftOrigins(legacy, { gate1Decision: { ...decision, decidedAt: '2026-09-10T00:00:00.000Z' } })
+    .goodsPriceRmb.owner, true);
+  assert.equal(supplierDraftOrigins(legacy, { gate1Decision: { ...decision, decision: 'skip' } }).goodsPriceRmb.owner, true);
+});
+
+test('主人把 Seerfar 的尺寸改成实际的：只换长宽高，这一项记成你填的，别的数和来源一个不动', () => {
+  const fieldSources = { goodsPriceRmb: '1688_image_search', domesticShippingRmb: '1688_price_note', packedWeightKg: 'seerfar',
+    dimensionsCm: 'seerfar_volume', targetSalePriceRub: 'ozon_match' };
+  const draft = buildSupplierDraftV1(normalizeSupplierDraftInput(input()), { declaredAt: at, fieldSources });
+  const revised = reviseSupplierDraftDimensions(draft, { dimensionsCm: { length: 30, width: 20, height: 6 }, revisedAt: '2026-09-12T00:00:00.000Z' });
+  assert.deepEqual(revised.dimensionsCm, { length: 30, width: 20, height: 6 });
+  assert.equal(revised.fieldSources.dimensionsCm, 'owner');
+  assert.equal(revised.fieldSources.packedWeightKg, 'seerfar');
+  assert.equal(revised.provenance, 'owner_accepted_software_read');
+  assert.equal(revised.declaredAt, at);
+  assert.equal(revised.dimensionsRevisedAt, '2026-09-12T00:00:00.000Z');
+  assert.equal(revised.goodsPriceRmb, draft.goodsPriceRmb);
+  assert.deepEqual(draft.dimensionsCm, { length: 75, width: 21, height: 4 }, '原来那份不改');
+  assert.equal(supplierDraftOrigins(revised).dimensionsCm.label, '你填的');
+  // 还没带来源的「做这件」老方案：先按同一时刻的关口 1 记录补齐来源，再把尺寸记成主人的。
+  const legacy = draftFrom();
+  const fromDecision = reviseSupplierDraftDimensions(legacy, { dimensionsCm: { length: 30, width: 20, height: 6 }, revisedAt: at,
+    gate1Decision: { decision: 'accept', decidedAt: at, factSources: fieldSources } });
+  assert.deepEqual({ ...fromDecision.fieldSources }, { ...fieldSources, dimensionsCm: 'owner' });
+  // 手填的老方案改了尺寸还是主人声明。
+  assert.equal(reviseSupplierDraftDimensions(legacy, { dimensionsCm: { length: 30, width: 20, height: 6 }, revisedAt: at }).provenance,
+    'owner_declared');
+  assert.throws(() => reviseSupplierDraftDimensions(null, { dimensionsCm: { length: 1, width: 1, height: 1 }, revisedAt: at }),
+    error => error.code === 'supplier_draft_missing');
+  assert.throws(() => reviseSupplierDraftDimensions(draft, { dimensionsCm: { length: 30, width: 0, height: 6 }, revisedAt: at }),
+    error => error.code === 'supplier_draft_dimensions_invalid');
+  // 输入封闭：只收修订号和长宽高。
+  assert.deepEqual(normalizeSupplierDraftDimensionsInput({ dataRevision: 3, dimensionsCm: { length: 30, width: 20, height: 6 } }),
+    { dataRevision: 3, dimensionsCm: { length: 30, width: 20, height: 6 } });
+  assert.throws(() => normalizeSupplierDraftDimensionsInput({ dataRevision: 3, dimensionsCm: { length: 30, width: 20, height: 6 }, packedWeightKg: 1 }),
+    error => error.code === 'supplier_draft_field_forbidden');
+  assert.throws(() => normalizeSupplierDraftDimensionsInput({ dimensionsCm: { length: 30, width: 20, height: 6 } }),
+    error => error.code === 'supplier_draft_revision_required');
 });
 
 test('75厘米长边配1.3公斤没有可走线路，提示直接引用资费表自己的限制', () => {

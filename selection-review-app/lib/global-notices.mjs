@@ -68,6 +68,16 @@ export function discoveryFailureLabel(failureClass) {
 
 /** The extension codes from src/extensionStatus.js that mean nothing can reach Chrome right now. */
 const OFFLINE_EXTENSION_CODES = Object.freeze(["disconnected", "background_unavailable"]);
+/**
+ * The extension codes from src/extensionStatus.js where the plugin answers but takes no new job until a page it opened is
+ * accounted for. Chrome is open and the plugin is on, so "插件没连上" would send the owner the wrong way.
+ */
+const HELD_EXTENSION_NOTICES = Object.freeze({
+  tab_left_open: { title: "插件上次打开的一个页面没能自动关上",
+    detail: "关掉它之前插件不领新作业。把插件刚才打开的那个页面关掉；分不清是哪个，就到 chrome://extensions 重新加载插件。" },
+  tab_unconfirmed: { title: "插件上次开页面时 Chrome 没回话",
+    detail: "重新加载插件之前它不领新作业。到 chrome://extensions 重新加载插件。" }
+});
 
 function blockerOf(candidate) {
   const intake = isObject(candidate?.intake) ? candidate.intake : null;
@@ -114,8 +124,14 @@ export function globalNotices({ extensionStatus = null, queueExtension = null, c
   const codes = new Set(active.map(candidate => blockerOf(candidate)?.code).filter(Boolean));
   const notices = [];
   const liveConnected = extensionStatus?.code === "connected";
-  const offline = !liveConnected && (queueExtension?.online === false || OFFLINE_EXTENSION_CODES.includes(extensionStatus?.code) ||
-    codes.has("plugin_offline"));
+  const held = Object.hasOwn(HELD_EXTENSION_NOTICES, extensionStatus?.code ?? "") ? HELD_EXTENSION_NOTICES[extensionStatus.code] : null;
+  const offline = !liveConnected && held === null && (queueExtension?.online === false ||
+    OFFLINE_EXTENSION_CODES.includes(extensionStatus?.code) || codes.has("plugin_offline"));
+  if (held !== null) {
+    const waiting = waitingCount(active, ["plugin_offline"]);
+    notices.push({ key: "plugin_held", title: held.title,
+      detail: `${held.detail}${waiting > 0 ? `${waiting} 件在等，` : ""}排着的商品什么都不会丢；处理好后在下面的待办里点「接着找」才会再跑。` });
+  }
   if (offline) {
     const waiting = waitingCount(active, ["plugin_offline"]);
     notices.push({ key: "plugin_offline", title: "插件没连上，或者 Chrome 关着",

@@ -23,8 +23,8 @@ function validateSavedState(state) {
   assert.ok(["d-software-execution-state-v1", "d-software-execution-state-v2"].includes(state.schemaVersion));
   const valid=validate(state);validateSavedState.errors=validate.errors;return valid;
 }
-async function persistenceFixture(createRepository = createMemoryBusinessStateRepository) {
-  const { fixture, plan, preflight, prepared, currentProductionBinding } = await preparedFixture();
+async function persistenceFixture(createRepository = createMemoryBusinessStateRepository, fixtureOptions = {}) {
+  const { fixture, plan, preflight, prepared, currentProductionBinding } = await preparedFixture(fixtureOptions);
   const candidate = { id: fixture.candidateId, dataRevision: fixture.candidateRevision, lifecycleV11: { skuPackage: structuredClone(fixture.skuPackage) } };
   const document = initialBusinessStateDocument({ now: NOW }); document.candidates = [candidate];
   const memory = createRepository(document);
@@ -265,6 +265,27 @@ test("a fresh committed D run persists every checkpoint and terminal record; con
   assert.equal(saved.lifecycleV11.skuPackage.eVerificationRecord, null);
   assert.equal((await runPersistedDExecution({ ...fixture.input, createAdapter })).status, "idempotent_replay");
   assert.equal(factories.length, 1);
+});
+
+test("a D run for an owner-locked stock of 37 writes, checkpoints and records 37 under the published schemas (review P0-5)", async () => {
+  const fixture = await persistenceFixture(undefined, { stock: 37 });
+  assert.equal(fixture.request.stock, 37);
+  const before = await fixture.repository.readSnapshot();
+  // The old fixed count is no longer implied: an owner decision for 100 does not match a 37 authorization.
+  await assert.rejects(() => commitDExecutionIntent({ ...fixture.input,
+    ownerExecutionDecision: { ...fixture.input.ownerExecutionDecision, stock: 100 } }), /D_EXECUTION_OWNER_SCOPE_MISMATCH/);
+  assert.deepEqual(await fixture.repository.readSnapshot(), before);
+  const calls = []; const factories = [];
+  // Every saved state passes the published d-software-execution-state-v2 schema inside the repository wrapper.
+  const result = await runPersistedDExecution({ ...fixture.input, createAdapter: syntheticCheckpointFactory({ ...fixture, calls, factories }) });
+  assert.equal(result.status, "succeeded");
+  assert.deepEqual(calls, ["/v3/product/import", "/v1/product/import/info", "/v2/products/stocks"]);
+  const sku = (await savedCandidate(fixture.repository)).lifecycleV11.skuPackage;
+  assert.equal(sku.dSoftwareExecution.checkpoints.find(event => event.kind === "stock_intent").stock, 37);
+  assert.equal(sku.productionRecord.stockWritten, 37);
+  assert.equal(sku.productionRecord.expectedStock, 37);
+  const validateRecord = schemaValidator.getSchema("production-record-v1.1");
+  assert.equal(validateRecord(sku.productionRecord), true, JSON.stringify(validateRecord.errors));
 });
 
 test("rights expiry after a durable write intent records zero only when no import was sent", async () => {

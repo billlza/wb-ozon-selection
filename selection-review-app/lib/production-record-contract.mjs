@@ -94,9 +94,9 @@ export function validateProductionRecord(record) {
     }
     if (!isCompleteStoreRef(record.storeRef, record.store)) push(errors, "storeRef", "必须保存已执行的完整店铺身份");
     if (!nonEmptyString(record.platformOfferId) || record.platformOfferId !== record.merchantSku) push(errors, "platformOfferId", "平台offer必须等于锁定merchantSku");
-    if (record.inventoryModified !== true || record.stockWritten !== 100) push(errors, "inventoryModified", "Seller API软件执行必须回读库存100");
+    if (record.inventoryModified !== true || !Number.isSafeInteger(record.stockWritten) || record.stockWritten < 0) push(errors, "inventoryModified", "Seller API软件执行必须记录已写入的授权库存");
     if (!isObject(record.expectedPrice) || !Number.isFinite(record.expectedPrice.amount) || !nonEmptyString(record.expectedPrice.currency)) push(errors, "expectedPrice", "必须锁定E回读价格");
-    if (record.expectedStock !== 100) push(errors, "expectedStock", "必须锁定E回读库存100");
+    if (record.expectedStock !== record.stockWritten) push(errors, "expectedStock", "E回读库存必须等于本次写入的授权库存");
     if (record.expectedImageCount !== record.imagesUploaded) push(errors, "expectedImageCount", "必须锁定E回读图片数");
     // Historical records remain readable; E separately requires the precise projection.
     if (Object.hasOwn(record, "readbackExpectation")) {

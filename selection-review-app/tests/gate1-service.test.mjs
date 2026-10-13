@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGate1Service } from '../lib/gate1-service.mjs';
 import { recordSkipReason } from '../lib/store-profile.mjs';
+import { supplierDraftOrigins } from '../lib/supplier-draft.mjs';
 
 // In-memory document and synthetic candidate only: no saved data, no platform, no extension.
 const offer = (id, extra = {}) => ({ offerId: String(id), sourceUrl: `https://detail.1688.com/offer/${id}.html`, title: `合成货源 ${id}`,
@@ -60,7 +61,13 @@ test('做这件：方案、关口 1 记录和历史一起写，修订号加一�
   const saved = document.candidates[0];
   assert.equal(saved.dataRevision, 3);
   assert.equal(saved.supplierDraftV1.sourceUrl, 'https://detail.1688.com/offer/7001.html');
-  assert.equal(saved.supplierDraftV1.provenance, 'owner_declared');
+  // 货价、运费、重量、售价是软件读的，只有长宽高是主人在卡上补的：方案逐项记着，不整份写成「主人声明」。
+  assert.equal(saved.supplierDraftV1.provenance, 'owner_accepted_software_read');
+  assert.deepEqual({ ...saved.supplierDraftV1.fieldSources }, { goodsPriceRmb: '1688_image_search', domesticShippingRmb: '1688_price_note',
+    packedWeightKg: 'declared', dimensionsCm: 'owner', targetSalePriceRub: 'ozon_match' });
+  const origins = supplierDraftOrigins(saved.supplierDraftV1);
+  assert.deepEqual(Object.values(origins).filter(item => item.owner).map(item => item.field), ['dimensionsCm']);
+  assert.equal(origins.goodsPriceRmb.label, '1688 搜图卡片上的价');
   assert.equal(saved.gate1DecisionV1.decision, 'accept');
   assert.equal(saved.gate1DecisionV1.decidedBy, 'owner-1');
   // 录入流水线看这个标记，在就不再替它补搜。

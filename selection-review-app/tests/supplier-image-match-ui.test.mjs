@@ -7,7 +7,9 @@ import react from "@vitejs/plugin-react";
 import { IMAGE_MATCH_CHANNEL, OZON_IMAGE_MATCH_CHANNEL, captureStartMessage, needsCaptureStartSignal } from "../src/captureStart.js";
 import { ozonImageMatchView, ozonSearchQueryReady } from "../src/ozonImageMatchView.js";
 import { normalizeOzonSearchQuery, ozonImageMatchRules } from "../lib/ozon-same-product-match.mjs";
-import { IMAGE_MATCH_JUDGEMENT_LABELS, IMAGE_MATCH_SIMILARITY_LABELS, imageMatchSourceState, supplierImageMatchView } from "../src/supplierImageMatchView.js";
+import { IMAGE_MATCH_COMPARISON_INTERRUPTED as PAGE_COMPARISON_INTERRUPTED, IMAGE_MATCH_JUDGEMENT_LABELS, IMAGE_MATCH_SIMILARITY_LABELS,
+  imageMatchSourceState, supplierImageMatchView } from "../src/supplierImageMatchView.js";
+import { IMAGE_MATCH_COMPARISON_INTERRUPTED } from "../lib/image-match-record.mjs";
 import { IMAGE_SIMILARITY_LABELS } from "../lib/image-fingerprint.mjs";
 import { SUPPLIER_IMAGE_MATCH_JUDGEMENT_LABELS, supplierImageMatchSource } from "../lib/supplier-image-match.mjs";
 
@@ -37,6 +39,7 @@ const candidate = (extra = {}) => ({ id: "candidate:synthetic-pdd", dataRevision
 test("the page labels match the service's own labels word for word", () => {
   for (const [level, label] of Object.entries(IMAGE_SIMILARITY_LABELS)) assert.equal(IMAGE_MATCH_SIMILARITY_LABELS[level], label);
   assert.deepEqual({ ...IMAGE_MATCH_JUDGEMENT_LABELS }, { ...SUPPLIER_IMAGE_MATCH_JUDGEMENT_LABELS });
+  assert.equal(PAGE_COMPARISON_INTERRUPTED, IMAGE_MATCH_COMPARISON_INTERRUPTED);
 });
 
 test("the block appears when there is a picture to search, a capture to redo or an earlier search, and says why a search cannot start", () => {
@@ -281,6 +284,22 @@ test("a running, empty, failed or unknown Ozon search says so and blocks or asks
   const unknown = ozonImageMatchView(candidate({ ozonImageMatch: { captureId: "OMJ-c", status: "failed", jobStatus: "unknown_outcome",
     query: OZON_QUERY, reason: "结果未知", results: [] } }));
   assert.deepEqual([unknown.unknownOutcome, unknown.canStart], [true, true]);
+});
+
+test("a comparison cut off midway says so in both blocks, keeps the results judgeable and offers 重新比对", () => {
+  const interrupted = { comparison: { version: "dhash-64-v1", comparedAt: null, interruptedAt: "2026-10-09T08:00:09.000Z",
+    sourceFingerprint: null, sourceError: IMAGE_MATCH_COMPARISON_INTERRUPTED } };
+  const supplier = supplierImageMatchView(candidate({ supplierImageMatch: compared({ ...interrupted,
+    results: [row(0, { compareError: IMAGE_MATCH_COMPARISON_INTERRUPTED }), row(1, { compareError: IMAGE_MATCH_COMPARISON_INTERRUPTED })] }) }));
+  assert.match(supplier.statusLine, /读回的 2 条在比对首图时中断了/);
+  assert.match(supplier.statusLine, /点「重新比对」再比一次，或者直接逐条判断/);
+  assert.doesNotMatch(supplier.statusLine, /不像|首图一致 0 条/);
+  assert.deepEqual([supplier.canCompare, supplier.judgeable, supplier.inFlight], [true, true, false]);
+  const ozon = ozonImageMatchView(candidate({ ozonImageMatch: ozonCompared({ ...interrupted, searchBy: "image",
+    results: [ozonRow(0, { compareError: IMAGE_MATCH_COMPARISON_INTERRUPTED })] }) }));
+  assert.match(ozon.statusLine, /读回的 1 条在比对首图时中断了/);
+  assert.doesNotMatch(ozon.statusLine, /用俄文词再搜一次/, "an unfinished comparison is not 'only near matches'");
+  assert.deepEqual([ozon.canCompare, ozon.judgeable], [true, true]);
 });
 
 test("the Ozon start receipt sends the Ozon start signal, never the 1688 one", () => {

@@ -127,8 +127,11 @@ export async function preparedFixture(options = {}) {
 }
 
 export function exactObservation(request, overrides = {}) {
-  const expectation = request.executionMode === "single_sku_seller_api" ? request.readbackExpectation : request.independentReadback.expectation;
+  const record = request.executionMode === "single_sku_seller_api";
+  const expectation = record ? request.readbackExpectation : request.independentReadback.expectation;
   const urls = expectation.media.map(asset => asset.submittedUrl);
+  // The platform shows what this request wrote: the owner-authorized stock (100 in most fixtures).
+  const stock = (record ? request.expectedStock : request.stock) ?? 100;
   return {
     platform: request.platform,
     store: request.store,
@@ -138,12 +141,12 @@ export function exactObservation(request, overrides = {}) {
     merchantSku: request.merchantSku,
     platformProductId: "910001",
     currentPrice: structuredClone(request.platformWritePrice || request.expectedPrice),
-    currentStock: 100,
+    currentStock: stock,
     imageCount: request.finalUploads?.length ?? request.expectedImageCount,
     mediaObservation: { sourceProtocol: "ozon-product-attributes-v4", primaryImageUrl: urls[0], images: urls.slice(1) },
     inventoryObservation: { sourceProtocol: "ozon-product-stocks-by-warehouse-fbs-v2", hasNext: false,
       rows: [{ warehouseId: expectation.warehouseId, productId: overrides.platformProductId ?? "910001", sku: "1910001",
-        offerId: request.merchantSku, freeStock: 100, present: 100, reserved: 0 }] },
+        offerId: request.merchantSku, freeStock: stock, present: stock, reserved: 0 }] },
     moderationStatus: "in_moderation",
     validationStatus: "processing",
     saleStatus: "not_for_sale",

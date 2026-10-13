@@ -305,7 +305,7 @@ function validateExecutionRequest(request, capabilities) {
   if (!sameStoreRef(request.storeRef, capabilities.storeRef) || request.warehouseRef !== capabilities.warehouseRef || request.credentialAlias !== capabilities.credentialAlias) return "完整店铺、仓库或凭据绑定与能力证据不一致";
   if (!nonEmpty(request.executionKey) || request.idempotencyKey !== request.executionKey) return "缺少唯一执行键";
   if (!nonEmpty(request.merchantSku) || !nonEmpty(request.supplierSkuId)) return "merchantSku与supplierSku未唯一锁定";
-  if (request.stock !== 100 || request.inventoryWrite?.stock !== 100) return "新品库存必须锁定100";
+  if (!Number.isSafeInteger(request.stock) || request.stock < 0 || request.inventoryWrite?.stock !== request.stock) return "新品库存必须与授权锁定的数量一致";
   if (request.inventoryWrite?.endpoint !== OZON_INVENTORY_WRITE_ENDPOINT ||
       !isPersistedNumericId(request.inventoryWrite?.warehouseId) || request.inventoryWrite.warehouseId !== capabilities.warehouseId) return "库存端点或仓库与能力证据不一致";
   if (request.productImport?.endpoint !== OZON_PRODUCT_IMPORT_ENDPOINT || request.productImport?.body?.items?.length !== 1) return "商品导入请求必须只包含一个SKU";

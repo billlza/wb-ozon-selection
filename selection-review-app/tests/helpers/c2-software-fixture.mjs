@@ -16,7 +16,7 @@ export function productionAuthorizationInputFixture({ publishScope = "create_and
   sourceCandidateRevision = 12, warehouseRef = "warehouse:synthetic:ozon", credentialAlias = "credential-alias:synthetic:ozon",
   allowedWriteFields = ["create_product", "title", "description", "attributes", "price", "stock", "assets.finalUploads", "publish_scope"],
   exclusions = ["no_activation", "no_advertising", "no_other_sku_write"],
-  buyerTargetPrice, platformWritePrice, priceConversion, sourceSkuPackage,
+  buyerTargetPrice, platformWritePrice, priceConversion, sourceSkuPackage, stock = 100,
   executionBinding = { bindingId: "binding:synthetic:ozon", configurationVersion: "config-v1", warehouseId: "70001" }
 } = {}) {
   const at = "2026-08-22T07:00:00.000Z";
@@ -29,7 +29,7 @@ export function productionAuthorizationInputFixture({ publishScope = "create_and
   const reviewed = attachSyntheticFinalPricingReview(confirmed.skuPackage, { at, candidateRevision: sourceCandidateRevision });
   const skuPackage = createFinalProductPlanConfirmationCard({ skuPackage: reviewed, createdAt: at }).skuPackage;
   const model = confirmed.productionAuthorizationPreparation.finalCardInputSnapshot.activeProfitModel;
-  const commercialDecision = { selectedOption: "approve_for_production_authorization", merchantSku, warehouseRef, credentialAlias, stock: 100,
+  const commercialDecision = { selectedOption: "approve_for_production_authorization", merchantSku, warehouseRef, credentialAlias, stock,
     buyerTargetPrice: buyerTargetPrice ?? { amount: model.recommendedSalePriceRub, currency: "RUB" },
     platformWritePrice: platformWritePrice ?? { amount: model.recommendedSalePriceCny, currency: "CNY" },
     priceConversion: structuredClone(priceConversion ?? model.priceConversion), publishScope, allowedWriteFields, exclusions, executionBinding: structuredClone(executionBinding) };

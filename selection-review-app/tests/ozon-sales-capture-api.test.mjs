@@ -9,6 +9,7 @@ import { stopApiProcess } from "./helpers/api-process-lifecycle.mjs";
 import { createServer } from "node:http";
 import { isOzonCaptureJob, validateOzonCaptureRequest } from "../extension/1688-capture/capture-request.js";
 import { buildGate1AutopilotGrant } from "../lib/gate1-autopilot.mjs";
+import { blockExecutionForTechnicalFailure, createSoftwareExecutionRuntime, openExceptionCase } from "../lib/software-execution-state.mjs";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const port = Number(process.env.SELECTION_REVIEW_TEST_PORT || 43927);
@@ -325,6 +326,11 @@ test("读一次 Ozon 页面：只有主人能发起，占同一把采集控制�
   assert.equal(snapshots[0].readOnly, true);
   assert.equal(captured.body.candidate.workflowStatus, "codex_processing", "读到了也不推进业务阶段");
   assert.equal(captured.body.candidate.lifecycleV11.platformWrites, 0);
+  // 主人点的只是「读一次」：回传后不顺手叫付费 AI，插件那头也不用等它，执行状态不被 AI 改写。
+  assert.equal(api.terraCalls(), 0, "读页面不得顺手调用付费 AI");
+  assert.equal(captured.body.candidate.aStageAi, undefined);
+  assert.equal((snapshots[0].auxiliaryDrafts ?? []).length, 0);
+  assert.equal(captured.body.candidate.executionRuntime ?? null, null);
 
   // 算利润那一小块现在说「可以用它」，按钮不再被类目挡住。
   const view = await api.get("/api/candidates/OZON-CAPTURE-1/lifecycle/supplier-draft");
@@ -410,6 +416,63 @@ test("服务重启时把等不到结果的读页面记录收口，不留下永�
   // 收口之后这件商品可以重新读一次。
   const retry = await api.post(startRoute("OZON-RESTART-QUEUED"), { dataRevision: closedQueued.dataRevision });
   assert.equal(retry.status, 202, JSON.stringify(retry.body));
+  assert.equal(api.stderr.join(""), "");
+});
+
+test("以前 AI 整理失败锁住的商品：服务重启时只解开那条 AI 记录并存档，别的技术失败原样留着，不调用模型", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "ozon-terra-release-"));
+  const dataFile = path.join(directory, "candidates.json");
+  const at = "2026-10-01T08:00:00.000Z";
+  const base = (id) => createSoftwareExecutionRuntime({ candidateId: id, dataRevision: 2, businessPhase: "A", stepId: "A_TERRA_SALES_ASSIST", at });
+  const failed = candidate("OZON-TERRA-FAILED", "4403916892");
+  failed.dataRevision = 3;
+  failed.executionRuntime = blockExecutionForTechnicalFailure(base(failed.id), {
+    failureId: `technical-failure:${failed.id}:2:a-terra`, kind: "external_dependency", errorCode: "A_TERRA_GATEWAY_UNAVAILABLE",
+    failureLayer: "gateway_status", evidenceRefs: ["sales-snapshot:terra-failed"], sourceRevision: 2, at });
+  failed.aStageAi = { status: "failed", taskType: "sales_comparability_assist", model: "gpt-5.6-terra", jobId: null, attempt: 1,
+    failure: { code: "A_TERRA_GATEWAY_UNAVAILABLE", layer: "gateway_status", safeMessageKey: "technical_failure.external_dependency" },
+    businessStateEffect: "unchanged", stoppedAt: at };
+  const mismatched = candidate("OZON-TERRA-SCHEMA", "4403916999");
+  mismatched.dataRevision = 3;
+  mismatched.executionRuntime = openExceptionCase(base(mismatched.id), {
+    exceptionId: `exception:${mismatched.id}:2:a-terra`, reasonCode: "output_schema_mismatch", failureLayer: "output_schema",
+    evidenceRefs: ["sales-snapshot:terra-schema"], sourceRevision: 2, at });
+  const waiting = candidate("OZON-B-WAITING", "4403916777");
+  waiting.dataRevision = 3;
+  waiting.executionRuntime = blockExecutionForTechnicalFailure(
+    createSoftwareExecutionRuntime({ candidateId: waiting.id, dataRevision: 2, businessPhase: "B", stepId: "B_DETERMINISTIC_PROFIT", at }), {
+      failureId: `b-exact-commission-required:${waiting.id}:3`, kind: "external_dependency", errorCode: "B_EXACT_COMMISSION_REQUIRED",
+      failureLayer: "b_commission_evidence", evidenceRefs: ["commission:synthetic"], sourceRevision: 3, at });
+  await writeFile(dataFile, JSON.stringify(document([failed, mismatched, waiting])));
+
+  const api = await startApi(t, null, { dataFile });
+  const stored = await api.readDocument();
+  const releasedFailure = stored.candidates.find(item => item.id === failed.id);
+  const releasedException = stored.candidates.find(item => item.id === mismatched.id);
+  for (const [released, before] of [[releasedFailure, failed], [releasedException, mismatched]]) {
+    assert.equal(released.executionRuntime.technicalFailure, null);
+    assert.equal(released.executionRuntime.exceptionCase, null);
+    assert.equal(released.executionRuntime.status, "waiting_owner", "解开之后这件商品等主人，不再显示被挡住");
+    assert.equal(released.executionRuntime.history.at(-1).type, "a_terra_assist_block_released");
+    assert.equal(released.dataRevision, 4, "解开只推进一次修订号");
+    assert.equal(released.lastModifiedBy, "system");
+    assert.equal(released.history.at(-1).action, "aTerraAssistBlockReleased");
+    assert.equal(released.workflowStatus, before.workflowStatus, "业务结论不变");
+  }
+  assert.equal(releasedFailure.aStageAi.status, "failed", "AI 那条失败记录还在，页面照样说它没做成");
+  assert.deepEqual(releasedFailure.aStageAi.releasedRuntimeBlock.technicalFailure, failed.executionRuntime.technicalFailure);
+  assert.equal(releasedFailure.aStageAi.releasedRuntimeBlock.exceptionCase, null);
+  assert.deepEqual(releasedException.aStageAi.releasedRuntimeBlock.exceptionCase, mismatched.executionRuntime.exceptionCase);
+  const untouched = stored.candidates.find(item => item.id === waiting.id);
+  assert.deepEqual(untouched.executionRuntime, waiting.executionRuntime, "等精确佣金那种正常的技术停止不能被顺手解开");
+  assert.equal(untouched.dataRevision, 3);
+  assert.equal(api.terraCalls(), 0);
+
+  // 再重启一次什么都不变：只解一次。
+  await api.restart();
+  const again = await api.readDocument();
+  assert.deepEqual(again.candidates.map(item => item.dataRevision), [4, 4, 3]);
+  assert.equal(api.terraCalls(), 0);
   assert.equal(api.stderr.join(""), "");
 });
 

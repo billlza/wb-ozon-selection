@@ -21,7 +21,9 @@ const EXTENSION_ISSUES = Object.freeze({
   disconnected: { tone: "error", sentence: "插件没连上，现在没法采集1688页面" },
   page_refresh_required: { tone: "warning", sentence: "插件装好了，但这一页还没接上它；刷新这一页才能采集1688页面" },
   reload_required: { tone: "warning", sentence: "插件是旧版本，要在浏览器里重新加载一次，否则采集1688页面会失败" },
-  background_unavailable: { tone: "warning", sentence: "插件后台没有响应，现在发不出采集任务" }
+  background_unavailable: { tone: "warning", sentence: "插件后台没有响应，现在发不出采集任务" },
+  tab_left_open: { tone: "warning", sentence: "插件上次打开的一个页面没能自动关上；把它关掉（或重新加载插件）之前发不出新的采集任务" },
+  tab_unconfirmed: { tone: "warning", sentence: "插件上次开页面时 Chrome 没回话；重新加载插件之前发不出新的采集任务" }
 });
 const EXTENSION_UNKNOWN = { tone: "error", sentence: "插件状态没取到，现在说不准能不能采集1688页面" };
 

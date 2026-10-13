@@ -372,6 +372,45 @@ export function recoverBExactCommissionTechnicalFailure(runtime, { failureId, ca
   return { runtime: next, priorTechnicalFailure };
 }
 
+function aTerraAssistFailure(runtime) {
+  const failure = runtime?.technicalFailure;
+  return failure?.status === "stopped" && failure.candidateId === runtime.candidateId && failure.businessStateChanged === false &&
+    failure.failureId === `technical-failure:${runtime.candidateId}:${failure.sourceRevision}:a-terra`;
+}
+
+function aTerraAssistException(runtime) {
+  const exception = runtime?.exceptionCase;
+  return exception?.status === "open" && exception.schemaVersion === "exception-case-v2" &&
+    exception.dispatchState === "not_dispatched" && exception.candidateId === runtime.candidateId &&
+    exception.businessStateChanged === false &&
+    exception.exceptionId === `exception:${runtime.candidateId}:${exception.sourceRevision}:a-terra`;
+}
+
+/**
+ * Terra's A-stage assist only ever produced a reference draft, yet older builds recorded its failure as the whole product's
+ * technical failure or ExceptionCase, which then refused A confirmation, B recalculation and C2 confirmation with no way out.
+ * Only those records (ids ending in ":a-terra", never handed to maintenance) are taken out of the runtime and returned for
+ * archiving; any other blocking record stays exactly where it is. Returns null when the runtime holds none of them.
+ */
+export function releaseATerraAssistBlock(runtime, { at }) {
+  if (!aTerraAssistFailure(runtime) && !aTerraAssistException(runtime)) return null;
+  const next = checked(runtime);
+  const timestamp = time(at, "at");
+  const releasedTechnicalFailure = aTerraAssistFailure(next) ? structuredClone(next.technicalFailure) : null;
+  const releasedExceptionCase = aTerraAssistException(next) ? structuredClone(next.exceptionCase) : null;
+  if (releasedTechnicalFailure) next.technicalFailure = null;
+  if (releasedExceptionCase) next.exceptionCase = null;
+  const stillBlocked = next.technicalFailure?.status === "stopped" || next.exceptionCase?.status === "open";
+  if (!stillBlocked) {
+    next.executorType = "owner";
+    next.status = "waiting_owner";
+  }
+  next.updatedAt = timestamp;
+  next.history.push(historyEvent("a_terra_assist_block_released", timestamp, "software",
+    [releasedTechnicalFailure?.failureId, releasedExceptionCase?.exceptionId].filter(Boolean).join(" ")));
+  return { runtime: next, releasedTechnicalFailure, releasedExceptionCase };
+}
+
 export function authorizeExceptionMaintenance(runtime, {
   exceptionId,
   maintenanceAuthorizationId,

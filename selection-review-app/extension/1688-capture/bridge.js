@@ -8,6 +8,9 @@ const ROUTES = Object.freeze({
 const STATUS_PING = "SELECTION_REVIEW_EXTENSION_STATUS_PING";
 const STATUS_RESPONSE = "SELECTION_REVIEW_EXTENSION_STATUS_RESPONSE";
 const BACKGROUND_PING = "SELECTION_REVIEW_EXTENSION_BACKGROUND_PING";
+// A tab the worker opened and could not yet account for. Passing the reason on lets the page tell the owner to close that
+// tab (or reload the plugin), instead of saying the background is not answering.
+const TAB_HOLDS = ["tab_cleanup_failed", "tab_creation_unconfirmed"];
 const version = chrome.runtime.getManifest().version;
 
 async function readBackgroundStatus() {
@@ -20,10 +23,11 @@ async function readBackgroundStatus() {
       // timeout and never the extension's own reason — exactly how a whole afternoon went into guessing (2026-09-11).
       lastCaptureCode: typeof response?.lastCaptureCode === "string" ? response.lastCaptureCode : "",
       captureActive: response?.captureActive === true,
+      heldBy: TAB_HOLDS.includes(response?.code) ? response.code : "",
       backgroundError: response?.accepted === true ? "" : response?.code === "extension_identity_rejected" ? "插件身份未获服务端允许，禁止领取作业" : "插件后台或评审台连接尚未确认"
     };
   } catch {
-    return { backgroundReady: false, serviceConnected: false, lastCaptureCode: "", captureActive: false, backgroundError: "插件后台没有响应" };
+    return { backgroundReady: false, serviceConnected: false, lastCaptureCode: "", captureActive: false, heldBy: "", backgroundError: "插件后台没有响应" };
   }
 }
 
@@ -68,7 +72,8 @@ window.addEventListener("message", async (event) => {
     type: ackType,
     captureId: message.captureId,
     accepted: response?.accepted === true,
-    code: ["request_origin_invalid", "start_signal_invalid", "capture_busy", "capture_job_invalid", "capture_job_not_claimed", "heartbeat_unavailable", "extension_identity_rejected", "background_unavailable"].includes(response?.code) ? response.code : "",
+    code: ["request_origin_invalid", "start_signal_invalid", "capture_busy", "capture_job_invalid", "capture_job_not_claimed", "heartbeat_unavailable",
+      "extension_identity_rejected", "background_unavailable", "tab_cleanup_failed", "tab_creation_unconfirmed"].includes(response?.code) ? response.code : "",
     error: response?.accepted === true ? "" : "插件未确认领取作业，请查看当前技术状态"
   }, window.location.origin);
 });

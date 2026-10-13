@@ -25,6 +25,8 @@ import {
 } from "../lib/source-capture.mjs";
 import { toggleLocalSupplierSkuSelection } from "../src/aSupplierCaptureSelection.js";
 import { harness, idle, message, startCapture, supplierJob, SUPPLIER_URL, PING, START } from "./helpers/extension-runtime-fixture.mjs";
+import { SEERFAR_WEB_MODE, SEERFAR_WEB_REQUEST_TYPE, SEERFAR_WEB_SEARCH_ENDPOINT, SEERFAR_WEB_SEARCH_PAGE }
+  from "../extension/1688-capture/seerfar-web-capture.js";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -610,4 +612,120 @@ test("uncertain claim transport cannot be repeated by a second page signal", asy
   assert.equal((await startCapture(h.runtime, "job-1")).code, "capture_replay_rejected");
   assert.equal(h.calls.requests.length, 1);
   assert.equal(h.calls.created.length, 0);
+});
+
+// What Chrome says for a tab id it no longer has.
+const noSuchTab = (id) => new Error(`No tab with id: ${id}.`);
+const settle = async (until) => { for (let i = 0; i < 30 && !until(); i += 1) await new Promise(setImmediate); };
+
+test("a page the owner already closed counts as closed: the next job is taken, never turned away as busy (review P0-9)", async () => {
+  // A capture whose tab the owner closed before the plugin got to it: Chrome refuses to remove a tab it no longer has.
+  const options = { job: supplierJob() };
+  const h = harness(options);
+  const { get, create } = h.chromeApi.tabs;
+  let closedByOwner = false;
+  h.chromeApi.tabs.create = async (input) => { closedByOwner = false; return create(input); };
+  h.chromeApi.tabs.get = async (id) => { if (closedByOwner) throw noSuchTab(id); return get(id); };
+  h.chromeApi.tabs.remove = async (id) => { h.calls.removed.push(id); closedByOwner = true; throw noSuchTab(id); };
+  assert.equal((await startCapture(h.runtime, "job-1")).accepted, true);
+  await idle(h.runtime);
+  assert.equal(h.calls.requests.find((request) => /\/result$/.test(request.url)).body.status, "captured");
+  assert.equal(h.runtime.status().backgroundReady, true);
+  assert.notEqual(h.runtime.status().code, "tab_cleanup_failed");
+  await h.runtime.heartbeat();
+  assert.equal(h.calls.requests.at(-1).body.backgroundReady, true, "the service must not be told the plugin is unavailable");
+  options.job = supplierJob({ captureId: "job-2" });
+  assert.equal((await startCapture(h.runtime, "job-2")).accepted, true);
+  await idle(h.runtime);
+  assert.equal(h.calls.created.length, 2);
+
+  // The Seerfar tab is the owner's to search in, and closing it when done is the natural thing to do.
+  const seerfarJob = { captureId: "SWR-00000000-0000-4000-8000-000000000001", jobId: "SWR-00000000-0000-4000-8000-000000000001",
+    roundId: "seerfar-web-round:00000000-0000-4000-8000-000000000002", mode: SEERFAR_WEB_MODE, pageUrl: SEERFAR_WEB_SEARCH_PAGE,
+    endpoint: SEERFAR_WEB_SEARCH_ENDPOINT, categoryPaths: ["宠物用品 > 宠物服装和靴子 > 宠物服装"], sellerType: "cross_border",
+    maxRecords: 20, waitMs: 5000, requiredExtensionVersion: "1.4.1", attempt: 1, token: "synthetic-token" };
+  let seerfar;
+  let tabGone = false;
+  seerfar = harness({ job: seerfarJob, execute: () => { tabGone = true; throw noSuchTab(7); } });
+  const seerfarGet = seerfar.chromeApi.tabs.get;
+  seerfar.chromeApi.tabs.get = async (id) => { if (tabGone) throw noSuchTab(id); return seerfarGet(id); };
+  seerfar.chromeApi.tabs.remove = async (id) => { seerfar.calls.removed.push(id); throw noSuchTab(id); };
+  assert.equal((await startCapture(seerfar.runtime, seerfarJob.captureId, SEERFAR_WEB_REQUEST_TYPE)).accepted, true);
+  await idle(seerfar.runtime);
+  assert.deepEqual(seerfar.calls.removed, [7]);
+  assert.equal(seerfar.calls.requests.find((request) => /\/result$/.test(request.url)).body.status, "failed");
+  assert.equal(seerfar.runtime.status().backgroundReady, true);
+  assert.equal(message(seerfar.runtime, { type: START, captureId: "job-after-seerfar" }).keepOpen, true,
+    "a new job goes to the claim instead of being refused on the spot");
+});
+
+test("a page Chrome will not close holds new jobs with that reason, and only until the page is gone", async () => {
+  const options = { job: supplierJob(), removeFails: true };
+  const h = harness(options);
+  assert.equal((await startCapture(h.runtime, "job-1")).accepted, true);
+  await idle(h.runtime);
+  assert.deepEqual(h.calls.removed, [7]);
+  assert.equal(h.runtime.status().backgroundReady, false);
+  assert.equal(h.runtime.status().code, "tab_cleanup_failed");
+  options.job = supplierJob({ captureId: "job-2" });
+  const claimsBefore = h.calls.requests.filter((request) => /\/claim$/.test(request.url)).length;
+  assert.deepEqual(await startCapture(h.runtime, "job-2"), { accepted: false, code: "tab_cleanup_failed" },
+    "the owner hears which page to close, not that another product is being captured");
+  assert.equal(h.calls.requests.filter((request) => /\/claim$/.test(request.url)).length, claimsBefore, "a held worker claims nothing");
+  assert.equal(h.calls.created.length, 1);
+  await h.runtime.heartbeat();
+  assert.equal(h.calls.requests.at(-1).body.backgroundReady, false);
+  // Nothing is closed for the owner later on: the page may be theirs by now. They close it, and the hold lets go by itself.
+  assert.deepEqual(h.calls.removed, [7]);
+  const { get, create } = h.chromeApi.tabs;
+  let closedByOwner = true;
+  h.chromeApi.tabs.create = async (input) => { closedByOwner = false; return create(input); };
+  h.chromeApi.tabs.get = async (id) => { if (closedByOwner) throw noSuchTab(id); return get(id); };
+  assert.equal(message(h.runtime, { type: PING }).response.backgroundReady, false, "the inquiry answers at once, then looks again");
+  await settle(() => h.runtime.status().backgroundReady);
+  assert.equal(h.runtime.status().backgroundReady, true);
+  await h.runtime.heartbeat();
+  assert.equal(h.calls.requests.at(-1).body.backgroundReady, true);
+  assert.equal((await startCapture(h.runtime, "job-2")).accepted, true, "the job turned away earlier was never claimed, so it can start now");
+  await idle(h.runtime);
+  assert.equal(h.calls.created.length, 2);
+
+  // Closing the page and pressing again straight away also works: the start signal looks before it says no.
+  const again = harness({ job: supplierJob(), removeFails: true });
+  assert.equal((await startCapture(again.runtime, "job-1")).accepted, true);
+  await idle(again.runtime);
+  again.chromeApi.tabs.get = async (id) => { throw noSuchTab(id); };
+  again.chromeApi.tabs.create = async () => { throw new Error("synthetic: no new page is needed to prove the claim"); };
+  const claimed = await startCapture(again.runtime, "job-x");
+  assert.notEqual(claimed.code, "tab_cleanup_failed");
+  assert.ok(again.calls.requests.some((request) => /capture-jobs\/job-x\/claim$/.test(request.url)));
+});
+
+test("a page Chrome was still opening when its job ran out of time holds new jobs until Chrome answers and that page is closed", async () => {
+  let fireDeadline = null;
+  const jobTimerOptions = {
+    setTimer: (handler, delay) => { if (delay === 40000) { fireDeadline = handler; return "deadline"; } return setTimeout(handler, delay); },
+    clearTimer: (timer) => { if (timer !== "deadline") clearTimeout(timer); }
+  };
+  const options = { job: supplierJob(), jobTimerOptions };
+  const h = harness(options);
+  const { create } = h.chromeApi.tabs;
+  let answer = null;
+  h.chromeApi.tabs.create = (input) => new Promise((resolve) => { answer = () => resolve(create(input)); });
+  assert.equal((await startCapture(h.runtime, "job-1")).accepted, true);
+  await settle(() => answer !== null);
+  fireDeadline();
+  await idle(h.runtime);
+  assert.equal(h.calls.requests.find((request) => /\/result$/.test(request.url)).body.failureCode, "timeout");
+  assert.equal(h.runtime.status().code, "tab_creation_unconfirmed");
+  options.job = supplierJob({ captureId: "job-2" });
+  assert.deepEqual(await startCapture(h.runtime, "job-2"), { accepted: false, code: "tab_creation_unconfirmed" });
+  answer(); // Chrome answers late: the page is made, and the job that asked for it closes it straight away.
+  await settle(() => h.runtime.status().backgroundReady);
+  assert.deepEqual(h.calls.removed, [7]);
+  assert.equal(h.runtime.status().backgroundReady, true);
+  h.chromeApi.tabs.create = create;
+  assert.equal((await startCapture(h.runtime, "job-2")).accepted, true);
+  await idle(h.runtime);
+  assert.equal(h.calls.created.length, 2);
 });

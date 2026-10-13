@@ -225,7 +225,9 @@ export function buildGate1Acceptance({ candidate, input, ozonOptions, supplierOp
     draft = buildSupplierDraftV1(normalizeSupplierDraftInput({ dataRevision: input.dataRevision, sourceUrl: supplier.sourceUrl,
       goodsPriceRmb: facts.values.goodsPriceRmb, domesticShippingRmb: facts.values.domesticShippingRmb,
       packedWeightKg: facts.values.packedWeightKg, dimensionsCm: facts.values.dimensionsCm,
-      targetSalePriceRub: facts.values.targetSalePriceRub, note: '在「做这件」卡上认下的方案' }), { declaredAt: decidedAt });
+      targetSalePriceRub: facts.values.targetSalePriceRub, note: '在「做这件」卡上认下的方案' }),
+    // 方案里哪几个数是软件读的、哪几个是主人在卡上补的，逐项跟着方案走；后面的页面只许把主人补的说成「你填的」。
+    { declaredAt: decidedAt, fieldSources: facts.sources });
   } catch (error) {
     if (error instanceof SupplierDraftError) reject(error.message, error.code);
     throw error;
