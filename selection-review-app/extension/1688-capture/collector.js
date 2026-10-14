@@ -26,6 +26,16 @@ export async function collect1688Page(expectedOfferId) {
   };
   const first = (...values) => values.find((value) => limitText(value) !== "");
   const firstObject = (...values) => values.find((value) => value !== null && typeof value === "object");
+  // 1688 ships SKU labels HTML-escaped ("黑色&gt;4XL"); the owner must read the specification, not the markup.
+  const plainText = (value, limit = 800) => limitText(value, limit)
+    .replace(/&(?:amp|lt|gt|quot|#0*39|apos|nbsp);/g, (entity) =>
+      ({ "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'", "&nbsp;": " " })[entity] || (/^&#0*39;$/.test(entity) ? "'" : entity))
+    .trim();
+  // Shipping weight is kilograms in the page model and is neither money nor a count, so it keeps its own range check.
+  const weightKgFrom = (value) => {
+    const parsed = typeof value === "number" ? value : (typeof value === "string" && /^\d+(?:\.\d{1,6})?$/.test(value.trim()) ? Number(value.trim()) : NaN);
+    return Number.isFinite(parsed) && parsed > 0 && parsed <= 1000 ? parsed : null;
+  };
   let pageOfferId = "";
   try {
     const url = new URL(window.location.href);
@@ -41,35 +51,153 @@ export async function collect1688Page(expectedOfferId) {
     if (document.querySelector?.('form[action*="login"] input[type="password"], [data-widget="loginForm"]')) return "site_login_required";
     return null;
   };
+  // Since 2026-09-12 detail.1688.com ships zero script[type="application/json"]; the model travels as the second
+  // argument of an ordinary inline IIFE (window.context=(function(b,d){…})(window.contextPath,{"result":…})).
+  // Reading it means slicing that argument out of the script text — the script itself is never executed and no
+  // MAIN-world global is ever read, so the page cannot decide what this collector sees.
+  const balancedJsonObject = (source, from) => {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = from; index < source.length; index += 1) {
+      const character = source[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') inString = true;
+      else if (character === "{") depth += 1;
+      else if (character === "}") {
+        depth -= 1;
+        if (depth === 0) return source.slice(from, index + 1);
+        if (depth < 0) return "";
+      }
+    }
+    return "";
+  };
+  // The argument is not valid JSON: 1688 emits bare numeric keys ({5846845077743:0.2400}), which is exactly why it
+  // can no longer live in an application/json script. Quoting them needs string awareness, or a digit sequence that
+  // merely looks like a key inside a product description would be rewritten. Only a parse failure pays this cost.
+  const quoteBareNumericKeys = (source) => {
+    const blank = (character) => character === " " || character === "\t" || character === "\n" || character === "\r";
+    let output = "";
+    let inString = false;
+    let escaped = false;
+    let index = 0;
+    while (index < source.length) {
+      const character = source[index];
+      if (inString) {
+        output += character;
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') inString = false;
+        index += 1;
+        continue;
+      }
+      if (character === '"') {
+        inString = true;
+        output += character;
+        index += 1;
+        continue;
+      }
+      if (character === "{" || character === ",") {
+        let start = index + 1;
+        while (start < source.length && blank(source[start])) start += 1;
+        let end = start;
+        while (end < source.length && source[end] >= "0" && source[end] <= "9") end += 1;
+        let colon = end;
+        while (colon < source.length && blank(source[colon])) colon += 1;
+        // A JSON value can never be followed by ":", so digits + ":" after "{" or "," is unambiguously a bare key.
+        if (end > start && end - start <= 40 && source[colon] === ":") {
+          output += `${source.slice(index, start)}"${source.slice(start, end)}"`;
+          index = end;
+          continue;
+        }
+      }
+      output += character;
+      index += 1;
+    }
+    return output;
+  };
+  const parseEvidenceJson = (text) => {
+    try { return JSON.parse(text); } catch { /* Fall through to the bare-key repair below. */ }
+    try { return JSON.parse(quoteBareNumericKeys(text)); } catch { return null; }
+  };
+  const modelFrom = (parsed) => {
+    const model = parsed?.result?.global?.globalData?.model || parsed?.globalData;
+    if (!model || typeof model !== "object" || Array.isArray(model)) return null;
+    const data = parsed?.result?.data;
+    // The legacy offerBaseInfo/skuModel/orderParamModel/tempModel shape survived the move; it is now a widget payload.
+    const dataJson = data?.Root?.fields?.dataJson;
+    return { model, data, init: parsed, dataJson: dataJson && typeof dataJson === "object" && !Array.isArray(dataJson) ? dataJson : null };
+  };
   const readPageData = () => {
     const models = [];
-    for (const script of Array.from(document.querySelectorAll?.('script[type="application/json"]') || []).slice(0, 20)) {
+    const seenPayloads = new Set();
+    for (const script of Array.from(document.querySelectorAll?.("script") || []).slice(0, 60)) {
       const content = script.textContent;
-      if (typeof content !== "string" || content.length > 1_000_000) continue;
-      let parsed;
-      try { parsed = JSON.parse(content); } catch { continue; } // Non-JSON scripts are not a supported source.
-      const model = parsed?.result?.global?.globalData?.model || parsed?.globalData;
-      if (model && typeof model === "object" && !Array.isArray(model)) models.push({ model, data: parsed?.result?.data, init: parsed });
+      if (typeof content !== "string" || !content || content.length > 3_000_000) continue;
+      const scriptType = limitText(script.getAttribute?.("type"), 80).toLowerCase();
+      const candidates = [];
+      if (scriptType === "application/json" || scriptType === "application/ld+json") candidates.push(content);
+      else if (content.includes('"globalData"')) {
+        // Anchored on the payload's own key names, never on 1688's wrapper syntax, which is minified per release.
+        for (const anchor of ['{"result":', '{"globalData"', '{"data":']) {
+          const start = content.indexOf(anchor);
+          if (start < 0) continue;
+          const sliced = balancedJsonObject(content, start);
+          if (sliced) candidates.push(sliced);
+        }
+      }
+      for (const candidate of candidates) {
+        if (seenPayloads.has(candidate)) break; // The same payload emitted twice is one statement, not two.
+        const found = modelFrom(parseEvidenceJson(candidate));
+        if (found) { seenPayloads.add(candidate); models.push(found); break; }
+      }
     }
+    // Two *differing* copies of the model are not evidence; one page must speak with one voice.
     return models.length === 1 ? models[0] : null;
   };
-  const skuRowsPresent = () => document.querySelectorAll?.("#skuSelection .ant-table-tbody tr[data-row-key]")?.length > 0;
+  // The 2026-09 specification table dropped .ant-table-tbody and tr[data-row-key] alike, so presence is judged by the
+  // widget id the page model itself declares (result.data.skuSelection.id) plus a plain table row — no styling classes.
+  const skuTableScopes = () => Array.from(document.querySelectorAll?.('#skuSelection, [data-tag="skuSelection"], [data-widget-id="skuSelection"]') || []).slice(0, 5);
+  const skuTableRows = () => {
+    const rows = [];
+    for (const scope of skuTableScopes()) rows.push(...Array.from(scope.querySelectorAll?.("tbody tr") || []));
+    return rows.slice(0, 400);
+  };
+  const skuRowsPresent = () => skuTableRows().length > 0;
 
-  const deadline = Date.now() + 12000;
+  // 20s of in-page polling: the model JSON on a throttled background tab arrives well after the first paint.
+  const deadline = Date.now() + 20000;
   while (Date.now() < deadline && !pageBlocker() && !readPageData() && !skuRowsPresent()) await sleep(250);
 
   const blocker = pageBlocker();
   if (blocker) return { status: "failed", failureCode: blocker, offerId: pageOfferId };
   const pageData = readPageData();
   const root = pageData?.model;
-  const offerBaseInfo = root?.offerBaseInfo || null;
-  const tradeModel = root?.tradeModel || null;
-  const skuModel = root?.skuModel || null;
-  const declaredOfferIds = [offerBaseInfo?.offerId, pageData?.data?.offerId].filter((value) => value !== undefined && value !== null);
-  if (root && (!declaredOfferIds.length || declaredOfferIds.some((value) => limitText(value, 40) !== String(expectedOfferId)))) {
+  const dataRoot = pageData?.dataJson || null;
+  const offerBaseInfo = root?.offerBaseInfo || dataRoot?.offerBaseInfo || null;
+  const offerDetail = root?.offerDetail || dataRoot?.offerDetail || null;
+  const tradeModel = root?.tradeModel || dataRoot?.tradeModel || null;
+  const skuModel = root?.skuModel || dataRoot?.skuModel || null;
+  const tempModel = dataRoot?.tempModel || root?.tempModel || null;
+  // Every place the page states its own identity must agree; one dissenting copy means the tab is not this offer.
+  const offerIdCandidates = [
+    [offerBaseInfo?.offerId, "offerBaseInfo.offerId"],
+    [offerDetail?.offerId, "offerDetail.offerId"],
+    [tradeModel?.offerId, "tradeModel.offerId"],
+    [tempModel?.offerId, "tempModel.offerId"],
+    [pageData?.data?.offerId, "data.offerId"]
+  ].map(([value, source]) => [limitText(value, 40), source]).filter(([value]) => value !== "");
+  const declaredOfferIds = offerIdCandidates.map(([value]) => value);
+  if (root && (!declaredOfferIds.length || declaredOfferIds.some((value) => value !== String(expectedOfferId)))) {
     return { status: "failed", failureCode: "wrong_offer", offerId: pageOfferId };
   }
-  const structuredOfferId = limitText(first(offerBaseInfo?.offerId, pageData?.data?.offerId), 40);
+  const structuredOfferId = offerIdCandidates[0]?.[0] || "";
+  const structuredOfferIdSource = offerIdCandidates[0]?.[1] || null;
   const actualOfferId = structuredOfferId || pageOfferId;
   if (!actualOfferId || actualOfferId !== String(expectedOfferId) || (pageOfferId && pageOfferId !== String(expectedOfferId))) {
     return { status: "failed", failureCode: "wrong_offer", message: "页面offerId与当前候选不一致", offerId: actualOfferId || pageOfferId };
@@ -82,47 +210,63 @@ export async function collect1688Page(expectedOfferId) {
   const supplierAttributes = {};
   const attributeLists = [
     root?.offerAttributeModel?.offerAttrs,
+    offerDetail?.featureAttributes,
     pageData?.data?.productAttributes?.fields?.attributes
   ];
   for (const list of attributeLists) {
     if (!Array.isArray(list)) continue;
     for (const item of list) {
-      const key = limitText(first(item?.name, item?.attrName, item?.title, item?.key), 120);
-      const value = limitText(first(item?.value, item?.attrValue, item?.content, item?.text), 500);
+      const key = plainText(first(item?.name, item?.attrName, item?.title, item?.key), 120);
+      const value = plainText(first(item?.value, item?.attrValue, item?.content, item?.text), 500);
       if (key && value) supplierAttributes[key] = value;
     }
   }
 
-  const skuProps = Array.isArray(skuModel?.skuProps) && skuModel.skuProps.length
-    ? skuModel.skuProps
-    : Array.isArray(root?.skuProps) ? root.skuProps : [];
+  const skuProps = [skuModel?.skuProps, root?.skuProps, offerDetail?.skuProps]
+    .find((list) => Array.isArray(list) && list.length) || [];
   const propLookup = new Map();
+  // Declared order and declared value names: the only basis on which a combined specification label may be split.
+  const orderedProps = [];
   for (const prop of skuProps) {
     const propId = limitText(first(prop?.fid, prop?.propId, prop?.id, prop?.pid), 80);
-    const propName = limitText(first(prop?.prop, prop?.propName, prop?.name, "规格"), 120);
+    const propName = plainText(first(prop?.prop, prop?.propName, prop?.name, "规格"), 120);
+    const valueNames = new Set();
     for (const item of Array.isArray(prop?.value) ? prop.value : []) {
       const valueId = limitText(first(item?.vid, item?.valueId, item?.id, item?.propValueId), 80);
-      const valueName = limitText(first(item?.name, item?.value, item?.displayName, item?.text), 300);
-      if (propId && valueId && valueName) propLookup.set(`${propId}:${valueId}`, [propName, valueName]);
+      const valueName = plainText(first(item?.name, item?.value, item?.displayName, item?.text), 300);
+      if (!valueName) continue;
+      valueNames.add(valueName);
+      if (propId && valueId) propLookup.set(`${propId}:${valueId}`, [propName, valueName]);
     }
+    if (propName && valueNames.size) orderedProps.push([propName, valueNames]);
   }
+  const splitSpecLabel = (label) => {
+    if (!orderedProps.length) return null;
+    const parts = label.split(">").map((part) => part.trim()).filter((part) => part !== "");
+    if (parts.length !== orderedProps.length) return null;
+    return parts.every((part, index) => orderedProps[index][1].has(part))
+      ? parts.map((part, index) => [orderedProps[index][0], part])
+      : null;
+  };
 
   const attributesForSku = (rawSku) => {
     const attributes = {};
     const direct = firstObject(rawSku?.specAttrs, rawSku?.specAttr, rawSku?.attributes) || first(rawSku?.specAttrs, rawSku?.specAttr, rawSku?.attributes);
     if (direct && typeof direct === "object" && !Array.isArray(direct)) {
       for (const [key, value] of Object.entries(direct)) {
-        const cleaned = limitText(value, 300);
-        if (cleaned) attributes[limitText(key, 120)] = cleaned;
+        const cleaned = plainText(value, 300);
+        if (cleaned) attributes[plainText(key, 120)] = cleaned;
       }
     } else if (Array.isArray(direct)) {
       for (const item of direct) {
-        const key = limitText(first(item?.name, item?.key, item?.propName), 120);
-        const value = limitText(first(item?.value, item?.text, item?.valueName), 300);
+        const key = plainText(first(item?.name, item?.key, item?.propName), 120);
+        const value = plainText(first(item?.value, item?.text, item?.valueName), 300);
         if (key && value) attributes[key] = value;
       }
     } else if (direct && !/^\d+:\d+(?:[;,]\d+:\d+)*$/.test(String(direct).replace(/\s+/g, ""))) {
-      attributes["规格"] = limitText(direct, 500);
+      const label = plainText(direct, 500);
+      attributes["规格"] = label;
+      for (const [propName, value] of splitSpecLabel(label) || []) attributes[propName] = value;
     }
     const propPath = limitText(first(rawSku?.propPath, rawSku?.specId, rawSku?.specAttrs), 600);
     for (const token of propPath.match(/\d+:\d+/g) || []) {
@@ -177,6 +321,26 @@ export async function collect1688Page(expectedOfferId) {
   addEntries(pageData?.init?.skuModel?.skuInfos, "json.skuModel.skuInfos");
   addEntries(pageData?.init?.skuModel?.skuList, "json.skuModel.skuList");
 
+  // Per-SKU shipping weight in kilograms. It never creates a SKU, it only annotates one the SKU maps already declare.
+  const skuWeightSources = [
+    [root?.detailDescription?.freightInfo?.skuWeight, "detailDescription.freightInfo.skuWeight"],
+    [pageData?.data?.shippingServices?.fields?.freightInfo?.skuWeight, "shippingServices.freightInfo.skuWeight"],
+    [pageData?.data?.submitOrder?.fields?.freightInfo?.skuWeight, "submitOrder.freightInfo.skuWeight"],
+    [root?.freightModel?.skuWeight, "freightModel.skuWeight"]
+  ];
+  const skuWeights = new Map();
+  for (const [map, source] of skuWeightSources) {
+    // A $ref placeholder yields no numbers, so an aliased copy simply contributes nothing.
+    if (!map || typeof map !== "object" || Array.isArray(map)) continue;
+    for (const [key, value] of Object.entries(map).slice(0, 400)) {
+      const id = limitText(key, 160);
+      const weightKg = weightKgFrom(value);
+      if (id && weightKg !== null && !skuWeights.has(id)) skuWeights.set(id, { value: weightKg, unit: "kg", source });
+    }
+  }
+  const weightFor = (id) => (skuWeights.has(id) ? { value: skuWeights.get(id).value, unit: "kg" } : null);
+  const weightSourceFor = (id) => (skuWeights.has(id) ? skuWeights.get(id).source : null);
+
   const skus = [];
   const skuById = new Map();
   for (const entry of rawSkuEntries) {
@@ -198,7 +362,9 @@ export async function collect1688Page(expectedOfferId) {
       stock: stock.value !== null && stock.value >= 0 ? stock.value : null,
       stockSource: stock.value !== null && stock.value >= 0 ? `${entry.source}.${stock.source}` : null,
       inStock: typeof rawSku.inStock === "boolean" ? rawSku.inStock : stock.value === null ? null : stock.value > 0,
-      imageUrl: imageUrlFrom(imageUrl)
+      imageUrl: imageUrlFrom(imageUrl),
+      weight: weightFor(sourceSkuId),
+      weightSource: weightSourceFor(sourceSkuId)
     };
     const existing = skuById.get(sourceSkuId);
     if (!existing) {
@@ -223,33 +389,45 @@ export async function collect1688Page(expectedOfferId) {
     }
     if (existing.inStock === null && incoming.inStock !== null) existing.inStock = incoming.inStock;
     existing.imageUrl ||= incoming.imageUrl;
+    existing.weight ||= incoming.weight;
+    existing.weightSource ||= incoming.weightSource;
   }
 
-  const headers = Array.from(document.querySelectorAll?.("#skuSelection .ant-table-thead th") || []).map((node) => limitText(node.textContent, 120));
-  for (const row of Array.from(document.querySelectorAll?.("#skuSelection .ant-table-tbody tr[data-row-key]") || [])) {
-      const sourceSkuId = limitText(row.getAttribute?.("data-row-key"), 160);
+  // DOM fallback only. A table row is usable evidence solely when it still carries a supplier SKU ID, and price and
+  // stock are located through the table's own header text rather than through release-specific styling classes.
+  const headers = [];
+  for (const scope of skuTableScopes()) {
+    if (headers.length) break;
+    headers.push(...Array.from(scope.querySelectorAll?.("thead th") || []).map((node) => plainText(node.textContent, 120)));
+  }
+  const headerIndex = (pattern) => headers.findIndex((header) => pattern.test(header));
+  const priceColumn = headerIndex(/价格|单价/);
+  const stockColumn = headerIndex(/库存|可售|可订/);
+  for (const row of skuTableRows()) {
+      const sourceSkuId = limitText(first(row.getAttribute?.("data-row-key"), row.getAttribute?.("data-sku-id"), row.getAttribute?.("data-skuid")), 160);
       if (!sourceSkuId) continue;
       const attributes = {};
-      const cells = Array.from(row.querySelectorAll?.("td.ant-table-cell") || []);
+      const cells = Array.from(row.querySelectorAll?.("td") || []);
       cells.forEach((cell, index) => {
         const key = headers[index];
-        if (!key || /价格|库存|进货数量/.test(key)) return;
-        const value = limitText(cell.textContent, 300);
+        if (!key || /价格|单价|库存|可售|可订|进货数量/.test(key)) return;
+        const value = plainText(cell.textContent, 300);
         if (value) attributes[key] = value;
       });
-      const priceNodes = row.querySelectorAll?.(".gyp-pro-table-price span") || [];
-      const priceValue = numberFrom(priceNodes[0]?.textContent);
-      const stockValue = numberFrom(priceNodes[1]?.textContent, "count");
+      const priceValue = priceColumn >= 0 ? numberFrom(plainText(cells[priceColumn]?.textContent, 120)) : null;
+      const stockValue = stockColumn >= 0 ? numberFrom(plainText(cells[stockColumn]?.textContent, 120), "count") : null;
       const domSku = {
         sourceSkuId,
-        propPath: limitText(row.querySelector?.(".gyp-pro-table-title p")?.textContent, 600) || null,
+        propPath: null,
         attributes,
         priceCny: priceValue !== null && priceValue > 0 ? priceValue : null,
         priceSource: priceValue !== null && priceValue > 0 ? "dom.sku_table.price" : null,
         stock: stockValue !== null && stockValue >= 0 ? stockValue : null,
         stockSource: stockValue !== null && stockValue >= 0 ? "dom.sku_table.stock" : null,
         inStock: stockValue === null ? null : stockValue > 0,
-        imageUrl: null
+        imageUrl: null,
+        weight: weightFor(sourceSkuId),
+        weightSource: weightSourceFor(sourceSkuId)
       };
       const existing = skuById.get(sourceSkuId);
       if (!existing) {
@@ -273,6 +451,8 @@ export async function collect1688Page(expectedOfferId) {
         existing.stockSource = domSku.stockSource;
       }
       if (existing.inStock === null && domSku.inStock !== null) existing.inStock = domSku.inStock;
+      existing.weight ||= domSku.weight;
+      existing.weightSource ||= domSku.weightSource;
     }
 
   const pageSelectedSkuId = limitText(first(
@@ -303,7 +483,9 @@ export async function collect1688Page(expectedOfferId) {
       stock: stock.value !== null && stock.value >= 0 ? stock.value : null,
       stockSource: stock.value !== null && stock.value >= 0 ? `singleSku.${stock.source}` : null,
       inStock: typeof rawSku.inStock === "boolean" ? rawSku.inStock : stock.value === null ? null : stock.value > 0,
-      imageUrl: imageUrlFrom(first(rawSku?.imageUrl, rawSku?.imgUrl, rawSku?.image))
+      imageUrl: imageUrlFrom(first(rawSku?.imageUrl, rawSku?.imgUrl, rawSku?.image)),
+      weight: weightFor(pageSelectedSkuId),
+      weightSource: weightSourceFor(pageSelectedSkuId)
     });
   }
 
@@ -314,7 +496,8 @@ export async function collect1688Page(expectedOfferId) {
   for (const [field, list] of [
     ["tradeModel.offerPriceRanges", tradeModel?.offerPriceRanges],
     ["tradeModel.currentPrices", tradeModel?.currentPrices],
-    ["tradeModel.disPriceRanges", tradeModel?.disPriceRanges]
+    ["tradeModel.disPriceRanges", tradeModel?.disPriceRanges],
+    ["tradeModel.offerPriceModel.currentPrices", tradeModel?.offerPriceModel?.currentPrices]
   ]) {
     if (!Array.isArray(list)) continue;
     for (const item of list) {
@@ -328,13 +511,32 @@ export async function collect1688Page(expectedOfferId) {
     [offerBaseInfo?.subject, "offerBaseInfo.subject"],
     [offerBaseInfo?.title, "offerBaseInfo.title"],
     [offerBaseInfo?.productTitle, "offerBaseInfo.productTitle"],
+    [offerDetail?.subject, "offerDetail.subject"],
+    [tempModel?.offerTitle, "tempModel.offerTitle"],
+    [pageData?.data?.gallery?.fields?.subject, "data.gallery.subject"],
     [root?.offerModel?.subject, "offerModel.subject"],
     [document.querySelector?.('meta[property="og:title"]')?.content, "dom.meta.og:title"],
     [document.title, "document.title"],
     [document.querySelector?.("h1")?.textContent, "dom.h1"]
-  ].map(([value, source]) => [limitText(value, 800).replace(/\s*[-_|]\s*阿里巴巴.*$/i, "").trim(), source])
+  ].map(([value, source]) => [plainText(value, 800).replace(/\s*[-_|]\s*阿里巴巴.*$/i, "").trim(), source])
     .filter(([value]) => value);
   const titleChoice = rawTitleCandidates.find(([value]) => !/(?:有限责任公司|有限公司|个体工商户|经营部)$/.test(value)) || rawTitleCandidates[0] || ["", null];
+  // The offer's own first picture, so the owner can later search 1688 with it for the same goods from other sellers.
+  // Read from the gallery data the page ships, then og:image; only alicdn product pictures count, and the field is named.
+  const firstOf = (value) => (Array.isArray(value) ? value[0] : value);
+  const pictureAddress = (value) => {
+    const raw = typeof value === "string" ? value : firstObject(value) ? first(value.fullPathImageURI, value.imageURI, value.url) : null;
+    return typeof raw === "string" && raw.startsWith("//") ? `https:${raw}` : raw;
+  };
+  const galleryFields = pageData?.data?.gallery?.fields || root?.gallery?.fields || null;
+  const mainImageChoice = [
+    [firstOf(galleryFields?.mainImage), "data.gallery.fields.mainImage[0]"],
+    [firstOf(galleryFields?.offerImgList), "data.gallery.fields.offerImgList[0]"],
+    [firstOf(galleryFields?.images), "data.gallery.fields.images[0]"],
+    [firstOf(offerDetail?.mainImage), "offerDetail.mainImage[0]"],
+    [firstOf(offerDetail?.imageList), "offerDetail.imageList[0]"],
+    [document.querySelector?.('meta[property="og:image"]')?.content, "dom.meta.og:image"]
+  ].map(([value, source]) => [imageUrlFrom(pictureAddress(value)), source]).find(([value]) => value) || [null, null];
   const pageProductPrice = explicitScalarField([
     ["offerBaseInfo.offerPrice", offerBaseInfo?.offerPrice],
     ["offerBaseInfo.price", offerBaseInfo?.price],
@@ -357,11 +559,13 @@ export async function collect1688Page(expectedOfferId) {
       offerId: actualOfferId,
       sourceUrl: `https://detail.1688.com/offer/${actualOfferId}.html`,
       title: titleChoice[0],
-      offerStatus: limitText(first(offerBaseInfo?.status, offerBaseInfo?.offerStatus, tradeModel?.status), 120) || null,
+      offerStatus: limitText(first(offerBaseInfo?.status, offerBaseInfo?.offerStatus, offerDetail?.status, tradeModel?.status), 120) || null,
       observedAt: new Date().toISOString(),
       titleSource: titleChoice[1],
-      offerIdSource: structuredOfferId ? "offerBaseInfo.offerId" : "location.pathname",
+      offerIdSource: structuredOfferId ? structuredOfferIdSource : "location.pathname",
       pageSelectedSkuId: pageSelectedSkuId || null,
+      mainImageUrl: mainImageChoice[0],
+      mainImageSource: mainImageChoice[1],
       priceRanges,
       pageFields: {
         unitProductPriceCny: pageProductPrice.value,

@@ -209,6 +209,20 @@ export function codexOfflineModeFromEnvironment(environment = process.env) {
   return String(environment?.CODEX_OFFLINE || "").trim().toLowerCase() === "true";
 }
 
+function explicitSwitchEnabled(value) {
+  return ["on", "true"].includes(String(value || "").trim().toLowerCase());
+}
+
+/**
+ * 旧Codex派发通道的唯一开关判定：只校验环境变量，不调度、不写数据。
+ * 只有在没有开启CODEX_OFFLINE、且派发开关与自动投递开关都显式打开时才允许派发。
+ */
+export function dispatchDeliveryEnabledFromEnvironment(environment = process.env) {
+  if (codexOfflineModeFromEnvironment(environment)) return false;
+  return explicitSwitchEnabled(environment?.SELECTION_REVIEW_CODEX_DISPATCH) &&
+    explicitSwitchEnabled(environment?.SELECTION_REVIEW_AUTO_DELIVER);
+}
+
 export function assertRuntimeCodexDependencyAllowed({
   codexOffline,
   pathType,

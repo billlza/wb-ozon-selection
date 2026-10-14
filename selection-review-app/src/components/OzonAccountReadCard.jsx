@@ -36,9 +36,9 @@ export default function OzonAccountReadCard({ preparation, onAuthorize, onContin
       {current.admissionBlocker ? <p>已保存的读取许可或凭据绑定未通过当前校验，不能继续发送请求。</p> : null}
       <p>已发送读取请求：{current.requestsSent === 'unknown' ? '待核对' : `${current.requestsSent} 次`}。</p>
       {current.observedMethods.length ? <p>已取得：{current.observedMethods.map(method => methodLabels[method]).join('、')}。</p> : null}
-      {current.companyCurrency ? <p>公司币种：{current.companyCurrency}；后台写入价格的币种仍需独立核验。</p> : null}
+      {current.companyCurrency ? <p>已读取的公司币种：{current.companyCurrency}。</p> : null}
       {current.gaps.length ? <ul>{current.gaps.map(gap => <li key={`${gap.code}:${gap.field}`}>{gap.message}</li>)}</ul> : null}
-      {current.status === 'completed' ? <p>账户读取完成。店铺身份、后台价格币种、后台连接及写入协议仍需对应证据；原生产任务保持等待。</p> : null}
+      {current.status === 'completed' ? <p>账户资料已保存；能否继续生产，以生产任务的当前校验结果为准。</p> : null}
       {current.status === 'failed' || current.status === 'unknown_outcome' ? <p>已保留取得的资料和请求状态，未自动重发。</p> : null}
       {current.canContinue ? <button type="button" disabled={saving || typeof onContinue !== 'function'} onClick={() => run(() =>
         onContinue({ candidateId: preparation.candidateId, jobId: current.jobId, expectedRevision: current.expectedRevision }))}>

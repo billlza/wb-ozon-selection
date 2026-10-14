@@ -46,7 +46,7 @@ export const MULTI_USER_MIGRATION_STAGES = Object.freeze([
 
 export const LOCAL_RUNTIME_LOCK_IN_AUDIT = Object.freeze([
   ["localhost_and_fixed_ports", "development_local_reasonable", "运行配置已提供替换边界；本地继续使用4317及配置化服务端口"],
-  ["macos_keychain", "development_local_reasonable", "保留本机密钥适配器，未来中央秘密管理替换"],
+  ["macos_keychain", "development_local_reasonable", "本机密钥已改走按操作系统选择的凭据层（macOS 钥匙串、Windows 凭据管理器、Linux Secret Service），钥匙串名称不变；未来中央秘密管理替换"],
   ["json_state_file", "must_abstract_before_multi_user", "已建立Repository边界；当前适配器明确仅单进程"],
   ["whole_json_rewrite", "must_abstract_before_multi_user", "原子改名防半文件，不防多实例丢失更新"],
   ["in_memory_job_maps", "must_abstract_before_multi_user", "中央队列前不得宣称多Worker可用"],

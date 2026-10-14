@@ -1,9 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildC1DraftRuntimeView } from "../lib/c1-draft-runtime-view.mjs";
-import { buildC1PaidDraftInput, buildC1KeywordHandoffRetryInput } from "../src/c1PaidDraftInput.js";
+import { buildC1PaidDraftInput, buildC1KeywordHandoffRetryInput, buildC1DraftResultReadInput } from "../src/c1PaidDraftInput.js";
 import { createC1KeywordHandoffRetryFixture, keywordHandoffDraftBinding } from "./fixtures/c1-keyword-handoff-retry-fixture.mjs";
-import { createC1PaidFormalFixture } from "./fixtures/c1-draft-source-fixture.mjs";
+import { createC1PaidFormalFixture, c1DraftPreparedCandidate } from "./fixtures/c1-draft-source-fixture.mjs";
+import { finalPricingC1ReuseFixture } from "./fixtures/final-pricing-c1-reuse-fixture.mjs";
+import { finalAssets, ownerDecision } from "./helpers/c2-software-fixture.mjs";
+import { prepareC2FinalUploadManifest, confirmC2SoftwareFinalUploads } from "../lib/c2-software-orchestrator.mjs";
+import { createFinalProductPlanConfirmationCard } from "../lib/final-product-plan-confirmation-card.mjs";
+import { prepareOwnerProductFacts, OwnerProductFactsError } from "../lib/owner-product-facts.mjs";
+import { prepareC1FinalPlanRevision } from "../lib/c1-final-plan-revision-preparation.mjs";
+import { prepareCurrentC1AiDraftRequest } from "../lib/c1-ai-draft-request-source.mjs";
+import { ConfirmedSupplierInputError } from "../lib/confirmed-supplier-inputs.mjs";
 import { prepareC1DraftSoftwareExecution } from "../lib/c1-draft-software-use-case.mjs";
 import { createSoftwareJobEnvelope } from "../lib/software-job-contract.mjs";
 import { fileURLToPath } from "node:url";
@@ -29,6 +37,121 @@ function queuedFixture() {
   f.runtime.softwareJobs.push(structuredClone(job));
   return f;
 }
+
+function ownerFactsFixture() {
+  const source = finalPricingC1ReuseFixture().document.candidates[0], observedAt = "2026-08-22T02:04:00.000Z";
+  source.targetPlatform = "ozon";
+  const sku = source.lifecycleV11.skuPackage;
+  const manifest = prepareC2FinalUploadManifest({ skuPackage: sku, expectedDataRevision: sku.dataRevision,
+    finalUploadAssets: finalAssets(), preparedAt: observedAt });
+  const confirmed = confirmC2SoftwareFinalUploads({ skuPackage: sku, expectedDataRevision: sku.dataRevision,
+    finalManifest: manifest, ownerDecision: ownerDecision(manifest), confirmedAt: observedAt });
+  source.lifecycleV11.skuPackage = structuredClone(createFinalProductPlanConfirmationCard({ skuPackage: confirmed.skuPackage,
+    createdAt: observedAt }).skuPackage);
+  const declared = prepareOwnerProductFacts({ candidate: source,
+    facts: { productForm: "合成测试置物架", intendedUses: ["合成测试收纳"], closureType: null, adjustable: null, detachable: null },
+    confirmedByUserId: "synthetic-owner-facts", confirmedAt: observedAt });
+  const revised = prepareC1FinalPlanRevision({ candidate: declared.candidate,
+    expectedRevision: declared.candidate.dataRevision, preparedAt: observedAt });
+  const candidate = c1DraftPreparedCandidate({ candidate: revised.candidate, at: observedAt });
+  const request = prepareCurrentC1AiDraftRequest(candidate, observedAt);
+  candidate.lifecycleV11.c1AiDraftRequestV1 = structuredClone(request);
+  return { candidate, request, observedAt, runtime: { softwareJobs: [] },
+    serviceBindings: [{ provider: request.provider, modelVersion: `gpt-5.6-${request.provider}`,
+      credentialAlias: "gateway-alias:owner-facts-test", configurationVersion: "synthetic:owner-facts" }] };
+}
+
+function overnightResultFixture() {
+  const f = queuedFixture();
+  Object.assign(f.runtime.softwareJobs[0], {
+    status: "failed", attempt: 1, externalRequestState: "succeeded", failureClass: "C1_AI_GATEWAY_RECEIPT_REJECTED",
+    startedAt: "2026-01-01T23:00:00.000Z", completedAt: "2026-01-02T08:00:00.717Z",
+    resultEnvelope: { applicationDisposition: "not_applied", payload: {} },
+    c1ResultReconciliation: {
+      priorOutcome: { status: "unknown_outcome", completedAt: "2026-01-01T23:01:01.000Z" },
+      readAttempt: { status: "failed", startedAt: "2026-01-02T08:00:00.100Z", completedAt: "2026-01-02T08:00:00.717Z" }
+    }
+  });
+  return f;
+}
+
+test("隔夜终态四种耗时分开；刷新和持久化重启不延长耗时，也不补造服务时间", () => {
+  const f = overnightResultFixture();
+  const before = structuredClone(f);
+  const expected = { workbenchWaitSeconds: 61, serviceGenerationSeconds: null, resultReadSeconds: 0.617,
+    totalElapsedSeconds: 32400.717, activeWaitSeconds: null, activeReadWaitSeconds: null };
+  for (const observedAt of ["2026-01-02T08:00:01.000Z", "2026-01-03T08:00:01.000Z", "2099-01-01T00:00:00.000Z"]) {
+    const view = buildC1DraftRuntimeView({ ...JSON.parse(JSON.stringify(f)), observedAt });
+    assert.deepEqual(view.timings, expected);
+    assert.equal(view.elapsedSeconds, undefined);
+    assert.equal(view.currentOwner, "技术维护");
+    assert.match(view.nextAction, /事实引用/);
+    assert.equal(view.canReadOriginalResult, false);
+  }
+  assert.deepEqual(f, before);
+});
+
+test("服务生成只取成功回执或有版本的失败服务时间，独立于工作台等待和读取时间", () => {
+  for (const source of ["receipt", "serviceTiming"]) {
+    const f = overnightResultFixture();
+    f.runtime.softwareJobs[0].resultEnvelope.payload[source] = {
+      ...(source === "serviceTiming" ? { schemaVersion: "c1-service-timing-v1", gatewayJobId: "inf-synthetic-timing" } : {}),
+      startedAt: "2026-01-01T23:00:02.000Z", completedAt: "2026-01-01T23:01:32.500Z"
+    };
+    assert.equal(buildC1DraftRuntimeView(f).timings.serviceGenerationSeconds, 90.5);
+    if (source === "serviceTiming") {
+      delete f.runtime.softwareJobs[0].resultEnvelope.payload.serviceTiming.schemaVersion;
+      assert.equal(buildC1DraftRuntimeView(f).timings.serviceGenerationSeconds, null);
+    }
+  }
+});
+
+test("缺失、非法或倒序时间保持未知，不以当前时间代替已结束的终点", () => {
+  for (const completedAt of [null, undefined, "invalid", "2025-01-01T00:00:00.000Z"]) {
+    const f = overnightResultFixture();
+    const job = f.runtime.softwareJobs[0];
+    job.completedAt = completedAt;
+    job.c1ResultReconciliation.priorOutcome.completedAt = completedAt;
+    job.c1ResultReconciliation.readAttempt.completedAt = completedAt;
+    job.resultEnvelope.payload.serviceTiming = { schemaVersion: "c1-service-timing-v1",
+      startedAt: job.startedAt, completedAt };
+    const view = buildC1DraftRuntimeView(f);
+    assert.deepEqual(Object.values(view.timings), Array(6).fill(null));
+  }
+});
+
+test("首次等待终止的未知结果仍保留等待耗时，总经过只在最终处理结束后提供", () => {
+  const f = overnightResultFixture();
+  const job = f.runtime.softwareJobs[0];
+  job.status = "unknown_outcome"; job.externalRequestState = "unknown_outcome";
+  job.completedAt = job.c1ResultReconciliation.priorOutcome.completedAt;
+  delete job.c1ResultReconciliation;
+  const view = buildC1DraftRuntimeView(f);
+  assert.equal(view.timings.workbenchWaitSeconds, 61);
+  assert.equal(view.timings.totalElapsedSeconds, null);
+  assert.equal(view.timings.serviceGenerationSeconds, null);
+});
+
+test("真正运行中的等待单独计时，读取租约到期后停止显示正在读取", () => {
+  const f = queuedFixture(); const job = f.runtime.softwareJobs[0];
+  Object.assign(job, { status: "waiting_platform", attempt: 1, externalRequestState: "in_flight",
+    startedAt: "2026-01-01T23:00:00.000Z", completedAt: null });
+  f.observedAt = "2026-01-01T23:00:10.250Z";
+  const running = buildC1DraftRuntimeView(f);
+  assert.equal(running.timings.activeWaitSeconds, 10.25);
+  assert.equal(running.timings.workbenchWaitSeconds, null);
+  assert.equal(running.timings.serviceGenerationSeconds, null);
+  Object.assign(job, { status: "unknown_outcome", externalRequestState: "unknown_outcome" });
+  job.c1ResultReconciliation = { priorOutcome: null, readAttempt: { status: "in_flight",
+    startedAt: "2026-01-01T23:00:10.000Z", completedAt: null, expiresAt: "2026-01-01T23:00:20.000Z" } };
+  assert.equal(buildC1DraftRuntimeView(f).timings.activeReadWaitSeconds, 0.25);
+  assert.equal(buildC1DraftRuntimeView(f).timings.resultReadSeconds, null);
+  job.status = "failed";
+  assert.equal(buildC1DraftRuntimeView(f).timings.activeReadWaitSeconds, null);
+  job.status = "unknown_outcome";
+  f.observedAt = "2026-01-01T23:00:20.000Z";
+  assert.equal(buildC1DraftRuntimeView(f).timings.activeReadWaitSeconds, null);
+});
 
 test("一次许可只引用保存请求；配置缺失、旧修订及未确认均拒绝", () => {
   const f = fixture();
@@ -67,6 +190,11 @@ test("失败和未知保留实际耗用，不显示可重新许可；作业缺�
   assert.equal(view.canAuthorize, false); assert.equal(view.automaticRetryAllowed, false);
   assert.deepEqual(view.accounting, accounting); view.accounting.usage.total_tokens = 0;
   assert.equal(accounting.usage.total_tokens, 10);
+  job.failureClass = "C1_AI_GATEWAY_RECEIPT_REJECTED";
+  const rejected = buildC1DraftRuntimeView(f);
+  assert.match(rejected.message, /已返回结果.*未通过.*尚未采用/);
+  assert.equal(rejected.canReadOriginalResult, false);
+  assert.equal(rejected.accounting.usage.total_tokens, 10);
   job.status = "unknown_outcome"; job.externalRequestState = "unknown_outcome";
   assert.equal(buildC1DraftRuntimeView(f).status, "unknown_outcome");
 });
@@ -181,6 +309,40 @@ test("非法当前时钟及未知程序异常不得包装成等待证据", () =>
   }
 });
 
+test("主人事实声明和投影的已知来源错误显示阻塞且不产生许可或副作用", t => {
+  let externalCalls = 0;
+  t.mock.method(globalThis, "fetch", () => { externalCalls += 1; throw new Error("unexpected external request"); });
+  const original = ownerFactsFixture();
+  assert.equal(buildC1DraftRuntimeView(original).status, "awaiting_paid_confirmation");
+  for (const [change, code] of [
+    [plan => { plan.sourceFactsRevision.sourceCandidate.lifecycleV11.ownerProductFactsV1.sourceIdentity.supplierSkuId = "other"; }, "OWNER_PRODUCT_FACTS_RECORD_INVALID"],
+    [plan => { plan.sourceFactsRevision.sourceCandidate.targetStore = "other"; }, "OWNER_PRODUCT_FACTS_SOURCE_MISMATCH"],
+    [plan => { plan.productAttributes.ownerDeclaredFacts[0].fact.value = "changed synthetic fact"; }, "C1_SUPPLIER_FACT_REVISION_OWNER_PROJECTION_CHANGED"],
+    [plan => { delete plan.sourceFactsRevision.sourceCandidate.lifecycleV11.ownerProductFactsV1; }, "C1_SUPPLIER_FACT_REVISION_OWNER_SOURCE_MISMATCH"],
+    [plan => { plan.sourceFactsRevision.sourceCandidate.lifecycleV11.ownerProductFactsV1.confirmedAt = "2099-01-01T00:00:00.000Z"; }, "C1_SUPPLIER_FACT_REVISION_OWNER_TIME_INVALID"]
+  ]) {
+    const f = structuredClone(original); change(f.candidate.lifecycleV11.skuPackage.c1ProductPlan);
+    const before = structuredClone(f), view = buildC1DraftRuntimeView(f);
+    assert.equal(view.status, "source_conflict", code);
+    assert.equal(view.sourceBlockReason, code);
+    assert.equal(view.canAuthorize, false); assert.equal(view.canContinueSaved, false);
+    assert.equal(view.automaticRetryAllowed, false); assert.deepEqual(f, before);
+  }
+  assert.equal(externalCalls, 0);
+});
+
+test("主人事实来源之外的未知异常和伪装成已知码的类型仍原样抛出", () => {
+  for (const error of [new Error("unexpected owner-source failure"),
+    new Error("OWNER_PRODUCT_FACTS_RECORD_INVALID"),
+    new OwnerProductFactsError("OWNER_PRODUCT_FACTS_UNKNOWN_FAILURE"),
+    new ConfirmedSupplierInputError("C1_SUPPLIER_FACT_REVISION_UNEXPECTED"),
+    new TypeError("OWNER_PRODUCT_FACTS_RECORD_INVALID")]) {
+    const f = ownerFactsFixture();
+    Object.defineProperty(f.candidate.lifecycleV11.skuPackage.c1ProductPlan, "sourceFactsRevision", { get() { throw error; } });
+    assert.throws(() => buildC1DraftRuntimeView(f), observed => observed === error);
+  }
+});
+
 test("已知交接配置修复后只提供本地准备动作，当前证据与失败身份必须一致", async () => {
   const f = await createC1KeywordHandoffRetryFixture();
   const candidate = f.document.candidates[0];
@@ -211,6 +373,17 @@ test("已知交接配置修复后只提供本地准备动作，当前证据与�
   }
 });
 
+test("原结果读取只提交当前商品与原任务，旧修订和不可读状态拒绝", () => {
+  const f = queuedFixture();
+  const candidate = { ...f.candidate, c1DraftRuntimeView: { canReadOriginalResult: true,
+    jobRevision: f.candidate.dataRevision, jobId: f.runtime.softwareJobs[0].jobId } };
+  const input = buildC1DraftResultReadInput({ candidate, sourceRevision: candidate.dataRevision });
+  assert.deepEqual(input, { candidateId: candidate.id, expectedRevision: candidate.dataRevision, jobId: f.runtime.softwareJobs[0].jobId });
+  assert.throws(() => buildC1DraftResultReadInput({ candidate, sourceRevision: candidate.dataRevision - 1 }));
+  candidate.c1DraftRuntimeView.canReadOriginalResult = false;
+  assert.throws(() => buildC1DraftResultReadInput({ candidate, sourceRevision: candidate.dataRevision }));
+});
+
 test("实际表单默认不勾选且按钮禁用，失败显示用量而没有再次许可入口", async () => {
   const entry = fileURLToPath(new URL("./c1-paid-form-test-entry.jsx", import.meta.url));
   const component = fileURLToPath(new URL("../src/components/C1PaidDraftPanel.jsx", import.meta.url));
@@ -220,6 +393,7 @@ test("实际表单默认不勾选且按钮禁用，失败显示用量而没有�
       import Panel from ${JSON.stringify(component)};
       export const render = candidate => renderToStaticMarkup(<Panel candidate={candidate} identity={{canAuthorizeC1PaidCall:true}}
         onAuthorize={()=>{throw new Error("render performed write")}} onContinueSaved={()=>{throw new Error("render continued job")}}
+        onReadOriginalResult={()=>{throw new Error("render read original result")}}
         onRetryKeywordHandoff={()=>{throw new Error("render retried handoff")}}/>);` : null
   }], ssr: { noExternal: true }, build: { ssr: true, write: false, rollupOptions: { input: entry, output: { format: "es" } } } });
   const output = built.output.find(item => item.type === "chunk" && item.isEntry);
@@ -232,6 +406,20 @@ test("实际表单默认不勾选且按钮禁用，失败显示用量而没有�
     accounting: { usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 }, charge: { status: "unknown" } } };
   const failed = render(f.candidate);
   assert.match(failed, /输入 7，输出 3，合计 10/); assert.doesNotMatch(failed, /type="checkbox"|确认本件商品的一次文案调用|继续已许可任务/);
+  const stopped = structuredClone(f.candidate);
+  stopped.c1DraftRuntimeView = { status: "unknown_outcome", canReadOriginalResult: true,
+    timings: { workbenchWaitSeconds: 61 }, jobId: "job:original", jobRevision: stopped.dataRevision };
+  const resultRead = render(stopped);
+  assert.match(resultRead, /读取本次文案结果/);
+  assert.match(resultRead, /61 秒/);
+  for (const label of ["工作台首次等待", "服务生成", "本次读取", "总经过", "暂无准确耗时"]) assert.ok(resultRead.includes(label));
+  assert.doesNotMatch(resultRead, /type="checkbox"|确认本件商品的一次文案调用|继续已许可任务|disabled=""/);
+  const overnight = overnightResultFixture();
+  overnight.candidate.c1DraftRuntimeView = buildC1DraftRuntimeView(overnight);
+  const ended = render(overnight.candidate);
+  assert.match(ended, /0.617 秒/); assert.match(ended, /32400.717 秒/);
+  assert.match(ended, /当前处理方：技术维护/); assert.match(ended, /本次处理已结束/);
+  assert.doesNotMatch(ended, /正在执行|正在等待|读取本次文案结果|本次执行记录已用/);
   const queued = queuedFixture(); queued.candidate.c1DraftRuntimeView = buildC1DraftRuntimeView(queued);
   const continuation = render(queued.candidate);
   assert.match(continuation, /继续已许可任务/);

@@ -116,8 +116,8 @@ export function validateProfitModel(model) {
   if (finite(model.recommendedSalePriceRub) && model.recommendedSalePriceRub <= 0) errors.push({ path: "recommendedSalePriceRub", message: "必须大于0" });
   if (finite(model.recommendedSalePriceCny) && model.recommendedSalePriceCny <= 0) errors.push({ path: "recommendedSalePriceCny", message: "必须大于0" });
   if (finite(model.commissionRate) && (model.commissionRate < 0 || model.commissionRate >= 1)) errors.push({ path: "commissionRate", message: "必须在0到1之间" });
-  if (model.commissionMode !== undefined && !["exact", "estimated"].includes(model.commissionMode)) {
-    errors.push({ path: "commissionMode", message: "必须明确为exact或estimated" });
+  if (model.commissionMode !== undefined && !["exact", "estimated", "official_reference"].includes(model.commissionMode)) {
+    errors.push({ path: "commissionMode", message: "必须明确为exact、estimated或official_reference" });
   }
   if (![FORMAL_COMMISSION_CALCULATION_VERSION, PROFIT_CALCULATION_VERSION].includes(model.calculation?.version) && model.commissionMode === "estimated" && model.exactCommissionRequiredAtC !== true) {
     errors.push({ path: "exactCommissionRequiredAtC", message: "估算佣金必须在C阶段补取精确佣金" });
@@ -240,8 +240,9 @@ export function runSkuProfitModel({
   const commissionRate = requireNumber(fees.commissionRate, "平台佣金率", { nonNegative: true });
   if (commissionRate >= 1) throw new Error("B_INPUT_GAP: 平台佣金率必须小于100%");
   const commissionMode = fees.commissionEvidenceMode;
-  if (!["exact", "estimated"].includes(commissionMode)) {
-    throw new Error("B_INPUT_GAP: 佣金证据必须明确为exact或estimated");
+  // official_reference是主人已保存的官方费表版本命中的费率：与exact一样直接进入正式计算。
+  if (!["exact", "estimated", "official_reference"].includes(commissionMode)) {
+    throw new Error("B_INPUT_GAP: 佣金证据必须明确为exact、estimated或official_reference");
   }
   if (commissionMode === "estimated" && fees.estimateAuthorized !== true) {
     throw new Error("B_INPUT_GAP: 估算佣金缺少当前SKU主人授权");

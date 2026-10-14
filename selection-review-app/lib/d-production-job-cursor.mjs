@@ -14,6 +14,9 @@ const steps = ['import_intent', 'import_task_received', 'import_result_observed'
 const checkpointFields = [[], ['taskId'], ['taskId', 'productId', 'merchantSku', 'itemCount', 'status', 'errorCount', 'requestReceiptRef'],
   ['taskId', 'productId', 'merchantSku', 'warehouseId', 'stock'],
   ['taskId', 'productId', 'merchantSku', 'warehouseId', 'updated', 'itemCount', 'errorCount', 'inventoryReceiptRef'], ['observation']];
+// r70 起 import_result_observed 还带 errors（错误明细）。**按可选处理**：
+// 这一改之前落盘的 checkpoint 没有这个字段，把它列成必填会让历史记录整体判冲突。
+const checkpointOptionalFields = [[], [], ['errors'], [], [], []];
 const nullableCount = value => value === null || Number.isSafeInteger(value) && value >= 0;
 const nullableId = value => value === null || positiveId(value);
 const nullableRef = value => value === null || isCanonicalFrozenRef(value);
@@ -91,8 +94,10 @@ export function assertDCheckpointSources(state, request, observedAt, { terminal 
   let previousTime = time(state.attempt.startedAt);
   for (const [index, checkpoint] of state.checkpoints.entries()) {
     requireCondition(object(checkpoint) && checkpoint.kind === steps[index] &&
-      Object.keys(checkpoint).length === checkpointFields[index].length + 2 &&
-      checkpointFields[index].every(field => Object.hasOwn(checkpoint, field)), 'D_JOB_CURSOR_CHECKPOINT_SEQUENCE_CONFLICT');
+      checkpointFields[index].every(field => Object.hasOwn(checkpoint, field)) &&
+      Object.keys(checkpoint).every(field => field === 'kind' || field === 'observedAt' ||
+        checkpointFields[index].includes(field) || checkpointOptionalFields[index].includes(field)) &&
+      Object.keys(checkpoint).length >= checkpointFields[index].length + 2, 'D_JOB_CURSOR_CHECKPOINT_SEQUENCE_CONFLICT');
     const at = time(checkpoint.observedAt);
     requireCondition(at >= previousTime && at <= time(observedAt), 'D_JOB_CURSOR_TIME_CONFLICT'); previousTime = at;
   }

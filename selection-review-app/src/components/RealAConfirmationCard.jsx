@@ -16,6 +16,7 @@ const EVIDENCE_STATUS_LABELS = {
   metadata_only: "只有摘要",
   invalid: "证据无效",
   expired: "已经过期",
+  refresh_due: "到了复查提示时间（非失效、非阻断）",
   scope_mismatch: "适用范围不匹配",
   missing: "尚未准备"
 };
@@ -24,6 +25,14 @@ const CONTEXT_STATUS_LABELS = {
   available: "已确定",
   missing: "待系统确定",
   conflict: "存在冲突"
+};
+
+// AI 整理失败时记下的只有分类键，没有给人看的句子；这里翻成一句人话。
+const AI_ASSIST_FAILURE_TEXT = {
+  "technical_failure.external_dependency": "AI 服务当时连不上",
+  "technical_failure.unknown_outcome": "不确定 AI 那边做完没有",
+  "technical_failure.known_technical_failure": "AI 整理的条件没满足",
+  "exception.output_schema_mismatch": "AI 交回来的格式不对"
 };
 
 function dateTime(value) {
@@ -170,7 +179,8 @@ export default function RealAConfirmationCard({ card, onSubmit, disabled = false
         {sales ? (
           <>
             <span>{sales.title}</span>
-            <span>当前价格 {sales.currentPrice} {sales.currency} · {SELLER_LABELS[sales.sellerType] || sales.sellerType}</span>
+            <span>当前价格 {sales.currentPrice} {sales.currency === "unknown" ? "（币种未知）" : sales.currency} · {SELLER_LABELS[sales.sellerType] || sales.sellerType}</span>
+            {sales.currencyEvidenced === false && sales.currencyGapReason ? <span role="note">{sales.currencyGapReason}</span> : null}
             <span>采集于 {new Date(sales.collectedAt).toLocaleString("zh-CN")} · 身份证据 {sales.sellerIdentityStatus}</span>
           </>
         ) : <span>没有有效销售快照，不能确认进入B。</span>}
@@ -191,11 +201,11 @@ export default function RealAConfirmationCard({ card, onSubmit, disabled = false
           </>
         ) : card.aiAssist?.status === "failed" ? (
           <>
-            <span>AI整理已停止：{card.aiAssist.failure?.message || "技术失败"}</span>
-            <small>商品业务结论未改变；没有换Sol，也没有自动重试。</small>
+            <span>AI整理没做成：{card.aiAssist.failure?.message || AI_ASSIST_FAILURE_TEXT[card.aiAssist.failure?.safeMessageKey] || "技术失败"}</span>
+            <small>它只是参考，不影响确认供货；商品业务结论未改变，没有换模型，也没有自动重试。</small>
           </>
         ) : (
-          <span>{providerEvidence ? '本轮尚无已保存的辅助草稿；请按商品证据核对，模型建议不能替代事实。' : '销售快照保存后由软件调用Terra一次；尚未生成辅助草稿。'}</span>
+          <span>{providerEvidence ? '本轮尚无已保存的辅助草稿；请按商品证据核对，模型建议不能替代事实。' : '读页面不会顺手叫 AI 整理（AI 要花钱）；上面的价格、标题和卖家都是插件直接读到的，不用 AI 也能确认。'}</span>
         )}
       </section>
 

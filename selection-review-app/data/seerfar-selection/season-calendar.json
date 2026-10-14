@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "seerfar-season-calendar-v1",
+  "version": "season-2026-10-10-draft-3",
+  "windows": [
+    { "windowId": "halloween-decor", "label": "万圣节装饰", "prepareFrom": "08-01", "prepareUntil": "10-05", "stores": ["miska"],
+      "categoryPaths": ["装饰和房间内饰", "纪念品和礼品"], "note": "跨境物流约 3 到 6 周，过了 10 月初再上赶不上。" },
+    { "windowId": "new-year-decor-gifts", "label": "新年装饰和礼品", "prepareFrom": "10-01", "prepareUntil": "12-10", "stores": ["miska"],
+      "categoryPaths": ["新年装饰用品", "纪念品和礼品"], "note": null },
+    { "windowId": "valentines-gifts", "label": "2 月 14 日情人节礼品", "prepareFrom": "12-15", "prepareUntil": "01-31", "stores": ["miska"],
+      "categoryPaths": ["纪念品和礼品", "装饰和房间内饰"], "note": null },
+    { "windowId": "womens-day-gifts", "label": "3 月 8 日妇女节礼品", "prepareFrom": "01-05", "prepareUntil": "02-20", "stores": ["miska"],
+      "categoryPaths": ["纪念品和礼品", "服装首饰", "家居香水"], "note": "俄罗斯送女性礼物最大的节日。" },
+    { "windowId": "winter-pet-clothing", "label": "冬季宠物衣服", "prepareFrom": "09-01", "prepareUntil": "12-10", "stores": ["miska"],
+      "categoryPaths": ["宠物用品 > 宠物服装和靴子 > 宠物服装"], "note": "12 月中旬以后再上的冬装赶不上旺季。" },
+    { "windowId": "spring-rain-pet", "label": "春季雨季（宠物雨衣）", "prepareFrom": "02-15", "prepareUntil": "05-15", "stores": ["miska"],
+      "categoryPaths": ["宠物用品 > 宠物服装和靴子 > 宠物服装"], "note": null },
+    { "windowId": "new-year-toys", "label": "新年玩具礼物", "prepareFrom": "10-01", "prepareUntil": "12-10", "stores": ["dandanshu"],
+      "categoryPaths": ["玩具", "积木玩具套装"], "note": "俄罗斯新年是一年里买玩具最多的时候。" },
+    { "windowId": "defender-day-toys", "label": "2 月 23 日祖国保卫者日（男孩玩具、模型）", "prepareFrom": "12-20", "prepareUntil": "02-05", "stores": ["dandanshu"],
+      "categoryPaths": ["拼图， 模型", "积木玩具套装"], "note": null },
+    { "windowId": "childrens-day-toys", "label": "6 月 1 日儿童节", "prepareFrom": "04-01", "prepareUntil": "05-20", "stores": ["dandanshu"],
+      "categoryPaths": ["玩具", "儿童创意活动与发展"], "note": null },
+    { "windowId": "back-to-school", "label": "9 月 1 日开学（手工、益智）", "prepareFrom": "07-01", "prepareUntil": "08-20", "stores": ["dandanshu"],
+      "categoryPaths": ["儿童创意活动与发展", "教学玩具"], "note": null }
+  ]
+}

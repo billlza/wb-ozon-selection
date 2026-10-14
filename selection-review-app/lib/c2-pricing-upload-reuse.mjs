@@ -1,11 +1,11 @@
-import { resolveC2FinalConfirmationMediaContract } from "./c2-asset-lifecycle.mjs";
+import { resolveC2FinalConfirmationTargetContract } from "./c2-asset-lifecycle.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { assertC1PricingResultReuse } from "./c1-pricing-result-reuse.mjs";
 import { C2_UPLOAD_DRAFT_VERSION, MAX_UPLOAD_RECORDS, c2DraftError, settleC2Upload, assertCurrentC2UploadDraft, saveC2UploadSelection } from "./c2-upload-draft.mjs";
 
-function mediaRules(requirements) {
-  const { sourceDataRevision, sourceC1Fingerprint, requirementsFingerprint, ...rules } = requirements;
-  return rules;
+function targetBinding(targetContext) {
+  const { sourceDataRevision, sourceC1Fingerprint, ...binding } = targetContext;
+  return binding;
 }
 
 // Rebind only a recorded pricing revision; files remain in the existing local asset store.
@@ -28,14 +28,14 @@ export function rebaseC2UploadDraftAfterPricing(candidate, { historyRevisionId, 
       old.sourceSkuRevision !== (previous.c2FinalAssets?.status === "completed"
         ? previous.c2FinalAssets.productionAuthorizationPreparation?.sourceDataRevision : previous.dataRevision) ||
       old.sourceC1Fingerprint !== previous.c2FinalAssets?.softwareState?.sourceC1Fingerprint ||
-      old.requirementsFingerprint !== previous.c2FinalAssets?.mediaRequirements?.requirementsFingerprint ||
-      !previous.c2FinalAssets?.mediaRequirements || !sku.c2FinalAssets?.mediaRequirements ||
-      !isDeepStrictEqual(mediaRules(previous.c2FinalAssets.mediaRequirements), mediaRules(sku.c2FinalAssets.mediaRequirements)) ||
+      old.schemaEvidenceRef !== previous.c2FinalAssets?.targetContext?.schemaEvidenceRef ||
+      !previous.c2FinalAssets?.targetContext || !sku.c2FinalAssets?.targetContext ||
+      !isDeepStrictEqual(targetBinding(previous.c2FinalAssets.targetContext), targetBinding(sku.c2FinalAssets.targetContext)) ||
       !isDeepStrictEqual(record.sourcePlan, previous.c1ProductPlan?.draftOnlySeo?.pricingReuseRecord?.sourcePlan ?? previous.c1ProductPlan)) {
-    throw c2DraftError("c2_upload_rebase_source_invalid", "旧素材清单、SKU、已复用C1或媒体要求不一致");
+    throw c2DraftError("c2_upload_rebase_source_invalid", "旧素材清单、SKU、已复用C1或目标绑定不一致");
   }
-  resolveC2FinalConfirmationMediaContract(previous);
-  resolveC2FinalConfirmationMediaContract(sku);
+  resolveC2FinalConfirmationTargetContract(previous);
+  resolveC2FinalConfirmationTargetContract(sku);
   assertC1PricingResultReuse({ plan: sku.c1ProductPlan, resultSkuRevision: record.resultSkuRevision });
   if (!Array.isArray(old.uploads) || old.uploads.length > MAX_UPLOAD_RECORDS || !Array.isArray(old.selection) ||
       new Set(old.uploads.map(upload => upload.uploadId)).size !== old.uploads.length ||

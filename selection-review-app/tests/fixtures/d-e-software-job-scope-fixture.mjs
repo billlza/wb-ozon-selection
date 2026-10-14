@@ -7,8 +7,8 @@ import { runPersistedDExecution } from "../../lib/d-e-software-integration.mjs";
 export const DE_SCOPE_OBSERVED_AT = "2026-08-22T07:30:00.000Z";
 
 /** Entirely synthetic: exercise the existing persisted D writer with explicit synthetic completion DTOs; not a real adapter integration. */
-export async function deSoftwareJobScopeFixture() {
-  const { fixture, plan, preflight, prepared, currentProductionBinding } = await preparedFixture();
+export async function deSoftwareJobScopeFixture(options = {}) {
+  const { fixture, plan, preflight, prepared, currentProductionBinding } = await preparedFixture(options);
   const sku = structuredClone(fixture.skuPackage);
   const initialCandidate = { id: fixture.candidateId, dataRevision: fixture.candidateRevision,
     targetStore: sku.targetStore, storeRef: structuredClone(sku.g1Identity.storeRef), lifecycleV11: { skuPackage: sku } };

@@ -12,28 +12,29 @@ import {
 
 test("执行器读取固定钥匙串秘密，状态检查只验证条目存在且不读取秘密", async () => {
   let seen;
-  const secret = await readSeerfarKeychainSecret({ execFileImpl: async (...args) => { seen = args; return { stdout: "test-secret\n" }; } });
+  const secret = await readSeerfarKeychainSecret({ platform: "darwin", execFileImpl: async (...args) => { seen = args; return { stdout: "test-secret\n" }; } });
   assert.equal(secret, "test-secret");
   assert.equal(seen[0], "/usr/bin/security");
   assert.deepEqual(seen[1], ["find-generic-password", "-w", "-s", SEERFAR_KEYCHAIN_SERVICE, "-a", SEERFAR_KEYCHAIN_ACCOUNT]);
   let inspectionArgs;
-  const entryExists = await inspectSeerfarKeychainEntry({ execFileImpl: async (...args) => { inspectionArgs = args; return { stdout: "metadata only" }; } });
+  const entryExists = await inspectSeerfarKeychainEntry({ platform: "darwin", execFileImpl: async (...args) => { inspectionArgs = args; return { stdout: "metadata only" }; } });
   assert.equal(entryExists, true);
   assert.equal(inspectionArgs[0], "/usr/bin/security");
   assert.deepEqual(inspectionArgs[1], ["find-generic-password", "-s", SEERFAR_KEYCHAIN_SERVICE, "-a", SEERFAR_KEYCHAIN_ACCOUNT]);
   assert.equal(inspectionArgs[1].includes("-w"), false);
-  const status = await inspectSeerfarRuntimeConfiguration({ keychainEntryReader: async () => true });
+  const status = await inspectSeerfarRuntimeConfiguration({ keychainEntryReader: async () => true, platform: "darwin" });
+  assert.equal(status.credentialLocation, "macos_keychain");
   assert.equal(status.configured, true);
   assert.equal(JSON.stringify(status).includes("test-secret"), false);
   assert.equal(status.secretExposed, false);
 });
 
 test("钥匙串确定缺项与拒绝分开，未知异常不能伪装未配置", async () => {
-  await assert.rejects(()=>readSeerfarKeychainSecret({execFileImpl:async()=>{throw Object.assign(new Error('sensitive stderr'),{code:44});}}),error=>error.code==='credential_missing'&&!error.message.includes('sensitive'));
-  assert.equal(await inspectSeerfarKeychainEntry({execFileImpl:async()=>{throw {code:44};}}),false);
-  await assert.rejects(()=>inspectSeerfarKeychainEntry({execFileImpl:async()=>{throw {code:51};}}),error=>error.code==='credential_access_denied');
+  await assert.rejects(()=>readSeerfarKeychainSecret({platform:"darwin",execFileImpl:async()=>{throw Object.assign(new Error('sensitive stderr'),{code:44});}}),error=>error.code==='credential_missing'&&!error.message.includes('sensitive'));
+  assert.equal(await inspectSeerfarKeychainEntry({platform:"darwin",execFileImpl:async()=>{throw {code:44};}}),false);
+  await assert.rejects(()=>inspectSeerfarKeychainEntry({platform:"darwin",execFileImpl:async()=>{throw {code:51};}}),error=>error.code==='credential_access_denied');
   const failure=new Error('implementation defect');
-  await assert.rejects(()=>readSeerfarKeychainSecret({execFileImpl:async()=>{throw failure;}}),error=>error===failure);
+  await assert.rejects(()=>readSeerfarKeychainSecret({platform:"darwin",execFileImpl:async()=>{throw failure;}}),error=>error===failure);
   await assert.rejects(()=>inspectSeerfarRuntimeConfiguration({keychainEntryReader:async()=>{throw failure;}}),error=>error===failure);
 });
 

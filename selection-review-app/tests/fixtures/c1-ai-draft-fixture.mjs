@@ -46,7 +46,7 @@ export function nonTrainSkuPackage({ candidateId = "GENERIC-SINK-001", supplierS
     contractVersion: "g1-c1-domain-contract-v1",
     revisionRefs: { sourceRevision: 2, resultRevision: 3 },
     frozenInputRefs: { candidateId, skuPackageId, platform: "ozon", storeRef: storeRef.stableStoreId, sourceRevision: 2, salesSnapshotId: "sales:fixture:sink-organizer", selectedSupplySnapshotId: FACT_SOURCE, ownerSupplyConfirmationRef: `${FACT_SOURCE}#ownerSupplyConfirmation`, profitModelVersion: "profit-v1", schemaSnapshotRef: SCHEMA_SOURCE },
-    schemaSnapshotRef: SCHEMA_SOURCE, draftOnlySeo: null, keywordEvidenceRefs: [], mediaRequirements: null, unknownManifest: [],
+    schemaSnapshotRef: SCHEMA_SOURCE, draftOnlySeo: null, keywordEvidenceRefs: [], unknownManifest: [],
     c1PlanId: `c1:${skuPackageId}:profit-v1`,
     status: "facts_checked",
     createdAt: CREATED_AT,

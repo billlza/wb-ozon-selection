@@ -64,7 +64,7 @@ function module(definition) {
 }
 
 export const THREE_STORE_MAP_AREAS = Object.freeze([
-  area("1", "运行底座与状态保存", "谁保存状态、修订号和本地运行边界。"),
+  area("1", "运行底座与状态保存", "谁保存状态、修订号、本地运行边界，以及主人每天真正打开的入口。"),
   area("2", "A：候选、市场与供应确认", "把一个方向和一个准确供应 SKU 变成可审查的输入。"),
   area("3", "B：利润与自动 C1 交接", "用冻结输入做具体 SKU 利润判断，并把通过项交给 C1。"),
   area("4", "C1：商品事实、Schema、SEO 与关键词", "准备上架前的商品事实和文字证据。"),
@@ -105,14 +105,48 @@ export const THREE_STORE_MAP_REGISTRY = Object.freeze([
     ] }
   }),
   module({
+    id: "1.2",
+    areaId: "1",
+    title: "主人每天打开的选品台入口",
+    plainDescription: "主人打开工作台后默认停在选品台：一屏是待你决定的商品，旁边是进行中和需要你处理；以前那些页面整体收进“维护”。按“不要”只保存一个固定理由，不创建任何东西，也不花点数。",
+    inputs: ["本店已保存的查询结果与估算", "本店候选的生命周期状态", "主人的要 / 不要 / 稍后判断"],
+    outputs: ["选品台、进行中、需要你处理三页视图", "保存在 aDiscoveryDeclines 里的不做理由"],
+    upstream: ["1.1"],
+    downstream: ["2.3", "2.5"],
+    executionStatus: "connected",
+    statusReason: "工作台默认视图就是选品台，三页与“维护”入口在同一套导航里；不做理由经 /api/product-discovery/decline 落到本地状态。这只说明入口已接通，不代表某一天的判断结果。",
+    connection: { codePresent: true, uiConnected: true, executionConnected: true },
+    actualChain: "主人登录 → 选品台默认页 → 要 / 不要 / 稍后 → 选中导入或不做理由写入本地状态",
+    ownerAction: "日常判断都在这一页完成；旧页面只在维护时从“维护”里打开。",
+    codexRule: "Codex 不替主人点要或不要，也不能补写不做理由。",
+    failureAndUnknown: "读取本店查询结果失败时显示失败原因，不能显示成“本店没有商品”。",
+    breakpoint: "不做理由目前只是被保存下来的判断素材，还没有任何软件按它预筛下一轮。",
+    nextStep: "先保证理由取值固定、可回读，再谈按理由预筛。",
+    codeRefs: [
+      ref("lib/a-discovery-runtime-services.mjs", "declineProduct", "不做理由持久化"),
+      ref("src/selectionDeskView.js", "boardColumns", "选品台三页视图算法"),
+      ref("server.mjs", "/api/product-discovery", "选品台读取与判断入口")
+    ],
+    uiRefs: [
+      ref("src/components/SelectionDesk.jsx", "不要", "选品台待你决定"),
+      ref("src/components/PipelineBoard.jsx", "PipelineBoard", "进行中"),
+      ref("src/components/OwnerInbox.jsx", "OwnerInbox", "需要你处理"),
+      ref("src/App.jsx", "MAINTENANCE_PAGES", "维护里的旧页面入口")
+    ],
+    testEvidence: { refs: [
+      ref("tests/selection-desk-view.test.mjs", "test(", "选品台视图算法测试"),
+      ref("tests/selection-desk-ui.test.mjs", "test(", "选品台 UI 契约测试")
+    ] }
+  }),
+  module({
     id: "2.1",
     areaId: "2",
     title: "确认一个可计算的供应方案",
     plainDescription: "把销售快照、精确 1688 链接、供应 SKU、采购成本、重量和尺寸放进同一张主人确认卡；没有这些输入就不能进入利润计算。",
     inputs: ["已保存的销售快照", "供应链接、SKU、价格、运费、重量、尺寸", "主人确认"],
     outputs: ["已确认供应 SKU", "冻结的 A 阶段证据和生命周期包"],
-    upstream: ["1.1"],
-    downstream: ["2.2", "3.1"],
+    upstream: ["1.1", "2.3", "2.5"],
+    downstream: ["2.2", "2.6", "3.1"],
     executionStatus: "connected",
     statusReason: "主人确认卡、服务端校验和 A→B/C1 原子交接均有代码与 UI 接线；这里只说明本地软件链，不代表外部证据永远可取。",
     connection: { codePresent: true, uiConnected: true, executionConnected: true },
@@ -163,13 +197,184 @@ export const THREE_STORE_MAP_REGISTRY = Object.freeze([
     ] }
   }),
   module({
+    id: "2.3",
+    areaId: "2",
+    title: "按一次授权向正式接口查一轮市场",
+    plainDescription: "主人在选品台确认一轮方向后，软件按已保存的计划向 Seerfar 正式接口查一次类目热销榜，把回执写成本轮市场结果；主人点“要”时再把那一件导入候选。",
+    inputs: ["已保存的发现计划与连接绑定", "主人一次确认的本轮授权", "正式接口回执与点数额度"],
+    outputs: ["版本化市场结果（含重量、体积、尺寸）", "主人选中后导入的候选，或明确的失败层"],
+    upstream: ["1.2"],
+    downstream: ["2.1", "2.4", "2.5", "8.1"],
+    executionStatus: "connected",
+    statusReason: "创建、授权、续跑、选中导入都走持久化作业、worker 租约与回执校验，并有服务端路由和选品台入口；主人已于 2026-09-10 用这条链路跑完真实轮次并导入候选。本条只说明软件链，不代表任何店铺事实。",
+    connection: { codePresent: true, uiConnected: true, executionConnected: true },
+    actualChain: "选品台确认一轮 → 创建批次 → 授权并执行作业 → 正式接口回执 → 市场结果 → 选中导入候选",
+    ownerAction: "每一轮都要主人确认；点数按轮消耗，软件不会自己加轮。",
+    codexRule: "Codex 不能代替正式接口回执，也不能补写市场结果。",
+    failureAndUnknown: "额度、权限、超时或解析失败都保存为技术失败层，不能写成“这一轮没有商品”。",
+    breakpoint: "每轮真实消耗点数额度；只有本轮全部请求成功才导入，单请求失败的批次会停在原地等主人决定。",
+    nextStep: "把点数余额与失败层持续显示在选品台，减少主人反复确认。",
+    codeRefs: [
+      ref("lib/a-discovery-runtime-services.mjs", "createADiscoveryRuntimeServices", "发现作业运行时"),
+      ref("lib/seerfar-discovery-software-runner.mjs", "runSeerfarDiscoverySoftwareJob", "一次性发现作业执行"),
+      ref("lib/a-discovery-candidate-import.mjs", "importSelectedProduct", "选中商品导入候选"),
+      ref("lib/seerfar-discovery-contract.mjs", "SEERFAR_MARKET_RESULT_SCHEMA_VERSION", "市场结果 v3 契约"),
+      ref("lib/seerfar-open-api-transport.mjs", "createSeerfarOpenApiTransport", "正式接口传输层"),
+      ref("server.mjs", "/api/product-discovery", "发现计划与选中入口")
+    ],
+    uiRefs: [
+      ref("src/components/SelectionDesk.jsx", "找一轮新品", "选品台开一轮"),
+      ref("src/components/ProductDiscoveryCard.jsx", "ProductDiscoveryCard", "维护里的软件找商品页")
+    ],
+    testEvidence: { refs: [
+      ref("tests/a-discovery-runtime-services.test.mjs", "test(", "发现运行时测试"),
+      ref("tests/a-discovery-candidate-import.test.mjs", "test(", "候选导入测试"),
+      ref("tests/seerfar-discovery-contract.test.mjs", "test(", "发现契约与市场结果测试")
+    ] }
+  }),
+  module({
+    id: "2.4",
+    areaId: "2",
+    title: "把本轮标题翻成中文，只用于展示",
+    plainDescription: "把本轮市场结果里的原始标题送到本机 AI 网关翻成中文，并排显示在原标题旁边；它不覆盖任何已保存字段，也不进入商品文案。",
+    inputs: ["本轮已保存的市场结果标题", "本机 AI 网关地址"],
+    outputs: ["按商品保存的中文展示标题", "翻译失败层"],
+    upstream: ["2.3"],
+    downstream: ["1.2"],
+    executionStatus: "connected",
+    statusReason: "翻译用例、网关客户端、保存结构和 /api/product-discovery/translate 都已接线，选品台有“翻译标题”入口，网关地址默认指向本机；网关进程当下是否在跑属于运行事实。",
+    connection: { codePresent: true, uiConnected: true, executionConnected: true },
+    actualChain: "市场结果标题 → 本机 AI 网关任务 → 中文展示标题 → 选品台与原标题并列展示",
+    ownerAction: "主人按需点一次“翻译标题”；不翻译不影响其他判断。",
+    codexRule: "Codex 不做翻译，也不能把聊天译文写进任何商品字段。",
+    failureAndUnknown: "网关未接入返回明确的未配置回应，网关失败保存失败层；两种情况都不改动原标题。",
+    breakpoint: "只是展示层：译文不参与利润、选品或上架判断，也不是 C1 文案来源。",
+    nextStep: "保持展示专用；将来若要进入商品文案，必须走 C1 的正式草稿门。",
+    codeRefs: [
+      ref("lib/discovery-title-translation.mjs", "createDiscoveryTitleTranslator", "网关翻译客户端"),
+      ref("lib/discovery-title-translation-store.mjs", "createADiscoveryTitleTranslationUseCase", "翻译用例与保存"),
+      ref("server.mjs", "/api/product-discovery/translate", "标题翻译入口")
+    ],
+    uiRefs: [ref("src/components/SelectionDesk.jsx", "翻译标题", "选品台翻译入口")],
+    testEvidence: { refs: [
+      ref("tests/discovery-title-translation.test.mjs", "test(", "标题翻译测试")
+    ] }
+  }),
+  module({
+    id: "2.5",
+    areaId: "2",
+    title: "算 A 阶段采购上限，排除预估负利润",
+    plainDescription: "用官方佣金表、官方汇率和货代运费表，给本轮每件商品算一个到手总价上限和中值利润；预估负利润的商品直接移出可选池，主人点“要”也会被拒绝。",
+    inputs: ["本轮市场结果的售价、重量、体积、尺寸", "官方佣金表、官方汇率与货代运费表", "本店利润规则"],
+    outputs: ["按商品保存的估算记录与缺口", "可选 / 资料不全 / 预估负利润三种归类"],
+    upstream: ["2.3"],
+    downstream: ["1.2", "2.1"],
+    executionStatus: "connected",
+    statusReason: "纯算法、用例、/api/product-discovery/estimate 与选品台“算利润区间”都已接线，官方读取器由服务端注入；选中时对预估负利润直接拒绝（ESTIMATE_EXCLUDED）。",
+    connection: { codePresent: true, uiConnected: true, executionConnected: true },
+    actualChain: "市场结果 → 官方佣金 / 汇率 / 运费读取器 → 估算记录 → 选品台展示并过滤可选池",
+    ownerAction: "主人可按轮点一次估算；数字不全时显示缺口，不猜数。",
+    codexRule: "Codex 不能替换任何官方读数，也不能替商品补齐缺口。",
+    failureAndUnknown: "读取器缺配置或商品缺字段都记成缺口并归为“资料不全”，不按市场行情推算。",
+    breakpoint: "包装费仍是每单固定假设并写进每条记录，真实包装成本要等 B 阶段实测；这是 A 阶段参考上限，不是正式利润结论。",
+    nextStep: "B 阶段实测包装与实际运费后，用同一批记录回看估算偏差。",
+    codeRefs: [
+      ref("lib/a-discovery-estimate.mjs", "estimateDiscoveredProduct", "采购上限纯算法"),
+      ref("lib/a-discovery-estimate-store.mjs", "createADiscoveryEstimateUseCase", "估算用例与保存"),
+      ref("lib/ozon-commission-reference-reader.mjs", "readOzonCommissionReference", "官方佣金读取"),
+      ref("lib/official-fx-reader.mjs", "readCurrentCbrExchangeRate", "官方汇率读取"),
+      ref("lib/guoo-tariff-reader.mjs", "readGuooTariffCatalog", "货代运费表读取"),
+      ref("server.mjs", "/api/product-discovery/estimate", "估算入口")
+    ],
+    uiRefs: [ref("src/components/SelectionDesk.jsx", "算利润区间", "选品台估算入口")],
+    testEvidence: { refs: [
+      ref("tests/a-discovery-estimate.test.mjs", "test(", "采购上限算法测试"),
+      ref("tests/a-discovery-estimate-store.test.mjs", "test(", "估算用例与排除规则测试")
+    ] }
+  }),
+  module({
+    id: "2.6",
+    areaId: "2",
+    title: "用 1688 图搜找同款供应",
+    plainDescription: "为已确认的候选按主图找 1688 同款供应，作为主人核实供应方案的辅助；当前页面契约还没有配置，准备度固定显示“未配置”。",
+    inputs: ["已保存的候选与其冻结主图", "未来需要：已验证的 1688 图搜页面契约与浏览器 Worker"],
+    outputs: ["当前只有准备度与阻断码", "未来需要：可核实的同款供应线索"],
+    upstream: ["2.1"],
+    downstream: ["2.2"],
+    executionStatus: "code_not_connected",
+    statusReason: "契约、作业执行器、准备度用例和服务端入口都在，但页面契约与浏览器 Worker 均未核验，准备度只返回未配置，授权入口不开放。",
+    connection: { codePresent: true, uiConnected: true, executionConnected: false },
+    actualChain: "候选主图 → 准备度检查 → 当前一律阻断（页面契约未配置）",
+    ownerAction: "图搜结果即便将来可用，也仍要主人核实同款、规格、起订量和单件成本。",
+    codexRule: "Codex 不能用临时浏览器操作代替正式图搜作业。",
+    failureAndUnknown: "阻断码必须原样显示；不能把“未配置”显示成“没有同款”。",
+    breakpoint: "PAGE_CONTRACT_UNCONFIGURED：缺已验证的页面契约与受控浏览器 Worker，所以不能授权执行。",
+    nextStep: "先核验页面契约与登录态 Worker 能力，再开放一次性授权与回执保存。",
+    codeRefs: [
+      ref("lib/a-supplier-image-search-runtime-services.mjs", "supplierImageSearchAvailability", "图搜准备度"),
+      ref("lib/a-supplier-image-search-contract.mjs", "assertASupplierImageSearchScope", "图搜作业契约"),
+      ref("server.mjs", "imageSearchRoute", "图搜准备与授权入口")
+    ],
+    uiRefs: [ref("src/components/CandidateDetail.jsx", "supplierImageSearchPreparation", "候选详情里的图搜准备度")],
+    testEvidence: { refs: [
+      ref("tests/a-supplier-image-search-runtime-services.test.mjs", "test(", "图搜准备度测试"),
+      ref("tests/a-supplier-image-search-api.test.mjs", "test(", "图搜入口边界测试")
+    ] }
+  }),
+  module({
+    id: "2.7",
+    areaId: "2",
+    title: "Seerfar 会员网页发现路线",
+    plainDescription: "另一条不花接口点数的发现路线：主人自己的浏览器跑会员站搜索，扩展抓下页面返回，由契约转成严格市场商品。当前工程里只有这份契约。",
+    inputs: ["未来需要：主人本机登录态与扩展采集", "未来需要：一次受控的搜索请求声明"],
+    outputs: ["当前只有契约校验能力", "未来需要：可导入的严格市场结果"],
+    upstream: [],
+    downstream: [],
+    executionStatus: "code_not_connected",
+    statusReason: "只有契约与其测试；没有作业、没有服务端路由、没有导入接线，也没有页面入口，不能与正式接口路线混为一谈。",
+    connection: { codePresent: true, uiConnected: false, executionConnected: false },
+    actualChain: "尚未接线；契约只能校验别人交来的原始记录",
+    ownerAction: "当前不提供入口；主人无需操作。",
+    codexRule: "Codex 不能用聊天里的页面观察冒充网页发现结果。",
+    failureAndUnknown: "契约遇到未知字段一律失败关闭，不做宽松解析。",
+    breakpoint: "缺扩展采集、作业与导入接线；这条路线还不能产生任何候选。",
+    nextStep: "先确认是否真的需要第二条发现路线，再决定是否补作业与导入。",
+    codeRefs: [ref("lib/seerfar-web-discovery-contract.mjs", "buildSeerfarWebDiscoveryResult", "会员网页发现契约")],
+    uiRefs: [],
+    testEvidence: { refs: [
+      ref("tests/seerfar-web-discovery-contract.test.mjs", "test(", "会员网页契约测试")
+    ] }
+  }),
+  module({
+    id: "2.8",
+    areaId: "2",
+    title: "AI 选品判断层",
+    plainDescription: "将来让软件按主人历史的“要”和不做理由，先替主人过一遍本轮商品。现在没有任何实现，不做理由只是被保存下来的素材。",
+    inputs: ["未来需要：已保存的不做理由与选中记录", "未来需要：可解释的预筛规则"],
+    outputs: ["未来需要：可解释、可复核的预筛结果"],
+    upstream: ["1.2"],
+    downstream: [],
+    executionStatus: "not_implemented",
+    statusReason: "工程里没有该判断层的代码、路由或入口；不能因为已经在保存理由就说它已经在过滤。",
+    connection: { codePresent: false, uiConnected: false, executionConnected: false },
+    actualChain: "尚未建立正式链路",
+    ownerAction: "当前每一件都由主人自己判断。",
+    codexRule: "Codex 的聊天判断不是选品层，不能替主人筛商品。",
+    failureAndUnknown: "未实现时必须显示“尚未实现”，不能显示成已按理由预筛。",
+    breakpoint: "尚未开始；样本量、规则与人工复核门都还没有定义。",
+    nextStep: "先积累足够的真实理由样本，再定义可解释的预筛规则与复核门。",
+    codeRefs: [],
+    uiRefs: [],
+    testEvidence: { refs: [] }
+  }),
+  module({
     id: "3.1",
     areaId: "3",
     title: "算具体 SKU 的利润，并自动交给 C1",
     plainDescription: "只使用 A 阶段已经确认的供应 SKU 和证据，算该 SKU 是否达到利润门槛；通过后由软件原子创建 C1 输入，而不是让人再点一次“开始上架”。",
     inputs: ["已确认供应 SKU", "销售、佣金、物流和成本证据", "当前利润规则"],
     outputs: ["利润结论和计算依据", "C1 的冻结输入或明确证据缺口"],
-    upstream: ["2.1", "2.2"],
+    upstream: ["2.1", "2.2", "3.2"],
     downstream: ["4.1"],
     executionStatus: "connected",
     statusReason: "利润模型和 A→B→C1 原子交接已有服务端实现与今日选品评审展示；是否能得到精确利润仍取决于输入证据是否齐全。",
@@ -189,6 +394,35 @@ export const THREE_STORE_MAP_REGISTRY = Object.freeze([
     testEvidence: { refs: [
       ref("tests/profit-model.test.mjs", "test(", "利润模型测试"),
       ref("tests/real-a-b-c1-api.test.mjs", "test(", "A/B/C1 API 交接测试")
+    ] }
+  }),
+  module({
+    id: "3.2",
+    areaId: "3",
+    title: "读官方佣金参考表",
+    plainDescription: "把本地保存的 Ozon 官方费表按“成交价档 + 类型名称”读成佣金率，并带上版本与来源指纹。A 阶段估算已经在用；B 阶段只在精确佣金取不到时把它当回退来源。",
+    inputs: ["本地官方费表文件与当前版本状态", "A 阶段已冻结的成交价与类型名称"],
+    outputs: ["带版本与来源指纹的佣金率", "明确的缺口码，而不是旧值"],
+    upstream: ["2.5"],
+    downstream: ["3.1"],
+    executionStatus: "code_not_connected",
+    statusReason: "读取器、版本状态校验、按环境注入的费表配置以及 B 阶段回退分支都在；但 B 的官方来源目前仍因缺少冻结成交价记成缺口，随后回到主人授权估算路径，所以它还不是 B 的正式佣金证据来源。",
+    connection: { codePresent: true, uiConnected: true, executionConnected: false },
+    actualChain: "本地官方费表 → 版本状态校验 → 佣金率与来源指纹 → A 估算已在用 / B 仍回退",
+    ownerAction: "费表换版时由主人更新版本状态；不能让软件自己接受新文件。",
+    codexRule: "Codex 不能手抄佣金率，也不能替换版本状态。",
+    failureAndUnknown: "版本不符、已作废或字段不全时返回缺口，绝不返回上一版数值。",
+    breakpoint: "OFFICIAL_TABLE_PRICE_MISSING：首轮 A 确认还没冻结建议成交价，B 取不到价格档，只能回退到主人授权估算。",
+    nextStep: "在 A 确认卡里冻结建议成交价与类型名称，再让 B 用官方来源出正式佣金证据。",
+    codeRefs: [
+      ref("lib/ozon-commission-reference-reader.mjs", "readOzonCommissionReference", "官方费表读取与版本校验"),
+      ref("lib/lifecycle-b-real-evidence-readers.mjs", "official_reference", "B 阶段官方来源与回退"),
+      ref("lib/runtime-configuration.mjs", "SELECTION_REVIEW_OZON_COMMISSION_REFERENCE_JSON", "费表与版本状态配置")
+    ],
+    uiRefs: [ref("src/components/SelectionDesk.jsx", "佣金", "选品台展示的佣金率")],
+    testEvidence: { refs: [
+      ref("tests/ozon-commission-reference-reader.test.mjs", "test(", "官方费表读取测试"),
+      ref("tests/lifecycle-b-real-evidence-readers.test.mjs", "test(", "B 阶段证据读取与回退测试")
     ] }
   }),
   module({
@@ -323,7 +557,7 @@ export const THREE_STORE_MAP_REGISTRY = Object.freeze([
     ownerAction: "主人只能对当前精确范围授权；结果未知时必须先对账，不能直接重发。",
     codexRule: "Codex 只能诊断未知异常；不能代替正式适配器执行写店。",
     failureAndUnknown: "请求已发出但无法确认终态时必须保存 unknown_outcome，禁止自动重试或假定未写入。",
-    breakpoint: "当前 d-e 软件视图明确 canExecutePlatformWrite=false，服务端没有正式 Seller API 写入路由。",
+    breakpoint: "当前 d-e 软件视图明确 canExecutePlatformWrite=false；服务端只把 d_production_execution 当作“已有任务”的判断条件，没有任何路由能创建这类执行作业。",
     nextStep: "接入有幂等键的一次性 D 执行路由、受控适配器和回执保存，再做独立平台回读。",
     codeRefs: [
       ref("lib/d-e-software-integration.mjs", "buildDESoftwareIntegrationView", "D/E 准备度视图"),
@@ -347,7 +581,7 @@ export const THREE_STORE_MAP_REGISTRY = Object.freeze([
     upstream: ["6.1"],
     downstream: ["7.2"],
     executionStatus: "not_implemented",
-    statusReason: "当前项目没有 WB 正式写店的运行实现；不能把现有候选 UI 或通用授权对象说成 WB 已接通。",
+    statusReason: "当前项目没有 WB 正式写店的运行实现，跨平台铺货（把 Ozon 已上架商品同步到 WB）也尚未开始；工程里与 WB 有关的只有一份佣金费表读取器。不能把现有候选 UI 或通用授权对象说成 WB 已接通。",
     connection: { codePresent: false, uiConnected: false, executionConnected: false },
     actualChain: "尚未建立正式链路",
     ownerAction: "未来仍需独立的精确 WB 生产确认。",
@@ -369,22 +603,24 @@ export const THREE_STORE_MAP_REGISTRY = Object.freeze([
     upstream: ["6.2"],
     downstream: ["8.1"],
     executionStatus: "code_not_connected",
-    statusReason: "E 阶段规则、DTO 和读回验证函数已有代码；当前服务端仍接受调用方提供的观察结果，未接通独立 Ozon 平台读取者。",
+    statusReason: "E 阶段规则、DTO、读回验证函数和一次性回读运行时都已有代码，服务端也已拒收浏览器提交的平台观察，只接受引用已保存来源记录；但独立读取者仍以空实现注入，任何请求都停在“可信回读尚未接通”。",
     connection: { codePresent: true, uiConnected: true, executionConnected: false },
     actualChain: "平台商品身份 → 独立平台读取 → E 验证规则 → EVerificationRecord",
     ownerAction: "除非发生异常或需要商业判断，主人不应手工替代独立回读。",
     codexRule: "Codex 不能把聊天观察、请求成功或本地页面变化当作 E 回读。",
     failureAndUnknown: "未能独立读取时必须保持未验证或 unknown_outcome，不能显示“已上架”。",
-    breakpoint: "浏览器观察入口已关闭；可信独立读取未接线，当前请求503且不改状态。",
+    breakpoint: "浏览器观察入口已关闭；可信独立读取未接线，当前请求503且不改状态（读取者以 readPlatform: null 注入）。",
     nextStep: "接入店铺隔离的只读 Ozon API 读取者，并把结果与 D 幂等键对账。",
     codeRefs: [
       ref("lib/e-stage-readback.mjs", "verifySystemCreatedListing", "E 阶段验证规则"),
-      ref("server.mjs", "lifecycleEReadbackRoute", "现有 E 回读入口"),
+      ref("lib/e-readback-software-use-case.mjs", "createSystemEReadbackSoftwareRuntime", "一次性回读运行时"),
+      ref("server.mjs", "readPlatform: null", "当前未注入独立读取者"),
       ref("lib/ozon-seller-api-de-adapter.mjs", "inspectAdapterCapabilities", "Ozon D/E 适配器")
     ],
     uiRefs: [ref("src/components/DESoftwareRuntimeCard.jsx", "DESoftwareRuntimeCard", "D/E 状态展示")],
     testEvidence: { refs: [
       ref("tests/e-stage-readback.test.mjs", "test(", "E 验证规则测试"),
+      ref("tests/e-readback-software-use-case.test.mjs", "test(", "回读运行时测试"),
       ref("tests/ozon-seller-api-de-adapter.test.mjs", "test(", "Ozon D/E 适配器测试")
     ] }
   }),
@@ -417,7 +653,7 @@ export const THREE_STORE_MAP_REGISTRY = Object.freeze([
     plainDescription: "低置信度、证据冲突、权限问题、技术失败或结果未知时，软件先保存 ExceptionCase 并停止；Codex 只在真实维护轮次中诊断和修复，不能成为正常流水线工人。",
     inputs: ["结构化技术失败、未知结果或冲突证据", "安全脱敏的 ExceptionCase"],
     outputs: ["停止原因、维护授权和可审计的恢复建议", "由状态机重新判断的下一轮，不自动推进"],
-    upstream: ["2.2", "4.2", "6.2", "7.1"],
+    upstream: ["2.2", "2.3", "4.2", "6.2", "7.1", "8.3"],
     downstream: [],
     executionStatus: "manual_or_codex_experiment",
     statusReason: "异常运行时、ExceptionCase 和 Codex 离线门禁已有代码与测试；维护案件不是正常商品的自动续跑能力。",
@@ -462,10 +698,39 @@ export const THREE_STORE_MAP_REGISTRY = Object.freeze([
       ref("lib/worker-registry.mjs", "createLocalDevelopmentWorkerRegistry", "当前本地 Worker 适配器"),
       ref("src/runtimeArchitectureView.js", "runtimeArchitectureView", "运行边界展示")
     ],
-    uiRefs: [ref("src/components/RuntimeArchitectureStatus.jsx", "RuntimeArchitectureStatus", "本地/中央状态提示")],
+    uiRefs: [ref("src/components/HeaderStatus.jsx", "HeaderStatus", "顶栏本地/中央状态提示")],
     testEvidence: { refs: [
       ref("tests/multi-user-central-runtime.test.mjs", "test(", "中央运行边界测试"),
       ref("tests/runtime-architecture-view.test.mjs", "test(", "运行状态 UI 测试")
+    ] }
+  }),
+  module({
+    id: "8.3",
+    areaId: "8",
+    title: "旧 Codex 派发通道（退役候选）",
+    plainDescription: "历史上的一次性 Codex 派发通道：领取、桌面端接管和权限决定三个入口还在代码里，但投递开关关闭时它们一律拒绝，历史派发只剩只读展示。",
+    inputs: ["历史派发记录", "按环境判定的投递开关"],
+    outputs: ["停用回应（409），不产生新派发", "只读的历史派发展示"],
+    upstream: [],
+    downstream: ["8.1"],
+    executionStatus: "code_not_connected",
+    statusReason: "三个路由都先判断投递开关，开关来自专门的环境判定函数且默认关闭，因此正常链路不会再产生新派发；代码尚未删除。",
+    connection: { codePresent: true, uiConnected: true, executionConnected: false },
+    actualChain: "旧派发路由 → 投递开关判定 → 停用回应；历史记录只读展示",
+    ownerAction: "不需要主人操作；要重新启用必须显式配置，那属于一次维护决定。",
+    codexRule: "这条通道本身就是要退役的；不能因为代码还在就把它恢复成正常工人链路。",
+    failureAndUnknown: "开关关闭时一律明确返回停用，不做静默降级，也不改任何候选状态。",
+    breakpoint: "代码仍在但已停用，是明确的退役候选；派发器与相关展示尚未删除。",
+    nextStep: "确认没有历史依赖后，按一次维护轮次删除派发路由与派发器。",
+    codeRefs: [
+      ref("lib/codex-independence.mjs", "dispatchDeliveryEnabledFromEnvironment", "投递开关判定"),
+      ref("server.mjs", "LEGACY_DISPATCH_CHANNEL_DISABLED", "三个旧派发入口的停用回应"),
+      ref("lib/codex-dispatcher.mjs", "dispatchCandidateSnapshot", "旧派发器")
+    ],
+    uiRefs: [ref("src/components/UserInspector.jsx", "一次性派发", "历史派发只读展示")],
+    testEvidence: { refs: [
+      ref("tests/codex-independence.test.mjs", "test(", "Codex 离线与投递开关测试"),
+      ref("tests/dispatch-delivery-integration.test.mjs", "test(", "派发投递停用测试")
     ] }
   })
 ]);
@@ -568,9 +833,9 @@ export function buildThreeStoreMapView({ runtimeArchitecture = null, seerfarSoft
     statusDefinitions: Object.entries(THREE_STORE_MAP_EXECUTION_STATES).map(([id, value]) => ({ id, ...value })),
     areas: structuredClone(THREE_STORE_MAP_AREAS),
     modules,
-    mainFlow: ["1.1", "2.1", "2.2", "3.1", "4.1", "4.2", "5.1", "6.1", "6.2", "7.1"],
+    mainFlow: ["1.1", "1.2", "2.3", "2.5", "2.1", "2.2", "3.1", "4.1", "4.2", "5.1", "6.1", "6.2", "7.1"],
     exceptionRoute: {
-      from: ["2.2", "4.2", "6.2", "7.1"],
+      from: ["2.2", "2.3", "4.2", "6.2", "7.1"],
       to: "8.1",
       label: "技术失败、冲突或未知结果 → 停止并进入维护支路",
       returnRule: "维护后由状态机按保存的证据重新判断；不能从地图自动跳过原断点。"

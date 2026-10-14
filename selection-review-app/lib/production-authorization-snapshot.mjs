@@ -1,5 +1,5 @@
 import { validateProductionAuthorizationRecord } from "./product-lifecycle-schema.mjs";
-import { assertC2FinalMediaContent } from "./c2-media-content-rules.mjs";
+import { assertAuthorizedMediaUnchanged } from "./production-authorization-preparation.mjs";
 function deepFreeze(value) {
   if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
   Object.freeze(value);
@@ -18,7 +18,11 @@ export function readAuthorizedProductionSnapshot({ productionAuthorization, cand
     lifecycleState: "persisted"
   });
   if (!validation.valid) throw new Error(`ProductionAuthorization校验失败：${validation.errors.map((item) => `${item.path}: ${item.message}`).join("；")}`);
-  assertC2FinalMediaContent({ mediaRequirements: skuPackage.c2FinalAssets.productionAuthorizationPreparation.mediaRequirements,
-    assets: productionAuthorization.lockedScope.finalUploads, checkedAt });
+  // 读授权快照这一步也要确认：锁定范围里的这批地址就是主人当初授权的那批。
+  assertAuthorizedMediaUnchanged(
+    productionAuthorization.lockedScope.finalUploads,
+    productionAuthorization.lockedScope.authorizedMediaFingerprint,
+    "readAuthorizedProductionSnapshot"
+  );
   return deepFreeze(structuredClone(productionAuthorization));
 }

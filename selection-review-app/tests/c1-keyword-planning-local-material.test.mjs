@@ -185,3 +185,38 @@ test("本地原料Schema固定3至5竞品且没有外部执行字段入口", asy
   assert.equal(productionSchema.additionalProperties, false);
   assert.equal(productionSchema.properties.execution.properties.codexDispatches.const, 0);
 });
+
+// 密钥扫描器按**字段名**判，`categoryToken` 里带 "token" 就被当成凭据——2026-09-17 实测：
+// 主人签完权利声明后，整条 C1 准备链被这一条误报挡死。放行的依据不是「这个名字我保证没问题」，
+// 而是**值本身当场可证**：必须恰好等于同层两个明文数字拼出来的公开类目串。证明不了的照旧拒绝。
+function withCategoryEvidence(evidence) {
+  const poisoned = candidate();
+  poisoned.lifecycleV11.opportunityPackage.salesSnapshots[0].platformCategoryEvidence = evidence;
+  return poisoned;
+}
+
+test("categoryToken 只有在等于同层明文类目串时才放行，差一点就当密钥拒绝", () => {
+  const proven = withCategoryEvidence({ descriptionCategoryId: 17028966, typeId: 96063, categoryToken: "ozon:17028966:96063" });
+  assert.doesNotThrow(() => produceC1KeywordPlanningLocalMaterial({ candidate: proven, expectedRevision: 20, producedAt: NOW }),
+    "值等于同层两个明文数字拼出来的串，就不是密钥");
+
+  for (const [why, evidence] of [
+    ["数字对不上", { descriptionCategoryId: 17028966, typeId: 96063, categoryToken: "ozon:17028966:99999" }],
+    ["缺同层依据", { categoryToken: "ozon:17028966:96063" }],
+    ["换了平台前缀", { descriptionCategoryId: 17028966, typeId: 96063, categoryToken: "wb:17028966:96063" }],
+    ["塞了真凭据", { descriptionCategoryId: 17028966, typeId: 96063, categoryToken: "Bearer abc123" }],
+    ["同层依据是字符串不是整数", { descriptionCategoryId: "17028966", typeId: "96063", categoryToken: "ozon:17028966:96063" }],
+    ["同层依据是负数", { descriptionCategoryId: -17028966, typeId: -96063, categoryToken: "ozon:-17028966:-96063" }]
+  ]) {
+    assert.throws(() => produceC1KeywordPlanningLocalMaterial({ candidate: withCategoryEvidence(evidence), expectedRevision: 20, producedAt: NOW }),
+      /SECRET_FORBIDDEN/, `${why}：证明不了就必须照旧拒绝`);
+  }
+});
+
+test("放行只认 categoryToken 这一个名字，其他撞名字段照旧拒绝", () => {
+  for (const key of ["accessToken", "apiToken", "token", "refresh_token"]) {
+    const poisoned = withCategoryEvidence({ descriptionCategoryId: 17028966, typeId: 96063, [key]: "ozon:17028966:96063" });
+    assert.throws(() => produceC1KeywordPlanningLocalMaterial({ candidate: poisoned, expectedRevision: 20, producedAt: NOW }),
+      /SECRET_FORBIDDEN/, `${key} 不在放行之列`);
+  }
+});

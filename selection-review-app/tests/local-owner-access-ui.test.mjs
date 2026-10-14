@@ -125,7 +125,7 @@ test("actual access views distinguish loading, first setup, login, authenticated
   const result = await build({ configFile: false, logLevel: "warn", plugins: [react(), { name: "owner-access-render",
     resolveId: id => id === entry ? entry : null,
     load: id => id === entry ? `import React from 'react';import{renderToStaticMarkup}from'react-dom/server';import{LocalOwnerAccessView}from ${JSON.stringify(component)};import App from ${JSON.stringify(app)};
-      export const render=state=>renderToStaticMarkup(<LocalOwnerAccessView state={state} saving={false} password='' repeatedPassword='' inputError=''/>);
+      export const render=(state,showAuthenticated=false)=>renderToStaticMarkup(<LocalOwnerAccessView state={state} saving={false} password='' repeatedPassword='' inputError='' showAuthenticated={showAuthenticated}/>);
       export const renderApp=()=>renderToStaticMarkup(<App/>);` : null }], ssr: { noExternal: true },
     build: { ssr: true, write: false, rollupOptions: { input: entry, output: { format: "es" } } } });
   const chunk = result.output.find(item => item.type === "chunk" && item.isEntry);
@@ -140,7 +140,9 @@ test("actual access views distinguish loading, first setup, login, authenticated
   assert.match(setup, /至少4个字符、最多1024字节/);
   const login = render({ status: "loaded", access: access("login_required") });
   assert.equal((login.match(/type="password"/g) || []).length, 1); assert.match(login, /autoComplete="current-password"/); assert.doesNotMatch(login, /首次设置/);
-  const authenticated = render({ status: "loaded", access: access("authenticated") });
+  // 已登录是常态，不必每一页头上都声明一遍：默认整条不显示，只有「维护」把它显示出来（退出登录就在那里）。
+  assert.equal(render({ status: "loaded", access: access("authenticated") }), "");
+  const authenticated = render({ status: "loaded", access: access("authenticated") }, true);
   assert.match(authenticated, /主人已登录/); assert.match(authenticated, /退出登录/); assert.doesNotMatch(authenticated, /type="password"/);
   const development = render({ status: "loaded", access: access("development_only") });
   assert.match(development, /预览身份/); assert.match(development, /不能保存正式生产授权/); assert.doesNotMatch(development, /type="password"|设置密码并登录/);

@@ -57,8 +57,10 @@ test('component renders reference price and missing samples without submitting h
   const chunk = bundle.output.find(item => item.type === 'chunk' && item.isEntry);
   const { render } = await import(`data:text/javascript;base64,${Buffer.from(chunk.code).toString('base64')}`);
   const f = await fixture(), before = structuredClone(f.candidate), html = render(f.candidate);
-  assert.match(html, /B参考成交价：1800 RUB/); assert.match(html, /当前选择不足3条/);
-  assert.match(html, /前期A\/B允许单竞品参考/); assert.match(html, /浏览器不计算利润/);
+  assert.match(html, /已保存成交价：1800 RUB/); assert.match(html, /当前选择不足3条/);
+  assert.match(html, /主人主动复核或调整售价/); assert.match(html, /有效且达到批准门槛的正式方案优先沿用/);
+  assert.match(html, /不要求为价格差异重复研究/); assert.match(html, /浏览器不计算利润/);
+  assert.match(html, /保存比较不等于生产授权/);
   assert.doesNotMatch(html, /checked=""/); assert.match(html, /<button[^>]*disabled[^>]*>保存最终定价比较/);
   assert.deepEqual(f.candidate, before);
 });

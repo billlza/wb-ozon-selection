@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { crc32, deflateRawSync } from 'node:zlib';
-import { DEFAULT_GUOO_TARIFF_PATH, readCurrentGuooTariff, readGuooTariffCatalog, parseWorksheetRows, selectGuooTariffRow } from '../lib/guoo-tariff-reader.mjs';
+import { DEFAULT_GUOO_TARIFF_PATH, GUOO_MAIN_QUOTE_CALCULATION_RULE_STATUS, readCurrentGuooTariff, readGuooTariffCatalog, parseWorksheetRows, selectGuooTariffRow } from '../lib/guoo-tariff-reader.mjs';
+import { calculateFreight } from '../lib/lifecycle-b-input-bundle.mjs';
 
 test('adopted workbook keeps original bytes and all real tariff rows with exact source references', async () => {
   const manifest = JSON.parse(await readFile(new URL('../data/logistics/guoo-2026-08-19.source.json', import.meta.url), 'utf8'));
@@ -47,13 +48,20 @@ function zip(entries) {
   end.writeUInt32LE(catalog.length, 12); end.writeUInt32LE(offset, 16);
   return Buffer.concat([...bodies, catalog, end]);
 }
-const row = '<row r="17"><c r="B17" t="inlineStr"><is><t>Small</t></is></c><c r="C17" t="inlineStr"><is><t>GUOO Economy Small PUDO</t></is></c><c r="D17" t="inlineStr"><is><t>land</t></is></c><c r="G17" t="inlineStr"><is><t>0.001-2KG</t></is></c><c r="K17"><v>28.1</v></c><c r="L17"><v>17.97</v></c></row>';
+const weightFormula = 'IF(OR(AND(D5>=2.001,D5<=30,D7>1501,D7<7000,SUM(H5:H7)<=310,H5<=150,H6<=80,H7<=80),AND(D5>=5.001,D5<=30,D7>7001,D7<250000,SUM(H5:H7)<=310,H5<=150,H6<=80,H7<=80)),MAX(H5*H6*H7/12000,D5),D5)';
+const formulaXml = text => text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+// The single-row reader now checks the same two quote cells the catalog checks, so every fixture
+// that expects a reading to succeed has to carry this row's real quote expression.
+const smallQuote = rowNumber => `IF(OR(D5>2,D7<1501,D7>7000,AND(SUM(H5:H7)>150),H5>60,H6>60,H7>60),"",IF(OR($D$5=0,$D$7=0,$H$5=0,$H$6=0,$H$7=0),"",F5*K${rowNumber}+L${rowNumber}))`;
+const quoteCell = rowNumber => `<c r="E${rowNumber}"><f>${formulaXml(smallQuote(rowNumber))}</f><v>0</v></c>`;
+const weightRow = `<row r="5"><c r="F5"><f>${formulaXml(weightFormula)}</f></c></row>`;
+const row = `<row r="17"><c r="B17" t="inlineStr"><is><t>Small</t></is></c><c r="C17" t="inlineStr"><is><t>GUOO Economy Small PUDO</t></is></c><c r="D17" t="inlineStr"><is><t>land</t></is></c><c r="G17" t="inlineStr"><is><t>0.001-2KG</t></is></c><c r="K17"><v>28.1</v></c><c r="L17"><v>17.97</v></c>${quoteCell(17)}</row>`;
 function workbook(transform = value => value, transformEntries = entries => entries) {
   return zip(transformEntries({
     'xl/workbook.xml': '<workbook><sheets><sheet name="GUOO realFBS资费试算表" r:id="rId1"/></sheets></workbook>',
     'xl/_rels/workbook.xml.rels': '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
     'xl/sharedStrings.xml': '<sst/>',
-    'xl/worksheets/sheet1.xml': transform(`<worksheet><sheetData>${row}</sheetData></worksheet>`)
+    'xl/worksheets/sheet1.xml': transform(`<worksheet><sheetData>${row}${weightRow}</sheetData></worksheet>`)
   }));
 }
 async function readBytes(bytes) {
@@ -162,7 +170,8 @@ test('worksheet relationships reject external targets and traversal instead of r
 test('unmerged blanks never inherit previous product type weight declared value or size rules', async () => {
   const xml = `<worksheet><sheetData>
     <row r="16"><c r="B16" t="inlineStr"><is><t>Big</t></is></c><c r="G16" t="inlineStr"><is><t>0.1-30KG</t></is></c><c r="H16" t="inlineStr"><is><t>100-1000</t></is></c><c r="I16" t="inlineStr"><is><t>previous-size</t></is></c></row>
-    <row r="17"><c r="C17" t="inlineStr"><is><t>GUOO Economy Small PUDO</t></is></c><c r="K17"><v>28.1</v></c><c r="L17"><v>17.97</v></c></row>
+    <row r="17"><c r="C17" t="inlineStr"><is><t>GUOO Economy Small PUDO</t></is></c><c r="K17"><v>28.1</v></c><c r="L17"><v>17.97</v></c>${quoteCell(17)}</row>
+    ${weightRow}
   </sheetData></worksheet>`;
   const selected = selectGuooTariffRow(parseWorksheetRows(xml), 'GUOO Economy Small');
   for (const field of ['productType', 'weightLimit', 'declaredValueLimit', 'sizeLimit']) assert.equal(selected[field], '', field);
@@ -233,8 +242,6 @@ test('only supported workbook product types select their explicit chargeable-wei
   }
 });
 
-const weightFormula = 'IF(OR(AND(D5>=2.001,D5<=30,D7>1501,D7<7000,SUM(H5:H7)<=310,H5<=150,H6<=80,H7<=80),AND(D5>=5.001,D5<=30,D7>7001,D7<250000,SUM(H5:H7)<=310,H5<=150,H6<=80,H7<=80)),MAX(H5*H6*H7/12000,D5),D5)';
-const formulaXml = text => text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
 function catalogEntries() {
   const labels = [
     ['Extra Small', ['Express', 'Standard', 'Economy']], ['Budget', ['Standard', 'Economy']],
@@ -334,4 +341,57 @@ test('adopted 8/19 original main sheet exposes Small tariffs for 1kg 20x20x8 200
     assert.deepEqual(row.sourceRefs.calculation.map(value=>value.cellRef),['F5',`E${row.rowNumber}`]);
     assert.equal(row.evidenceData.tariffFormula,null); assert.equal(row.evidenceData.tariffFormulaSourceStatus,'display_formula_not_evaluated');
   }
+});
+
+/**
+ * 两种读法必须给同一个数。
+ *
+ * 路线比较按整表目录（`readGuooTariffCatalog`）给主人报运费；B 阶段的正式利润按单行读取
+ * （`readCurrentGuooTariff`）计费。`assertSelectedFreightBinding` 要求这两个数逐分相同，
+ * 所以它们的计费字段必须逐字段相同——这条测试就是把那个要求钉在真表上。
+ *
+ * 顺带钉住已经退役的那条历史推定：旧读法把「重量档文字下限」当最低计费重量。下面对每条线路
+ * 都取它自己档位内的包裹，证明那个下限永远咬不到计费重量（计费重 ≥ 实重 ≥ 档下限），
+ * 并且用一个档位外的包裹证明这条测试不是空转——档外确实会差钱，只是档外的包裹走不了这条线路。
+ */
+test('整表目录读法与单行读法对真表 15 条线路逐字段同值，退役的档位下限咬不到任何档内包裹', async () => {
+  const filePath = fileURLToPath(new URL(`../data/logistics/${path.basename(DEFAULT_GUOO_TARIFF_PATH)}`, import.meta.url));
+  const catalog = await readGuooTariffCatalog({ filePath });
+  assert.equal(catalog.rows.length, 15);
+  let outsideDifferences = 0;
+  for (const catalogRow of catalog.rows) {
+    const single = await readCurrentGuooTariff({ filePath, scope: { route: catalogRow.route, ruleVersion: catalog.ruleVersion },
+      now: () => new Date('2026-09-14T00:00:00.000Z') });
+    assert.equal(single.current, true, catalogRow.route);
+    assert.equal(single.sourceRef, `${catalog.sourceRef}:row-${catalogRow.rowNumber}`, catalogRow.route);
+    assert.deepEqual(single.evidenceData,
+      { ...catalogRow.evidenceData, calculationRuleStatus: GUOO_MAIN_QUOTE_CALCULATION_RULE_STATUS }, catalogRow.route);
+    assert.equal(single.evidenceData.minimumChargeableWeightKg, 0, catalogRow.route);
+
+    // 这一行自己的重量档文字：档下限就是旧读法会填进 minimumChargeableWeightKg 的那个数。
+    const limit = catalogRow.evidenceData.weightLimit.replace(/\s+/gu, '').match(/^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)KG(?:收抛)?$/u);
+    assert.ok(limit, `${catalogRow.route} 的重量档文字必须能解析：${JSON.stringify(catalogRow.evidenceData.weightLimit)}`);
+    const [minKg, maxKg] = [Number(limit[1]), Number(limit[2])];
+    assert.ok(minKg > 0 && minKg <= maxKg, catalogRow.route);
+    const retired = { ...single.evidenceData, minimumChargeableWeightKg: minKg };
+    const pack = data => ({ id: 'x', scope: { route: catalogRow.route, ruleVersion: catalog.ruleVersion }, evidenceData: data });
+    // `calculateFreight` 会把整份计费规则原样带回来，两份规则本来就差这一个字段；这里比的是算出来的数。
+    const billed = (data, packaging) => {
+      const { tariff, ...computed } = calculateFreight(pack(data), packaging);
+      return computed;
+    };
+    // 体积重可能远大于实重，也可能几乎为 0：两头都取，因为最低计费重量是压在「计费重」上的。
+    for (const dimensionsCm of [{ length: 25, width: 35, height: 2 }, { length: 1, width: 1, height: 1 },
+      { length: 30, width: 20, height: 20 }, { length: 150, width: 80, height: 80 }]) {
+      for (const weightKg of [minKg, minKg + 1e-9, (minKg + maxKg) / 2, maxKg - 1e-9, maxKg]) {
+        const packaging = { weightKg, dimensionsCm };
+        assert.deepEqual(billed(retired, packaging), billed(single.evidenceData, packaging),
+          `${catalogRow.route} ${weightKg}kg ${JSON.stringify(dimensionsCm)}`);
+      }
+      // 档外（比下限还轻）的包裹两种读法确实不同——这条线路根本不收它，所以差价不属于任何真实报价。
+      const below = { weightKg: minKg / 2, dimensionsCm };
+      if (billed(retired, below).amountRmb !== billed(single.evidenceData, below).amountRmb) outsideDifferences += 1;
+    }
+  }
+  assert.ok(outsideDifferences > 0, '档外包裹必须能看出差别，否则这条等价性测试是空转的');
 });

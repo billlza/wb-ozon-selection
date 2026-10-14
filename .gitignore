@@ -25,6 +25,8 @@ id_ed25519
 
 # Live and historical business data (backed up outside Git)
 /selection-review-app/data/candidates*.json
+# CEL 物流资费表原文放在本机工作台里，不进公开仓库（lib/cel-tariff-reader.mjs 从这里读）
+/selection-review-app/data/logistics/CEL*.xlsx
 /selection-review-app/product-images
 /selection-review-app/evidence/
 /evidence/

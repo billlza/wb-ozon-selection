@@ -11,7 +11,7 @@ export const SENDER = { url: "http://127.0.0.1:4317/" };
 export const supplierJob = (extra = {}) => ({
   captureId: "job-1", candidateId: "candidate-1", token: "synthetic-fixture-token", dataRevision: 2,
   mode: "a_supplier_capture", sourceUrl: SUPPLIER_URL, expectedOfferId: "876240928352",
-  requiredExtensionVersion: "1.2.7", attempt: 1, ...extra
+  requiredExtensionVersion: "1.4.1", attempt: 1, ...extra
 });
 export const ozonJob = (extra = {}) => ({
   captureId: "ozon-1", candidateId: "candidate-2", token: "synthetic-fixture-token", dataRevision: 4,
@@ -27,7 +27,7 @@ export function harness(options = {}) {
   let tab = null;
   let alarm = options.alarm || null;
   const chromeApi = {
-    runtime: { getManifest: () => ({ version: "1.2.7" }), onMessage: event(), onInstalled: event(), onStartup: event() },
+    runtime: { getManifest: () => ({ version: "1.4.1" }), onMessage: event(), onInstalled: event(), onStartup: event() },
     alarms: { onAlarm: event(), get: async () => alarm, create: async (name, config) => { calls.alarmCreates.push({ name, config }); alarm = { name, ...config }; } },
     tabs: {
       onUpdated: event(),
@@ -57,6 +57,10 @@ export function harness(options = {}) {
     if (url.endsWith("/claim")) {
       if (options.claim) return options.claim();
       return { ok: true, json: async () => ({ accepted: true, captureJob: options.job || null }) };
+    }
+    if (url.endsWith("/search-image")) {
+      if (options.searchImage) return options.searchImage();
+      return { ok: true, json: async () => ({ contentType: "image/jpeg", byteLength: 3, base64: "AAEC" }) };
     }
     if (options.reportFails) throw new Error("https://secret.example/?token=fixture-secret");
     if (options.reportStatus) return { ok: false, status: options.reportStatus };

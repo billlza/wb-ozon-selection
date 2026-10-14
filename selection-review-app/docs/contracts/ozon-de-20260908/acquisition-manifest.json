@@ -1,0 +1,23 @@
+{
+  "sourceUrl": "https://docs.ozon.ru/api/seller/swagger.json?1788843872856",
+  "originalAcquiredAt": "2026-09-08T05:04:32.856Z",
+  "originalHttpStatus": 200,
+  "extractionDate": "2026-09-08",
+  "method": "Bounded extraction from the previously acquired official OpenAPI in the current public documentation browser session; no seller account request. Saved only exact public contract tool outputs from this task.",
+  "artifacts": {
+    "official-de-structural-openapi.json": "Projection of 8 existing D/E paths and recursive 87-schema closure; recursively removes description, example, examples and x-codeSamples keys. This is not a full raw schema and must not be used alone to claim protocol verification.",
+    "official-field-semantics.json": "Unmodified selected schema values and directly relevant descriptions, with a few adjacent schema definitions from name filtering.",
+    "official-auth-import-semantics.json": "Unmodified authentication tag, import status operation and enum description, and stock request schema contradiction.",
+    "official-exact-warehouse-openapi.json": "Full unmodified exact-warehouse method, headers and recursive 5-schema closure; descriptions retained. Extracted from same previously acquired official OpenAPI."
+  },
+  "knownContradictions": [
+    "import/info example task_id is a string while normative schema requires integer int64.",
+    "stock request required includes undefined quant_size and product_id, while description recommends exactly one of offer_id/product_id.",
+    "attributes media schema uses inconsistent type wording."
+  ],
+  "remainingLimits": [
+    "No current seller identity or backend currency-setting observation.",
+    "No current account permission proof for a changed D/E method set.",
+    "No production acceptance or verification of transformed platform image identity."
+  ]
+}

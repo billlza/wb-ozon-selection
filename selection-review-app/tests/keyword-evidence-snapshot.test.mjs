@@ -276,3 +276,21 @@ test("旧数据只读兼容，缺失事实只能unknown或null", () => {
   assert.deepEqual(legacySource, { keywords: ["old keyword"] });
   assert.equal(Object.isFrozen(view), true);
 });
+
+
+test("v2快照按标题最低数量派生ready，v1与未评分快照保留旧覆盖语义", () => {
+  const titleOnly = { title_keywords: [keyword("confirmed title", "fact:title")], attribute_and_tag_keywords: [], description_long_tail: [] };
+  const context = {
+    scoringVersion: "keyword-scoring-v2", preparationFingerprint: "preparation:one", metricEvidenceFingerprint: "metrics:one",
+    execution: { networkCalls: 0, modelCalls: 0, codexDispatches: 0, bOrC1Created: false, sharedWrites: 0 }
+  };
+  const current = createKeywordEvidenceSnapshot(input({ groups: titleOnly, scoringContext: context }));
+  assert.equal(current.status, "ready");
+  assert.equal(createKeywordEvidenceSnapshot(input({ groups: titleOnly })).status, "partial_ready");
+  assert.equal(createKeywordEvidenceSnapshot(input({ groups: titleOnly, scoringContext: { ...context, scoringVersion: "keyword-scoring-v1" } })).status, "partial_ready");
+  assert.throws(() => createKeywordEvidenceSnapshot(input({ groups: titleOnly, scoringContext: context, statusOverride: "partial_ready" })), /KEYWORD_EVIDENCE_INVALID/);
+  const noTitle = { title_keywords: [], attribute_and_tag_keywords: [], description_long_tail: [keyword("description", "fact:description")] };
+  assert.equal(createKeywordEvidenceSnapshot(input({ groups: noTitle, scoringContext: context })).status, "partial_ready");
+  assert.throws(() => createKeywordEvidenceSnapshot(input({ groups: noTitle, scoringContext: context, statusOverride: "ready" })), /KEYWORD_EVIDENCE_INVALID/);
+  assert.throws(() => createKeywordEvidenceSnapshot(input({ groups: titleOnly, scoringContext: { ...context, scoringVersion: "keyword-scoring-v999" } })), /评分版本无效/);
+});

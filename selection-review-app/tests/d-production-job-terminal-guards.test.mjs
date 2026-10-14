@@ -7,7 +7,8 @@ import { createStoreIsolatedOzonSellerApiDEAdapter } from "../lib/ozon-seller-ap
 import { savedDProductionJobFixture } from "./fixtures/d-production-saved-job-fixture.mjs";
 import { D_READBACK_MISMATCH_CODES, formatDReadbackMismatchReason, isDProductionUnknownReason } from "../lib/production-execution-failure.mjs";
 
-import { createDPlatformObservationRuntimeFixture as waitingFixture } from "./fixtures/d-platform-observation-runtime-fixture.mjs";
+import { createDPlatformObservationRuntimeFixture as waitingFixture,
+  attachDPreparationEvidence } from "./fixtures/d-platform-observation-runtime-fixture.mjs";
 import { assertDRemainingInventoryContinuation, assertDRemainingInventorySend } from "../lib/d-platform-observation-contract.mjs";
 import { exactObservation } from "./helpers/d-software-fixture.mjs";
 import { createSyntheticDCompletionAdapter } from "./helpers/d-synthetic-completion-adapter.mjs";
@@ -16,6 +17,10 @@ import { createSyntheticDCompletionAdapter } from "./helpers/d-synthetic-complet
 async function inventoryFixture() {
   const f=await waitingFixture({responses:['imported'],prerequisitePolicy:'configured'});
   for(let index=0;index<3;index++) { f.lastObservation=await f.job(); await f.createRuntime().runJob({jobId:f.lastObservation.jobId}); f.d.advance(11); }
+  // 真实 D 作业都带准备证据（prepare() 必写），fixture 原先不带，
+  // 于是 results.mjs:186 的 `!== undefined` 把第 187 行那道断言整段跳过。
+  // 补上之后，下面两条失败档用例才真的走到那道闸。
+  f.preparationEvidence=await attachDPreparationEvidence(f.d);
   return f;
 }
 async function continueInventory(f,{onStock=async()=>{},stockRejected=false,readback=exactObservation}={}) {

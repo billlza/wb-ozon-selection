@@ -12,6 +12,7 @@ import { A_DISCOVERY_JOB_TYPE, ADiscoveryError, assertADiscoveryScope, assertADi
 import { isADiscoverySoftwareJob, createADiscoveryJobForScope, settleADiscoverySoftwareJobInDocument } from "./software-job-contract.mjs";
 export { createADiscoveryJobForScope } from "./software-job-contract.mjs";
 import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
+import { assertCurrentC1AiDraftRequest } from "./c1-ai-draft-contract.mjs";
 import { isDeepStrictEqual } from 'node:util';
 import { assertBusinessStateRepositoryBoundary } from "./business-state-repository.mjs";
 import { assertSafeRuntimeRecord, workerSatisfiesCapabilities } from "./runtime-identity.mjs";
@@ -23,7 +24,8 @@ import { assertDProductionPreparation, markDProductionPreparationUnknown } from 
 import { readDAssetTransportJobTerminal } from "./d-e-software-job-results.mjs";
 import { D_PLATFORM_OBSERVATION_JOB_TYPE, assertDPlatformObservationJobSource, assertDPlatformObservationSend,
   assertDPlatformObservationScope, readDProductionJobWaiting, recordDPlatformObservationInDocument as recordObservation,
-  resumeDRemainingInventoryInDocument, reconcileDRemainingInventoryInDocument, rejectDPlatformObservationInDocument, rejectDRemainingInventoryInDocument } from './d-platform-observation-contract.mjs';
+  resumeDRemainingInventoryInDocument, reconcileDRemainingInventoryInDocument, rejectDPlatformObservationInDocument, rejectDRemainingInventoryInDocument,
+  registerOwnerWrittenInventoryInDocument } from './d-platform-observation-contract.mjs';
 import {
   SOFTWARE_JOB_TYPES,
   C1_PAID_KEYWORD_EVIDENCE_JOB_TYPE,
@@ -32,7 +34,7 @@ import {
   settleC1PaidKeywordFailureSoftwareJobInDocument,
   createSoftwareJobEnvelope,
   settleDPlatformObservationSoftwareJobInDocument,
-  settleDPlatformStoppedSoftwareJobInDocument,
+  settleDPlatformStoppedSoftwareJobInDocument, settleDOwnerStockRegisteredSoftwareJobInDocument,
   settleDInitialImportStoppedSoftwareJobInDocument,
   D_PRODUCTION_EXECUTION_JOB_TYPE,
   E_INDEPENDENT_READBACK_JOB_TYPE,
@@ -45,6 +47,10 @@ import {
   markSoftwareJobExternalRequestStarted,
   recordSoftwareJobProgress,
   recordC1GatewayAcceptance,
+  C1_AI_DRAFT_JOB_TYPE,
+  beginC1AiDraftResultReconciliation,
+  settleC1AiDraftResultReconciliation,
+  readC1AiDraftReconciliationSource,
   reconcileExpiredSoftwareJobLease,
   reconcileSoftwareJobAfterRestart,
   sameSoftwareJobIdentity,
@@ -356,6 +362,11 @@ function assignmentRejection(job, error) {
 }
 
 export { enqueueSoftwareJobInDocument, findSoftwareJobInDocument, sameSoftwareJobIdentity, settleSoftwareJobInDocument };
+
+const RESTART_FILTER_JOB_TYPES = Object.freeze([
+  A_DISCOVERY_JOB_TYPE, A_PRODUCT_DETAIL_JOB_TYPE,
+  D_PRODUCTION_EXECUTION_JOB_TYPE, D_PLATFORM_OBSERVATION_JOB_TYPE, E_INDEPENDENT_READBACK_JOB_TYPE
+]);
 
 export function createRepositoryBackedSoftwareJobStore({ businessStateRepository, serverClock = () => new Date().toISOString(), workerRegistry = null,
   resolveDEExecutionBinding = null } = {}) {
@@ -738,6 +749,22 @@ export function createRepositoryBackedSoftwareJobStore({ businessStateRepository
     settleDInitialImportStoppedInDocument({document,jobId,workerId,leaseId,observedAt}){
       return clone(settleDInitialImportStoppedSoftwareJobInDocument(document,{jobId,workerId,leaseId},observedAt));
     },
+    /** 把一次被误停的导入执行放回 waiting_platform：作业侧与 parkDProductionWaiting 收敛到同一形状。 */
+    recoverDInitialImportStoppedJobInDocument({document,jobId,observedAt}){
+      const job=findSoftwareJobInDocument(document,jobId);
+      const candidate=document.candidates.find(value=>value.id===job.candidateId);
+      const state=candidate.lifecycleV11.skuPackage.dSoftwareExecution;
+      const next={...clone(job),status:'waiting_platform',externalRequestState:'succeeded',
+        failureClass:null,resultRef:null,resultEnvelope:null,completedAt:null,
+        leaseId:null,leaseExpiresAt:null,lastProgressAt:observedAt,
+        platformContinuation:clone(state.platformContinuation)};
+      // 作业与执行状态互指必须一致，否则观察链的 source() 会判来源冲突。
+      state.softwareJobRef={...clone(state.softwareJobRef),workerId:next.workerId,leaseId:null};
+      assertSafeRuntimeRecord(next,'softwareJob');
+      const jobs=softwareJobsInDocument(document);jobs[jobs.findIndex(value=>value.jobId===jobId)]=next;
+      const waiting=readDProductionJobWaiting({candidate,job:next,observedAt});
+      return {job:clone(next),platformContinuation:waiting.platformContinuation};
+    },
     parkDProductionWaitingInDocument({document,candidate,jobId,workerId,leaseId,observedAt}){
       const job=findSoftwareJobInDocument(document,jobId);
       assertSoftwareJobExecutionLease({job,workerId,leaseId,serverTime:observedAt});
@@ -836,6 +863,17 @@ export function createRepositoryBackedSoftwareJobStore({ businessStateRepository
         const candidate=document.candidates.find(value=>value.id===job.candidateId);
         job.platformContinuation=clone(candidate.lifecycleV11.skuPackage.dSoftwareExecution.platformContinuation);
         const settled=settleDPlatformStoppedSoftwareJobInDocument(document,{candidate,jobId},observedAt);
+        return {changed:true,document,result:clone(settled)};
+      });
+    },
+    /** 主人自己填了库存：只登记、不写平台，不生成 productionRecord、不排 E。 */
+    async registerOwnerWrittenInventory({jobId,observationJobId,verifyInventoryPrerequisiteSource,actorId}){
+      return businessStateRepository.transact(document=>{
+        const observedAt=observedServerTime(),job=findSoftwareJobInDocument(document,jobId);
+        registerOwnerWrittenInventoryInDocument({document,job,observationJobId,observedAt,verifyInventoryPrerequisiteSource,actorId});
+        const candidate=document.candidates.find(value=>value.id===job.candidateId);
+        job.platformContinuation=clone(candidate.lifecycleV11.skuPackage.dSoftwareExecution.platformContinuation);
+        const settled=settleDOwnerStockRegisteredSoftwareJobInDocument(document,{candidate,jobId},observedAt);
         return {changed:true,document,result:clone(settled)};
       });
     },
@@ -981,6 +1019,55 @@ export function createRepositoryBackedSoftwareJobStore({ businessStateRepository
         return { changed: true, document, result: outcome.job };
       });
     },
+    async beginC1AiDraftReconciliation({ candidateId, expectedRevision, jobId, workerId, leaseId, leaseDurationMs }) {
+      return businessStateRepository.transact(document => {
+        const job = findSoftwareJobInDocument(document, jobId);
+        if (job?.jobType !== C1_AI_DRAFT_JOB_TYPE || job.candidateId !== candidateId || job.revision !== expectedRevision || job.workerId !== workerId) {
+          throw new Error("C1_DRAFT_RECONCILIATION_SCOPE_INVALID");
+        }
+        registryWorkerForJob(job, workerId);
+        if (job.c1ResultReconciliation && ["completed", "failed"].includes(job.status) &&
+            job.c1ResultReconciliation.readAttempt.status === job.status) return { changed: false, result: { acquired: false, terminal: true, job: clone(job) } };
+        const observedAt = observedServerTime();
+        const candidate = currentCandidate(document, job, observedAt);
+        const source = readC1AiDraftReconciliationSource(job);
+        const ref = candidate.lifecycleV11?.c1AiDraftJobRefV1;
+        if (ref?.jobId !== job.jobId || ref.candidateId !== job.candidateId || ref.skuPackageId !== job.skuPackageId ||
+            ref.sourceRevision !== job.scopeBinding.sourceRevision || ref.resultRevision !== job.revision ||
+            ref.inputFingerprint !== job.scopeBinding.inputFingerprint ||
+            !isDeepStrictEqual(candidate.lifecycleV11.c1AiDraftRequestV1, source.request)) throw new Error("C1_DRAFT_RECONCILIATION_REQUEST_CONFLICT");
+        assertCurrentC1AiDraftRequest({ skuPackage: candidate.lifecycleV11.skuPackage, request: source.request });
+        // This reads the original consumed permission. It neither refreshes its
+        // expiry nor consumes a second use for the already-issued request.
+        if (!Array.isArray(document.runtime.softwareJobAuthorizationRecords) ||
+            !Array.isArray(document.runtime.softwareJobCredentialBindings)) throw new Error("C1_DRAFT_RECONCILIATION_ADMISSION_CONFLICT");
+        const authorizations = document.runtime.softwareJobAuthorizationRecords.filter(record => record.authorizationId === job.scopeBinding.authorizationRef);
+        const credentials = document.runtime.softwareJobCredentialBindings.filter(record => record.credentialAlias === job.scopeBinding.credentialAlias && isDeepStrictEqual(record.scopeBinding, job.scopeBinding));
+        if (authorizations.length !== 1 || authorizations[0].authorizationType !== "paid_ai_draft" ||
+            authorizations[0].useCount !== 1 || authorizations[0].maxUses !== 1 || authorizations[0].consumedByJobId !== job.jobId ||
+            !isDeepStrictEqual(authorizations[0].scopeBinding, job.scopeBinding) || credentials.length !== 1 ||
+            !credentials[0].allowedWorkerIds.includes(workerId)) throw new Error("C1_DRAFT_RECONCILIATION_ADMISSION_CONFLICT");
+        const outcome = beginC1AiDraftResultReconciliation({ job, workerId, leaseId, leaseDurationMs, serverTime: observedAt });
+        if (outcome.changed) {
+          const jobs = softwareJobsInDocument(document);
+          jobs[jobs.findIndex(value => value.jobId === jobId)] = clone(outcome.job);
+        }
+        return { changed: outcome.changed, ...(outcome.changed ? { document } : {}), result: outcome };
+      });
+    },
+    async settleC1AiDraftReconciliation({ jobId, workerId, attemptId, observationStatus, resultEnvelope = null, failureClass = null }) {
+      return businessStateRepository.transact(document => {
+        const job = findSoftwareJobInDocument(document, jobId);
+        const candidate = document.candidates.find(value => value.id === job?.candidateId);
+        const applicationDisposition = observationStatus === "completed" && (!candidate || candidate.dataRevision !== job.revision)
+          ? "revision_conflict_not_applied" : "result_recorded_no_candidate_mutation";
+        const next = settleC1AiDraftResultReconciliation({ job, workerId, attemptId, observationStatus, resultEnvelope,
+          failureClass, applicationDisposition, serverTime: observedServerTime() });
+        const jobs = softwareJobsInDocument(document);
+        jobs[jobs.findIndex(value => value.jobId === jobId)] = clone(next);
+        return { changed: true, document, result: next };
+      });
+    },
     async settle({ jobId, workerId, leaseId, status, externalRequestState, resultRef, resultEnvelope, failureClass, externalRequestRef }) {
       return businessStateRepository.transact(async (document) => {
         const observedAt = observedServerTime();
@@ -1004,8 +1091,8 @@ export function createRepositoryBackedSoftwareJobStore({ businessStateRepository
         .slice(0, limit));
     },
     async reconcileAfterRestart({ jobTypes = null } = {}) {
-      if (jobTypes !== null && (!Array.isArray(jobTypes) || jobTypes.length < 1 || jobTypes.length > 2 ||
-          new Set(jobTypes).size !== jobTypes.length || jobTypes.some(type => ![A_DISCOVERY_JOB_TYPE, A_PRODUCT_DETAIL_JOB_TYPE].includes(type)))) {
+      if (jobTypes !== null && (!Array.isArray(jobTypes) || jobTypes.length < 1 || jobTypes.length > RESTART_FILTER_JOB_TYPES.length ||
+          new Set(jobTypes).size !== jobTypes.length || jobTypes.some(type => !RESTART_FILTER_JOB_TYPES.includes(type)))) {
         throw new Error("SOFTWARE_JOB_RESTART_FILTER_INVALID");
       }
       const selectedTypes = jobTypes === null ? null : new Set(jobTypes);

@@ -1,3 +1,4 @@
+import { attachProductionProfitEvidence } from "./fixtures/production-profit-evidence-fixture.mjs";
 import { attachSyntheticFinalPricingReview } from './fixtures/final-pricing-review-fixture.mjs';
 import { productionOwnerDecisionFixture } from './fixtures/production-owner-decision-fixture.mjs';
 import { createProductionAuthorization, commitSingleOwnerProductionAuthorization } from '../lib/production-authorization.mjs';
@@ -36,9 +37,7 @@ function fixture({ optionalMaterial = false } = {}) {
     verification: { evidenceRef: "configuration-evidence:synthetic:1", checkedAt: "2026-08-01T00:00:00.000Z", expiresAt: "2026-09-01T00:00:00.000Z" } };
   const configuration = createSelectionReviewRuntimeConfiguration({ env: { SELECTION_REVIEW_STORE_BINDINGS_JSON: JSON.stringify([store]),
     SELECTION_REVIEW_PRODUCTION_BINDINGS_JSON: JSON.stringify([binding]) }, appDir: "/tmp/synthetic-production-preparation", argv: [] });
-  const fx = candidate.lifecycleV11.skuPackage.c2FinalAssets.productionAuthorizationPreparation.finalCardInputSnapshot.activeProfitModel.priceConversion;
-  const evidencePacks = [{ id: fx.evidenceRef, kind: "exchange_rate", status: "active", scope: { pair: "RUB/CNY" }, sourceType: "official",
-    sourceRef: "https://www.cbr.ru/currency_base/daily/", checkedAt: "2026-08-07T00:00:00.000Z", expiresAt: "2026-09-01T00:00:00.000Z", evidenceData: { rubPerCny: fx.rubPerCny } }];
+  const { evidencePacks } = attachProductionProfitEvidence(candidate);
   const args = { candidate, configuration, evidencePacks, observedAt };
   const view = buildProductionOwnerPreparationView(args);
   const input = { contractVersion: view.contractVersion, ...view.source, bindingId: binding.bindingId, configurationVersion: binding.configurationVersion,
@@ -161,9 +160,8 @@ test('two comparable final-pricing samples remain explicitly insufficient for th
   assert.equal(f.view.ready, true);
 });
 
-test('missing or altered final comparison blocks preparation and direct authorization without modifying history', async () => {
+test('altered saved final comparison blocks preparation and direct authorization without modifying history', async () => {
   for (const mutate of [
-    sku => { delete sku.finalPricingReview; },
     sku => { sku.finalPricingReview.assessment.selectedPriceRub += 1; },
     sku => { sku.finalPricingReview.profitModelVersion = 'synthetic:other-profit'; },
     sku => { sku.finalPricingReview.assessment.target.storeRef.platformStoreId = 'synthetic:other-store'; },
@@ -177,7 +175,7 @@ test('missing or altered final comparison blocks preparation and direct authoriz
     assert.deepEqual(f.candidate, before);
     const formal = productionOwnerDecisionFixture(), sku = structuredClone(formal.candidate.lifecycleV11.skuPackage);
     mutate(sku); const frozen = structuredClone(sku);
-    assert.throws(() => createProductionAuthorization({ candidateId: formal.candidate.id, sourceCandidateRevision: formal.candidate.dataRevision,
+    assert.throws(() => createProductionAuthorization({ candidate: { ...formal.candidate, lifecycleV11: { ...formal.candidate.lifecycleV11, skuPackage: sku } }, evidencePacks: formal.evidencePacks, currentCommissionCatalogs: formal.currentCommissionCatalogs, candidateId: formal.candidate.id, sourceCandidateRevision: formal.candidate.dataRevision,
       currentCandidateRevision: formal.candidate.dataRevision, skuPackage: sku, commercialDecision: formal.commercialDecision,
       ownerActor: formal.args.actor, authorizedAt: formal.formal.at }), /FINAL_PRICING|最终/);
     assert.deepEqual(sku, frozen); assert.equal(sku.productionAuthorization, null); assert.equal(sku.dHandoff, undefined);

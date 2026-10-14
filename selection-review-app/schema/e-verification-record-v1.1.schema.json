@@ -13,7 +13,7 @@
       ],
       "properties": {
         "sourceProtocol": {
-          "const": "ozon-product-attributes-v4"
+          "enum": ["ozon-product-attributes-v4", "ozon-product-info-v3"]
         },
         "primaryImageUrl": {
           "oneOf": [

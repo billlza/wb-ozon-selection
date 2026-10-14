@@ -16,10 +16,7 @@ function candidate() {
   return { id: "candidate-1", dataRevision: 12, lifecycleV11: { skuPackage: {
     skuPackageId: "sku-1", dataRevision: 8, businessPhase: "C2", c2FinalAssets: {
       status: "awaiting_final_uploads", softwareState: { sourceC1Fingerprint: "a".repeat(64) },
-      mediaRequirements: { requirementsFingerprint: "b".repeat(64), imageSlots: [
-        { slotId: "main", role: "main_image", mediaType: "image", minCount: 1, maxCount: 1 },
-        { slotId: "detail", role: "detail_image", mediaType: "image", minCount: 0, maxCount: 1 }
-      ], videoSlots: [] }
+      targetContext: { schemaEvidenceRef: "schema:evidence:1" }
     }
   } } };
 }
@@ -41,14 +38,14 @@ test("C2 local file and draft survive JSON save/reopen with selection and source
   assert.equal(asset.height, 3);
   current.lifecycleV11.c2UploadDraft = settleC2Upload(current.lifecycleV11.c2UploadDraft, { uploadId: ID, asset, settledAt: TIME });
   current.lifecycleV11.c2UploadDraft = saveC2UploadSelection(current, {
-    dataRevision: 12, draftRevision: 2, selection: [{ assetId: asset.assetId, slotId: "main", order: 1 }]
+    dataRevision: 12, draftRevision: 2, selection: [{ assetId: asset.assetId, order: 1 }]
   });
   const stateFile = path.join(directory, "state.json");
   await writeFile(stateFile, JSON.stringify(current));
   const reloaded = JSON.parse(await readFile(stateFile, "utf8"));
   const recovered = selectedC2DraftAssets(reloaded.lifecycleV11.c2UploadDraft);
   assert.equal(recovered.length, 1);
-  assert.equal(recovered[0].slotId, "main");
+  assert.equal(recovered[0].order, 1);
   assert.equal(reloaded.lifecycleV11.c2UploadDraft.revision, 3);
   assert.deepEqual((await store.read(recovered[0])).body, PNG);
   assert.deepEqual(reloaded.lifecycleV11.skuPackage, sourceBefore);
@@ -60,6 +57,24 @@ test("C2 local file and draft survive JSON save/reopen with selection and source
   assert.deepEqual((await store.read(recovered[0])).body, PNG);
   await writeFile(path.join(directory, "files", ID), Buffer.concat([PNG.subarray(0, -1), Buffer.from([0])]));
   await assert.rejects(store.read(recovered[0]), error => error.extra.code === "c2_upload_file_changed");
+});
+
+test("one verified upload can be linked under an independent sibling asset identity", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "c2-linked-upload-test-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createC2LocalAssetStore({ directory: path.join(directory, "files") });
+  const source = await store.write({ assetId: `c2-local:${ID}`, fileName: "main.png",
+    mediaType: "image", contentType: "image/png", stagedAt: TIME }, PNG);
+  const target = { assetId: `c2-local:${SECOND}`, fileName: "main.png",
+    mediaType: "image", contentType: "image/png", stagedAt: TIME };
+  const linked = await store.linkExisting(source, target);
+  assert.equal(linked.assetId, target.assetId);
+  assert.equal(linked.sha256, source.sha256);
+  assert.notEqual(linked.assetRef, source.assetRef);
+  assert.deepEqual((await store.read(linked, { verifyContent: true })).body, PNG);
+  await assert.rejects(store.linkExisting(source, target), { code: "EEXIST" });
+  await assert.rejects(store.linkExisting(source, { ...target, assetId: `c2-local:00000000-0000-4000-8000-000000000003`,
+    fileName: "other.png" }), error => error.extra?.code === "c2_link_identity_invalid");
 });
 
 test("complete pixel decoding rejects signature-only and damaged images before publishing a file", async t => {
@@ -87,7 +102,7 @@ test("upload reservations reject concurrency, stale draft and source identity dr
     item => { item.id = "another-candidate"; },
     item => { item.lifecycleV11.skuPackage.skuPackageId = "another-sku"; },
     item => { item.lifecycleV11.skuPackage.dataRevision++; },
-    item => { item.lifecycleV11.skuPackage.c2FinalAssets.mediaRequirements.requirementsFingerprint = "c".repeat(64); },
+    item => { item.lifecycleV11.skuPackage.c2FinalAssets.targetContext.schemaEvidenceRef = "schema:evidence:other"; },
     item => { item.lifecycleV11.skuPackage.c2FinalAssets.softwareState.sourceC1Fingerprint = "d".repeat(64); }
   ]) {
     const altered = structuredClone(current); change(altered);
@@ -118,26 +133,27 @@ test("selection is limited to registered ready assets and current platform slots
   current.lifecycleV11.c2UploadDraft = settleC2Upload(current.lifecycleV11.c2UploadDraft, { uploadId: ID, asset, settledAt: TIME });
   const before = structuredClone(current);
   for (const selection of [
-    [{ assetId: "foreign", slotId: "main", order: 1 }],
-    [{ assetId: asset.assetId, slotId: "foreign", order: 1 }],
-    [{ assetId: asset.assetId, slotId: "main", order: 2 }],
-    [{ assetId: asset.assetId, slotId: "main", order: 1, assetRef: "/private/file" }]
+    [{ assetId: "foreign", order: 1 }],
+    [{ assetId: asset.assetId, order: 2 }],
+    [{ assetId: asset.assetId, order: 1, assetRef: "/private/file" }],
+    [{ assetId: asset.assetId, order: 1, slotId: "main" }]
   ]) assert.throws(() => saveC2UploadSelection(current, { dataRevision: 12, draftRevision: 2, selection }), error => error.extra.code === "c2_upload_selection_invalid");
   assert.deepEqual(current, before);
 });
 
-test("unassigned selections count toward the media total, including previously removed files", () => {
+test("平台没有张数上限，但主人排第一张的必须是图片", () => {
   const current = candidate();
-  current.lifecycleV11.skuPackage.c2FinalAssets.mediaRequirements.imageSlots.pop();
   for (const uploadId of [ID, SECOND]) {
     const upload = reserve(current, uploadId);
-    const asset = { ...upload, assetRef: `local-asset:${upload.assetId}`, sha256: "a".repeat(64), byteSize: 100 };
+    const asset = { ...upload, assetRef: `local-asset:${upload.assetId}`, sha256: `${uploadId === ID ? "a" : "b"}`.repeat(64), byteSize: 100 };
     current.lifecycleV11.c2UploadDraft = settleC2Upload(current.lifecycleV11.c2UploadDraft, { uploadId, asset, settledAt: TIME });
     current.lifecycleV11.c2UploadDraft = saveC2UploadSelection(current, { dataRevision: 12, draftRevision: current.lifecycleV11.c2UploadDraft.revision, selection: [] });
   }
-  const selection = current.lifecycleV11.c2UploadDraft.uploads.map((asset, index) => ({ assetId: asset.assetId, slotId: null, order: index + 1 }));
-  assert.throws(() => saveC2UploadSelection(current, { dataRevision: 12, draftRevision: 6, selection }), error => error.extra.code === "c2_upload_media_limit");
-  assert.deepEqual(current.lifecycleV11.c2UploadDraft.selection, []);
+  const selection = current.lifecycleV11.c2UploadDraft.uploads.map((asset, index) => ({ assetId: asset.assetId, order: index + 1 }));
+  const saved = saveC2UploadSelection(current, { dataRevision: 12, draftRevision: 6, selection });
+  assert.deepEqual(saved.selection, selection);
+  current.lifecycleV11.c2UploadDraft.uploads[0].mediaType = "video";
+  assert.throws(() => saveC2UploadSelection(current, { dataRevision: 12, draftRevision: 6, selection }), error => error.extra.code === "c2_upload_selection_invalid");
 });
 
 test("D读取仅接受当前授权的登记文件，保留解码所需MIME并拒绝错绑", () => {
@@ -146,14 +162,18 @@ test("D读取仅接受当前授权的登记文件，保留解码所需MIME并拒
   const uploads = authorization.lockedScope.finalUploads.map(asset => ({ ...structuredClone(asset), status: "ready", contentType: "image/jpeg" }));
   const source = { id: fixture.candidateId, dataRevision: fixture.candidateRevision, lifecycleV11: {
     skuPackage: fixture.skuPackage, c2UploadDraft: { schemaVersion: "c2-upload-draft-v1", candidateId: fixture.candidateId, skuPackageId: fixture.skuPackage.skuPackageId,
-      sourceC1Fingerprint: authorization.sourceC1Fingerprint, requirementsFingerprint: authorization.lockedScope.mediaRequirementsFingerprint,
-      uploads, selection: uploads.map(asset => ({ assetId: asset.assetId, slotId: asset.slotId, order: asset.order })) }
+      sourceC1Fingerprint: authorization.sourceC1Fingerprint, schemaEvidenceRef: authorization.lockedScope.schemaEvidenceRef,
+      uploads, selection: uploads.map(asset => ({ assetId: asset.assetId, order: asset.order })) }
   } };
   const frozen = authorization.lockedScope.finalUploads[0];
   assert.equal(resolveRegisteredC2FinalAsset(source, frozen).contentType, "image/jpeg");
+  // 2026-09-23 主人决定：C1 改版后复用原素材确认是正常路径，登记仍指向旧 C1 不再据此拒绝；
+  // 下面 candidateId、sha256、width、order、status 五条继续逐条兜住文件身份。
+  const afterC1Revision = structuredClone(source);
+  afterC1Revision.lifecycleV11.c2UploadDraft.sourceC1Fingerprint = "b".repeat(64);
+  assert.equal(resolveRegisteredC2FinalAsset(afterC1Revision, frozen).contentType, "image/jpeg");
   for (const change of [
     value => { value.lifecycleV11.c2UploadDraft.candidateId = "another"; },
-    value => { value.lifecycleV11.c2UploadDraft.sourceC1Fingerprint = "b".repeat(64); },
     value => { value.lifecycleV11.c2UploadDraft.uploads[0].sha256 = "c".repeat(64); },
     value => { value.lifecycleV11.c2UploadDraft.uploads[0].width += 1; },
     value => { value.lifecycleV11.c2UploadDraft.selection[0].order = 2; },
@@ -176,7 +196,7 @@ async function pricingDraftFixture() {
   });
   original.lifecycleV11.c2UploadDraft = saveC2UploadSelection(original, {
     dataRevision: original.dataRevision, draftRevision: 2,
-    selection: [{ assetId: upload.assetId, slotId: original.lifecycleV11.skuPackage.c2FinalAssets.mediaRequirements.imageSlots[0].slotId, order: 1 }]
+    selection: [{ assetId: upload.assetId, order: 1 }]
   });
   await f.usecase.review({ actor: f.actor, input: f.input });
   const target = (await f.repository.readSnapshot()).candidates[0];
@@ -210,7 +230,7 @@ test('pricing draft rebase rejects foreign or incomplete history and never filte
   const mutations = [
     c => { c.lifecycleV11.finalPricingRevisionHistory.at(-1).previousC1References.c2UploadDraft.candidateId = 'different'; },
     c => { c.lifecycleV11.finalPricingRevisionHistory.at(-1).previousC1References.c2UploadDraft.sourceSkuRevision++; },
-    c => { c.lifecycleV11.skuPackage.c2FinalAssets.mediaRequirements.imageSlots[0].maxCount++;  },
+    c => { c.lifecycleV11.skuPackage.c2FinalAssets.targetContext.schemaRevision = 'schema-v9';  },
     c => { c.lifecycleV11.c1PricingReuse.status = 'blocked'; },
     c => { c.lifecycleV11.finalPricingRevisionHistory.at(-1).previousC1References.c2UploadDraft.uploads[0].status = 'uploading'; },
     c => { c.lifecycleV11.finalPricingRevisionHistory.at(-1).previousC1References.c2UploadDraft.uploads[0].status = 'failed'; },

@@ -222,3 +222,107 @@ test("B最终检查拒绝缺包、重复ID、同ID换包或跨平台来源", () 
   assert.equal(JSON.stringify(shared), before);
   assert.ok(results.every(result => result.externalAccesses.length === 0));
 });
+
+/**
+ * 主人 2026-09-14 的决定是「把钱的闸门从文案素材挪到上架」。上架那道闸门已经加好了
+ * （lib/commission-estimate-authorization.mjs 的 assertFormalCommissionBeforeProduction，由
+ * commitSingleOwnerProductionAuthorization 在原子事务里调用）。放行 C1 这一半没有做，这条测试把「为什么还没做」
+ * 钉成可执行的事实，而不是一句写在报告里的话。
+ *
+ * 一、真正拦住 C1 的不是 HTTP 路由里那一行触发条件，是 lib/c1-product-plan.mjs 里
+ *     `activeProfitModel.commissionMode !== "exact"` 那一道。放行判据本身已经说这件商品够格了。
+ * 二、可是 C1 只要往这件商品上写第一笔，「使用精确费用复算」那条出路当场就没了：写一次把 dataRevision 顶高
+ *     一格，而 prepareSavedConditionalBExactInputs 把失败记录和运行时的修订号钉死在当前版本上。
+ *
+ * 所以谁要放行 C1，必须连着把第二条一起解决（参考 lib/final-pricing-revalidation.mjs 的做法：拿一份工作副本
+ * 临时置回 B 阶段再算）。在那之前，这条测试红了就说明 C1 被放行了而出路没跟上。
+ */
+test("放行C1之前，精确佣金复算必须先活得过C1的第一次落盘", async () => {
+  const { createSavedConditionalBFixture } = await import("./fixtures/real-a-b-flow-fixture.mjs");
+  const { createMemoryBusinessStateRepository } = await import("../lib/business-state-repository.mjs");
+  const { runC1KeywordPlanningEvidenceProduction } = await import("../lib/c1-keyword-planning-software-use-case.mjs");
+  const { createActorContext } = await import("../lib/runtime-identity.mjs");
+  const { buildBExactCommissionRuntimeView } = await import("../lib/b-exact-commission-runtime-view.mjs");
+  const { createC1ProductPlan } = await import("../lib/c1-product-plan.mjs");
+  const { resolveConditionalCommissionRelease } = await import("../lib/commission-estimate-authorization.mjs");
+
+  const fixture = await createSavedConditionalBFixture();
+  const lifecycle = fixture.candidate.lifecycleV11;
+  const sku = lifecycle.skuPackage;
+  const model = sku.profitModels.at(-1);
+
+  // 放行判据说这件商品够格：条件测算只因为佣金是估算的，利润门槛、市场判定、异常记录三道全过。
+  assert.equal(resolveConditionalCommissionRelease({ profitModel: model,
+    executionRuntime: fixture.candidate.executionRuntime }).conditionalOnEstimatedCommissionOnly, true);
+  // 拦住它的是 createC1ProductPlan 里那两道，不是 HTTP 路由里那一行触发条件。两道分开钉：
+  // 任何一道被放开，这里就要红，好让放开它的人同时看见下面那半段。
+  const plan = skuPackage => createC1ProductPlan({ opportunityPackage: lifecycle.opportunityPackage, skuPackage,
+    platformSchemaEvidence: lifecycle.bSystemEvidenceBundle.platformSchemaEvidence, createdAt: fixture.at });
+  // 第一道：条件测算的 SKU 结论是 manual_review，不是 passed。
+  assert.throws(() => plan(sku), /^Error: C1_GATE_REJECTED: B阶段未通过或未完成$/u);
+  // 第二道：就算把结论换成 passed，佣金还是估算的，仍然进不去。
+  // （这道闸门认两种正式B佣金：exact 与 official_reference。estimated 不在其中，照旧拦住。）
+  assert.throws(() => plan({ ...structuredClone(sku), businessResult: "passed" }),
+    /^Error: C1_GATE_REJECTED: 正式B必须先取得精确佣金或官方费表费率，估算或历史利润记录不得进入C1$/u);
+
+  // 出路现在是通的。
+  const repository = createMemoryBusinessStateRepository({ meta: { version: 2 }, ...fixture.document });
+  const runtimeView = candidate => buildBExactCommissionRuntimeView({ candidate, evidencePacks: fixture.evidencePacks,
+    currentCommissionCatalogs: [], rules: fixture.document.rules, observedAt: fixture.at });
+  const before = (await repository.readSnapshot()).candidates[0];
+  assert.equal(runtimeView(before).canRecalculate, true);
+  assert.equal(runtimeView(before).status, "ready");
+
+  // C1 往这件商品上写的第一笔——连最无害的那一笔（「这件还没有 C1 包」的准备度记录）——就足以关掉它。
+  await runC1KeywordPlanningEvidenceProduction({ repository, runtimeMode: "local_development",
+    actor: createActorContext({ userId: "selection-review-software", sessionId: `c1-planning:${before.id}`,
+      actorType: "software", roles: ["operator"], source: "selection_review_state_machine", authenticatedAt: fixture.at }),
+    candidateId: before.id, expectedRevision: before.dataRevision, producedAt: fixture.at, codexOffline: true });
+  const after = (await repository.readSnapshot()).candidates[0];
+  assert.equal(after.dataRevision, before.dataRevision + 1);
+  assert.equal(runtimeView(after).canRecalculate, false);
+  assert.equal(runtimeView(after).blockReason, "B_EXACT_RECALCULATION_NOT_AVAILABLE");
+});
+
+// 1688 详情页采到的商品级属性，2026-09-17 之前**一项都没进冻结快照**：material 被写死成 unknown，
+// attributes 里只有两个内部记账对象。下面三条钉住修法，尤其第三条——品牌不能变成「已确认事实」。
+function withCapturedAttributes(source, attributes) {
+  return { ...source, sourceCapture: { ...(source.sourceCapture || {}), supplierAttributes: attributes } };
+}
+
+function confirmWith(source) {
+  const card = buildRealAConfirmationCard(source);
+  return runRealAConfirmationToBAndC1({
+    candidate: source, otherCosts: currentOtherCosts(source), submission: submission(card),
+    evidencePacks: evidencePacks(), confirmedAt
+  });
+}
+
+test("1688 采到的商品级属性进入冻结供货快照，面料成为材质", async () => {
+  const source = withCapturedAttributes(addEvidenceContext(await candidate()),
+    { "面料": "牛津布", "产品类别": "作训服", "尺码": "均码", "功能": "", "重量": "   ", "颜色": 5 });
+  const sku = confirmWith(source).skuPackage.selectedSupplySnapshot.supplierSku;
+  assert.equal(sku.material, "牛津布", "页面采到面料就不该再回 unknown");
+  for (const empty of ["功能", "重量", "颜色"]) {
+    assert.equal(Object.hasOwn(sku.attributes, empty), false, `空值或非字符串不能冒充已确认事实：${empty}`);
+  }
+  assert.equal(sku.attributes["产品类别"], "作训服");
+  assert.equal(sku.attributes["尺码"], "均码");
+  assert.ok(sku.attributes.purchaseCostComponents, "原有的内部记账对象不能被挤掉");
+});
+
+test("采不到属性时照旧回 unknown，不替主人猜一个", async () => {
+  const source = addEvidenceContext(await candidate());
+  const sku = confirmWith(source).skuPackage.selectedSupplySnapshot.supplierSku;
+  assert.equal(sku.material, "unknown");
+});
+
+test("1688 写的品牌绝不进冻结事实：主人自己签的品牌声明才是唯一权威", async () => {
+  const source = withCapturedAttributes(addEvidenceContext(await candidate()),
+    { "品牌": "WOSPORT", "有可授权的自有品牌": "否", "面料": "牛津布" });
+  const sku = confirmWith(source).skuPackage.selectedSupplySnapshot.supplierSku;
+  assert.equal(Object.hasOwn(sku.attributes, "品牌"), false, "1688 卖家把品牌当款式名写，不能当成已确认事实");
+  assert.equal(Object.hasOwn(sku.attributes, "有可授权的自有品牌"), false);
+  assert.equal(JSON.stringify(sku).includes("WOSPORT"), false);
+  assert.equal(sku.material, "牛津布", "排除品牌不该连累其他属性");
+});

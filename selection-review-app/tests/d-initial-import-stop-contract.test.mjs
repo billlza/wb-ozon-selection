@@ -69,3 +69,28 @@ test('initial stop rejects old execution versions, conflicting accepted receipts
     failureClass:job.failureClass,resultEnvelope:job.resultEnvelope,serverTime:f.input.serverClock()}),/DOMAIN_SETTLEMENT_REQUIRED/);
   assert.deepEqual(await f.repository.readSnapshot(),document);
 });
+
+// r69：导入已被平台接受、却因上下文变化停下时，主人要能点「对账并登记」。
+// 路由在 r69 之前就有了，但界面上没有入口——主人点不了，整条路等于不存在。
+// 这一条钉住「按钮该亮的时候亮、其余三个不亮」，以及按钮要提交的东西由视图给全。
+test('导入被接受后停下：只有「对账并登记」亮，其余三个按钮都不亮', async () => {
+  const { buildDESavedJobRuntimeView } = await import('../lib/d-e-runtime-view.mjs');
+  const { f, document, candidate } = await stoppedFixture('context_changed');
+  const view = buildDESavedJobRuntimeView({ candidate, runtime: document.runtime,
+    serviceBindings: [], productionBindings: [f.currentProductionBinding],
+    dependencyView: {}, observedAt: f.serverClock ? f.serverClock() : f.input.serverClock() });
+
+  assert.equal(view.canRecoverInitialImport, true);
+  assert.equal(view.canContinueSaved, false);
+  assert.equal(view.canDispatchNewRound, false);
+  assert.equal(view.canRollbackAuthorization, false);
+  assert.equal(view.recoveryBlocker, null);
+
+  // 按钮要提交的四项必须由视图给全，界面不自己拼
+  const payload = view.initialImportRecovery;
+  assert.ok(payload);
+  assert.equal(payload.sourceDJobId, document.runtime.softwareJobs[0].jobId);
+  assert.equal(payload.taskId, document.runtime.softwareJobs[0].resultEnvelope.payload.taskId);
+  assert.equal(payload.requestReceiptRef, document.runtime.softwareJobs[0].resultEnvelope.payload.requestReceiptRef);
+  assert.equal(payload.expectedRevision, candidate.dataRevision);
+});

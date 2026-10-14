@@ -1,7 +1,7 @@
 import { productionAuthorizationInputFixture } from "./helpers/c2-software-fixture.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -19,19 +19,148 @@ import { commitSingleOwnerProductionAuthorization } from "../lib/production-auth
 
 const AUTH_TIME = "2026-08-22T07:00:00.000Z";
 
+async function countSourceParses(source, run) {
+  const parse = JSON.parse;
+  let count = 0;
+  JSON.parse = function (text, ...args) {
+    if (text === source) count += 1;
+    return parse.call(this, text, ...args);
+  };
+  try { await run(() => count); }
+  finally { JSON.parse = parse; }
+}
+
+test("JSON snapshot reuse still reads the file and never shares mutable DTOs", async () => {
+  const source = JSON.stringify({ candidates: [{ id: "cache-test", nested: { value: 1 } }],
+    runtime: { idempotencyRecords: [{ result: { nested: { value: 2 } } }] } });
+  let reads = 0;
+  const repository = createJsonBusinessStateRepository({ filePath: "synthetic-state.json",
+    fileSystem: { async readFile() { reads += 1; return source; } } });
+  await countSourceParses(source, async parsed => {
+    const first = await repository.readSnapshot();
+    first.candidates[0].nested.value = 99;
+    first.runtime.idempotencyRecords[0].result.nested.value = 99;
+    const second = await repository.readSnapshot();
+    assert.equal(second.candidates[0].nested.value, 1);
+    assert.equal(second.runtime.idempotencyRecords[0].result.nested.value, 2);
+    second.candidates[0].nested.value = 88;
+    assert.equal((await repository.readSnapshot()).candidates[0].nested.value, 1);
+    assert.equal(reads, 3);
+    assert.equal(parsed(), 1);
+  });
+});
+
+test("warm JSON snapshots observe atomic replacement and reject damaged or missing sources", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "snapshot-cache-source-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = path.join(directory, "state.json");
+  const source = JSON.stringify({ candidates: [{ id: "fresh-file", dataRevision: 1 }] });
+  await writeFile(filePath, source);
+  const repository = createJsonBusinessStateRepository({ filePath });
+  await repository.readSnapshot();
+  await repository.readSnapshot();
+  const replacement = `${filePath}.replacement`;
+  await writeFile(replacement, source.replace('"dataRevision":1', '"dataRevision":2'));
+  await rename(replacement, filePath);
+  assert.equal((await repository.readSnapshot()).candidates[0].dataRevision, 2);
+  await writeFile(filePath, "{");
+  await assert.rejects(repository.readSnapshot(), SyntaxError);
+  await writeFile(filePath, JSON.stringify({ candidates: [], productionEntityRecords: [{}] }));
+  await assert.rejects(repository.readSnapshot(), /PRODUCTION_ENTITY_SHAPE_INVALID/);
+  await rm(filePath);
+  await assert.rejects(repository.readSnapshot(), error => error.code === "ENOENT");
+  await writeFile(filePath, source);
+  assert.equal((await repository.readSnapshot()).candidates[0].dataRevision, 1);
+});
+
+test("snapshot reuse cannot publish no-op mutations, failed writes or failed transactions", async () => {
+  let source = JSON.stringify({ candidates: [{ id: "transaction-cache", dataRevision: 1 }] });
+  let rejectWrite = true;
+  const repository = createJsonBusinessStateRepository({ filePath: "synthetic-state.json",
+    fileSystem: { async readFile() { return source; } },
+    atomicWriter: async (_file, document) => {
+      if (rejectWrite) throw new Error("SYNTHETIC_ATOMIC_WRITE_FAILED");
+      source = JSON.stringify(document);
+    } });
+  await repository.readSnapshot();
+  await repository.transact(document => {
+    document.candidates[0].dataRevision = 2;
+    return { changed: false, result: "not_saved" };
+  });
+  assert.equal((await repository.readSnapshot()).candidates[0].dataRevision, 1);
+  await assert.rejects(repository.transact(() => { throw new Error("SYNTHETIC_MUTATOR_FAILED"); }), /SYNTHETIC_MUTATOR_FAILED/);
+  await assert.rejects(repository.transact(document => {
+    document.candidates[0].dataRevision = 2;
+    return { changed: true, document, result: "save" };
+  }), /SYNTHETIC_ATOMIC_WRITE_FAILED/);
+  assert.equal((await repository.readSnapshot()).candidates[0].dataRevision, 1);
+  rejectWrite = false;
+  await repository.transact(document => {
+    document.candidates[0].dataRevision = 2;
+    return { changed: true, document, result: "saved" };
+  });
+  assert.equal((await repository.readSnapshot()).candidates[0].dataRevision, 2);
+});
+
+test("a delayed read across a write keeps snapshots isolated and observes the next file read", async () => {
+  let source = JSON.stringify({ candidates: [{ id: "delayed-cache", dataRevision: 1 }] });
+  let release, reads = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const repository = createJsonBusinessStateRepository({ filePath: "synthetic-state.json",
+    fileSystem: { async readFile() {
+      const captured = source;
+      if (++reads === 1) await gate;
+      return captured;
+    } }, atomicWriter: async (_file, document) => { source = JSON.stringify(document); } });
+  const delayed = repository.readSnapshot();
+  await repository.transact(document => {
+    document.candidates[0].dataRevision = 2;
+    return { changed: true, document, result: "saved" };
+  });
+  release();
+  const old = await delayed;
+  assert.equal(old.candidates[0].dataRevision, 1);
+  old.candidates[0].dataRevision = 99;
+  assert.equal((await repository.readSnapshot()).candidates[0].dataRevision, 2);
+  assert.equal(reads, 3);
+});
+
+test("oversized snapshot input remains readable without being retained for reuse", async () => {
+  const source = JSON.stringify({ candidates: [], evidence: "x".repeat(32 * 1024 * 1024) });
+  const repository = createJsonBusinessStateRepository({ filePath: "synthetic-state.json",
+    fileSystem: { async readFile() { return source; } } });
+  await countSourceParses(source, async parsed => {
+    assert.equal((await repository.readSnapshot()).evidence.length, 32 * 1024 * 1024);
+    assert.equal((await repository.readSnapshot()).evidence.length, 32 * 1024 * 1024);
+    assert.equal(parsed(), 2);
+  });
+});
+
+test("missing initial documents and read failures cannot return a cached successful snapshot", async () => {
+  let initialRevision = 0, failure = "ENOENT";
+  const repository = createJsonBusinessStateRepository({ filePath: "synthetic-state.json", initializeIfMissing: true,
+    initialDocument: () => ({ candidates: [{ id: "initial-cache", dataRevision: ++initialRevision }] }),
+    fileSystem: { async readFile() { throw Object.assign(new Error("SYNTHETIC_READ_FAILED"), { code: failure }); } } });
+  assert.equal((await repository.readSnapshot()).candidates[0].dataRevision, 1);
+  assert.equal((await repository.readSnapshot()).candidates[0].dataRevision, 2);
+  failure = "EIO";
+  await assert.rejects(repository.readSnapshot(), error => error.code === "EIO");
+});
+
 function authorizationFixture() {
   const source = productionAuthorizationInputFixture();
   const skuPackage = structuredClone(source.skuPackage);
-  const candidate = { id: source.candidateId, dataRevision: source.sourceCandidateRevision,
-    targetPlatform: skuPackage.targetPlatform, targetStore: skuPackage.targetStore, storeRef: structuredClone(skuPackage.g1Identity.storeRef),
-    lifecycleV11: { status: "c2_ready", platformWrites: 0, skuPackage }, updatedAt: source.authorizedAt, lastModifiedBy: "owner" };
+  // Keep the shared producer's exact B input bundle and matching evidence; the repository test must reach the write boundary.
+  const candidate = { ...structuredClone(source.candidate),
+    lifecycleV11: { ...structuredClone(source.candidate.lifecycleV11), status: "c2_ready", platformWrites: 0, skuPackage },
+    updatedAt: source.authorizedAt, lastModifiedBy: "owner" };
   const card = skuPackage.productionConfirmationCard;
   const preparation = skuPackage.c2FinalAssets.productionAuthorizationPreparation;
   const input = { contractVersion: "production-authorization-v1.2", dataRevision: candidate.dataRevision, skuRevision: skuPackage.dataRevision,
     cardId: card.cardId, cardRevision: card.cardRevision, sourcePreparationFingerprint: preparation.preparationFingerprint,
     sourceFinalCardInputFingerprint: preparation.finalCardInputFingerprint, bindingId: source.commercialDecision.executionBinding.bindingId, configurationVersion: source.commercialDecision.executionBinding.configurationVersion,
     merchantSku: source.commercialDecision.merchantSku, confirmExactScope: true };
-  return { candidate, commercialDecision: structuredClone(source.commercialDecision), actor: source.ownerActor, preparation, input };
+  return { candidate, evidencePacks: structuredClone(source.evidencePacks), currentCommissionCatalogs: structuredClone(source.currentCommissionCatalogs), commercialDecision: structuredClone(source.commercialDecision), actor: source.ownerActor, preparation, input };
 }
 
 function authorizationArgs(fixture, repository) {
@@ -153,7 +282,7 @@ test("事务失败不留下半套业务状态，缺少Repository边界明确失�
 
 test("一次主人确认在同一Repository事务保存准确决定、唯一授权和唯一D handoff", async () => {
   const fixture = authorizationFixture(); const { candidate, commercialDecision, preparation } = fixture;
-  const repository = createMemoryBusinessStateRepository({ candidates: [candidate], runtime: { operationAudit: [], idempotencyRecords: [] }, dispatches: [] });
+  const repository = createMemoryBusinessStateRepository({ candidates: [candidate], evidencePacks: fixture.evidencePacks, currentCommissionCatalogs: fixture.currentCommissionCatalogs, runtime: { operationAudit: [], idempotencyRecords: [] }, dispatches: [] });
   const args = authorizationArgs(fixture, repository);
   const first = await commitSingleOwnerProductionAuthorization(args);
   assert.equal(first.status, "committed");
@@ -196,7 +325,7 @@ test("一次主人确认在同一Repository事务保存准确决定、唯一授�
 test("旧revision、缺图、未确认、秘密与unknown_outcome均零授权零handoff且原子回滚", async () => {
   const cases = [
     ["old revision", f => { f.input.dataRevision -= 1; }, /REVISION_CONFLICT/],
-    ["incomplete images", f => { f.candidate.lifecycleV11.skuPackage.c2FinalAssets.productionAuthorizationPreparation.finalUploads = []; }, /C2素材包校验失败:productionAuthorizationPreparation:/],
+    ["incomplete images", f => { f.candidate.lifecycleV11.skuPackage.c2FinalAssets.productionAuthorizationPreparation.finalUploads = []; }, /^Error: PRODUCTION_AUTHORIZATION_PREPARATION_DRIFT:fingerprint$/],
     ["unconfirmed owner", f => { f.input.confirmExactScope = false; }, /RECONFIRMATION_REQUIRED/],
     ["unauthorized actor", f => { f.actor = createActorContext({ userId: "reviewer-1", sessionId: "session-review", actorType: "human", roles: ["reviewer"], source: "authenticated_identity_provider", authenticatedAt: AUTH_TIME }); }, /AUTHENTICATED_IDENTITY_REQUIRED/],
     ["secret key", f => { f.commercialDecision.credentialAlias = "accessToken=secret-value"; }, /SECRET_REJECTED/],
@@ -208,7 +337,7 @@ test("旧revision、缺图、未确认、秘密与unknown_outcome均零授权零
   ];
   for (const [label, mutate, expected] of cases) {
     const fixture = authorizationFixture(); mutate(fixture);
-    const document = { candidates: [fixture.candidate], runtime: { operationAudit: [], idempotencyRecords: [] }, dispatches: [] };
+    const document = { candidates: [fixture.candidate], evidencePacks: fixture.evidencePacks, currentCommissionCatalogs: fixture.currentCommissionCatalogs, runtime: { operationAudit: [], idempotencyRecords: [] }, dispatches: [] };
     const repository = createMemoryBusinessStateRepository(document);
     await assert.rejects(commitSingleOwnerProductionAuthorization(authorizationArgs(fixture, repository)), expected, label);
     const stored = await repository.readSnapshot(); assert.deepEqual(stored, document, label);
@@ -222,11 +351,13 @@ test("旧revision、缺图、未确认、秘密与unknown_outcome均零授权零
 test("授权事务持久化失败时决定、授权、handoff、审计与幂等记录全部不落盘", async () => {
   const fixture = authorizationFixture();
   const directory = await mkdtemp(path.join(os.tmpdir(), "production-authorization-rollback-")); const filePath = path.join(directory, "state.json");
-  const document = { candidates: [fixture.candidate], runtime: { operationAudit: [], idempotencyRecords: [] }, dispatches: [] };
+  const document = { candidates: [fixture.candidate], evidencePacks: fixture.evidencePacks, currentCommissionCatalogs: fixture.currentCommissionCatalogs, runtime: { operationAudit: [], idempotencyRecords: [] }, dispatches: [] };
   await writeFile(filePath, JSON.stringify(document), "utf8");
   try {
-    const repository = createJsonBusinessStateRepository({ filePath, atomicWriter: async () => { throw new Error("simulated_atomic_replace_failure"); } });
+    let replaceAttempts = 0;
+    const repository = createJsonBusinessStateRepository({ filePath, atomicWriter: async () => { replaceAttempts += 1; throw new Error("simulated_atomic_replace_failure"); } });
     await assert.rejects(commitSingleOwnerProductionAuthorization(authorizationArgs(fixture, repository)), /simulated_atomic_replace_failure/);
+    assert.equal(replaceAttempts, 1, "valid production inputs must reach the atomic writer before its injected failure");
     assert.deepEqual(JSON.parse(await readFile(filePath, "utf8")), document);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

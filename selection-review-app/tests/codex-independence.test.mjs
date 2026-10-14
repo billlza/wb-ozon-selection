@@ -14,6 +14,7 @@ import {
   NORMAL_PRODUCTION_PATH,
   SOFTWARE_LIFECYCLE_AUDIT_PHASES,
   codexOfflineModeFromEnvironment,
+  dispatchDeliveryEnabledFromEnvironment,
   validateSoftwareLifecycleCodexIndependenceAudit
 } from "../lib/codex-independence.mjs";
 
@@ -74,6 +75,42 @@ test("运行环境门禁默认关闭，显式CODEX_OFFLINE=true后正常路径�
     dependencyType: "dispatch",
     evidenceRef: "runtime:maintenance"
   }).allowed, true);
+});
+
+test("旧派发通道开关必须两个显式开关同时打开且未进入CODEX_OFFLINE", () => {
+  assert.equal(dispatchDeliveryEnabledFromEnvironment({}), false);
+  assert.equal(dispatchDeliveryEnabledFromEnvironment({
+    CODEX_OFFLINE: "true",
+    SELECTION_REVIEW_CODEX_DISPATCH: "off",
+    SELECTION_REVIEW_AUTO_DELIVER: "off"
+  }), false, "正式生产环境必须保持关闭");
+  assert.equal(dispatchDeliveryEnabledFromEnvironment({
+    SELECTION_REVIEW_CODEX_DISPATCH: "on",
+    SELECTION_REVIEW_AUTO_DELIVER: "on"
+  }), true);
+  assert.equal(dispatchDeliveryEnabledFromEnvironment({ SELECTION_REVIEW_CODEX_DISPATCH: "on" }), false);
+  assert.equal(dispatchDeliveryEnabledFromEnvironment({ SELECTION_REVIEW_AUTO_DELIVER: "on" }), false);
+  assert.equal(dispatchDeliveryEnabledFromEnvironment({
+    SELECTION_REVIEW_CODEX_DISPATCH: "on",
+    SELECTION_REVIEW_AUTO_DELIVER: "off"
+  }), false);
+  assert.equal(dispatchDeliveryEnabledFromEnvironment({
+    CODEX_OFFLINE: "true",
+    SELECTION_REVIEW_CODEX_DISPATCH: "on",
+    SELECTION_REVIEW_AUTO_DELIVER: "on"
+  }), false, "CODEX_OFFLINE优先于任何派发开关");
+  assert.equal(dispatchDeliveryEnabledFromEnvironment({
+    SELECTION_REVIEW_CODEX_DISPATCH: "TRUE",
+    SELECTION_REVIEW_AUTO_DELIVER: " on "
+  }), true);
+  assert.equal(dispatchDeliveryEnabledFromEnvironment({
+    SELECTION_REVIEW_CODEX_DISPATCH: " On ",
+    SELECTION_REVIEW_AUTO_DELIVER: "True"
+  }), true);
+  assert.equal(dispatchDeliveryEnabledFromEnvironment({
+    SELECTION_REVIEW_CODEX_DISPATCH: "yes",
+    SELECTION_REVIEW_AUTO_DELIVER: "on"
+  }), false);
 });
 
 test("正常SKU只有所有依赖均为非必需时才证明软件独立", () => {

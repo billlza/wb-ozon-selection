@@ -1,7 +1,9 @@
 import { adapt1688CaptureToSupplierOption } from './supplier-option.mjs';
 import { readAProductDetailSupplierEvidence } from './a-product-detail-evidence.mjs';
-import { validateSalesSnapshot } from "./sales-snapshot.mjs";
-import { sourceCaptureFailureDestinationLabel } from "./source-capture.mjs";
+import { currentSalesSnapshot } from "./discovery-market-snapshot.mjs";
+import { SEERFAR_CATEGORY_DETAIL_SOURCE, salesSnapshotCurrencyEvidenced } from "./sales-snapshot.mjs";
+import { siblingReferencedSalesSnapshot } from "./sibling-sales-snapshot.mjs";
+import { normalizePinduoduoCaptureSource, sourceCaptureFailureDestinationLabel } from "./source-capture.mjs";
 import { STORE_PLATFORMS, isCompleteStoreRef, sameStoreRef } from "./store-binding.mjs";
 
 export const REAL_A_CONFIRMATION_CARD_VERSION = "real-a-confirmation-card-v1.1";
@@ -32,10 +34,13 @@ function nonNegative(value) {
   return parsed !== null && parsed >= 0;
 }
 
+/**
+ * The current snapshot is the newest saved entry that still validates, whichever source produced it: a real page read,
+ * a provider detail read, or the read-only projection of an already-saved discovery receipt. The card only requires
+ * that one exists and that the owner confirms it; it never ranks the sources itself.
+ */
 function newestValidSalesSnapshot(candidate) {
-  return (Array.isArray(candidate?.salesSnapshotsV11) ? candidate.salesSnapshotsV11 : [])
-    .filter((snapshot) => validateSalesSnapshot(snapshot).valid)
-    .sort((left, right) => Date.parse(right.collectedAt) - Date.parse(left.collectedAt))[0] || null;
+  return currentSalesSnapshot(candidate);
 }
 
 function selectedCaptureSku(candidate) {
@@ -51,9 +56,30 @@ function exact1688Url(value) {
   return /^https:\/\/detail\.1688\.com\/offer\/\d+\.html(?:[?#].*)?$/i.test(String(value || "").trim());
 }
 
+// Like a 1688 detail link with its query, a Pinduoduo goods link is exact when it names exactly one goods_id.
+function exactPinduoduoUrl(value) {
+  return normalizePinduoduoCaptureSource(String(value || "").trim()).type === "detail";
+}
+
+function exactSupplierUrl(value) {
+  return exact1688Url(value) || exactPinduoduoUrl(value);
+}
+
 function aSupplierInputUrl(value) {
   const input = String(value || "").trim();
-  return exact1688Url(input) || /^https:\/\/qr\.1688\.com\/s\/[A-Za-z0-9_-]{1,160}\/?$/i.test(input);
+  return exactSupplierUrl(input) || /^https:\/\/qr\.1688\.com\/s\/[A-Za-z0-9_-]{1,160}\/?$/i.test(input) ||
+    normalizePinduoduoCaptureSource(input).type === "short";
+}
+
+/**
+ * 对标快照的售价币种没有证据时，给主人的那一句话；有证据时是 null。它跟着卡片走：A 确认在发任何外部请求之前
+ * 就按这一句拒绝，「算利润」那一步读同一张卡提前说出来，两处说的是同一句话。
+ */
+function salesCurrencyGapReason(sales) {
+  if (salesSnapshotCurrencyEvidenced(sales)) return null;
+  return sales?.source === SEERFAR_CATEGORY_DETAIL_SOURCE
+    ? "这个售价来自 Seerfar 的查询结果，Seerfar 没有说明它是卢布还是别的币种，软件不拿它算正式利润。先读一次这个 Ozon 商品页，用页面上的售价。"
+    : "这份对标快照里的售价没有可核对的币种，软件不猜它是卢布，不能拿它算正式利润。";
 }
 
 function field(value, source, status = known(value) ? "available" : "missing") {
@@ -80,7 +106,8 @@ export function buildRealAConfirmationCard(candidate, options = {}) {
   }
   const before = JSON.stringify(candidate);
   const apiEvidence = readAProductDetailSupplierEvidence(candidate);
-  const sales = apiEvidence?.salesSnapshot ?? newestValidSalesSnapshot(candidate);
+  // A sibling colour shows the snapshot its record names (its family's price basis), not whichever copy is newest.
+  const sales = apiEvidence?.salesSnapshot ?? siblingReferencedSalesSnapshot(candidate) ?? newestValidSalesSnapshot(candidate);
   const capturedSku = selectedCaptureSku(candidate);
   const supplierCapture = apiEvidence?.supplierCapture ?? (isObject(candidate.sourceCapture) && candidate.sourceCapture.mode === "a_supplier_capture"
     ? candidate.sourceCapture
@@ -121,11 +148,16 @@ export function buildRealAConfirmationCard(candidate, options = {}) {
     guooRouteComparison,
     salesReview: sales ? {
       snapshotId: sales.snapshotId,
+      source: sales.source ?? "platform_page_read",
+      marketMetrics: isObject(sales.marketMetrics) ? structuredClone(sales.marketMetrics) : null,
       sourceDataRevision: sales.sourceDataRevision,
       productUrl: sales.productUrl,
       title: sales.title,
       currentPrice: sales.currentPrice,
       currency: sales.currency,
+      // 售价币种有没有证据。没有的话这份快照只能看，不能当正式价格依据（P0-13）。
+      currencyEvidenced: salesSnapshotCurrencyEvidenced(sales),
+      currencyGapReason: salesCurrencyGapReason(sales),
       sellerType: sales.sellerType,
       sellerIdentityStatus: sales.sellerIdentityEvidence.status,
       collectedAt: sales.collectedAt,
@@ -260,13 +292,17 @@ export function validateRealAConfirmationSubmission(card, input) {
   if (!card.salesReview || sales.snapshotId !== card.salesReview.snapshotId) {
     push("salesReview.snapshotId", "销售快照", "必须确认当前卡片展示的销售快照");
   }
+  if (card.salesReview && card.salesReview.currencyEvidenced !== true) {
+    push("salesReview.currency", "对标售价的币种", card.salesReview.currencyGapReason ||
+      "这份对标快照里的售价没有可核对的币种，不能拿它算正式利润。");
+  }
   if (sales.comparability !== "comparable") {
     push("salesReview.comparability", "商品可比性", "只有确认商品合理可比才能进入B");
   }
   if (sales.validityStatus !== "current") {
     push("salesReview.validityStatus", "销售快照时效", "当前快照必须经系统确认仍然有效");
   }
-  if (!exact1688Url(supplier.productUrl)) push("productUrl", "精确1688供应链接", "必须是detail.1688.com的准确商品链接");
+  if (!exactSupplierUrl(supplier.productUrl)) push("productUrl", "精确供应链接", "必须是detail.1688.com或拼多多goods_id的准确商品链接");
   if (!String(supplier.supplierSkuId || "").trim()) push("supplierSkuId", "具体供应SKU", "必须锁定具体供应SKU");
   if (!String(supplier.variantKey || "").trim()) push("variantKey", "规格/变体", "必须明确具体规格或变体");
   if (!positive(supplier.unitProductPrice)) push("unitProductPrice", "商品价", "必须填写大于0的单件商品价");

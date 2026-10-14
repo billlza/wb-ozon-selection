@@ -50,6 +50,60 @@ test("服务端正式来源证据生成绑定下一revision的关键词准备证
   assert.notEqual(result.evidence.binding.skuPackageId, "sku-lifecycle:CX-20260803-010:4993364145574");
 });
 
+test("供应快照缺少显式版本时保存与作业规划一致的绑定值", () => {
+  const candidate = keywordPlanningCandidate();
+  delete candidate.lifecycleV11.skuPackage.c1ProductPlan.inputSnapshots.confirmedSupplierSkuSnapshot.schemaVersion;
+  const result = produceC1KeywordPlanningEvidence({ candidate, expectedRevision: 31,
+    serverEvidence: keywordPlanningSourceEvidence(), producedAt: KEYWORD_NOW });
+  assert.equal(result.status, "ready");
+  assert.equal(result.evidence.binding.salesSnapshotVersion, "sales-snapshot-v1.1");
+  assert.equal(result.evidence.binding.supplySnapshotVersion, "c1-confirmed-supplier-sku-snapshot-v1");
+  assert.equal(Object.values(result.evidence.binding).includes(undefined), false);
+});
+
+test("空值与 unknown 快照版本遵守作业规划的有效版本选择", () => {
+  for (const invalid of ["", "  ", "unknown"]) {
+    const candidate = keywordPlanningCandidate();
+    const snapshots = candidate.lifecycleV11.skuPackage.c1ProductPlan.inputSnapshots;
+    snapshots.salesSnapshot.version = invalid;
+    snapshots.confirmedSupplierSkuSnapshot.version = invalid;
+    const fromSchema = produceC1KeywordPlanningEvidence({ candidate, expectedRevision: 31,
+      serverEvidence: keywordPlanningSourceEvidence(), producedAt: KEYWORD_NOW });
+    assert.equal(fromSchema.status, "ready");
+    assert.equal(fromSchema.evidence.binding.salesSnapshotVersion, "sales-snapshot-v1.1");
+    assert.equal(fromSchema.evidence.binding.supplySnapshotVersion, "confirmed-supplier-sku-snapshot-v1");
+
+    snapshots.confirmedSupplierSkuSnapshot.schemaVersion = invalid;
+    const fromFallback = produceC1KeywordPlanningEvidence({ candidate, expectedRevision: 31,
+      serverEvidence: keywordPlanningSourceEvidence(), producedAt: KEYWORD_NOW });
+    assert.equal(fromFallback.status, "ready");
+    assert.equal(fromFallback.evidence.binding.salesSnapshotVersion, "sales-snapshot-v1.1");
+    assert.equal(fromFallback.evidence.binding.supplySnapshotVersion, "c1-confirmed-supplier-sku-snapshot-v1");
+    assert.equal(Object.values(fromFallback.evidence.binding).includes(undefined), false);
+
+    snapshots.salesSnapshot.schemaVersion = invalid;
+    const missingSalesVersion = produceC1KeywordPlanningEvidence({ candidate, expectedRevision: 31,
+      serverEvidence: keywordPlanningSourceEvidence(), producedAt: KEYWORD_NOW });
+    assert.equal(missingSalesVersion.status, "not_ready");
+    assert.equal(missingSalesVersion.evidence, null);
+    assert.equal(missingSalesVersion.production.gaps[0].code, "sales_snapshot_version_missing");
+  }
+});
+
+test("销售快照没有版本时不保存无效关键词证据", async () => {
+  const schema = JSON.parse(await readFile(new URL("../schema/c1-keyword-planning-evidence-v1.schema.json", import.meta.url), "utf8"));
+  assert.deepEqual(schema.properties.binding.properties.salesSnapshotVersion, { type: "string", minLength: 1 });
+  const candidate = keywordPlanningCandidate();
+  delete candidate.lifecycleV11.skuPackage.c1ProductPlan.inputSnapshots.salesSnapshot.schemaVersion;
+  const before = structuredClone(candidate);
+  const result = produceC1KeywordPlanningEvidence({ candidate, expectedRevision: 31,
+    serverEvidence: keywordPlanningSourceEvidence(), producedAt: KEYWORD_NOW });
+  assert.equal(result.status, "not_ready");
+  assert.equal(result.evidence, null);
+  assert.equal(result.production.gaps[0].code, "sales_snapshot_version_missing");
+  assert.deepEqual(candidate, before);
+});
+
 test("有效复用快照走reuse_ready验证分支，不被错误拒绝", () => {
   const candidate = keywordPlanningCandidate();
   const source = keywordPlanningSourceEvidence();

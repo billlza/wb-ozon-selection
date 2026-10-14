@@ -807,8 +807,11 @@ test("正式C1从B实际创建和核验，经已保存AI回执合并自然进入
   assert.deepEqual(merged.skuPackage.selectedSupplySnapshot, before.selectedSupplySnapshot);
   assert.deepEqual(merged.skuPackage.g1Identity, before.g1Identity);
   assert.equal(c2.skuPackage.businessPhase, "C2");
-  assert.equal(c2.skuPackage.c2FinalAssets.mediaRequirements.sourceDataRevision, merged.skuPackage.dataRevision);
-  assert.equal(Object.hasOwn(schema.mediaRequirements, "sourceDataRevision"), false);
+  assert.equal(c2.skuPackage.c2FinalAssets.targetContext.sourceDataRevision, merged.skuPackage.dataRevision);
+  assert.equal(c2.skuPackage.c2FinalAssets.targetContext.schemaEvidenceRef, schema.evidenceId);
+  // 槽位合同已废止：冻结 Schema 不再携带任何媒体槽位，C1 也不再产出媒体摘要。
+  assert.equal(Object.hasOwn(schema, "mediaRequirements"), false);
+  assert.equal(Object.hasOwn(c2.skuPackage.c1ProductPlan, "mediaRequirements"), false);
   assert.deepEqual(c2.skuPackage.c1ProductPlan.inputSnapshots.platformSchemaRules, schema);
   assert.deepEqual(c2.skuPackage.profitModels, before.profitModels);
   assert.equal(c2.skuPackage.productionAuthorization, null);
@@ -941,11 +944,14 @@ test('verified no-battery product does not require unknown battery type count an
   }
 });
 
+// 主人 2026-09-15 要求撤掉「合规」那一档阻断。电池缺口仍然逐条如实记在清单上——
+// 只是不再拿它挡 C1→C2。不是把它藏起来：blockingScope 必须还叫得出名字。
 for (const powerProfile of [{ powered: false }, { powered: true, containsBattery: true }]) {
-  test(`battery safety gaps stay blocking when containsBattery is ${powerProfile.containsBattery ?? 'unknown'}`, () => {
+  test(`battery gaps stay on the record but stop blocking when containsBattery is ${powerProfile.containsBattery ?? 'unknown'}`, () => {
     const { c1ProductPlan: plan } = attributeDecisionFacts({ powerProfile });
     const gaps = collectC1UnknownManifest(plan).filter(item => item.fieldPath.startsWith('batteryAssessment.'));
-    assert.ok(gaps.some(item => item.blocksC2Handoff));
+    assert.ok(gaps.length > 0);
+    assert.ok(gaps.every(item => item.blockingScope === 'informational' && item.blocksC2Handoff === false));
   });
 }
 
@@ -994,12 +1000,15 @@ test('optional unknown material survives final card and authorization without an
 });
 
 
-test('contradictory frozen battery evidence cannot receive the no-battery exemption', () => {
+test('contradictory frozen battery evidence is still listed, and is no longer a C2 blocker either', () => {
   const plan = structuredClone(attributeDecisionFacts().c1ProductPlan);
   plan.inputSnapshots.confirmedSupplierSkuSnapshot.supplierSku.powerProfile.batteryIncluded = true;
   const gaps = collectC1UnknownManifest(plan);
   for (const field of ['batteryType', 'batteryCount', 'batteryCapacity']) {
-    assert.equal(gaps.find(item => item.fieldPath === `batteryAssessment.${field}`).blocksC2Handoff, true);
+    const gap = gaps.find(item => item.fieldPath === `batteryAssessment.${field}`);
+    assert.ok(gap, field);
+    assert.equal(gap.blockingScope, 'informational', field);
+    assert.equal(gap.blocksC2Handoff, false, field);
   }
 });
 
@@ -1018,4 +1027,319 @@ test('contradictory frozen battery evidence cannot receive the no-battery exempt
     assert.equal(sku.productionAuthorization, null);
     assert.equal(sku.dHandoff, undefined);
   }
+});
+
+/*
+ * 类目全部属性与字典号（2026-09-17 新增）。老计划里没有这个字段，新计划给了就必须成形。
+ * 为什么要守：dictionaryId 是发 import 时 dictionaryValueId 的唯一来源，
+ * 这里放行一个坏形状，代价是真发商品那一刻才炸（OZON_ADAPTER_DICTIONARY_VALUE_REQUIRED）。
+ */
+test("类目属性是可选字段：老证据照旧通过，新证据给了就必须成形", () => {
+  const base = platformSchemaEvidence();
+  assert.equal(validatePlatformSchemaEvidence(base).valid, true, "没有 attributes 的老证据必须照旧通过");
+
+  const good = { ...structuredClone(base), attributes: [
+    { fieldKey: "4967", label: "Материал", required: false, dictionaryId: 1503, isCollection: true, attributeType: "String" },
+    { fieldKey: "9048", label: "Название модели", required: true, dictionaryId: 0 }
+  ] };
+  assert.equal(validatePlatformSchemaEvidence(good).valid, true);
+
+  const paths = (evidence) => validatePlatformSchemaEvidence(evidence).errors.map((item) => item.path);
+  assert.deepEqual(paths({ ...structuredClone(base), attributes: {} }), ["attributes"]);
+  assert.deepEqual(paths({ ...structuredClone(base), attributes: [null] }), ["attributes[0]"]);
+  for (const [broken, path] of [
+    [{ fieldKey: "", label: "x", required: false, dictionaryId: 0 }, "attributes[0].fieldKey"],
+    [{ fieldKey: "1", label: "", required: false, dictionaryId: 0 }, "attributes[0].label"],
+    [{ fieldKey: "1", label: "x", required: "yes", dictionaryId: 0 }, "attributes[0].required"],
+    [{ fieldKey: "1", label: "x", required: false, dictionaryId: -1 }, "attributes[0].dictionaryId"],
+    [{ fieldKey: "1", label: "x", required: false, dictionaryId: 1.5 }, "attributes[0].dictionaryId"],
+    [{ fieldKey: "1", label: "x", required: false }, "attributes[0].dictionaryId"]
+  ]) {
+    assert.ok(paths({ ...structuredClone(base), attributes: [broken] }).includes(path), `应报 ${path}`);
+  }
+  assert.ok(paths({ ...structuredClone(base), attributes: [
+    { fieldKey: "4967", label: "a", required: false, dictionaryId: 0 },
+    { fieldKey: "4967", label: "b", required: false, dictionaryId: 0 }
+  ] }).includes("attributes[1].fieldKey"), "重复属性必须被拦");
+});
+
+/*
+ * 主人签过的「中文事实 → Ozon 字典值」映射，投影成俄文值的已确认事实。
+ *
+ * 这是关键词那条路的必经之处：Ozon 关键词要求**逐字等于**某条已确认事实的值，
+ * 而本品的事实来自 1688、全是中文。这组测试守的是最危险的失败方式——
+ * **依据已经变了却还在继续声称**：中文事实漂了、或 schema 换版了，
+ * 那条俄文事实必须退回 unknown，而不是照旧摆在那里让人当真。
+ */
+const OZON_SCHEMA_ATTRIBUTES = [
+  { fieldKey: "4967", label: "Материал", required: false, dictionaryId: 1503 },
+  { fieldKey: "brand", label: "品牌", required: true, dictionaryId: 28732849 }
+];
+
+async function factsWithOzonMapping(mutate = () => {}) {
+  const inputs = await phase8InputsReadyState();
+  const skuPackage = structuredClone(inputs.skuPackage);
+  const plan = skuPackage.c1ProductPlan;
+  plan.inputSnapshots.platformSchemaRules.attributes = structuredClone(OZON_SCHEMA_ATTRIBUTES);
+  const supply = plan.inputSnapshots.confirmedSupplierSkuSnapshot;
+  supply.supplierSku.material = "牛津布";
+  skuPackage.selectedSupplySnapshot.supplierSku.material = "牛津布";
+  skuPackage.ozonAttributeMappingsV1 = {
+    schemaVersion: "c1-ozon-attribute-mapping-v1",
+    schemaRevision: plan.inputSnapshots.platformSchemaRules.schemaRevision,
+    confirmationRef: "owner-ozon-attribute-mapping:test",
+    mappings: [{
+      attributeId: "4967", attributeLabel: "Материал", dictionaryValueId: 61979, value: "Оксфорд",
+      sourceFactPath: "productAttributes.material", sourceFactValue: "牛津布",
+      dictionaryEvidenceRef: "ozon-seller-api:/v1/description-category/attribute/values/search:17028665:92935:4967"
+    }]
+  };
+  mutate(skuPackage, plan);
+  return verifyC1ProductFacts({ skuPackage, verifiedAt: "2026-08-12T12:40:00.000Z" });
+}
+
+test("映射两端证据齐全时，产出俄文值的已确认事实并带上真实字典号", async () => {
+  const { skuPackage } = await factsWithOzonMapping();
+  const [entry] = skuPackage.c1ProductPlan.productAttributes.ozonAttributes;
+  assert.equal(entry.fieldKey, "4967");
+  assert.equal(entry.label, "Материал");
+  assert.equal(entry.dictionaryValueId, 61979);
+  // 字典属性的事实值必须是对象，真发 import 时适配器要从里面取 dictionaryValueId。
+  assert.deepEqual(entry.fact.value, { value: "Оксфорд", dictionaryValueId: 61979 });
+  assert.equal(entry.fact.verificationStatus, "confirmed");
+  // 两端的证据都要留在引用里：Ozon 字典读数、schema 属性、冻结供应属性、主人确认。
+  assert.ok(entry.fact.sourceRefs.some((ref) => ref.includes("attribute/values/search")), "缺Ozon字典证据引用");
+  assert.ok(entry.fact.sourceRefs.includes("owner-ozon-attribute-mapping:test"), "缺主人确认引用");
+});
+
+test("中文事实漂了就退回unknown，不继续声称那条俄文值", async () => {
+  const { skuPackage } = await factsWithOzonMapping((sku, plan) => {
+    plan.inputSnapshots.confirmedSupplierSkuSnapshot.supplierSku.material = "涤纶";
+  });
+  const [entry] = skuPackage.c1ProductPlan.productAttributes.ozonAttributes;
+  assert.equal(entry.fact.verificationStatus, "unknown");
+  assert.equal(entry.fact.reason, "source_fact_drifted_since_mapping");
+  assert.equal(entry.dictionaryValueId, null, "漂移后绝不能还交出字典号");
+});
+
+test("schema换版就退回unknown——属性号和字典可能已经不是同一套", async () => {
+  const { skuPackage } = await factsWithOzonMapping((sku) => {
+    sku.ozonAttributeMappingsV1.schemaRevision = "ozon-schema:别的版本";
+  });
+  const [entry] = skuPackage.c1ProductPlan.productAttributes.ozonAttributes;
+  assert.equal(entry.fact.verificationStatus, "unknown");
+  assert.equal(entry.fact.reason, "schema_revision_changed_since_mapping");
+});
+
+test("映射到当前schema里没有的属性也退回unknown", async () => {
+  const { skuPackage } = await factsWithOzonMapping((sku, plan) => {
+    plan.inputSnapshots.platformSchemaRules.attributes = [{ fieldKey: "9999", label: "别的", required: false, dictionaryId: 0 }];
+  });
+  const [entry] = skuPackage.c1ProductPlan.productAttributes.ozonAttributes;
+  assert.equal(entry.fact.verificationStatus, "unknown");
+  assert.equal(entry.fact.reason, "ozon_attribute_not_in_current_schema");
+});
+
+test("没有映射记录时是空数组，老计划的行为一字不变", async () => {
+  const inputs = await phase8InputsReadyState();
+  const { skuPackage } = verifyC1ProductFacts({ skuPackage: inputs.skuPackage, verifiedAt: "2026-08-12T12:40:00.000Z" });
+  assert.deepEqual(skuPackage.c1ProductPlan.productAttributes.ozonAttributes, []);
+});
+
+test("没映射的非必填Ozon属性不挡C2，必填的照旧阻断", async () => {
+  const { skuPackage } = await factsWithOzonMapping((sku) => {
+    sku.ozonAttributeMappingsV1.mappings.push({
+      attributeId: "brand", attributeLabel: "品牌", dictionaryValueId: 1, value: "Нет бренда",
+      sourceFactPath: "productAttributes.material", sourceFactValue: "对不上的值",
+      dictionaryEvidenceRef: "ozon-seller-api:brand"
+    });
+    sku.ozonAttributeMappingsV1.mappings[0].sourceFactValue = "也对不上";
+  });
+  const unknowns = collectC1UnknownManifest(skuPackage.c1ProductPlan)
+    .filter((item) => item.fieldPath.startsWith("productAttributes.ozonAttributes"));
+  assert.equal(unknowns.length, 2);
+  const byPath = Object.fromEntries(unknowns.map((item) => [item.fieldPath, item.blockingScope]));
+  assert.equal(byPath["productAttributes.ozonAttributes[0].fact"], "informational", "非必填的4967不该挡C2");
+  assert.equal(byPath["productAttributes.ozonAttributes[1].fact"], "required_field", "必填的brand必须照旧阻断");
+});
+
+test("回归：映射可以绑到计划里任何一块事实，不只是 productAttributes", async () => {
+  // 2026-09-17 真数据踩到的：投影一度跑在 plan.platformCategory 赋值之前，
+  // 绑到 platformCategory.categoryPath 的映射全被静默判成漂移。
+  // 合成夹具当时只绑 productAttributes，照不出这一条，只有真数据跑出来了。
+  const { skuPackage } = await factsWithOzonMapping((sku, plan) => {
+    plan.inputSnapshots.platformSchemaRules.attributes = [
+      ...structuredClone(OZON_SCHEMA_ATTRIBUTES),
+      { fieldKey: "4958", label: "Предназначено для", required: false, dictionaryId: 749 }
+    ];
+    sku.ozonAttributeMappingsV1.mappings.push({
+      attributeId: "4958", attributeLabel: "Предназначено для", dictionaryValueId: 33754, value: "Для кошек",
+      sourceFactPath: "platformCategory.categoryPath",
+      sourceFactValue: plan.inputSnapshots.salesSnapshot.categoryPath,
+      dictionaryEvidenceRef: "ozon-seller-api:values/search:4958"
+    });
+  });
+  const byId = Object.fromEntries(
+    skuPackage.c1ProductPlan.productAttributes.ozonAttributes.map((item) => [item.fieldKey, item]));
+  assert.equal(byId["4958"].fact.verificationStatus, "confirmed",
+    "绑到 platformCategory 的映射必须成立——投影要排在全部事实段之后");
+  assert.deepEqual(byId["4958"].fact.value, { value: "Для кошек", dictionaryValueId: 33754 });
+  assert.equal(byId["4958"].dictionaryValueId, 33754);
+  // 清单也必须看到最终那一份，而不是空的。
+  assert.equal(skuPackage.c1ProductPlan.unknownManifest
+    .filter((item) => item.fieldPath.startsWith("productAttributes.ozonAttributes")).length, 0);
+});
+
+test("从冻结类目属性表推出发 import 的写入绑定；缺属性编号就不给绑定", async () => {
+  // writeBindings 全仓库从没人赋过值、证据服务也不返回，于是它永远 unknown、永远阻断 C2。
+  // 但它要的 attributeId / complexId / dictionaryId 全在类目属性表里，只是没人拼起来。
+  const withIds = [
+    { fieldKey: "4180", label: "Название", required: false, dictionaryId: 0, complexId: 0 },
+    { fieldKey: "4191", label: "Аннотация", required: false, dictionaryId: 0, complexId: 0 },
+    { fieldKey: "23171", label: "#Хештеги", required: false, dictionaryId: 0, complexId: 0 },
+    { fieldKey: "8229", label: "Тип", required: true, dictionaryId: 1960, complexId: 0 },
+    { fieldKey: "85", label: "Бренд", required: true, dictionaryId: 28732849, complexId: 100001 }
+  ];
+  const { skuPackage } = await factsWithOzonMapping((sku, plan) => {
+    plan.inputSnapshots.platformSchemaRules.attributes = structuredClone(withIds);
+  });
+  const wb = skuPackage.c1ProductPlan.schemaSnapshot.writeBindings;
+  assert.equal(wb.verificationStatus, "confirmed");
+  assert.deepEqual(wb.value.content.searchKeywords, { fieldKey: "searchKeywords", attributeId: 23171, complexId: 0, dictionaryId: 0 });
+  // complexId 要照抄，不能假设 0——这个类目实测就有 100001。
+  assert.deepEqual(wb.value.requiredAttributes.find(item => item.fieldKey === "85"),
+    { fieldKey: "85", attributeId: 85, complexId: 100001, dictionaryId: 28732849 });
+
+  // 缺 complexId 的旧读数：宁可照实说缺，不编一个号发出去。
+  const stale = await factsWithOzonMapping((sku, plan) => {
+    plan.inputSnapshots.platformSchemaRules.attributes = withIds.map(({ complexId, ...rest }) => rest);
+  });
+  assert.equal(stale.skuPackage.c1ProductPlan.schemaSnapshot.writeBindings.verificationStatus, "unknown");
+
+  // 内容字段带字典就不能走文字写入，同样不给绑定。
+  const dictTitle = await factsWithOzonMapping((sku, plan) => {
+    plan.inputSnapshots.platformSchemaRules.attributes = withIds.map(item =>
+      item.fieldKey === "4180" ? { ...item, dictionaryId: 7 } : item);
+  });
+  assert.equal(dictTitle.skuPackage.c1ProductPlan.schemaSnapshot.writeBindings.verificationStatus, "unknown");
+});
+
+test("主人签的映射就是必填属性的答案；供应属性已能确认的不被盖掉", async () => {
+  // 2026-09-18 真数据踩到：映射已经签好（8229 Тип = Одежда для животных），
+  // 可 requiredPlatformFields 仍然 unknown、照旧阻断 C2——那一段只从 1688 供应属性里
+  // 按 sourceAttributeKeys 找依据，完全看不见 ozonAttributes。加新段时没接这条线，
+  // 等于让主人签了个不算数的字。
+  const { skuPackage } = await factsWithOzonMapping((sku, plan) => {
+    plan.inputSnapshots.platformSchemaRules.attributes = [
+      { fieldKey: "8229", label: "Тип", labelZh: "类型", required: true, dictionaryId: 1960, complexId: 0 },
+      { fieldKey: "4180", label: "Название", required: false, dictionaryId: 0, complexId: 0 },
+      { fieldKey: "4191", label: "Аннотация", required: false, dictionaryId: 0, complexId: 0 },
+      { fieldKey: "23171", label: "#Хештеги", required: false, dictionaryId: 0, complexId: 0 }
+    ];
+    plan.inputSnapshots.platformSchemaRules.requiredFields = [
+      { fieldKey: "8229", label: "Тип", required: true, sourceAttributeKeys: ["8229"] }
+    ];
+    sku.ozonAttributeMappingsV1.mappings = [{
+      attributeId: "8229", attributeLabel: "Тип", dictionaryId: 1960,
+      value: "Одежда для животных", dictionaryValueId: 96063,
+      sourceFactPath: "productAttributes.material", sourceFactValue: "牛津布",
+      dictionaryEvidenceRef: "ozon-seller-api:8229"
+    }];
+  });
+  const plan = skuPackage.c1ProductPlan;
+  const field = plan.productAttributes.requiredPlatformFields.find(item => item.fieldKey === "8229");
+  assert.equal(field.fact.verificationStatus, "confirmed", "签过的映射必须能满足必填项");
+  assert.deepEqual(field.fact.value, { value: "Одежда для животных", dictionaryValueId: 96063 });
+  assert.equal(field.resolvedFromOwnerAttributeMapping, true);
+  // 补齐之后，缺口计数和整体状态要跟着更新，否则界面还显示「必填不全」。
+  assert.equal(plan.platformCompliance.requiredFieldGapCount.value, 0);
+  assert.equal(plan.productAttributes.status.value, "all_required_fields_known");
+  // 这一格不该再挡 C2。
+  assert.equal((plan.unknownManifest ?? []).some(item =>
+    item.fieldPath.startsWith("productAttributes.requiredPlatformFields") && item.blocksC2Handoff), false);
+});
+
+test("已确认但缺字典号的必填项：只在取值逐字相同时补号，不改主人签过的任何一个字", async () => {
+  // 主人签的品牌声明给的是 {value:"Нет бренда", dictionaryValueId:null}——值对、就是缺平台编号。
+  // 而真发 import 时字典属性必须有正整数字典号，否则报 OZON_ADAPTER_DICTIONARY_VALUE_REQUIRED。
+  // 这里用「供应属性已经确认出一个缺号的对象值」来重现同一形状（合成夹具装不出同源的权利声明）。
+  async function withBrand(mappingValue) {
+    return factsWithOzonMapping((sku, plan) => {
+      plan.inputSnapshots.platformSchemaRules.attributes = [
+        { fieldKey: "brand", label: "Бренд", labelZh: "品牌", required: true, dictionaryId: 28732849, complexId: 0 },
+        { fieldKey: "4180", label: "Название", required: false, dictionaryId: 0, complexId: 0 },
+        { fieldKey: "4191", label: "Аннотация", required: false, dictionaryId: 0, complexId: 0 },
+        { fieldKey: "23171", label: "#Хештеги", required: false, dictionaryId: 0, complexId: 0 }
+      ];
+      plan.inputSnapshots.platformSchemaRules.requiredFields = [
+        { fieldKey: "brand", label: "Бренд", required: true, sourceAttributeKeys: ["brandDeclared"] }
+      ];
+      // 已确认、但缺 dictionaryValueId 的对象值——和主人签的品牌声明同一个形状。
+      plan.inputSnapshots.confirmedSupplierSkuSnapshot.supplierSku.attributes.brandDeclared =
+        { value: "Нет бренда", brandStatus: "unbranded", dictionaryValueId: null };
+      sku.ozonAttributeMappingsV1.mappings = [{
+        attributeId: "brand", attributeLabel: "Бренд", dictionaryId: 28732849,
+        value: mappingValue, dictionaryValueId: 126745801,
+        sourceFactPath: "productAttributes.material", sourceFactValue: "牛津布",
+        dictionaryEvidenceRef: "ozon-seller-api:brand"
+      }];
+    });
+  }
+  const { skuPackage } = await withBrand("Нет бренда");
+  const field = skuPackage.c1ProductPlan.productAttributes.requiredPlatformFields.find(item => item.fieldKey === "brand");
+  assert.equal(field.fact.verificationStatus, "confirmed");
+  assert.equal(field.fact.value.dictionaryValueId, 126745801, "取值相同就该把平台编号补上");
+  assert.equal(field.fact.value.value, "Нет бренда", "原来说的是什么就还是什么");
+  assert.equal(field.fact.value.brandStatus, "unbranded", "原值的其它字段不能被丢掉");
+  assert.equal(field.dictionaryValueIdResolvedFromOwnerAttributeMapping, true);
+  assert.equal(field.resolvedFromOwnerAttributeMapping, undefined, "这不是整条替换，只是补号");
+
+  // 取值不同就**不准**补——那是在替主人改他签过的东西。
+  const other = await withBrand("WOSPORT");
+  const otherField = other.skuPackage.c1ProductPlan.productAttributes.requiredPlatformFields.find(item => item.fieldKey === "brand");
+  assert.equal(otherField.fact.value.dictionaryValueId ?? null, null, "取值不同时绝不能补号");
+});
+
+test("依据是对象值的事实时，漂移判定要用深比较——否则好端端的映射全被判成漂移", async () => {
+  // 事实值不一定是字符串：主人签的品牌声明就是 {value, brandStatus, dictionaryValueId}。
+  // 原来这里用 ===，对象永远不相等，映射会被无辜判成 source_fact_drifted_since_mapping。
+  const { skuPackage } = await factsWithOzonMapping((sku, plan) => {
+    plan.inputSnapshots.confirmedSupplierSkuSnapshot.supplierSku.attributes.objectFact =
+      { value: "Нет бренда", brandStatus: "unbranded", dictionaryValueId: null };
+    const index = Object.keys(plan.inputSnapshots.confirmedSupplierSkuSnapshot.supplierSku.attributes)
+      .filter((key) => {
+        const item = plan.inputSnapshots.confirmedSupplierSkuSnapshot.supplierSku.attributes[key];
+        return item !== null && item !== undefined && item !== "";
+      }).indexOf("objectFact");
+    sku.ozonAttributeMappingsV1.mappings = [{
+      attributeId: "4967", attributeLabel: "Материал", dictionaryId: 1503,
+      value: "Оксфорд", dictionaryValueId: 61979,
+      sourceFactPath: `productAttributes.supplierAttributes.${index}.fact`,
+      sourceFactValue: { value: "Нет бренда", brandStatus: "unbranded", dictionaryValueId: null },
+      dictionaryEvidenceRef: "ozon-seller-api:4967"
+    }];
+  });
+  const [entry] = skuPackage.c1ProductPlan.productAttributes.ozonAttributes;
+  assert.equal(entry.fact.verificationStatus, "confirmed", "对象值逐字相同就不该判成漂移");
+
+  // 对象内容真的变了，仍然必须判成漂移。
+  const drifted = await factsWithOzonMapping((sku, plan) => {
+    plan.inputSnapshots.confirmedSupplierSkuSnapshot.supplierSku.attributes.objectFact =
+      { value: "WOSPORT", brandStatus: "branded", dictionaryValueId: null };
+    const index = Object.keys(plan.inputSnapshots.confirmedSupplierSkuSnapshot.supplierSku.attributes)
+      .filter((key) => {
+        const item = plan.inputSnapshots.confirmedSupplierSkuSnapshot.supplierSku.attributes[key];
+        return item !== null && item !== undefined && item !== "";
+      }).indexOf("objectFact");
+    sku.ozonAttributeMappingsV1.mappings = [{
+      attributeId: "4967", attributeLabel: "Материал", dictionaryId: 1503,
+      value: "Оксфорд", dictionaryValueId: 61979,
+      sourceFactPath: `productAttributes.supplierAttributes.${index}.fact`,
+      sourceFactValue: { value: "Нет бренда", brandStatus: "unbranded", dictionaryValueId: null },
+      dictionaryEvidenceRef: "ozon-seller-api:4967"
+    }];
+  });
+  const [driftedEntry] = drifted.skuPackage.c1ProductPlan.productAttributes.ozonAttributes;
+  assert.equal(driftedEntry.fact.verificationStatus, "unknown");
+  assert.equal(driftedEntry.fact.reason, "source_fact_drifted_since_mapping");
 });

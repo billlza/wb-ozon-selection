@@ -81,7 +81,8 @@ export function projectProductionReadbackExpectation({ finalUploads, warehouseId
 }
 
 export function observedMediaSequence(media) {
-  if (!exactKeys(media, ["sourceProtocol", "primaryImageUrl", "images"]) || media.sourceProtocol !== "ozon-product-attributes-v4" ||
+  if (!exactKeys(media, ["sourceProtocol", "primaryImageUrl", "images"]) ||
+      !["ozon-product-attributes-v4", "ozon-product-info-v3"].includes(media.sourceProtocol) ||
       !isObservedHttpsMediaUrl(media.primaryImageUrl) || !Array.isArray(media.images) || media.images.some(url => !isObservedHttpsMediaUrl(url))) return null;
   // The separate primary field can also be the leading entry of the platform list.
   // Only that leading repetition is structural; other duplicates remain observable.
@@ -118,24 +119,38 @@ export function observedWarehouseAvailableStock(inventory, warehouseId, identity
   return rows[0].freeStock;
 }
 
-/** Shared D and E content checks. Source URLs differing from CDN URLs are not equivalent evidence. */
+/** Content verification distinguishes unknown CDN identity from a proven change to known media. */
 export function productionReadbackContentGaps(expectation, observation) {
+  if (!validateProductionReadbackExpectation(expectation)) return ["readback_expectation_missing_or_invalid"];
+  const gaps = productionReadbackMediaGaps(expectation, observation);
+  const stock = observedWarehouseAvailableStock(observation?.inventoryObservation, expectation.warehouseId, { productId: observation?.platformProductId, offerId: observation?.merchantSku });
+  if (stock === "unknown") gaps.push("warehouse_identity_or_quantity_unverified");
+  else if (stock !== observation.currentStock) gaps.push("warehouse_stock_mismatch");
+  return gaps;
+}
+
+/** Media evidence can be checked when the owner explicitly chose card creation without stock write. */
+export function productionReadbackMediaGaps(expectation, observation) {
   if (!validateProductionReadbackExpectation(expectation)) return ["readback_expectation_missing_or_invalid"];
   const gaps = [];
   const sequence = observedMediaSequence(observation?.mediaObservation);
   if (!sequence) gaps.push("media_identity_unverified");
   else {
     const expectedUrls = expectation.media.map(asset => asset.submittedUrl);
-    if (new Set(sequence).size !== sequence.length) gaps.push("media_duplicate");
+    const observedUrls = new Set(sequence);
+    const identitiesKnown = sequence.every(url => expectedUrls.includes(url));
+    if (observedUrls.size !== sequence.length) gaps.push("media_duplicate");
     if (sequence.length !== expectedUrls.length) gaps.push("media_manifest_mismatch");
-    if (sequence.some(url => !expectedUrls.includes(url))) gaps.push("media_identity_unverified");
-    if (sequence[0] !== expectedUrls[0]) gaps.push("main_image_mismatch");
-    if (JSON.stringify(sequence) !== JSON.stringify(expectedUrls)) gaps.push("media_order_or_set_mismatch");
+    if (!identitiesKnown) gaps.push("media_identity_unverified");
+    // Compare placement only when both lists demonstrably contain the same assets.
+    // A transformed URL alone proves neither that the main image changed nor that it stayed the same.
+    const sameAssetSet = identitiesKnown && observedUrls.size === sequence.length && sequence.length === expectedUrls.length;
+    if (sameAssetSet) {
+      if (sequence[0] !== expectedUrls[0]) gaps.push("main_image_mismatch");
+      if (JSON.stringify(sequence) !== JSON.stringify(expectedUrls)) gaps.push("media_order_or_set_mismatch");
+    }
     if (observation.imageCount !== sequence.length) gaps.push("imageCount");
   }
-  const stock = observedWarehouseAvailableStock(observation?.inventoryObservation, expectation.warehouseId, { productId: observation?.platformProductId, offerId: observation?.merchantSku });
-  if (stock === "unknown") gaps.push("warehouse_identity_or_quantity_unverified");
-  else if (stock !== observation.currentStock) gaps.push("warehouse_stock_mismatch");
   return gaps;
 }
 

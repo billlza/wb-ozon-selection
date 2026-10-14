@@ -11,7 +11,7 @@
     "createdAt",
     "updatedAt",
     "assets",
-    "mediaRequirements",
+    "targetContext",
     "unknownManifest",
     "effectiveVideoRequirement",
     "ownerVideoRequirement",
@@ -473,7 +473,6 @@
         "sourceType",
         "order",
         "role",
-        "slotId",
         "byteSize",
         "width",
         "height",
@@ -554,18 +553,9 @@
           "minimum": 1
         },
         "role": {
-          "type": "string",
-          "minLength": 1
-        },
-        "slotId": {
-          "allOf": [
-            {
-              "type": "string",
-              "minLength": 1
-            },
-            {
-              "$ref": "#/$defs/canonicalFrozenRef"
-            }
+          "enum": [
+            "main_image",
+            "gallery_image"
           ]
         },
         "byteSize": {
@@ -631,78 +621,6 @@
           }
         }
       ]
-    },
-    "slot": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "slotId",
-        "mediaType",
-        "role",
-        "minCount",
-        "maxCount"
-      ],
-      "properties": {
-        "slotId": {
-          "allOf": [
-            {
-              "type": "string",
-              "minLength": 1
-            },
-            {
-              "$ref": "#/$defs/canonicalFrozenRef"
-            }
-          ]
-        },
-        "mediaType": {
-          "enum": [
-            "image",
-            "video"
-          ]
-        },
-        "role": {
-          "type": "string",
-          "minLength": 1
-        },
-        "minCount": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "maxCount": {
-          "type": "integer",
-          "minimum": 1
-        }
-      }
-    },
-    "imageSlot": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/slot"
-        },
-        {
-          "properties": {
-            "mediaType": {
-              "const": "image"
-            }
-          }
-        }
-      ],
-      "type": "object"
-    },
-    "videoSlot": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/slot"
-        },
-        {
-          "properties": {
-            "mediaType": {
-              "const": "video"
-            }
-          }
-        }
-      ],
-      "type": "object"
     },
     "videoRequirement": {
       "oneOf": [
@@ -784,7 +702,6 @@
         "schemaSnapshotRef",
         "draftOnlySeo",
         "keywordEvidenceRefs",
-        "mediaRequirements",
         "unknownManifest"
       ],
       "properties": {
@@ -890,81 +807,32 @@
           ]
         },
         "draftOnlySeo": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "status",
-            "formalProviderResultAccepted",
-            "reason",
-            "aiRequestId",
-            "aiRequestFingerprint",
-            "inputFingerprint",
-            "sourceRevision",
-            "receiptRef",
-            "providerJobRef"
-          ],
-          "properties": {
-            "status": {
-              "const": "draft_only"
-            },
-            "formalProviderResultAccepted": {
-              "const": true
-            },
-            "reason": {
-              "type": "null"
-            },
-            "aiRequestId": {
-              "allOf": [
-                {
-                  "$ref": "#/$defs/opaqueEvidenceRef"
-                },
-                {
-                  "$ref": "#/$defs/canonicalFrozenRef"
-                }
-              ]
-            },
-            "aiRequestFingerprint": {
-              "$ref": "#/$defs/sha256"
-            },
-            "inputFingerprint": {
-              "$ref": "#/$defs/sha256"
-            },
-            "sourceRevision": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "receiptRef": {
-              "allOf": [
-                {
-                  "$ref": "#/$defs/opaqueEvidenceRef"
-                },
-                {
-                  "$ref": "#/$defs/canonicalFrozenRef"
-                }
-              ]
-            },
-            "providerJobRef": {
+          "oneOf": [
+            {
               "type": "object",
               "additionalProperties": false,
               "required": [
-                "jobId",
-                "jobType",
-                "providerId",
-                "providerVersion",
-                "candidateId",
-                "skuPackageId",
-                "platform",
-                "storeRef",
-                "authorizationRef",
+                "status",
+                "formalProviderResultAccepted",
+                "reason",
+                "aiRequestId",
+                "aiRequestFingerprint",
                 "inputFingerprint",
                 "sourceRevision",
                 "receiptRef",
-                "terminalStatus",
-                "requestSubmitted",
-                "responseVerified"
+                "providerJobRef"
               ],
               "properties": {
-                "jobId": {
+                "status": {
+                  "const": "draft_only"
+                },
+                "formalProviderResultAccepted": {
+                  "const": true
+                },
+                "reason": {
+                  "type": "null"
+                },
+                "aiRequestId": {
                   "allOf": [
                     {
                       "$ref": "#/$defs/opaqueEvidenceRef"
@@ -974,94 +842,8 @@
                     }
                   ]
                 },
-                "jobType": {
-                  "const": "c1_ai_draft"
-                },
-                "providerId": {
-                  "allOf": [
-                    {
-                      "not": {
-                        "const": "unknown"
-                      }
-                    },
-                    {
-                      "$ref": "#/$defs/canonicalFrozenRef"
-                    }
-                  ]
-                },
-                "providerVersion": {
-                  "allOf": [
-                    {
-                      "not": {
-                        "const": "unknown"
-                      }
-                    },
-                    {
-                      "$ref": "#/$defs/canonicalFrozenRef"
-                    }
-                  ]
-                },
-                "candidateId": {
-                  "$ref": "#/$defs/canonicalFrozenRef"
-                },
-                "skuPackageId": {
-                  "$ref": "#/$defs/canonicalFrozenRef"
-                },
-                "platform": {
-                  "$ref": "#/$defs/canonicalFrozenRef"
-                },
-                "storeRef": {
-                  "$ref": "#/$defs/canonicalFrozenRef"
-                },
-                "authorizationRef": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": [
-                    "authorizationId",
-                    "authorizationType",
-                    "scope"
-                  ],
-                  "properties": {
-                    "authorizationId": {
-                      "$ref": "#/$defs/c1OpaqueAuthorizationId"
-                    },
-                    "authorizationType": {
-                      "const": "paid_ai_draft"
-                    },
-                    "scope": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "required": [
-                        "candidateId",
-                        "skuPackageId",
-                        "platform",
-                        "storeRef",
-                        "sourceRevision",
-                        "jobType"
-                      ],
-                      "properties": {
-                        "candidateId": {
-                          "$ref": "#/$defs/canonicalFrozenRef"
-                        },
-                        "skuPackageId": {
-                          "$ref": "#/$defs/canonicalFrozenRef"
-                        },
-                        "platform": {
-                          "$ref": "#/$defs/canonicalFrozenRef"
-                        },
-                        "storeRef": {
-                          "$ref": "#/$defs/canonicalFrozenRef"
-                        },
-                        "sourceRevision": {
-                          "type": "integer",
-                          "minimum": 0
-                        },
-                        "jobType": {
-                          "const": "c1_ai_draft"
-                        }
-                      }
-                    }
-                  }
+                "aiRequestFingerprint": {
+                  "$ref": "#/$defs/sha256"
                 },
                 "inputFingerprint": {
                   "$ref": "#/$defs/sha256"
@@ -1080,21 +862,179 @@
                     }
                   ]
                 },
-                "terminalStatus": {
-                  "const": "completed"
+                "providerJobRef": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "jobId",
+                    "jobType",
+                    "providerId",
+                    "providerVersion",
+                    "candidateId",
+                    "skuPackageId",
+                    "platform",
+                    "storeRef",
+                    "authorizationRef",
+                    "inputFingerprint",
+                    "sourceRevision",
+                    "receiptRef",
+                    "terminalStatus",
+                    "requestSubmitted",
+                    "responseVerified"
+                  ],
+                  "properties": {
+                    "jobId": {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/opaqueEvidenceRef"
+                        },
+                        {
+                          "$ref": "#/$defs/canonicalFrozenRef"
+                        }
+                      ]
+                    },
+                    "jobType": {
+                      "const": "c1_ai_draft"
+                    },
+                    "providerId": {
+                      "allOf": [
+                        {
+                          "not": {
+                            "const": "unknown"
+                          }
+                        },
+                        {
+                          "$ref": "#/$defs/canonicalFrozenRef"
+                        }
+                      ]
+                    },
+                    "providerVersion": {
+                      "allOf": [
+                        {
+                          "not": {
+                            "const": "unknown"
+                          }
+                        },
+                        {
+                          "$ref": "#/$defs/canonicalFrozenRef"
+                        }
+                      ]
+                    },
+                    "candidateId": {
+                      "$ref": "#/$defs/canonicalFrozenRef"
+                    },
+                    "skuPackageId": {
+                      "$ref": "#/$defs/canonicalFrozenRef"
+                    },
+                    "platform": {
+                      "$ref": "#/$defs/canonicalFrozenRef"
+                    },
+                    "storeRef": {
+                      "$ref": "#/$defs/canonicalFrozenRef"
+                    },
+                    "authorizationRef": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "authorizationId",
+                        "authorizationType",
+                        "scope"
+                      ],
+                      "properties": {
+                        "authorizationId": {
+                          "$ref": "#/$defs/c1OpaqueAuthorizationId"
+                        },
+                        "authorizationType": {
+                          "const": "paid_ai_draft"
+                        },
+                        "scope": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "candidateId",
+                            "skuPackageId",
+                            "platform",
+                            "storeRef",
+                            "sourceRevision",
+                            "jobType"
+                          ],
+                          "properties": {
+                            "candidateId": {
+                              "$ref": "#/$defs/canonicalFrozenRef"
+                            },
+                            "skuPackageId": {
+                              "$ref": "#/$defs/canonicalFrozenRef"
+                            },
+                            "platform": {
+                              "$ref": "#/$defs/canonicalFrozenRef"
+                            },
+                            "storeRef": {
+                              "$ref": "#/$defs/canonicalFrozenRef"
+                            },
+                            "sourceRevision": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "jobType": {
+                              "const": "c1_ai_draft"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "inputFingerprint": {
+                      "$ref": "#/$defs/sha256"
+                    },
+                    "sourceRevision": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "receiptRef": {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/opaqueEvidenceRef"
+                        },
+                        {
+                          "$ref": "#/$defs/canonicalFrozenRef"
+                        }
+                      ]
+                    },
+                    "terminalStatus": {
+                      "const": "completed"
+                    },
+                    "requestSubmitted": {
+                      "const": true
+                    },
+                    "responseVerified": {
+                      "const": true
+                    }
+                  }
                 },
-                "requestSubmitted": {
-                  "const": true
-                },
-                "responseVerified": {
-                  "const": true
+                "pricingReuseRecord": {
+                  "oneOf": [
+                    {
+                      "$ref": "c1-product-plan-v1.1#/$defs/c1PricingReuseRecord"
+                    },
+                    {
+                      "$ref": "#/$defs/c1PricingReuseReference"
+                    }
+                  ]
                 }
               }
             },
-            "pricingReuseRecord": {
-              "$ref": "c1-product-plan-v1.1#/$defs/c1PricingReuseRecord"
+            {
+              "$ref": "c1-editorial-source-v1.schema.json#/$defs/draftOnlySeo"
+            },
+            {
+              "$ref": "c1-editorial-source-v2.schema.json#/$defs/draftOnlySeo"
+            },
+            {
+              "$ref": "#/$defs/editorialDraftReference"
+            },
+            {
+              "$ref": "c1-sibling-formal-reuse-v1.schema.json#/$defs/draftOnlySeo"
             }
-          }
+          ]
         },
         "keywordEvidenceRefs": {
           "type": "array",
@@ -1109,92 +1049,6 @@
                 "$ref": "#/$defs/canonicalFrozenRef"
               }
             ]
-          }
-        },
-        "mediaRequirements": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "status",
-            "schemaSnapshotRef",
-            "sourceRefs",
-            "requiredSlots",
-            "videoRequirement",
-            "reason"
-          ],
-          "properties": {
-            "status": {
-              "const": "confirmed"
-            },
-            "schemaSnapshotRef": {
-              "allOf": [
-                {
-                  "$ref": "#/$defs/opaqueEvidenceRef"
-                },
-                {
-                  "$ref": "#/$defs/canonicalFrozenRef"
-                }
-              ]
-            },
-            "sourceRefs": {
-              "type": "array",
-              "minItems": 1,
-              "uniqueItems": true,
-              "items": {
-                "allOf": [
-                  {
-                    "$ref": "#/$defs/opaqueEvidenceRef"
-                  },
-                  {
-                    "$ref": "#/$defs/canonicalFrozenRef"
-                  }
-                ]
-              }
-            },
-            "requiredSlots": {
-              "type": "array",
-              "uniqueItems": true,
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "slotId",
-                  "mediaType",
-                  "required"
-                ],
-                "properties": {
-                  "slotId": {
-                    "allOf": [
-                      {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      {
-                        "$ref": "#/$defs/canonicalFrozenRef"
-                      }
-                    ]
-                  },
-                  "mediaType": {
-                    "enum": [
-                      "image",
-                      "video"
-                    ]
-                  },
-                  "required": {
-                    "const": true
-                  }
-                }
-              }
-            },
-            "videoRequirement": {
-              "enum": [
-                "required",
-                "not_required"
-              ]
-            },
-            "reason": {
-              "type": "null"
-            }
           }
         },
         "unknownManifest": {
@@ -1240,6 +1094,120 @@
           "$ref": "#/$defs/canonicalStableHttpsAssetRef"
         }
       ]
+    },
+    "c1PricingReuseReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "sourceIdentity",
+        "resultSkuRevision",
+        "targetPlanId",
+        "targetProfitModelVersion",
+        "recordFingerprint"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "c1-pricing-result-reuse-reference-v1"
+        },
+        "sourceIdentity": {
+          "$ref": "#/$defs/g1Identity"
+        },
+        "resultSkuRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "targetPlanId": {
+          "$ref": "#/$defs/canonicalFrozenRef"
+        },
+        "targetProfitModelVersion": {
+          "$ref": "#/$defs/canonicalFrozenRef"
+        },
+        "recordFingerprint": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "editorialDraftReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "sourceType",
+        "formalProviderResultAccepted",
+        "reason",
+        "editorialSource"
+      ],
+      "properties": {
+        "status": {
+          "const": "draft_only"
+        },
+        "sourceType": {
+          "const": "owner_confirmed_editorial"
+        },
+        "formalProviderResultAccepted": {
+          "const": false
+        },
+        "reason": {
+          "type": "null"
+        },
+        "editorialSource": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "sourceSchemaVersion",
+            "requestId",
+            "sourceReceiptId",
+            "sourceSoftwareJobId",
+            "editorialVersionId",
+            "requestFingerprint",
+            "sourceOutputFingerprint",
+            "outputFingerprint",
+            "ownerConfirmation"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": "c1-editorial-source-reference-v1"
+            },
+            "sourceSchemaVersion": {
+              "const": "c1-editorial-source-v2"
+            },
+            "requestId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "sourceReceiptId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "sourceSoftwareJobId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "editorialVersionId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "requestFingerprint": {
+              "$ref": "#/$defs/sha256"
+            },
+            "sourceOutputFingerprint": {
+              "$ref": "#/$defs/sha256"
+            },
+            "outputFingerprint": {
+              "$ref": "#/$defs/sha256"
+            },
+            "ownerConfirmation": {
+              "$ref": "c1-editorial-source-v1.schema.json#/$defs/source/properties/ownerConfirmation"
+            }
+          }
+        }
+      }
     }
   },
   "properties": {
@@ -1297,365 +1265,6 @@
           "items": {
             "$ref": "#/$defs/finalAsset"
           }
-        }
-      }
-    },
-    "mediaRequirements": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schemaVersion",
-        "evidenceRef",
-        "evidenceVersion",
-        "platform",
-        "targetStore",
-        "storeRef",
-        "categoryId",
-        "schemaRevision",
-        "sourceDataRevision",
-        "sourceC1Fingerprint",
-        "imageSlots",
-        "videoSlots",
-        "schemaVideoRequirement",
-        "requirementsFingerprint"
-      ],
-      "properties": {
-        "schemaVersion": {
-          "const": "c2-media-requirements-v1"
-        },
-        "evidenceRef": {
-          "allOf": [
-            {
-              "type": "string",
-              "minLength": 1
-            },
-            {
-              "$ref": "#/$defs/canonicalFrozenRef"
-            }
-          ]
-        },
-        "evidenceVersion": {
-          "type": "string",
-          "minLength": 1
-        },
-        "platform": {
-          "type": "string",
-          "minLength": 1
-        },
-        "targetStore": {
-          "type": "string",
-          "minLength": 1
-        },
-        "storeRef": {
-          "allOf": [
-            {
-              "type": "string",
-              "minLength": 1
-            },
-            {
-              "$ref": "#/$defs/canonicalFrozenRef"
-            }
-          ]
-        },
-        "categoryId": {
-          "allOf": [
-            {
-              "type": "string",
-              "minLength": 1
-            },
-            {
-              "$ref": "#/$defs/canonicalFrozenRef"
-            }
-          ]
-        },
-        "schemaRevision": {
-          "type": "string",
-          "minLength": 1
-        },
-        "sourceDataRevision": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "sourceC1Fingerprint": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{64}$"
-        },
-        "imageSlots": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/$defs/imageSlot"
-          }
-        },
-        "videoSlots": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/videoSlot"
-          }
-        },
-        "schemaVideoRequirement": {
-          "oneOf": [
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "status",
-                "requiredBy",
-                "evidenceRef"
-              ],
-              "properties": {
-                "status": {
-                  "const": "required"
-                },
-                "requiredBy": {
-                  "const": "schema"
-                },
-                "evidenceRef": {
-                  "allOf": [
-                    {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    {
-                      "$ref": "#/$defs/canonicalFrozenRef"
-                    }
-                  ]
-                }
-              }
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "status",
-                "requiredBy",
-                "evidenceRef"
-              ],
-              "properties": {
-                "status": {
-                  "const": "not_required"
-                },
-                "requiredBy": {
-                  "const": "default"
-                },
-                "evidenceRef": {
-                  "type": "null"
-                }
-              }
-            }
-          ]
-        },
-        "requirementsFingerprint": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{64}$"
-        },
-        "contentRules": {
-          "oneOf": [
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "schemaVersion",
-                "status",
-                "reason"
-              ],
-              "properties": {
-                "schemaVersion": {
-                  "const": "c2-media-content-rules-v1"
-                },
-                "status": {
-                  "const": "missing"
-                },
-                "reason": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              }
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "schemaVersion",
-                "status",
-                "evidenceRef",
-                "evidenceVersion",
-                "checkedAt",
-                "validUntil",
-                "slotRules"
-              ],
-              "properties": {
-                "schemaVersion": {
-                  "const": "c2-media-content-rules-v1"
-                },
-                "status": {
-                  "const": "verified"
-                },
-                "evidenceRef": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "evidenceVersion": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "checkedAt": {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                "validUntil": {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                "slotRules": {
-                  "type": "array",
-                  "minItems": 1,
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                      "slotId",
-                      "mediaType",
-                      "mimeTypes",
-                      "byteSize",
-                      "width",
-                      "height",
-                      "aspectRatio"
-                    ],
-                    "properties": {
-                      "slotId": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "mediaType": {
-                        "enum": [
-                          "image",
-                          "video"
-                        ]
-                      },
-                      "mimeTypes": {
-                        "type": "array",
-                        "minItems": 1,
-                        "uniqueItems": true,
-                        "items": {
-                          "enum": [
-                            "image/jpeg",
-                            "image/png",
-                            "image/webp",
-                            "video/mp4"
-                          ]
-                        }
-                      },
-                      "byteSize": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "min",
-                          "max"
-                        ],
-                        "properties": {
-                          "min": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "max": {
-                            "oneOf": [
-                              {
-                                "type": "integer",
-                                "minimum": 0,
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "const": "unrestricted"
-                              }
-                            ]
-                          }
-                        }
-                      },
-                      "width": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "min",
-                          "max"
-                        ],
-                        "properties": {
-                          "min": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "max": {
-                            "oneOf": [
-                              {
-                                "type": "integer",
-                                "minimum": 0,
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "const": "unrestricted"
-                              }
-                            ]
-                          }
-                        }
-                      },
-                      "height": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "min",
-                          "max"
-                        ],
-                        "properties": {
-                          "min": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "max": {
-                            "oneOf": [
-                              {
-                                "type": "integer",
-                                "minimum": 0,
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "const": "unrestricted"
-                              }
-                            ]
-                          }
-                        }
-                      },
-                      "aspectRatio": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "min",
-                          "max"
-                        ],
-                        "properties": {
-                          "min": {
-                            "type": "number",
-                            "minimum": 0
-                          },
-                          "max": {
-                            "oneOf": [
-                              {
-                                "type": "number",
-                                "minimum": 0,
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "const": "unrestricted"
-                              }
-                            ]
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          ]
         }
       }
     },
@@ -1761,7 +1370,7 @@
             "confirmedAt",
             "approvedManifestVersion",
             "approvedManifestSha256",
-            "approvedMediaRequirementsFingerprint",
+            "approvedAuthorizedMediaFingerprint",
             "approvedAssetIds",
             "approvedMainImageAssetId",
             "approvedVideoDisposition",
@@ -1785,7 +1394,7 @@
               "type": "string",
               "pattern": "^[a-f0-9]{64}$"
             },
-            "approvedMediaRequirementsFingerprint": {
+            "approvedAuthorizedMediaFingerprint": {
               "type": "string",
               "pattern": "^[a-f0-9]{64}$"
             },
@@ -1843,7 +1452,7 @@
             "sourceDataRevision",
             "resultDataRevision",
             "sourceC1Fingerprint",
-            "mediaRequirementsFingerprint",
+            "authorizedMediaFingerprint",
             "finalManifestVersion",
             "finalManifestSha256",
             "finalUploadsFingerprint",
@@ -1852,7 +1461,6 @@
             "ownerConfirmationAt",
             "targetContext",
             "frozenC1Handoff",
-            "mediaRequirements",
             "finalUploads",
             "effectiveVideoRequirement",
             "ownerVideoRequirement",
@@ -1895,7 +1503,7 @@
               "type": "string",
               "pattern": "^[a-f0-9]{64}$"
             },
-            "mediaRequirementsFingerprint": {
+            "authorizedMediaFingerprint": {
               "type": "string",
               "pattern": "^[a-f0-9]{64}$"
             },
@@ -1938,11 +1546,8 @@
                 "platform",
                 "targetStore",
                 "storeRef",
-                "categoryId",
                 "schemaRevision",
-                "schemaEvidenceRef",
-                "schemaEvidenceVersion",
-                "mediaRequirementsFingerprint"
+                "schemaEvidenceRef"
               ],
               "properties": {
                 "platform": {
@@ -1954,17 +1559,6 @@
                   "minLength": 1
                 },
                 "storeRef": {
-                  "allOf": [
-                    {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    {
-                      "$ref": "#/$defs/canonicalFrozenRef"
-                    }
-                  ]
-                },
-                "categoryId": {
                   "allOf": [
                     {
                       "type": "string",
@@ -1989,22 +1583,11 @@
                       "$ref": "#/$defs/canonicalFrozenRef"
                     }
                   ]
-                },
-                "schemaEvidenceVersion": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "mediaRequirementsFingerprint": {
-                  "type": "string",
-                  "pattern": "^[a-f0-9]{64}$"
                 }
               }
             },
             "frozenC1Handoff": {
               "$ref": "#/$defs/canonicalC1Handoff"
-            },
-            "mediaRequirements": {
-              "$ref": "#/properties/mediaRequirements"
             },
             "finalUploads": {
               "type": "array",
@@ -2164,12 +1747,19 @@
                   "type": "null"
                 },
                 "warehouseRef": {
-                  "allOf": [
+                  "anyOf": [
                     {
-                      "type": "null"
+                      "allOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/$defs/canonicalFrozenRef"
+                        }
+                      ]
                     },
                     {
-                      "$ref": "#/$defs/canonicalFrozenRef"
+                      "type": "null"
                     }
                   ]
                 },
@@ -2186,12 +1776,19 @@
                   "type": "null"
                 },
                 "sourceConfirmationCardId": {
-                  "allOf": [
+                  "anyOf": [
                     {
-                      "type": "null"
+                      "allOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/$defs/canonicalFrozenRef"
+                        }
+                      ]
                     },
                     {
-                      "$ref": "#/$defs/canonicalFrozenRef"
+                      "type": "null"
                     }
                   ]
                 },
@@ -2319,7 +1916,6 @@
                   "sourceType",
                   "order",
                   "role",
-                  "slotId",
                   "byteSize",
                   "width",
                   "height"
@@ -2360,14 +1956,10 @@
                     "minimum": 1
                   },
                   "role": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 256
-                  },
-                  "slotId": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 256
+                    "enum": [
+                      "main_image",
+                      "gallery_image"
+                    ]
                   },
                   "byteSize": {
                     "type": [
@@ -2404,7 +1996,7 @@
                 "confirmedAt",
                 "confirmationRef",
                 "approvedStagedAssetManifestFingerprint",
-                "approvedMediaRequirementsFingerprint",
+                "approvedSourceC1Fingerprint",
                 "approvedAssetIds",
                 "approvedMainImageAssetId",
                 "approvedVideoDisposition"
@@ -2434,9 +2026,6 @@
                 "approvedStagedAssetManifestFingerprint": {
                   "$ref": "#/$defs/sha256"
                 },
-                "approvedMediaRequirementsFingerprint": {
-                  "$ref": "#/$defs/sha256"
-                },
                 "approvedAssetIds": {
                   "type": "array",
                   "minItems": 1,
@@ -2454,6 +2043,9 @@
                     "includes_video",
                     "excludes_video"
                   ]
+                },
+                "approvedSourceC1Fingerprint": {
+                  "$ref": "#/$defs/sha256"
                 }
               }
             },
@@ -2529,7 +2121,6 @@
                                   "sha256",
                                   "order",
                                   "role",
-                                  "slotId",
                                   "stableUrl",
                                   "stableUrlEvidenceRef"
                                 ],
@@ -2545,14 +2136,10 @@
                                     "minimum": 1
                                   },
                                   "role": {
-                                    "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": 256
-                                  },
-                                  "slotId": {
-                                    "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": 256
+                                    "enum": [
+                                      "main_image",
+                                      "gallery_image"
+                                    ]
                                   },
                                   "stableUrl": {
                                     "allOf": [
@@ -2641,7 +2228,6 @@
         "lifecycleStatus",
         "sourceDataRevision",
         "sourceC1Fingerprint",
-        "mediaRequirementsFingerprint",
         "assetManifestFingerprint",
         "executionPolicy",
         "technicalState"
@@ -2661,10 +2247,6 @@
           "minimum": 0
         },
         "sourceC1Fingerprint": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{64}$"
-        },
-        "mediaRequirementsFingerprint": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$"
         },
@@ -2800,6 +2382,47 @@
               }
             }
           ]
+        }
+      }
+    },
+    "targetContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "platform",
+        "targetStore",
+        "storeRef",
+        "schemaRevision",
+        "schemaEvidenceRef",
+        "sourceDataRevision",
+        "sourceC1Fingerprint"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "c2-target-context-v1"
+        },
+        "platform": {
+          "$ref": "#/$defs/c2SecretCheckedContractString"
+        },
+        "targetStore": {
+          "$ref": "#/$defs/c2SecretCheckedContractString"
+        },
+        "storeRef": {
+          "$ref": "#/$defs/c2SecretCheckedContractString"
+        },
+        "schemaRevision": {
+          "$ref": "#/$defs/c2SecretCheckedContractString"
+        },
+        "schemaEvidenceRef": {
+          "$ref": "#/$defs/opaqueEvidenceRef"
+        },
+        "sourceDataRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sourceC1Fingerprint": {
+          "$ref": "#/$defs/sha256"
         }
       }
     }

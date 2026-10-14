@@ -1,0 +1,175 @@
+{
+  "kind": "official-auth-and-import-semantics-20260908",
+  "authorization": [
+    {
+      "name": "Auth",
+      "x-displayName": "Авторизация через API-ключ",
+      "description": "<br> <aside class=\"warning\">API-ключи хранятся в личном кабинете в скрытом виде. Вы увидите API-ключ только при создании. Сохраните его в надёжном месте или сразу укажите в своих системах. \n\nВы не сможете восстановить доступ к несохранённым API-ключам. Чтобы продолжить работу с API, создайте новый ключ.\n\nOzon может отозвать ключ, если обнаружит подозрительную активность или слишком большую нагрузку на свои системы.\n</aside>\n\n## Как получить доступ к Seller API \n\n1. Зарегистрируйтесь в [Ozon Seller](https://seller.ozon.ru/app/signup). Подробнее о регистрации \n   в [Базе знаний продавца](https://seller-edu.ozon.ru/docs/how-to-start/step-1-register.html).\n2. Примите оферту.\n3. Получите API-ключ.\n\n## Как получить API-ключ\n\n<aside class=\"warning\">\n<b>Не передавайте API-ключ посторонним людям</b>  \n\nЗапросы к API изменяют данные в вашем магазине на Ozon. Если доступ к ключу будет у посторонних, они смогут управлять \nвашим магазином.\n</aside>\n\nЧтобы получить API-ключ:\n1. В личном кабинете перейдите в [**Настройки → Seller API**](https://seller.ozon.ru/app/settings/api-keys).\n2. Нажмите **Сгенерировать ключ**.\n3. Придумайте название для ключа и выберите его уровень доступа.\n4. Выберите цель использования ключа: \n   - для личного пользования;\n   - для внешнего сервиса, приложения — введите название сервиса, для которого выпускается ключ.\n5. Нажмите **Сгенерировать**.\n\n<aside class=\"warning\">\nСрок действия ключа — 3 месяца. После истечения срока действия сгенерируйте новый ключ в личном кабинете.\n</aside>\n\nПолучите дату истечения срока действия ключа в параметре `expires_at` метода [/v1/roles](#operation/AccessAPI_RolesByToken).\n\nВы можете создать несколько API-ключей. Например, если у вас несколько пользователей с разными уровнями доступа.\n\n### Отредактировать ключ\n\nЕсли вы хотите изменить разрешённые сети для ключа, в [списке API-ключей](https://seller.ozon.ru/app/settings/api-keys) выберите нужный и нажмите <img src=\"https://cdn.ozone.ru/s3/ozon-disk-api/techdoc/seller-api/edit-key_1682516858.png\" width=\"20\">.\nВнесите изменения и нажмите **Обновить**.\n\n## API-ключ попал в посторонние руки\n\n1. В личном кабинете перейдите в [**Настройки → Seller API**](https://seller.ozon.ru/app/settings/api-keys).\n2. Удалите текущий API-ключ и создайте новый."
+    }
+  ],
+  "importInfo": {
+    "summary": "Узнать статус добавления или обновления товара",
+    "description": "Позволяет получить статус создания или обновления карточки товара.\n\nЕсли вы обновили изображение или видео по ссылке, но ссылка не изменилась, для изображения или видео в параметре `result.items.status` вернётся `skipped`.\n",
+    "operationId": "ProductAPI_GetImportProductsInfo",
+    "parameters": [
+      {
+        "$ref": "#/components/parameters/Client-Id"
+      },
+      {
+        "$ref": "#/components/parameters/Api-Key"
+      }
+    ],
+    "requestBody": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/productGetImportProductsInfoRequest"
+          },
+          "example": {
+            "task_id": "172549793"
+          }
+        }
+      },
+      "required": true
+    },
+    "responses": {
+      "200": {
+        "description": "Статус добавления или обновления товара",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/productGetImportProductsInfoResponse"
+            },
+            "example": {
+              "result": {
+                "items": [
+                  {
+                    "offer_id": "143210608",
+                    "product_id": 137285792,
+                    "status": "imported",
+                    "errors": []
+                  }
+                ],
+                "total": 1
+              }
+            }
+          }
+        }
+      },
+      "400": {
+        "description": "Неверный параметр",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/rpcStatus"
+            }
+          }
+        }
+      },
+      "403": {
+        "description": "Доступ запрещён",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/rpcStatus"
+            }
+          }
+        }
+      },
+      "404": {
+        "description": "Ответ не найден",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/rpcStatus"
+            }
+          }
+        }
+      },
+      "409": {
+        "description": "Конфликт запроса",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/rpcStatus"
+            }
+          }
+        }
+      },
+      "500": {
+        "description": "Внутренняя ошибка сервера",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/rpcStatus"
+            }
+          }
+        }
+      }
+    },
+    "tags": [
+      "ProductAPI"
+    ]
+  },
+  "importSchemas": {
+    "GetImportProductsInfoResponseResultItem": {
+      "properties": {
+        "offer_id": {
+          "type": "string",
+          "description": "Идентификатор товара в системе продавца — артикул.\n\nМаксимальная длина строки в значении поля — 50 символов.\n"
+        },
+        "product_id": {
+          "format": "int64",
+          "type": "integer",
+          "description": "Идентификатор товара в системе Ozon — `product_id`."
+        },
+        "status": {
+          "type": "string",
+          "description": "Статус создания или обновления товара. Информация о товаре обрабатывается очередями.\nВозможные значения параметра:\n- `pending` — товар в очереди на обработку;\n- `imported` — товар успешно загружен;\n- `failed` — товар загружен с ошибками;\n- `skipped` — товар не был обновлен, так как запрос не содержал изменений.\n"
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/v1ItemError"
+          },
+          "description": "Массив ошибок."
+        }
+      },
+      "type": "object",
+      "title": "object"
+    }
+  },
+  "stockRequestSchemas": {
+    "productv2ProductsStocksRequestStock": {
+      "required": [
+        "product_id",
+        "quant_size",
+        "stock",
+        "warehouse_id"
+      ],
+      "properties": {
+        "offer_id": {
+          "type": "string",
+          "description": "Идентификатор товара в системе продавца — артикул."
+        },
+        "product_id": {
+          "format": "int64",
+          "type": "integer",
+          "description": "Идентификатор товара в системе Ozon — `product_id`."
+        },
+        "stock": {
+          "format": "int64",
+          "type": "integer",
+          "description": "Количество товара в наличии без учёта зарезервированных товаров."
+        },
+        "warehouse_id": {
+          "format": "int64",
+          "type": "integer",
+          "description": "Идентификатор склада, полученный из метода [/v1/warehouse/list](#operation/WarehouseAPI_WarehouseList)."
+        }
+      },
+      "type": "object",
+      "title": "object"
+    }
+  }
+}

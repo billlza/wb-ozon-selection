@@ -6,6 +6,7 @@ import {
   blockExecutionForTechnicalFailure,
   recoverC1KeywordHandoffTechnicalFailure,
   recoverBExactCommissionTechnicalFailure,
+  releaseATerraAssistBlock,
   buildExecutionRuntimeView,
   codexDispatchGate,
   completeExecutionStep,
@@ -301,4 +302,64 @@ test("formal B recovery consumes only the current exact-commission stop and pres
   });
   assert.throws(() => recoverBExactCommissionTechnicalFailure(withCase, args), /B_EXACT_COMMISSION_RECOVERY_REJECTED/);
   assert.throws(() => recoverBExactCommissionTechnicalFailure(result.runtime, args), /B_EXACT_COMMISSION_RECOVERY_REJECTED/);
+});
+
+test("AI 辅助整理留下的那种阻断只解它自己：存档原记录，等主人；别的阻断、维护中的异常一律不碰", () => {
+  const terraFailure = blockExecutionForTechnicalFailure(runtime(), {
+    failureId: "technical-failure:SIM-1:7:a-terra", kind: "unknown_outcome", errorCode: "A_TERRA_GATEWAY_TIMEOUT",
+    failureLayer: "inference", evidenceRefs: ["sales-snapshot:1"], softwareJobId: "inf-1", sourceRevision: 7, at
+  });
+  const before = structuredClone(terraFailure);
+  const released = releaseATerraAssistBlock(terraFailure, { at: "2026-08-22T02:00:00.000Z" });
+  assert.deepEqual(terraFailure, before, "不改动传进来的记录");
+  assert.deepEqual(released.releasedTechnicalFailure, before.technicalFailure);
+  assert.equal(released.releasedExceptionCase, null);
+  assert.equal(released.runtime.technicalFailure, null);
+  assert.equal(released.runtime.status, "waiting_owner");
+  assert.equal(released.runtime.executorType, "owner");
+  assert.equal(validateExecutionRuntime(released.runtime).valid, true);
+  assert.deepEqual(released.runtime.history.at(-1),
+    { type: "a_terra_assist_block_released", at: "2026-08-22T02:00:00.000Z", executorType: "software", detail: "technical-failure:SIM-1:7:a-terra" });
+  // 解开之后下一步照常能开始，不再撞上 EXECUTION_BLOCKED_BY_TECHNICAL_FAILURE。
+  assert.equal(startSoftwareStep(released.runtime, { stepId: "B_DETERMINISTIC_PROFIT", inputRevision: 8, at }).status, "running");
+
+  const terraException = openExceptionCase(runtime(), {
+    exceptionId: "exception:SIM-1:7:a-terra", reasonCode: "output_schema_mismatch", failureLayer: "output_schema",
+    evidenceRefs: ["sales-snapshot:1"], sourceRevision: 7, at
+  });
+  const exceptionReleased = releaseATerraAssistBlock(terraException, { at });
+  assert.equal(exceptionReleased.runtime.exceptionCase, null);
+  assert.equal(exceptionReleased.releasedExceptionCase.exceptionId, "exception:SIM-1:7:a-terra");
+  assert.equal(exceptionReleased.runtime.status, "waiting_owner");
+
+  // AI 的异常压在另一条正常的技术停止上：只拿走 AI 那条，另一条连同 blocked 原样留着。
+  const otherStop = blockExecutionForTechnicalFailure(runtime(), {
+    failureId: "b-exact-commission-required:SIM-1:8", kind: "external_dependency", errorCode: "B_EXACT_COMMISSION_REQUIRED",
+    failureLayer: "b_commission_evidence", evidenceRefs: [], sourceRevision: 8, at
+  });
+  const stacked = openExceptionCase(otherStop, {
+    exceptionId: "exception:SIM-1:7:a-terra", reasonCode: "output_schema_mismatch", failureLayer: "output_schema",
+    evidenceRefs: [], sourceRevision: 7, at
+  });
+  const partly = releaseATerraAssistBlock(stacked, { at });
+  assert.equal(partly.runtime.exceptionCase, null);
+  assert.deepEqual(partly.runtime.technicalFailure, otherStop.technicalFailure);
+  assert.equal(partly.runtime.status, "blocked");
+  assert.equal(partly.releasedTechnicalFailure, null);
+
+  assert.equal(releaseATerraAssistBlock(otherStop, { at }), null, "别的技术停止不归它解");
+  assert.equal(releaseATerraAssistBlock(runtime(), { at }), null);
+  assert.equal(releaseATerraAssistBlock(null, { at }), null);
+  assert.equal(releaseATerraAssistBlock(undefined, { at }), null);
+  const maintained = authorizeExceptionMaintenance(terraException, {
+    exceptionId: "exception:SIM-1:7:a-terra", maintenanceAuthorizationId: "maintenance:1", at
+  });
+  assert.equal(releaseATerraAssistBlock(maintained, { at }), null, "已经交给维护的异常不在这里解");
+  const changedCandidate = structuredClone(terraFailure);
+  changedCandidate.technicalFailure.failureId = "technical-failure:OTHER:7:a-terra";
+  assert.equal(releaseATerraAssistBlock(changedCandidate, { at }), null, "编号必须是这件商品自己的");
+  const businessChanged = structuredClone(terraFailure);
+  businessChanged.technicalFailure.businessStateChanged = true;
+  assert.equal(releaseATerraAssistBlock(businessChanged, { at }), null);
+  assert.throws(() => releaseATerraAssistBlock({ ...terraFailure, schemaVersion: "old" }, { at }), /EXECUTION_CONTRACT_INVALID/);
 });

@@ -1,3 +1,4 @@
+import { allocatedTestPorts } from './helpers/api-process-lifecycle.mjs';
 import test from "node:test";
 import assert from "node:assert/strict";
 // The shared isolated fixture starts the real server.mjs with a temporary owner and business store.
@@ -7,9 +8,63 @@ import path from "node:path";
 import { productionOwnerDecisionHttpFixture, startSavedDEApi, confirmCurrentProduction } from "./helpers/d-e-saved-api-fixture.mjs";
 import { loadPublishedSchemaValidator } from "./helpers/published-schema-validator.mjs";
 
-const port = Number(process.env.SELECTION_REVIEW_TEST_PORT);
+const { api: port } = allocatedTestPorts();
 const published = await loadPublishedSchemaValidator();
 const validateSku = published.getSchema("product-lifecycle-v1.1"), validateJob = published.getSchema("software-job-v1.schema.json");
+
+test("final-plan revision requires owner identity before revealing dictionary read state", async t => {
+  const responses = [];
+  for (const unsettled of [false, true]) {
+    await t.test(unsettled ? "unsettled read" : "ordinary state", async child => {
+      const fixture = await productionOwnerDecisionHttpFixture();
+      if (unsettled) fixture.candidate.lifecycleV11.c1ColorDictionaryReadsV1 = { "10096": {
+        schemaVersion: "c1-color-dictionary-read-v1", status: "request_sent",
+        authorizationId: "synthetic:sent", externalRequestRef: "synthetic:sent:request"
+      } };
+      const directory = await mkdtemp(path.join(tmpdir(), "final-plan-owner-http-"));
+      const api = await startSavedDEApi(child, { directory, port, document: fixture.document,
+        binding: fixture.binding, services: [], identityProvider: "development_default" });
+      const before = await api.readBytes();
+      const input = { candidateId: fixture.candidate.id,
+        skuPackageId: fixture.candidate.lifecycleV11.skuPackage.skuPackageId,
+        dataRevision: fixture.candidate.dataRevision };
+      const response = await api.post(`/api/candidates/${encodeURIComponent(input.candidateId)}/lifecycle/c1/revise-final-plan`,
+        input, { authenticated: false });
+      assert.equal(response.status, 403, JSON.stringify(response.body));
+      assert.equal(response.body.code, "C1_FINAL_REVISION_OWNER_REQUIRED");
+      assert.equal(response.body.externalRequests, 0);
+      assert.equal(response.body.paidCalls, 0);
+      assert.equal(response.body.platformWrites, 0);
+      assert.deepEqual(await api.readBytes(), before);
+      assert.equal(api.dependencyRequests(), 0);
+      assert.equal(api.dictionaryRequests(), 0);
+      responses.push(response.body);
+      await api.assertClean();
+    });
+  }
+  assert.deepEqual(responses[0], responses[1]);
+});
+
+test("new final-plan preparation reports missing local OCR without changing business state or authorizing production", async t => {
+  const fixture = await productionOwnerDecisionHttpFixture();
+  const directory = await mkdtemp(path.join(tmpdir(), "final-plan-prepare-http-"));
+  const api = await startSavedDEApi(t, { directory, port, document: fixture.document, binding: fixture.binding, services: [] });
+  await api.authenticate();
+  const before = await api.readBytes();
+  const input = { candidateId: fixture.candidate.id, skuPackageId: fixture.candidate.lifecycleV11.skuPackage.skuPackageId,
+    dataRevision: fixture.candidate.dataRevision };
+  const route = `/api/candidates/${encodeURIComponent(input.candidateId)}/lifecycle/c1/revise-final-plan`;
+  const response = await api.post(route, input);
+  assert.equal(response.status, 503, JSON.stringify(response.body));
+  assert.equal(response.body.code, "C1_IMAGE_TEXT_SERVICE_UNAVAILABLE");
+  assert.equal(response.body.paidCalls, 0);
+  assert.equal(response.body.platformWrites, 0);
+  assert.deepEqual(await api.readBytes(), before);
+  const stale = await api.post(route, { ...input, dataRevision: input.dataRevision + 1 });
+  assert.equal(stale.status, 409);
+  assert.deepEqual(await api.readBytes(), before);
+  await api.assertClean();
+});
 
 for (const missing of ["service", "transport"]) {
   test(`one authenticated PA confirmation persists its unique queued D job when ${missing} is missing`, async t => {

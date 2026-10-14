@@ -36,6 +36,7 @@ export function createLocalDevelopmentWorkerRegistry({ clock = () => new Date().
     boundaryType: "worker_registry",
     persistenceClass: "local_development_ephemeral",
     multiUserReady: false,
+    heartbeatTtlMs,
     register(input) {
       const worker = createWorkerDescriptor(input);
       if (workers.has(worker.workerId)) throw new Error("WORKER_REGISTRY_DUPLICATE_WORKER");

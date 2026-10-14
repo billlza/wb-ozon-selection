@@ -41,7 +41,10 @@ test("local pricing reuse preserves original completion and admits C2 without ne
   assert.equal(result.skuPackage.c2FinalAssets, null);
   assert.deepEqual(plan.draftOnlySeo.providerJobRef, input.previousSkuPackage.c1ProductPlan.draftOnlySeo.providerJobRef);
   assert.deepEqual(plan.inputSnapshots.skuRightsReview, input.previousSkuPackage.c1ProductPlan.inputSnapshots.skuRightsReview);
-  assert.equal(normalizeC1CanonicalHandoffContract(result.skuPackage).draftOnlySeo.pricingReuseRecord.schemaVersion, "c1-pricing-result-reuse-v1");
+  assert.equal(plan.draftOnlySeo.pricingReuseRecord.schemaVersion, "c1-pricing-result-reuse-v1");
+  const handoffReuse = normalizeC1CanonicalHandoffContract(result.skuPackage).draftOnlySeo.pricingReuseRecord;
+  assert.equal(handoffReuse.schemaVersion, "c1-pricing-result-reuse-reference-v1");
+  assert.equal(handoffReuse.recordFingerprint, fingerprintCanonicalRecord(plan.draftOnlySeo.pricingReuseRecord));
   assert.deepEqual(input, before);
 });
 

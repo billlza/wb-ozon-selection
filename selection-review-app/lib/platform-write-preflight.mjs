@@ -8,8 +8,8 @@ import { assertCurrentProductionAuthorization } from "./production-authorization
 import { isRuntimeConfigurationTimestamp, normalizeProductionBindings } from "./runtime-configuration.mjs";
 import { ozonProductionConnectionRequirements } from "./ozon-production-strategy.mjs";
 
-import { PLATFORM_WRITE_PREFLIGHT_VERSION, assertValidPlatformWritePreflight, platformWritePreflightTechnicalStatus } from "./platform-write-preflight-contract.mjs";
-export { PLATFORM_WRITE_PREFLIGHT_VERSION, validatePlatformWritePreflight, assertValidPlatformWritePreflight, assertCurrentPlatformWritePreflight } from "./platform-write-preflight-contract.mjs";
+import { PLATFORM_WRITE_PREFLIGHT_VERSION, STORE_IDENTITY_PATHS, assertValidPlatformWritePreflight, canStoreIdentityPathAnchor, isStoreIdentityAnchored, platformWritePreflightTechnicalStatus } from "./platform-write-preflight-contract.mjs";
+export { PLATFORM_WRITE_PREFLIGHT_VERSION, validatePlatformWritePreflight, assertValidPlatformWritePreflight, assertCurrentPlatformWritePreflight, isStoreIdentityAnchored } from "./platform-write-preflight-contract.mjs";
 /** Checks the current non-secret configuration against the owner's frozen execution scope. */
 export function assertCurrentProductionExecutionBinding({ productionAuthorization, currentProductionBinding, checkedAt }) {
   if (!isRuntimeConfigurationTimestamp(checkedAt)) throw new Error("PRODUCTION_EXECUTION_BINDING_TIME_INVALID: 执行前检时间无效");
@@ -104,6 +104,11 @@ function stringArray(value) {
   return Array.isArray(value) && value.every(nonEmptyString);
 }
 
+/** An inspection that names no path is read under the original rule: identity comes from an observed store ref. */
+function storeIdentityVia(inspection) {
+  return inspection.storeIdentityVia ?? "platform_store_id";
+}
+
 function validateInspection(inspection) {
   if (!isObject(inspection)) throw new Error("PLATFORM_PREFLIGHT_INSPECTION_INVALID: 检查器必须返回结构化结果");
   if (!nonEmptyString(inspection.observedStore) || !["matched", "mismatched", "unverified"].includes(inspection.storeIdentityStatus) || !nonEmptyString(inspection.storeIdentityEvidenceRef)) {
@@ -111,6 +116,11 @@ function validateInspection(inspection) {
   }
   if (!Object.hasOwn(inspection, "observedStoreRef") || !(inspection.observedStoreRef === null || isCompleteStoreRef(inspection.observedStoreRef, inspection.observedStore))) {
     throw new Error("PLATFORM_PREFLIGHT_INSPECTION_INVALID: 必须返回完整观察店铺身份或明确未验证");
+  }
+  // 'scoped_warehouse' asserts the platform publishes no store number, so a store ref alongside it is a contradiction.
+  if (!STORE_IDENTITY_PATHS.has(storeIdentityVia(inspection)) ||
+      (storeIdentityVia(inspection) === "scoped_warehouse" && inspection.observedStoreRef !== null)) {
+    throw new Error("PLATFORM_PREFLIGHT_INSPECTION_INVALID: 店铺身份证据路径无效");
   }
   if (!PERMISSION_STATUSES.has(inspection.permissionStatus) || !nonEmptyString(inspection.permissionEvidenceRef)) {
     throw new Error("PLATFORM_PREFLIGHT_INSPECTION_INVALID: 权限检查结果不完整");
@@ -159,8 +169,18 @@ export async function runPlatformWritePreflight({ productionPlan, inspectPlatfor
   const platformWritableFields = [...new Set(inspection.platformWritableFields)];
   const effectiveWritableFields = inputs.allowedWriteFields.filter((field) => platformWritableFields.includes(field));
   const risks = structuredClone(inspection.risks);
-  const storeStatus = inspection.storeIdentityStatus === "unverified" || inspection.observedStoreRef === null ? "unverified"
-    : inspection.storeIdentityStatus === "matched" && inspection.observedStore === inputs.store && sameStoreRef(inputs.storeRef, inspection.observedStoreRef) ? "matched" : "mismatched";
+  // Two qualifying anchors, never a bare claim. 'platform_store_id' compares an observed store ref, as before.
+  // 'scoped_warehouse' (owner decision 2026-09-16) stands on the warehouse read back with this key plus the
+  // owner-verified warehouse-to-store binding, and therefore requires observedStoreRef to stay null — Ozon
+  // publishes no store number, so a store ref alongside that claim would be a fabrication, not a stronger proof.
+  const identityVia = storeIdentityVia(inspection);
+  const warehouseAnchored = identityVia === "scoped_warehouse";
+  const anchored = isStoreIdentityAnchored({ via: identityVia, observedStoreRef: inspection.observedStoreRef, expectedStoreRef: inputs.storeRef });
+  // 锚不住的路径（'none'，以及叫不出名字的锚）根本没有可核的锚，所以诚实的词是"未核验"——"不一致"的意思是
+  // 核过了、两边对不上，把"压根没核"说成"核出来不一致"，是在报告一次从未发生的核对。
+  const storeStatus = inspection.storeIdentityStatus === "unverified" || !canStoreIdentityPathAnchor(identityVia) ||
+      (!warehouseAnchored && inspection.observedStoreRef === null) ? "unverified"
+    : inspection.storeIdentityStatus === "matched" && inspection.observedStore === inputs.store && anchored ? "matched" : "mismatched";
   if (storeStatus !== "matched") risks.push({ code: "store_identity_not_verified", message: "店铺身份尚未验证一致" });
   const priceCurrencyMatched = inspection.priceFieldCurrency === inputs.platformWritePrice.currency;
   if (!priceCurrencyMatched) risks.push({ code: "platform_price_currency_mismatch", message: `授权写入币种${inputs.platformWritePrice.currency}与平台字段币种${inspection.priceFieldCurrency}不一致` });
@@ -181,6 +201,8 @@ export async function runPlatformWritePreflight({ productionPlan, inspectPlatfor
       expectedStoreRef: structuredClone(inputs.storeRef),
       observedStoreRef: structuredClone(inspection.observedStoreRef),
       status: storeStatus,
+      // Recorded so the conclusion stays traceable to the anchor it came from, not only to its evidence ref.
+      verifiedVia: identityVia,
       evidenceRef: inspection.storeIdentityEvidenceRef
     },
     permission: {

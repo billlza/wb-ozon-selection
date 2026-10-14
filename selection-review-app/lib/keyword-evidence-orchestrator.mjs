@@ -392,7 +392,14 @@ export async function prepareKeywordEvidence(input, providers = {}) {
     }
   }
 
-  const health = cachedTrueEmptyAttempts.length > 0
+  // 主人没有授权任何付费关键词提供方时，这一轮一次外部调用都不打。
+  // 连接器健康检查查的就是 Seerfar 连接器本身——没有连接器，就没有可查的东西，
+  // 跑它只会拿三条标准SKU去换一份查不出所以然的回执。来源只用本地融合
+  // （`buildLocalCandidates`：已确认商品事实 + 已证可比对标的词 + 种子词），
+  // 而 `source_candidates_ready` 本来就只看候选池非空，与有没有付费结果无关。
+  // 这和下面浏览器那两个开关是同一套写法，不是新机制；不传就是授权，老行为一字不变。
+  const paidProviderAuthorized = input.policy?.paidProviderAuthorized !== false;
+  const health = (!paidProviderAuthorized || cachedTrueEmptyAttempts.length > 0)
     ? { trigger: null, calls: 0, suspended: false, receipts: [], pointsBefore: null, pointsAfter: null, pointsSpent: null }
     : await runHealthCheck(input, providers);
   const state = {
@@ -406,7 +413,7 @@ export async function prepareKeywordEvidence(input, providers = {}) {
     browserCalls: 0
   };
   let apiTechnicalFailure = false;
-  if (!health.suspended && cachedTrueEmptyAttempts.length === 0) {
+  if (paidProviderAuthorized && !health.suspended && cachedTrueEmptyAttempts.length === 0) {
     if (typeof providers.seerfarApi !== "function") throw new Error("KEYWORD_SEERFAR_PROVIDER_MISSING");
     const receipt = await providers.seerfarApi({ input: structuredClone(input), attemptLimit: 1 });
     state.seerfarApiCalls = 1;

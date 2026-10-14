@@ -2,6 +2,7 @@ import {
   PRODUCT_LIFECYCLE_SCHEMA_VERSION,
   validateOpportunityPackage
 } from "./product-lifecycle-schema.mjs";
+import { platformOfStore } from "./store-registry.mjs";
 
 export const LEGACY_ADAPTER_MODE = "legacy-read-only-v1";
 export const UNKNOWN = "unknown";
@@ -45,9 +46,7 @@ function deepFreeze(value) {
 
 function targetPlatform(candidate) {
   if (candidate.targetPlatform) return candidate.targetPlatform;
-  if (["dandanshu", "miska"].includes(candidate.targetStore)) return "ozon";
-  if (candidate.targetStore === "wb") return "wb";
-  return UNKNOWN;
+  return platformOfStore(candidate.targetStore) ?? UNKNOWN;
 }
 
 function businessState(candidate) {

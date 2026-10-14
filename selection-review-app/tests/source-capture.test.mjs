@@ -25,9 +25,13 @@ import {
 } from "../lib/source-capture.mjs";
 import { toggleLocalSupplierSkuSelection } from "../src/aSupplierCaptureSelection.js";
 import { harness, idle, message, startCapture, supplierJob, SUPPLIER_URL, PING, START } from "./helpers/extension-runtime-fixture.mjs";
+import { SEERFAR_WEB_MODE, SEERFAR_WEB_REQUEST_TYPE, SEERFAR_WEB_SEARCH_ENDPOINT, SEERFAR_WEB_SEARCH_PAGE }
+  from "../extension/1688-capture/seerfar-web-capture.js";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+// A real querySelectorAll("script") returns typed scripts too, so the fixture answers the broad selector and
+// lets the collector read each node's own type attribute, exactly as it must on the page.
 function fakeDocument(json = null) {
   return {
     title: "机械发条木质火车",
@@ -36,7 +40,9 @@ function fakeDocument(json = null) {
       return selector === "h1" ? { textContent: "机械发条木质火车" } : null;
     },
     querySelectorAll(selector) {
-      if (selector === 'script[type="application/json"]' && json) return [{ textContent: JSON.stringify(json) }];
+      if (selector === "script" && json) {
+        return [{ textContent: JSON.stringify(json), getAttribute: (name) => (name === "type" ? "application/json" : null) }];
+      }
       return [];
     }
   };
@@ -175,6 +181,71 @@ test("capture prices require exact scalar decimals, stock requires nonnegative i
   const evidence = syntheticCapture();
   evidence.skus[0].stock = 1.5;
   assert.equal(sanitize1688Evidence(evidence, evidence.offerId).skus[0].stock, null);
+});
+
+// 每个规格自己的重量是它自己运费的唯一依据，所以它必须活着穿过脱敏边界，而不是在这里被丢掉。
+test("每个规格的发货重量按公斤保留下来，并带上页面里的来源", () => {
+  const evidence = syntheticCapture();
+  evidence.skus[0].weight = { value: 0.103, unit: "kg" };
+  evidence.skus[0].weightSource = "detailDescription.freightInfo.skuWeight";
+  const sanitized = sanitize1688Evidence(evidence, evidence.offerId);
+  assert.deepEqual(sanitized.skus[0].weight, { value: 0.103, unit: "kg" });
+  assert.equal(sanitized.skus[0].weightSource, "detailDescription.freightInfo.skuWeight");
+  // A bare number of kilograms is the same fact, normalized to the same shape. So is an exact scalar decimal in a
+  // string, which is exactly what the capture boundary already accepts for a price and for a stock count.
+  for (const raw of [0.24, "0.24", { value: "0.24", unit: "kg" }, { value: 0.24, unit: "KG" }]) {
+    const bare = syntheticCapture();
+    bare.skus[0].weight = raw;
+    bare.skus[0].weightSource = "freightModel.skuWeight";
+    assert.deepEqual(sanitize1688Evidence(bare, bare.offerId).skus[0].weight, { value: 0.24, unit: "kg" }, JSON.stringify(raw));
+  }
+});
+
+test("不合法的规格重量只被丢掉，不报错、不四舍五入、也不改写其他事实", () => {
+  for (const [weight, weightSource] of [
+    [{ value: 103, unit: "g" }, "page.grams"],
+    [{ value: 0, unit: "kg" }, "page.zero"],
+    [{ value: -1, unit: "kg" }, "page.negative"],
+    [{ value: 1001, unit: "kg" }, "page.absurd"],
+    [{ value: 0.103 }, "page.unitless"],
+    [{ value: "0.1公斤", unit: "kg" }, "page.text"],
+    [{ value: "0.10-0.15", unit: "kg" }, "page.range"],
+    [{ value: Infinity, unit: "kg" }, "page.infinite"],
+    [[0.103], "page.array"],
+    [true, "page.boolean"],
+    ["1e-1", "page.exponent"],
+    // A weight the page never told us where it came from is not evidence either.
+    [{ value: 0.103, unit: "kg" }, ""],
+    [{ value: 0.103, unit: "kg" }, undefined]
+  ]) {
+    const evidence = syntheticCapture();
+    evidence.skus[0].weight = weight;
+    evidence.skus[0].weightSource = weightSource;
+    const sanitized = sanitize1688Evidence(evidence, evidence.offerId);
+    assert.equal(sanitized.skus[0].weight, null, JSON.stringify(weight));
+    assert.equal(sanitized.skus[0].weightSource, null, JSON.stringify(weight));
+    // The specification is still a specification: its price and stock are untouched.
+    assert.equal(sanitized.skus[0].priceCny, 20);
+    assert.equal(sanitized.skus[0].stock, 1000);
+  }
+  // No weight at all is the normal case for a page that never declares one.
+  const plain = sanitize1688Evidence(syntheticCapture(), "712421624571");
+  assert.equal(plain.skus[0].weight, null);
+  assert.equal(plain.skus[0].weightSource, null);
+});
+
+test("采到的重量能直接接上供货方案的重量字段", async () => {
+  const { adapt1688CaptureToSupplierOption } = await import("../lib/supplier-option.mjs");
+  const evidence = syntheticCapture();
+  evidence.skus[0].weight = { value: 0.103, unit: "kg" };
+  evidence.skus[0].weightSource = "detailDescription.freightInfo.skuWeight";
+  const option = adapt1688CaptureToSupplierOption(sanitize1688Evidence(evidence, evidence.offerId),
+    { evidenceRef: "source-capture:SCJ-synthetic" });
+  assert.deepEqual(option.supplierSkus[0].weight, { value: 0.103, unit: "kg" });
+  // A specification without a declared weight stays explicitly unknown; nothing is filled in for it.
+  const missing = adapt1688CaptureToSupplierOption(sanitize1688Evidence(syntheticCapture(), "712421624571"),
+    { evidenceRef: "source-capture:SCJ-synthetic" });
+  assert.equal(missing.supplierSkus[0].weight, "unknown");
 });
 
 test("automatic SKU matching retains ambiguity across different supplier SKUs", () => {
@@ -441,9 +512,9 @@ test("1688 collector accepts a real top-level SKU ID on a single-specification o
   }
 });
 
-test("extension manifest stays limited to the 1688 short-link/detail allowlist, Ozon product pages and the local review app", async () => {
+test("extension manifest stays limited to the 1688 short-link/detail allowlist, the 1688 image-search pages, Pinduoduo goods pages, Ozon product, search and image-search pages, the Seerfar member site and the local review app", async () => {
   const manifest = JSON.parse(await readFile(path.join(appDir, "extension", "1688-capture", "manifest.json"), "utf8"));
-  assert.equal(manifest.version, "1.2.7");
+  assert.equal(manifest.version, "1.4.1");
   assert.equal(manifest.name, "全店经营工作台 · 商品只读采集器");
   assert.equal(manifest.action.default_title, "全店经营工作台 · 商品只读采集器");
   assert.match(manifest.description, /本机全店经营工作台/);
@@ -451,9 +522,20 @@ test("extension manifest stays limited to the 1688 short-link/detail allowlist, 
   assert.equal(manifest.minimum_chrome_version, "120");
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:4317/*",
+    "https://air.1688.com/kapp/*",
     "https://detail.1688.com/offer/*",
+    "https://mobile.pinduoduo.com/*",
+    "https://mobile.yangkeduo.com/*",
+    "https://p.pinduoduo.com/*",
     "https://qr.1688.com/s/*",
-    "https://www.ozon.ru/product/*"
+    "https://s.1688.com/youyuan/*",
+    "https://www.ozon.ru/",
+    "https://www.ozon.ru/?*",
+    "https://www.ozon.ru/category/*",
+    "https://www.ozon.ru/product/*",
+    "https://www.ozon.ru/search-by-image*",
+    "https://www.ozon.ru/search/*",
+    "https://www.seerfar.cn/*"
   ]);
   assert.equal(manifest.permissions.includes("cookies"), false);
 });
@@ -513,7 +595,7 @@ test("explicit capture claims only the requested ID and rejects mismatched or re
   assert.equal((await startCapture(mismatch.runtime, "job-1")).code, "capture_job_invalid");
   assert.equal(mismatch.calls.created.length, 0);
   assert.match(mismatch.calls.requests[0].url, /capture-jobs\/job-1\/claim$/);
-  assert.deepEqual(mismatch.calls.requests[0].body, { version: "1.2.7" });
+  assert.deepEqual(mismatch.calls.requests[0].body, { version: "1.4.1" });
   assert.equal((await startCapture(mismatch.runtime, "job-1")).code, "capture_replay_rejected");
   assert.equal(mismatch.calls.requests.length, 1);
 
@@ -530,4 +612,120 @@ test("uncertain claim transport cannot be repeated by a second page signal", asy
   assert.equal((await startCapture(h.runtime, "job-1")).code, "capture_replay_rejected");
   assert.equal(h.calls.requests.length, 1);
   assert.equal(h.calls.created.length, 0);
+});
+
+// What Chrome says for a tab id it no longer has.
+const noSuchTab = (id) => new Error(`No tab with id: ${id}.`);
+const settle = async (until) => { for (let i = 0; i < 30 && !until(); i += 1) await new Promise(setImmediate); };
+
+test("a page the owner already closed counts as closed: the next job is taken, never turned away as busy (review P0-9)", async () => {
+  // A capture whose tab the owner closed before the plugin got to it: Chrome refuses to remove a tab it no longer has.
+  const options = { job: supplierJob() };
+  const h = harness(options);
+  const { get, create } = h.chromeApi.tabs;
+  let closedByOwner = false;
+  h.chromeApi.tabs.create = async (input) => { closedByOwner = false; return create(input); };
+  h.chromeApi.tabs.get = async (id) => { if (closedByOwner) throw noSuchTab(id); return get(id); };
+  h.chromeApi.tabs.remove = async (id) => { h.calls.removed.push(id); closedByOwner = true; throw noSuchTab(id); };
+  assert.equal((await startCapture(h.runtime, "job-1")).accepted, true);
+  await idle(h.runtime);
+  assert.equal(h.calls.requests.find((request) => /\/result$/.test(request.url)).body.status, "captured");
+  assert.equal(h.runtime.status().backgroundReady, true);
+  assert.notEqual(h.runtime.status().code, "tab_cleanup_failed");
+  await h.runtime.heartbeat();
+  assert.equal(h.calls.requests.at(-1).body.backgroundReady, true, "the service must not be told the plugin is unavailable");
+  options.job = supplierJob({ captureId: "job-2" });
+  assert.equal((await startCapture(h.runtime, "job-2")).accepted, true);
+  await idle(h.runtime);
+  assert.equal(h.calls.created.length, 2);
+
+  // The Seerfar tab is the owner's to search in, and closing it when done is the natural thing to do.
+  const seerfarJob = { captureId: "SWR-00000000-0000-4000-8000-000000000001", jobId: "SWR-00000000-0000-4000-8000-000000000001",
+    roundId: "seerfar-web-round:00000000-0000-4000-8000-000000000002", mode: SEERFAR_WEB_MODE, pageUrl: SEERFAR_WEB_SEARCH_PAGE,
+    endpoint: SEERFAR_WEB_SEARCH_ENDPOINT, categoryPaths: ["宠物用品 > 宠物服装和靴子 > 宠物服装"], sellerType: "cross_border",
+    maxRecords: 20, waitMs: 5000, requiredExtensionVersion: "1.4.1", attempt: 1, token: "synthetic-token" };
+  let seerfar;
+  let tabGone = false;
+  seerfar = harness({ job: seerfarJob, execute: () => { tabGone = true; throw noSuchTab(7); } });
+  const seerfarGet = seerfar.chromeApi.tabs.get;
+  seerfar.chromeApi.tabs.get = async (id) => { if (tabGone) throw noSuchTab(id); return seerfarGet(id); };
+  seerfar.chromeApi.tabs.remove = async (id) => { seerfar.calls.removed.push(id); throw noSuchTab(id); };
+  assert.equal((await startCapture(seerfar.runtime, seerfarJob.captureId, SEERFAR_WEB_REQUEST_TYPE)).accepted, true);
+  await idle(seerfar.runtime);
+  assert.deepEqual(seerfar.calls.removed, [7]);
+  assert.equal(seerfar.calls.requests.find((request) => /\/result$/.test(request.url)).body.status, "failed");
+  assert.equal(seerfar.runtime.status().backgroundReady, true);
+  assert.equal(message(seerfar.runtime, { type: START, captureId: "job-after-seerfar" }).keepOpen, true,
+    "a new job goes to the claim instead of being refused on the spot");
+});
+
+test("a page Chrome will not close holds new jobs with that reason, and only until the page is gone", async () => {
+  const options = { job: supplierJob(), removeFails: true };
+  const h = harness(options);
+  assert.equal((await startCapture(h.runtime, "job-1")).accepted, true);
+  await idle(h.runtime);
+  assert.deepEqual(h.calls.removed, [7]);
+  assert.equal(h.runtime.status().backgroundReady, false);
+  assert.equal(h.runtime.status().code, "tab_cleanup_failed");
+  options.job = supplierJob({ captureId: "job-2" });
+  const claimsBefore = h.calls.requests.filter((request) => /\/claim$/.test(request.url)).length;
+  assert.deepEqual(await startCapture(h.runtime, "job-2"), { accepted: false, code: "tab_cleanup_failed" },
+    "the owner hears which page to close, not that another product is being captured");
+  assert.equal(h.calls.requests.filter((request) => /\/claim$/.test(request.url)).length, claimsBefore, "a held worker claims nothing");
+  assert.equal(h.calls.created.length, 1);
+  await h.runtime.heartbeat();
+  assert.equal(h.calls.requests.at(-1).body.backgroundReady, false);
+  // Nothing is closed for the owner later on: the page may be theirs by now. They close it, and the hold lets go by itself.
+  assert.deepEqual(h.calls.removed, [7]);
+  const { get, create } = h.chromeApi.tabs;
+  let closedByOwner = true;
+  h.chromeApi.tabs.create = async (input) => { closedByOwner = false; return create(input); };
+  h.chromeApi.tabs.get = async (id) => { if (closedByOwner) throw noSuchTab(id); return get(id); };
+  assert.equal(message(h.runtime, { type: PING }).response.backgroundReady, false, "the inquiry answers at once, then looks again");
+  await settle(() => h.runtime.status().backgroundReady);
+  assert.equal(h.runtime.status().backgroundReady, true);
+  await h.runtime.heartbeat();
+  assert.equal(h.calls.requests.at(-1).body.backgroundReady, true);
+  assert.equal((await startCapture(h.runtime, "job-2")).accepted, true, "the job turned away earlier was never claimed, so it can start now");
+  await idle(h.runtime);
+  assert.equal(h.calls.created.length, 2);
+
+  // Closing the page and pressing again straight away also works: the start signal looks before it says no.
+  const again = harness({ job: supplierJob(), removeFails: true });
+  assert.equal((await startCapture(again.runtime, "job-1")).accepted, true);
+  await idle(again.runtime);
+  again.chromeApi.tabs.get = async (id) => { throw noSuchTab(id); };
+  again.chromeApi.tabs.create = async () => { throw new Error("synthetic: no new page is needed to prove the claim"); };
+  const claimed = await startCapture(again.runtime, "job-x");
+  assert.notEqual(claimed.code, "tab_cleanup_failed");
+  assert.ok(again.calls.requests.some((request) => /capture-jobs\/job-x\/claim$/.test(request.url)));
+});
+
+test("a page Chrome was still opening when its job ran out of time holds new jobs until Chrome answers and that page is closed", async () => {
+  let fireDeadline = null;
+  const jobTimerOptions = {
+    setTimer: (handler, delay) => { if (delay === 40000) { fireDeadline = handler; return "deadline"; } return setTimeout(handler, delay); },
+    clearTimer: (timer) => { if (timer !== "deadline") clearTimeout(timer); }
+  };
+  const options = { job: supplierJob(), jobTimerOptions };
+  const h = harness(options);
+  const { create } = h.chromeApi.tabs;
+  let answer = null;
+  h.chromeApi.tabs.create = (input) => new Promise((resolve) => { answer = () => resolve(create(input)); });
+  assert.equal((await startCapture(h.runtime, "job-1")).accepted, true);
+  await settle(() => answer !== null);
+  fireDeadline();
+  await idle(h.runtime);
+  assert.equal(h.calls.requests.find((request) => /\/result$/.test(request.url)).body.failureCode, "timeout");
+  assert.equal(h.runtime.status().code, "tab_creation_unconfirmed");
+  options.job = supplierJob({ captureId: "job-2" });
+  assert.deepEqual(await startCapture(h.runtime, "job-2"), { accepted: false, code: "tab_creation_unconfirmed" });
+  answer(); // Chrome answers late: the page is made, and the job that asked for it closes it straight away.
+  await settle(() => h.runtime.status().backgroundReady);
+  assert.deepEqual(h.calls.removed, [7]);
+  assert.equal(h.runtime.status().backgroundReady, true);
+  h.chromeApi.tabs.create = create;
+  assert.equal((await startCapture(h.runtime, "job-2")).accepted, true);
+  await idle(h.runtime);
+  assert.equal(h.calls.created.length, 2);
 });

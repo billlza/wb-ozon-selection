@@ -70,8 +70,20 @@ test('observation policies have explicit bounded inputs and exact immutable sour
   assert.ok(Object.isFrozen(normalized.policies[0].policy));
   const load=createDPlatformObservationPolicyResolver({dPlatformObservation:normalized});
   const input={candidate:{id:'candidate:1'},job:{skuPackageId:'sku:1',revision:3,scopeBinding:{authorizationRef:'permission:1',productionBinding:{bindingId:'binding:1',configurationVersion:'config:1'}}}};
-  assert.deepEqual(load(input),policy);assert.equal(load({...input,job:{...input.job,revision:4}}),null);
-  assert.deepEqual(configure().dPlatformObservation,{policies:[],pumpIntervalMs:null});
+  assert.deepEqual(load(input),policy);
+  // 2026-09-23：查询策略是技术容量配置，不跟授权版本或候选修订走。重签一版授权之后
+  // revision 和 authorizationRef 都会变，若仍据此拒绝，新授权取不到策略，
+  // 导入被接受后不会排观察作业，商品发出去却永远不写库存。
+  assert.deepEqual(load({...input,job:{...input.job,revision:4}}),policy);
+  assert.deepEqual(load({...input,job:{...input.job,scopeBinding:{...input.job.scopeBinding,authorizationRef:'permission:2'}}}),policy);
+  // 商品、SKU、仓库绑定、配置版本任一不同仍必须取不到
+  assert.equal(load({...input,candidate:{id:'candidate:2'}}),null);
+  assert.equal(load({...input,job:{...input.job,skuPackageId:'sku:2'}}),null);
+  assert.equal(load({...input,job:{...input.job,scopeBinding:{...input.job.scopeBinding,productionBinding:{bindingId:'binding:2',configurationVersion:'config:1'}}}}),null);
+  assert.equal(load({...input,job:{...input.job,scopeBinding:{...input.job.scopeBinding,productionBinding:{bindingId:'binding:1',configurationVersion:'config:2'}}}}),null);
+  // r70 ④：规范化结果多了 defaults（店铺级默认观察策略）。这里断言的是**精确形状**，
+  // 所以要把新字段写进期望值——不是放宽断言，仍然逐字段精确比对。
+  assert.deepEqual(configure().dPlatformObservation,{policies:[],pumpIntervalMs:null,defaults:[]});
   for(const bad of [{policies:[entry],pumpIntervalMs:null},{policies:[entry,entry],pumpIntervalMs:1},{policies:[{...entry,policy:{...policy,maxQueries:101}}],pumpIntervalMs:1},{policies:[],pumpIntervalMs:2147483648}])assert.throws(()=>normalizeDPlatformObservationConfiguration(bad,production));
   assert.throws(()=>configure({SELECTION_REVIEW_D_PLATFORM_OBSERVATION_JSON:'{}'}));
 });

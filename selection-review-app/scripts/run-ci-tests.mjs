@@ -10,6 +10,8 @@ const testsDirectory = path.join(appDirectory, "tests");
 
 const apiProcessTests = new Set(API_PROCESS_TESTS);
 const isolatedTests = new Set(ISOLATED_TESTS);
+const concurrency = Number(process.env.SELECTION_REVIEW_TEST_CONCURRENCY ?? '2');
+if(!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 4) throw new Error('CI_TEST_CONCURRENCY_INVALID');
 
 const temporaryCandidateFixtureTests = new Set([
   "atomic-json-persistence.test.mjs",
@@ -103,7 +105,7 @@ console.log(
     + `excluding ${isolatedTests.size} files executed by the isolated runner.`,
 );
 
-const result = spawnSync(process.execPath, ["--test", ...selectedTests], {
+const result = spawnSync(process.execPath, ["--test", `--test-concurrency=${concurrency}`, ...selectedTests], {
   cwd: appDirectory,
   env: process.env,
   stdio: "inherit",

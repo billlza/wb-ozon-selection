@@ -2,7 +2,7 @@ export { readDProductionJobWaiting } from "./d-platform-observation-contract.mjs
 import { isDeepStrictEqual } from "node:util";
 import { assertDEJobAdmissionDecision } from "./d-e-software-job-admission.mjs";
 import { assertDProductionRecordSource, assertDProductionReceiptChain, assertDProductionJobScope, createEReadbackJobScope } from "./d-e-software-job-scope.mjs";
-import { fingerprintCanonicalRecord, isCanonicalFrozenRef } from "./production-contract-primitives.mjs";
+import { fingerprintCanonicalRecord, isCanonicalFrozenRef, dProductionJobRound } from "./production-contract-primitives.mjs";
 import { assertSafeRuntimeRecord } from "./runtime-identity.mjs";
 import { assertEReadbackAttempt } from "./e-readback-attempt.mjs";
 import { validateSystemCreatedVerificationRecord } from "./e-stage-readback.mjs";
@@ -92,8 +92,11 @@ export function readDPreparationJobTerminal({ document, candidate, job, observed
   requireCondition(evidence.status !== "in_flight" && (requestNotSent || job.externalRequestRef === `d-production-request:${job.scopeBinding.authorizationFingerprint}`),
     "REQUEST_SOURCE_CONFLICT");
   requireCondition(time(evidence.startedAt) >= time(job.startedAt) && time(observedAt) >= time(evidence.completedAt), "TIME_CONFLICT");
+  // 冻结源按授权找，不按作业号找：同一份授权可能跑过不止一轮受控执行，冻结输入始终是同一份。
   const originals = document.runtime.idempotencyRecords.filter(entry =>
-    entry.action === "create_single_owner_production_authorization_and_d_handoff" && entry.result?.softwareJobRef?.jobId === job.jobId);
+    entry.action === "create_single_owner_production_authorization_and_d_handoff" &&
+    entry.result?.productionAuthorization?.authorizationId === job.scopeBinding.authorizationRef &&
+    dProductionJobRound(entry.result?.softwareJobRef?.jobId, job.scopeBinding.authorizationFingerprint) === 1);
   requireCondition(originals.length === 1, "AUTHORIZATION_SOURCE_CONFLICT");
   const source = originals[0].candidateSnapshot;
   assertDProductionJobScope({ scope: job.scopeBinding, candidate: source, observedAt: job.createdAt });

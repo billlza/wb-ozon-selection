@@ -11,7 +11,29 @@ import {
   assertCurrentPlatformWritePreflight,
   validatePlatformWritePreflight
 } from "../lib/platform-write-preflight.mjs";
-import { platformWritePreflightTechnicalStatus } from "../lib/platform-write-preflight-contract.mjs";
+import { isStoreIdentityAnchored, platformWritePreflightTechnicalStatus } from "../lib/platform-write-preflight-contract.mjs";
+
+test("身份锚点只有一处判定：只有两条锚能锚住，'none' 和认不出的名字一律不算", () => {
+  const storeRef = { stableStoreId: "dandanshu", platformStoreId: "seller-dandanshu-001", mappingVersion: "stores-v1" };
+  const other = { ...storeRef, platformStoreId: "seller-miska-001" };
+  // 仓库反推（主人2026-09-16决定）：Ozon 不发店铺编号，空引用才是锚住了；旁边挂一个引用是矛盾。
+  assert.equal(isStoreIdentityAnchored({ via: "scoped_warehouse", observedStoreRef: null, expectedStoreRef: storeRef }), true);
+  assert.equal(isStoreIdentityAnchored({ via: "scoped_warehouse", observedStoreRef: storeRef, expectedStoreRef: storeRef }), false);
+  // 原路径按原规则比对观察引用；缺失值仍读作 platform_store_id，旧记录不回归。
+  for (const via of [undefined, null, "platform_store_id"]) {
+    assert.equal(isStoreIdentityAnchored({ via, observedStoreRef: storeRef, expectedStoreRef: storeRef }), true, String(via));
+    assert.equal(isStoreIdentityAnchored({ via, observedStoreRef: null, expectedStoreRef: storeRef }), false, String(via));
+    assert.equal(isStoreIdentityAnchored({ via, observedStoreRef: other, expectedStoreRef: storeRef }), false, String(via));
+  }
+  // 'none' 的字面意思就是没有锚点：配一个真实可对上的 observedStoreRef 也不算锚住——Ozon 从不返回
+  // 店铺编号，那个引用只可能是人手填进去的。认不出来的锚点名同样不算。
+  for (const via of ["none", "owner_says_so", ""]) {
+    for (const observedStoreRef of [storeRef, other, null]) {
+      assert.equal(isStoreIdentityAnchored({ via, observedStoreRef, expectedStoreRef: storeRef }), false,
+        `${via}/${JSON.stringify(observedStoreRef)}`);
+    }
+  }
+});
 
 test("production execution requires the exact current verified configuration frozen by the owner", () => {
   const productionAuthorization = authorizedProductionFixture().productionAuthorization;
@@ -81,6 +103,7 @@ test("13B-1 generates a complete read-only PlatformWritePreflight from Productio
     observedStore: "dandanshu",
     expectedStoreRef: projectProductionPlanInputs(plan).storeRef, observedStoreRef: projectProductionPlanInputs(plan).storeRef,
     status: "matched",
+    verifiedVia: "platform_store_id",
     evidenceRef: "seller-api:client-info:2026-08-22T07:10:00Z"
   });
   assert.equal(result.permission.status, "verified");
@@ -200,6 +223,66 @@ test("前检不信任同名匹配声明，旧平台ID或映射必须阻断", asy
   }
   const missing = successfulInspection(); delete missing.observedStoreRef;
   await assert.rejects(() => runPlatformWritePreflight({ productionPlan: plan, checkedAt: "2026-08-22T08:00:00.000Z", inspectPlatform: async () => missing }), /INSPECTION_INVALID/);
+});
+
+test("店铺身份只认两条锚：观测到的店铺引用，或仓库反推；空口宣称仍然不算", async () => {
+  const plan = productionPlanFixture();
+  const run = (overrides) => runPlatformWritePreflight({ productionPlan: plan, checkedAt: "2026-08-22T08:00:00.000Z",
+    inspectPlatform: async () => successfulInspection(overrides) });
+
+  // The warehouse path: no store ref at all, because Ozon publishes no store number to observe.
+  const warehouse = await run({ observedStoreRef: null, storeIdentityVia: "scoped_warehouse" });
+  assert.equal(warehouse.storeIdentity.status, "matched");
+  assert.equal(warehouse.storeIdentity.observedStoreRef, null);
+  assert.equal(warehouse.storeIdentity.verifiedVia, "scoped_warehouse");
+  assert.equal(warehouse.technicalStatus, "completed");
+  assert.equal(validatePlatformWritePreflight(warehouse).valid, true);
+
+  // Claiming the warehouse path while also producing a store ref is a contradiction, not stronger evidence.
+  await assert.rejects(() => run({ storeIdentityVia: "scoped_warehouse" }), /INSPECTION_INVALID/);
+  await assert.rejects(() => run({ storeIdentityVia: "owner_says_so" }), /INSPECTION_INVALID/);
+
+  // Without naming a path, a null store ref keeps its original meaning: nothing was established.
+  const bare = await run({ observedStoreRef: null });
+  assert.equal(bare.storeIdentity.status, "unverified");
+  assert.equal(bare.storeIdentity.verifiedVia, "platform_store_id");
+  assert.equal(bare.technicalStatus, "data_unavailable");
+
+  // A stored result cannot be edited into a warehouse-anchored match after the fact.
+  for (const patch of [{}, { verifiedVia: "platform_store_id" }, { verifiedVia: "none" }]) {
+    const forged = structuredClone(bare); Object.assign(forged.storeIdentity, { status: "matched" }, patch);
+    assert.equal(validatePlatformWritePreflight(forged).valid, false, JSON.stringify(patch));
+  }
+  // 「声称仓库反推、同时又带着店铺引用」在任何状态下都无效——不只是 matched，否则将来有人
+  // 「顺手把 observedStoreRef 补全」就能先以 mismatched 混进去，再改状态。
+  for (const status of ["matched", "mismatched", "unverified"]) {
+    const contradictory = structuredClone(warehouse);
+    contradictory.storeIdentity.observedStoreRef = projectProductionPlanInputs(plan).storeRef;
+    contradictory.storeIdentity.status = status;
+    assert.equal(validatePlatformWritePreflight(contradictory).valid, false, `仓库反推不得同时声称观测到店铺引用：${status}`);
+  }
+  const unknownPath = structuredClone(warehouse); unknownPath.storeIdentity.verifiedVia = "owner_says_so";
+  assert.equal(validatePlatformWritePreflight(unknownPath).valid, false);
+
+  // 'none' 就是"没有锚点"。就算检查器一边报 'none' 一边交出一个真实可对上的店铺引用（Ozon 从不返回
+  // 店铺编号，那个引用只可能是人手填的），也不得产出 matched，事后也改不成 matched。
+  const noneVia = await run({ storeIdentityVia: "none" });
+  assert.equal(noneVia.storeIdentity.verifiedVia, "none");
+  assert.deepEqual(noneVia.storeIdentity.observedStoreRef, projectProductionPlanInputs(plan).storeRef);
+  assert.notEqual(noneVia.storeIdentity.status, "matched");
+  // 而且要说实话：'none' 下没有任何锚可核，结论是"未核验"，不是"核过了两边不一致"。
+  // mismatched 会顺带把技术状态说成 completed——一次从未发生的核对，不许留下"检查完成"的痕迹。
+  assert.equal(noneVia.storeIdentity.status, "unverified");
+  assert.equal(noneVia.technicalStatus, "data_unavailable");
+  assert.ok(noneVia.risks.some((risk) => risk.code === "technical_data_unavailable"));
+  // 边界：有锚可核、核出来对不上，那才叫 mismatched，这一刀不得砍到它头上。
+  const drifted = await run({ observedStoreRef: { ...projectProductionPlanInputs(plan).storeRef, platformStoreId: "seller-miska-001" } });
+  assert.equal(drifted.storeIdentity.verifiedVia, "platform_store_id");
+  assert.equal(drifted.storeIdentity.status, "mismatched");
+  assert.ok(drifted.risks.some((risk) => risk.code === "store_identity_not_verified"));
+  const forgedNone = structuredClone(noneVia); forgedNone.storeIdentity.status = "matched";
+  assert.equal(validatePlatformWritePreflight(forgedNone).valid, false, "'none' 配一个对得上的店铺引用仍然不算锚住");
+  assert.equal(warehouse.platformWrites, 0);
 });
 
 test('v1.2 API route retains unobserved backend without making it a required connection', async () => {

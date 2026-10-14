@@ -3,7 +3,11 @@ import { api } from "../api.js";
 import { createLatestRead, createSubmitLock } from "../formState.js";
 import { assertOwnerAccessDto, ownerAccessPasswordInput } from "../ownerAccess.js";
 
-export function LocalOwnerAccessView({ state, saving, password, repeatedPassword, inputError,
+/**
+ * 已登录是常态，不必每一页头上都声明一遍：showAuthenticated 为假时这一条整条不显示（「退出登录」在「维护」里）。
+ * 其余每一种状态 —— 还在读、读不出来、只是预览身份、要设密码、要登录 —— 都必须照旧显眼，因为那时主人确实要动手。
+ */
+export function LocalOwnerAccessView({ state, saving, password, repeatedPassword, inputError, showAuthenticated = false,
   onPasswordChange, onRepeatedPasswordChange, onSubmit, onRefresh }) {
   if (state.status === "loading") return <section className="local-owner-access" aria-busy="true"><b>主人登录</b><span>正在读取登录状态…</span></section>;
   if (state.status === "failed") return <section className="local-owner-access">
@@ -15,10 +19,10 @@ export function LocalOwnerAccessView({ state, saving, password, repeatedPassword
     <b>当前为预览身份</b><span>本服务尚未启用主人登录，不能保存正式生产授权。</span>
     <button type="button" className="button secondary" disabled={saving} onClick={onRefresh}>刷新登录状态</button>
   </section>;
-  if (access.status === "authenticated") return <section className="local-owner-access">
+  if (access.status === "authenticated") return showAuthenticated ? <section className="local-owner-access">
     <b>主人已登录</b><span>商品确认仍以当前方案和服务端权限为准。</span>
     <button type="button" className="button secondary" disabled={saving} onClick={onSubmit}>{saving ? "正在退出…" : "退出登录"}</button>
-  </section>;
+  </section> : null;
   const setup = access.status === "setup_required";
   return <section className="local-owner-access">
     <div><b>{setup ? "首次设置主人密码" : "主人登录"}</b><p>此处只验证主人身份，不确认商品、不创建作业，也不执行生产。</p></div>
@@ -36,7 +40,7 @@ export function LocalOwnerAccessView({ state, saving, password, repeatedPassword
   </section>;
 }
 
-export default function LocalOwnerAccessPanel({ onAccessResolved, onAccessUnknown }) {
+export default function LocalOwnerAccessPanel({ onAccessResolved, onAccessUnknown, showAuthenticated = false }) {
   const [state, setState] = useState({ status: "loading", access: null, error: "" });
   const [password, setPassword] = useState("");
   const [repeatedPassword, setRepeatedPassword] = useState("");
@@ -103,5 +107,6 @@ export default function LocalOwnerAccessPanel({ onAccessResolved, onAccessUnknow
     });
   }
   return <LocalOwnerAccessView state={state} saving={saving} password={password} repeatedPassword={repeatedPassword} inputError={inputError}
+    showAuthenticated={showAuthenticated}
     onPasswordChange={setPassword} onRepeatedPasswordChange={setRepeatedPassword} onSubmit={submit} onRefresh={refresh} />;
 }

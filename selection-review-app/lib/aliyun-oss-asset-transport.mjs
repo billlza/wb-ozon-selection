@@ -1,7 +1,6 @@
 import OSS from "ali-oss";
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { createOsCredentialStore } from "./credential-store.mjs";
 import { assertFinalAssetLocation } from "./production-contract-primitives.mjs";
 
 export const ALIYUN_OSS_ASSET_TRANSPORT_VERSION = "aliyun-oss-final-assets-v1";
@@ -21,7 +20,6 @@ export const ALIYUN_OSS_PUBLIC_CONFIG = Object.freeze({
   })
 });
 
-const execFileAsync = promisify(execFile);
 const MAX_SIMPLE_UPLOAD_BYTES = 100 * 1024 * 1024;
 const MAX_BATCH_UPLOAD_BYTES = 256 * 1024 * 1024;
 
@@ -66,13 +64,10 @@ function evidenceRef(value) {
   return `aliyun-oss-asset:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 
-export async function readAliyunOssKeychainSecret(account, { service = ALIYUN_OSS_KEYCHAIN_SERVICE, execFileImpl = execFileAsync } = {}) {
-  const { stdout } = await execFileImpl("/usr/bin/security", [
-    "find-generic-password",
-    "-w",
-    "-s", service,
-    "-a", account
-  ], { encoding: "utf8", maxBuffer: 16 * 1024 });
+export async function readAliyunOssKeychainSecret(account, { service = ALIYUN_OSS_KEYCHAIN_SERVICE, execFileImpl, platform, credentialStore } = {}) {
+  const store = credentialStore ?? createOsCredentialStore({ ...(platform ? { platform } : {}), ...(execFileImpl ? { execFileImpl } : {}) });
+  // Store failures arrive as CredentialStoreError codes without subprocess text.
+  const stdout = await store.readSecret({ service, account }, { maxBuffer: 16 * 1024 });
   const value = String(stdout || "").trim();
   if (!value) throw new Error(`OSS_KEYCHAIN_MISSING: ${account}`);
   return value;

@@ -7,6 +7,7 @@ import { createLifecycleBInputBundle } from "./lifecycle-b-input-bundle.mjs";
 import { applyLifecycleBEvidenceContext } from "./lifecycle-b-evidence-context.mjs";
 import { LIFECYCLE_B_EVIDENCE_PREPARATION_VERSION, runLifecycleBEvidencePreparation } from "./lifecycle-b-evidence-preparation.mjs";
 import { buildRealAConfirmationCard, validateRealAConfirmationSubmission } from "./real-a-confirmation-card.mjs";
+import { readDeclaredCargoFacts } from "./cargo-facts-declaration.mjs";
 import { runRealAConfirmationToBAndC1 } from "./real-a-b-c1-flow.mjs";
 
 export const REAL_A_B_EVIDENCE_ORCHESTRATION_VERSION = "real-a-b-evidence-orchestration-v1.1";
@@ -30,6 +31,34 @@ function productIdFromSnapshot(snapshot) {
   } catch {
     return null;
   }
+}
+
+/**
+ * 类目被冻成平台身份之后，这一轮刚读到的佣金和Schema证据必须跟着换成同一个键。
+ *
+ * 2026-09-14 主人第一件真货就栽在这里：A确认把 `lifecycleEvidenceContextV11.category` 改成了
+ * `ozon:<descriptionCategoryId>:<typeId>`，可同一次事务提交的那两份证据仍然挂在读取时用的类目路径上。
+ * 从那一刻起这件商品的证据和它自己的适用范围对不上，`inspectLifecycleBInputReadiness` 再也找不到
+ * 佣金和Schema，「用更好的费用证据重算」那条路被 B_EXACT_RECALCULATION_EVIDENCE_UNAVAILABLE 永久挡住——
+ * 而记录本身一切正常，看不出哪里坏了。
+ *
+ * 所以冻结类目和重贴证据必须是同一件事：两者一起换，或者一样都不换。宁可这一轮不升级成平台身份键，
+ * 也不能留下一件证据和适用范围对不上的商品。
+ */
+function rekeyFrozenCategoryPacks({ packsToCommit, categoryPacks, fromCategory, categoryToken }) {
+  // 适用范围比对一律走 normalizeEvidenceScope 的那一套（去空白、转小写）：
+  // 保存的范围留着原样的大小写，证据包里的键已经规范化过，直接比字符串会当成两个类目。
+  const key = (value) => String(value ?? "").trim().toLowerCase();
+  if (key(fromCategory) === key(categoryToken)) return { packs: packsToCommit, categoryToken };
+  const committing = new Set(packsToCommit.map((pack) => pack.id));
+  // 这一轮复用了库里旧证据（没有重新提交）时，改不动它的适用范围：那就连类目键也不换，两边继续对得上。
+  if (categoryPacks.some((pack) => !committing.has(pack.id))) return { packs: packsToCommit, categoryToken: fromCategory };
+  return {
+    categoryToken,
+    packs: packsToCommit.map((pack) => (["commission", "schema"].includes(pack.kind) && key(pack.scope?.category) === key(fromCategory)
+      ? { ...structuredClone(pack), scope: { ...structuredClone(pack.scope), category: categoryToken } }
+      : pack))
+  };
 }
 
 function freezeResolvedCompetitorCategory({ candidate, submission, evidencePreparation, evidencePacks, verifiedAt }) {
@@ -61,7 +90,13 @@ function freezeResolvedCompetitorCategory({ candidate, submission, evidencePrepa
   const snapshot = (source.salesSnapshotsV11 || []).find((item) => item.snapshotId === snapshotId);
   if (!snapshot) throw new Error("B_CATEGORY_EVIDENCE_GAP: 当前确认的竞品销售快照不存在");
   const identity = identities[0];
-  const categoryToken = `ozon:${identity.descriptionCategoryId}:${identity.typeId}`;
+  const verifiedToken = `ozon:${identity.descriptionCategoryId}:${identity.typeId}`;
+  const rekeyed = rekeyFrozenCategoryPacks({
+    packsToCommit: Array.isArray(evidencePreparation?.evidencePacksToCommit) ? evidencePreparation.evidencePacksToCommit : [],
+    categoryPacks,
+    fromCategory: source.lifecycleEvidenceContextV11?.category ?? null,
+    categoryToken: verifiedToken,
+  });
   snapshot.attributes = {
     ...structuredClone(snapshot.attributes || {}),
     description_category_id: identity.descriptionCategoryId,
@@ -71,18 +106,22 @@ function freezeResolvedCompetitorCategory({ candidate, submission, evidencePrepa
     status: "verified",
     descriptionCategoryId: identity.descriptionCategoryId,
     typeId: identity.typeId,
-    categoryToken,
+    categoryToken: verifiedToken,
     sourceProductId: productIdFromSnapshot(snapshot),
     sourceSnapshotId: snapshot.snapshotId,
     sourceEvidenceRefs: categoryPacks.map((pack) => pack.id),
     verifiedAt,
   };
+  const persistedEvidenceContext = {
+    ...structuredClone(source.lifecycleEvidenceContextV11 || {}),
+    category: rekeyed.categoryToken,
+  };
+  // B 要在冻结后的这一对上跑：范围和证据同时换过，算出来的输入包才和落盘后的记录是同一件事。
+  source.lifecycleEvidenceContextV11 = structuredClone(persistedEvidenceContext);
   return {
     candidate: source,
-    persistedEvidenceContext: {
-      ...structuredClone(source.lifecycleEvidenceContextV11 || {}),
-      category: categoryToken,
-    },
+    persistedEvidenceContext,
+    evidencePacksToCommit: rekeyed.packs,
   };
 }
 
@@ -191,9 +230,10 @@ export async function runRealAConfirmationWithSystemEvidence({
       amountRub: validation.normalized.targetSalePriceRub,
       sourceRef: `a-confirmation:${candidate.id}:${candidate.dataRevision}:target-sale-price-rub`
     },
-    // The current A card does not freeze verified transportation attributes.
-    // A quoted route must not turn missing cargo facts into a transport approval.
-    cargoFacts: null,
+    // 运输属性只能来自主人自己在「算利润」之前签下的那一次声明（`cargoFactsV1`），带着它自己的来源。
+    // 没有声明时这里仍然是 null：线路依旧判不出适用性，`transportVerified` 依旧为 false，B 依旧不放行——
+    // 算出了运费不等于核验了运输方式，这道闸没有被这次改动放宽，只是终于有了合法的入口。
+    cargoFacts: readDeclaredCargoFacts(candidate),
     catalog
   };
   const guooRouteComparison = assertGuooRouteComparison(compareGuooRouteCatalog(comparisonInput), {
@@ -211,7 +251,10 @@ export async function runRealAConfirmationWithSystemEvidence({
       : guooRouteComparison.status === "compared"
         ? guooRouteComparison.selectedRoute === null
           ? "表内最低运费存在并列线路，尚未确定可采用的线路族。"
-          : "已得到GUOO表内推荐运费及线路族；运输属性和配送映射尚未完成核验，不能作为正式B放行。"
+          : guooRouteComparison.inputSnapshot.cargoFacts === null
+            // 说清楚缺的是哪一样，主人才知道该去做什么：这一句对应「算利润」里那一块运输属性。
+            ? "已得到GUOO表内推荐运费及线路族；这件商品的运输属性还没有你的确认，线路收不收这件货就核验不了，不能作为正式B放行。"
+            : "已得到GUOO表内推荐运费及线路族；运输属性和配送映射尚未完成核验，不能作为正式B放行。"
         : "GUOO表内报价仍缺必要输入或存在无法计算的规则，不能准备正式B输入。";
     return deepFreeze({
       orchestrationVersion: REAL_A_B_EVIDENCE_ORCHESTRATION_VERSION,
@@ -241,7 +284,10 @@ export async function runRealAConfirmationWithSystemEvidence({
     evidencePacks,
     currentCommissionCatalogs,
     providers,
-    plannedAt: confirmedAt
+    plannedAt: confirmedAt,
+    // 官方费表按成交价档取值，而这一笔确认的成交价要到这一轮结束才落盘：把主人本轮填的那个价随请求带下去。
+    // 传的是已校验的 normalized，不是客户端原样的 input。
+    submission: validation.normalized
   });
   if (evidencePreparation.status !== "completed") {
     return deepFreeze({
@@ -268,10 +314,12 @@ export async function runRealAConfirmationWithSystemEvidence({
     evidencePacks: combinedPacks,
     verifiedAt: confirmedAt,
   });
+  // 冻结之后的证据才是要落盘的那一份：类目键换过的，B 也必须用换过的那一份算，不能拿读取时的旧键去算。
+  const frozenPacks = [...evidencePacks, ...categoryFreeze.evidencePacksToCommit];
   const result = runRealAConfirmationToBAndC1({
     candidate: categoryFreeze.candidate,
     submission,
-    evidencePacks: combinedPacks,
+    evidencePacks: frozenPacks,
     currentCommissionCatalogs,
     otherCosts,
     confirmedAt,
@@ -284,7 +332,7 @@ export async function runRealAConfirmationWithSystemEvidence({
     evidenceContext: categoryFreeze.persistedEvidenceContext,
     evidencePreparation,
     guooRouteComparison,
-    evidencePacksToCommit: evidencePreparation.evidencePacksToCommit,
+    evidencePacksToCommit: categoryFreeze.evidencePacksToCommit,
     result,
     externalAccesses: evidencePreparation.providerCalls,
     platformWrites: 0

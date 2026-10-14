@@ -1,0 +1,10 @@
+{
+  "profileVersion": "platform-profile-wb-2026-10-09",
+  "platform": "wb",
+  "verificationStatus": "unverified",
+  "verificationNote": "数值为起草时的参考，未按 WB 官方文档和店铺实际销售模式核对；接 WB 只读接口时先核对再改为 verified。",
+  "variantModel": "card_per_color_sizes_inside",
+  "content": { "titleMaxChars": 60, "descriptionMaxChars": 5000, "language": "ru" },
+  "media": { "maxImages": 30, "minWidth": 700, "minHeight": 900, "aspectRatio": 0.75, "aspectTolerance": 0.02 },
+  "price": { "writeCurrency": "RUB", "buyerCurrency": "RUB" }
+}

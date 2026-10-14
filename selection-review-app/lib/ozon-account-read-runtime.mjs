@@ -92,6 +92,14 @@ export function createOzonAccountReadRuntime({repository,serverClock,workerRegis
     const binding=loadCurrentReadBinding({document,...(discovery?{preparationId:candidateId}:{candidateId,skuPackageId}),checkedAt,bindingId:selection.bindingId,configurationVersion:selection.configurationVersion});
     requireValue(binding!==null,'BINDING_REQUIRED');return assertOzonAccountReadBinding(binding);
   }
+  function refreshActiveWorker(expectedVersion){
+    const current=workerRegistry.snapshot().find(value=>value.workerId===worker.workerId);
+    requireValue(current?.status==='online'&&current.version===expectedVersion&&current.version===registered.version&&
+      isDeepStrictEqual(current.capabilities,registered.capabilities),'WORKER_CHANGED');
+    // Executing this checkpoint proves local liveness, but does not override a changed worker identity or status.
+    workerRegistry.heartbeat({workerId:current.workerId,version:current.version,capabilities:current.capabilities,status:current.status});
+    requireValue(workerRegistry.snapshot().find(value=>value.workerId===worker.workerId)?.heartbeatCurrent===true,'WORKER_CHANGED');
+  }
   function guard(document,job,leaseId,at){
     const candidate=sourceFor(document,job);
     assertOzonAccountReadCandidate(candidate,job.scopeBinding);
@@ -100,8 +108,7 @@ export function createOzonAccountReadRuntime({repository,serverClock,workerRegis
     requireValue(Object.keys(binding).every(field=>isDeepStrictEqual(binding[field],job.scopeBinding[field])),'BINDING_CHANGED');
     requireValue(Date.parse(at)<Date.parse(job.leaseExpiresAt),'LEASE_EXPIRED');
     assertSoftwareJobExecutionLease({job,workerId:worker.workerId,leaseId,serverTime:at});
-    const current=workerRegistry.snapshot().find(value=>value.workerId===worker.workerId);
-    requireValue(current?.status==='online'&&current.heartbeatCurrent===true&&current.version===job.workerVersion,'WORKER_CHANGED');
+    refreshActiveWorker(job.workerVersion);
     return assertSoftwareJobAdmittedForExternalRequest({document,job,workerId:worker.workerId,observedAt:at});
   }
   function isPermissionStop(error){
@@ -202,7 +209,7 @@ export function createOzonAccountReadRuntime({repository,serverClock,workerRegis
     async continueSaved(input){
       requireValue(closed(input,[discovery?'preparationId':'candidateId','jobId','expectedRevision'])&&ref(sourceId(input))&&ref(input.jobId)&&Number.isSafeInteger(input.expectedRevision),'CONTINUATION_INPUT_INVALID');
       let current=await snapshot(input);if(current.job.status!=='queued')return viewJob(current.document,current.job);
-      workerRegistry.heartbeat({...registered,status:'online'});
+      refreshActiveWorker(registered.version);
       const leaseId=`account-read-lease:${randomUUID()}`;
       try{await store.claim({jobId:input.jobId,worker:registered,leaseId,leaseDurationMs:worker.leaseDurationMs});}
       catch(error){

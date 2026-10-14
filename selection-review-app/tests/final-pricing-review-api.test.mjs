@@ -1,3 +1,4 @@
+import { allocatedTestPorts } from './helpers/api-process-lifecycle.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
@@ -15,7 +16,7 @@ test('最终定价真实HTTP鉴权、双提交、冷回读及过期修订，零�
     currentCommissionCatalogs: [], rules: f.rules, runtime: { softwareJobs: [] } };
   const binding = { ...source.binding, platform: sku.targetPlatform, storeRef: structuredClone(sku.g1Identity.storeRef) };
   const api = await startSavedDEApi(t, { directory: await mkdtemp(path.join(tmpdir(), 'final-pricing-api-')),
-    port: Number(process.env.SELECTION_REVIEW_TEST_PORT), document, binding });
+    port: allocatedTestPorts().api, document, binding });
   const route = `/api/candidates/${f.candidate.id}/lifecycle/final-pricing/review`;
   const end = new Date(), start = new Date(end.getTime() - 29 * 86400000);
   const reviews = f.assessmentInput.reviews.map(review => ({ ...review, salesWindow: { ...review.salesWindow,

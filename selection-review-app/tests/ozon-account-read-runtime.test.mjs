@@ -241,3 +241,82 @@ test('only the current PA source revision is equivalent; an unrelated historical
  assert.equal(queued.status,'queued');assert.equal(queued.job.revision,2);assert.equal(f.calls,3);
  assert.equal((await f.repository.readSnapshot()).runtime.softwareJobs.length,2);
 });
+
+const afterStart = milliseconds => new Date(Date.parse(T) + milliseconds).toISOString();
+
+test('active account reader renews heartbeat across two successful methods exceeding thirty seconds within its original lease',async()=>{
+ let sends=0;const f=setup({leaseDurationMs:120000,request:async(req,options,{calls,setNow})=>{
+  await options.beforeRequestSend();sends++;setNow(afterStart(calls*20000));return structuredClone(responses[req.endpoint]);
+ }}),outcome=await run(f);
+ assert.equal(outcome.status,'completed');assert.equal(f.calls,3);assert.equal(sends,3);assert.equal(outcome.requestsSent,3);
+ assert.deepEqual(outcome.observedMethods,['roles','seller_info','warehouse_list']);
+ assert.equal(outcome.receipt.steps[0].result.observedAt,afterStart(20000));
+ assert.equal(outcome.receipt.steps[1].result.observedAt,afterStart(40000));
+ assert.equal(outcome.receipt.steps[2].sentAt,afterStart(40000));
+ assert.equal(outcome.job.leaseExpiresAt,afterStart(120000));
+ assert.equal(outcome.receipt.completedAt,afterStart(60000));
+ assert.deepEqual((await f.repository.readSnapshot()).candidates[0],f.candidate);
+});
+
+test('an active delayed send checkpoint renews heartbeat without extending the authorized lease',async()=>{
+ let sends=0;const f=setup({leaseDurationMs:120000,request:async(req,options,{calls,setNow})=>{
+  if(calls===1)setNow(afterStart(31000));
+  await options.beforeRequestSend();sends++;return structuredClone(responses[req.endpoint]);
+ }}),outcome=await run(f);
+ assert.equal(outcome.status,'completed');assert.equal(sends,3);assert.equal(f.calls,3);
+ assert.equal(outcome.receipt.steps[0].intentAt,T);assert.equal(outcome.receipt.steps[0].sentAt,afterStart(31000));
+ assert.equal(outcome.job.leaseExpiresAt,afterStart(120000));
+});
+
+for(const change of ['offline','version','capabilities'])test(`heartbeat checkpoint does not restore an explicitly changed worker: ${change}`,async()=>{
+ let sends=0;let f;
+ f=setup({leaseDurationMs:120000,request:async(req,options,{calls,setNow})=>{
+  await options.beforeRequestSend();sends++;
+  if(calls===1){
+   setNow(afterStart(31000));const current=f.workerRegistry.get('worker:account');
+   if(change==='offline')f.workerRegistry.markOffline(current.workerId);
+   else f.workerRegistry.heartbeat({...current,...(change==='version'?{version:'worker-version:replaced'}:{capabilities:[]})});
+  }
+  return structuredClone(responses[req.endpoint]);
+ }});
+ const outcome=await run(f),changed=f.workerRegistry.get('worker:account');
+ assert.equal(outcome.status,'failed');assert.equal(outcome.receipt.failureClass,'OZON_ACCOUNT_READ_WORKER_CHANGED');
+ assert.equal(sends,1);assert.equal(f.calls,1);assert.equal(outcome.requestsSent,1);
+ assert.equal(outcome.receipt.steps.length,1);assert.equal(outcome.receipt.steps[0].result.status,'observed');
+ assert.equal(outcome.receipt.steps[0].result.observedAt,afterStart(31000));
+ assert.equal(changed.status,change==='offline'?'offline':'online');
+ assert.equal(changed.version,change==='version'?'worker-version:replaced':'worker-version:1');
+ if(change==='capabilities')assert.deepEqual(changed.capabilities,[]);
+ const before=await f.repository.readSnapshot();
+ await f.runtime.continueSaved({candidateId:f.input.candidateId,jobId:outcome.job.jobId,expectedRevision:0});
+ assert.equal(f.calls,1);assert.equal(sends,1);assert.deepEqual(await f.repository.readSnapshot(),before);
+ assert.deepEqual(f.workerRegistry.get('worker:account'),changed);
+});
+
+for(const limit of ['lease','authorization'])test(`heartbeat renewal cannot extend an expired ${limit} or resend retained observations`,async()=>{
+ let sends=0;const f=setup({leaseDurationMs:120000,request:async(req,options,{setNow})=>{
+  await options.beforeRequestSend();sends++;setNow(afterStart(limit==='lease'?120000:40000));return structuredClone(responses[req.endpoint]);
+ }});
+ if(limit==='authorization')f.input.expiresAt=afterStart(40000);
+ const outcome=await run(f);assert.equal(outcome.status,'failed');assert.equal(f.calls,1);assert.equal(sends,1);
+ assert.match(outcome.receipt.failureClass,limit==='lease'?/LEASE_EXPIRED/:/AUTHORIZATION_EXPIRED/);
+ assert.equal(outcome.receipt.steps.length,1);assert.equal(outcome.receipt.steps[0].result.status,'observed');
+ assert.equal(outcome.requestsSent,1);assert.equal(outcome.job.leaseExpiresAt,afterStart(120000));
+ const before=await f.repository.readSnapshot();
+ await f.runtime.continueSaved({candidateId:f.input.candidateId,jobId:outcome.job.jobId,expectedRevision:0});
+ assert.equal(f.calls,1);assert.equal(sends,1);assert.deepEqual(await f.repository.readSnapshot(),before);
+});
+
+test('initial claim never revives offline or replaces changed version/capabilities before the first request',async()=>{
+ for(const change of ['offline','version','capabilities']){
+  const f=setup({leaseDurationMs:120000}),queued=await f.runtime.authorizeAndEnqueue({actor:f.actor,input:f.input});
+  const current=f.workerRegistry.get('worker:account');
+  if(change==='offline')f.workerRegistry.markOffline(current.workerId);
+  else f.workerRegistry.heartbeat({...current,...(change==='version'?{version:'worker-version:replaced'}:{capabilities:[]})});
+  const before=await f.repository.readSnapshot(),registered=f.workerRegistry.get(current.workerId);
+  await assert.rejects(()=>f.runtime.continueSaved({candidateId:f.input.candidateId,jobId:queued.job.jobId,expectedRevision:0}),
+   error=>error.code==='OZON_ACCOUNT_READ_WORKER_CHANGED');
+  assert.equal(f.calls,0);assert.deepEqual(await f.repository.readSnapshot(),before);
+  assert.deepEqual(f.workerRegistry.get(current.workerId),registered);assert.equal(before.runtime.softwareJobs[0].status,'queued');
+ }
+});

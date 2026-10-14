@@ -39,7 +39,6 @@
     "schemaSnapshotRef",
     "draftOnlySeo",
     "keywordEvidenceRefs",
-    "mediaRequirements",
     "unknownManifest"
   ],
   "properties": {
@@ -602,106 +601,15 @@
               "$ref": "c1-product-plan-v1.1#/$defs/c1PricingReuseRecord"
             }
           }
-        }
-      ]
-    },
-    "mediaRequirements": {
-      "anyOf": [
-        {
-          "type": "null"
         },
         {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "status",
-            "schemaSnapshotRef",
-            "sourceRefs",
-            "requiredSlots",
-            "videoRequirement",
-            "reason"
-          ],
-          "properties": {
-            "status": {
-              "enum": [
-                "confirmed",
-                "unknown"
-              ]
-            },
-            "schemaSnapshotRef": {
-              "allOf": [
-                {
-                  "$ref": "#/$defs/opaqueEvidenceRef"
-                },
-                {
-                  "$ref": "#/$defs/canonicalFrozenRef"
-                }
-              ]
-            },
-            "sourceRefs": {
-              "type": "array",
-              "minItems": 1,
-              "uniqueItems": true,
-              "items": {
-                "allOf": [
-                  {
-                    "$ref": "#/$defs/opaqueEvidenceRef"
-                  },
-                  {
-                    "$ref": "#/$defs/canonicalFrozenRef"
-                  }
-                ]
-              }
-            },
-            "requiredSlots": {
-              "type": "array",
-              "uniqueItems": true,
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "slotId",
-                  "mediaType",
-                  "required"
-                ],
-                "properties": {
-                  "slotId": {
-                    "allOf": [
-                      {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      {
-                        "$ref": "#/$defs/canonicalFrozenRef"
-                      }
-                    ]
-                  },
-                  "mediaType": {
-                    "enum": [
-                      "image",
-                      "video"
-                    ]
-                  },
-                  "required": {
-                    "const": true
-                  }
-                }
-              }
-            },
-            "videoRequirement": {
-              "enum": [
-                "required",
-                "not_required",
-                "unknown"
-              ]
-            },
-            "reason": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          }
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/draftOnlySeo"
+        },
+        {
+          "$ref": "c1-editorial-source-v2.schema.json#/$defs/draftOnlySeo"
+        },
+        {
+          "$ref": "c1-sibling-formal-reuse-v1.schema.json#/$defs/draftOnlySeo"
         }
       ]
     },
@@ -738,8 +646,7 @@
             "enum": [
               "informational",
               "required_field",
-              "compliance",
-              "media_slot"
+              "compliance"
             ]
           },
           "blocksC2Handoff": {
@@ -747,6 +654,253 @@
           }
         }
       }
+    },
+    "sourceFactsRevision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "revisionId",
+        "targetC1PlanId",
+        "sourceC1PlanId",
+        "sourceSupplySnapshotId",
+        "preparedAt",
+        "sourceCandidateRevision",
+        "sourceSkuRevision",
+        "sourceIdentity",
+        "records",
+        "sourceCandidate"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "enum": [
+            "c1-supplier-fact-revision-v1",
+            "c1-supplier-fact-revision-v2"
+          ]
+        },
+        "revisionId": {
+          "$ref": "#/$defs/canonicalFrozenRef"
+        },
+        "targetC1PlanId": {
+          "$ref": "#/$defs/canonicalFrozenRef"
+        },
+        "sourceC1PlanId": {
+          "$ref": "#/$defs/canonicalFrozenRef"
+        },
+        "sourceSupplySnapshotId": {
+          "$ref": "#/$defs/canonicalFrozenRef"
+        },
+        "preparedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "sourceCandidateRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sourceSkuRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sourceIdentity": {
+          "type": "object"
+        },
+        "records": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "field",
+              "label",
+              "value",
+              "valueZh",
+              "status",
+              "sourceRefs"
+            ],
+            "properties": {
+              "field": {
+                "enum": [
+                  "battery",
+                  "color",
+                  "size",
+                  "variant",
+                  "brand"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "valueZh": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "status": {
+                "const": "confirmed"
+              },
+              "sourceRefs": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "powerProfile": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "containsBattery",
+                  "batteryType",
+                  "sourceRef"
+                ],
+                "properties": {
+                  "containsBattery": {
+                    "type": "boolean"
+                  },
+                  "batteryType": {
+                    "enum": [
+                      "none",
+                      "installed",
+                      "standalone"
+                    ]
+                  },
+                  "sourceRef": {
+                    "$ref": "#/$defs/canonicalFrozenRef"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "sourceCandidate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "dataRevision",
+            "targetPlatform",
+            "storeRef",
+            "lifecycleV11"
+          ],
+          "properties": {
+            "storeRef": {
+              "type": "object"
+            },
+            "cargoFactsV1": {
+              "type": "object"
+            },
+            "aProductDetailEvidenceV1": {
+              "type": "object"
+            },
+            "sourceCapture": {
+              "type": "object"
+            },
+            "lifecycleV11": {
+              "type": "object"
+            },
+            "salesSnapshotsV11": {
+              "type": "array"
+            },
+            "supplierOptionsV11": {
+              "type": "array"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "dataRevision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "targetPlatform": {
+              "enum": [
+                "ozon",
+                "wb"
+              ]
+            },
+            "targetStore": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "schemaVersion": {
+                "const": "c1-supplier-fact-revision-v1"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "records": {
+                "minItems": 1,
+                "type": "array"
+              },
+              "sourceCandidate": {
+                "properties": {
+                  "lifecycleV11": {
+                    "not": {
+                      "type": "object",
+                      "properties": {
+                        "ownerProductFactsV1": {}
+                      },
+                      "required": [
+                        "ownerProductFactsV1"
+                      ]
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "sourceCandidate": {
+                "properties": {
+                  "lifecycleV11": {
+                    "required": [
+                      "ownerProductFactsV1"
+                    ],
+                    "properties": {
+                      "ownerProductFactsV1": {
+                        "type": "object"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        }
+      ]
     }
   },
   "additionalProperties": false,

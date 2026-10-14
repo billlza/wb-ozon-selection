@@ -23,6 +23,7 @@ export const CURRENT_SNAPSHOT_PATH = "capability-snapshots/three-store-capabilit
 export const HISTORICAL_SNAPSHOT_SHA256 = "e3ced8107d2fc4306cfcfd33c92e5bc5987d65b3c78b4c02e9ef23ccfd0f85ff";
 
 export function excludedArtifactPath(relativePath) {
+  if(relativePath.startsWith('lib/batch-catalogs/'))return true;
   const parts = relativePath.split("/");
   const directories = new Set([".git", "node_modules", "dist", "coverage", "output", "cache", "logs", "evidence", "data", "docs", "capability-snapshots"]);
   return parts.some(part => directories.has(part) || part.startsWith(".vite") || part === ".DS_Store" || part.startsWith(".env")) ||

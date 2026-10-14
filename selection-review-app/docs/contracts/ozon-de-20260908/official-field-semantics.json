@@ -1,0 +1,486 @@
+{
+  "kind": "official-preflight-semantics-20260908",
+  "schemas": {
+    "SellerInfoResponseCompany": {
+      "type": "object",
+      "description": "Компания.",
+      "properties": {
+        "country": {
+          "type": "string",
+          "description": "Страна."
+        },
+        "currency": {
+          "type": "string",
+          "description": "Валюта:\n- `RUB` — российский рубль;\n- `EUR` — евро;\n- `USD` — доллар США;\n- `CNY` — юань;\n- `BYN` — белорусский рубль;\n- `KZT` — тенге;\n- `KGS` — киргизский сом.\n"
+        },
+        "inn": {
+          "type": "string",
+          "description": "ИНН."
+        },
+        "legal_name": {
+          "type": "string",
+          "description": "Название юридического лица."
+        },
+        "name": {
+          "type": "string",
+          "description": "Название компании на Ozon."
+        },
+        "ogrn": {
+          "type": "string",
+          "description": "ОГРН."
+        },
+        "ownership_form": {
+          "type": "string",
+          "description": "Форма собственности."
+        },
+        "tax_system": {
+          "$ref": "#/components/schemas/CompanyTaxSystemEnum"
+        }
+      }
+    },
+    "SellerInfoResponseRatingTypeEnum": {
+      "type": "string",
+      "description": "Тип значения:\n- `UNKNOWN` — не определён, \n- `INDEX` — индекс,\n- `PERCENT` — процент,\n- `TIME` — время,\n- `RATIO` — коэффициент,\n- `REVIEW_SCORE` — оценка,\n- `COUNT` — счёт.\n",
+      "default": "UNKNOWN",
+      "enum": [
+        "UNKNOWN",
+        "INDEX",
+        "PERCENT",
+        "TIME",
+        "RATIO",
+        "REVIEW_SCORE",
+        "COUNT"
+      ]
+    },
+    "SellerInfoResponseRating": {
+      "type": "object",
+      "properties": {
+        "current_value": {
+          "$ref": "#/components/schemas/RatingValueCurrent"
+        },
+        "name": {
+          "type": "string",
+          "description": "Название рейтинга."
+        },
+        "past_value": {
+          "$ref": "#/components/schemas/RatingValuePast"
+        },
+        "rating": {
+          "type": "string",
+          "description": "Название рейтинга в системе."
+        },
+        "status": {
+          "$ref": "#/components/schemas/RatingStatusEnum"
+        },
+        "value_type": {
+          "$ref": "#/components/schemas/SellerInfoResponseRatingTypeEnum"
+        }
+      }
+    },
+    "SellerInfoResponseSubscriptionTypeEnum": {
+      "type": "string",
+      "default": "UNKNOWN",
+      "description": "Тип подписки:\n- `UNKNOWN` — неизвестный,\n- `UNSPECIFIED` — нет подписки,\n- `PREMIUM` — Premium,\n- `PREMIUM_LITE` — Premium Lite,\n- `PREMIUM_PLUS` — Premium Plus,\n- `PREMIUM_PRO` — Premium Pro.\n",
+      "enum": [
+        "UNKNOWN",
+        "UNSPECIFIED",
+        "PREMIUM",
+        "PREMIUM_LITE",
+        "PREMIUM_PLUS",
+        "PREMIUM_PRO"
+      ]
+    },
+    "SellerInfoResponseSubscription": {
+      "type": "object",
+      "description": "Подписка.",
+      "properties": {
+        "is_premium": {
+          "type": "boolean",
+          "description": "`true`, если есть подписка.\n"
+        },
+        "type": {
+          "$ref": "#/components/schemas/SellerInfoResponseSubscriptionTypeEnum"
+        }
+      }
+    },
+    "v1SellerInfoResponse": {
+      "type": "object",
+      "properties": {
+        "company": {
+          "$ref": "#/components/schemas/SellerInfoResponseCompany"
+        },
+        "ratings": {
+          "type": "array",
+          "description": "Список рейтингов.",
+          "items": {
+            "$ref": "#/components/schemas/SellerInfoResponseRating"
+          }
+        },
+        "subscription": {
+          "$ref": "#/components/schemas/SellerInfoResponseSubscription"
+        }
+      }
+    },
+    "productsv1GetProductInfoStocksByWarehouseFbsRequest": {
+      "oneOf": [
+        {
+          "title": "sku",
+          "required": [
+            "sku"
+          ]
+        },
+        {
+          "title": "offer_id",
+          "required": [
+            "offer_id"
+          ]
+        }
+      ],
+      "type": "object",
+      "title": "object",
+      "properties": {
+        "sku": {
+          "description": "Идентификатор товара в системе Ozon — SKU.",
+          "items": {
+            "type": "string",
+            "format": "int64"
+          }
+        },
+        "offer_id": {
+          "description": "Идентификатор товара в системе продавца — артикул.",
+          "items": {
+            "type": "string",
+            "format": "int64"
+          }
+        }
+      }
+    },
+    "productsv1GetProductInfoStocksByWarehouseFbsResponseResult": {
+      "type": "object",
+      "title": "object",
+      "properties": {
+        "sku": {
+          "description": "Идентификатор товара в системе Ozon — SKU.",
+          "type": "integer",
+          "format": "int64"
+        },
+        "offer_id": {
+          "description": "Идентификатор товара в системе продавца — артикул.",
+          "type": "string",
+          "format": "int64"
+        },
+        "present": {
+          "description": "Общее количество товара на складе.",
+          "type": "integer",
+          "format": "int64"
+        },
+        "product_id": {
+          "description": "Идентификатор товара в системе Ozon — артикул.",
+          "type": "integer",
+          "format": "int64"
+        },
+        "reserved": {
+          "description": "Количество зарезервированных товаров на складе.",
+          "type": "integer",
+          "format": "int64"
+        },
+        "warehouse_id": {
+          "description": "Идентификатор склада.",
+          "type": "integer",
+          "format": "int64"
+        },
+        "warehouse_name": {
+          "description": "Название склада.",
+          "type": "string"
+        }
+      }
+    },
+    "productsv1GetProductInfoStocksByWarehouseFbsResponse": {
+      "type": "object",
+      "title": "object",
+      "properties": {
+        "result": {
+          "description": "Результат работы метода.",
+          "items": {
+            "$ref": "#/components/schemas/productsv1GetProductInfoStocksByWarehouseFbsResponseResult"
+          }
+        }
+      }
+    },
+    "v2GetProductInfoStocksByWarehouseFbsRequestV2": {
+      "required": [
+        "limit"
+      ],
+      "type": "object",
+      "oneOf": [
+        {
+          "title": "sku",
+          "required": [
+            "sku"
+          ]
+        },
+        {
+          "title": "offer_id",
+          "required": [
+            "offer_id"
+          ]
+        }
+      ],
+      "properties": {
+        "cursor": {
+          "type": "string",
+          "description": "Указатель для выборки следующих данных."
+        },
+        "limit": {
+          "type": "integer",
+          "format": "uint64",
+          "maximum": 1000,
+          "description": "Количество значений в ответе."
+        },
+        "offer_id": {
+          "type": "array",
+          "maxItems": 1000,
+          "description": "Идентификаторы товаров в системе продавца — артикул.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sku": {
+          "type": "array",
+          "maxItems": 1000,
+          "description": "Идентификаторы товаров в системе Ozon — SKU.",
+          "items": {
+            "type": "string",
+            "format": "int64"
+          }
+        }
+      }
+    },
+    "v2GetProductInfoStocksByWarehouseFbsResponseV2Product": {
+      "type": "object",
+      "properties": {
+        "free_stock": {
+          "type": "integer",
+          "format": "int64",
+          "description": "Количество доступных для продажи товаров."
+        },
+        "offer_id": {
+          "type": "string",
+          "description": "Идентификатор товара в системе продавца — артикул."
+        },
+        "present": {
+          "type": "integer",
+          "format": "int64",
+          "description": "Общее количество товара на складе."
+        },
+        "product_id": {
+          "type": "integer",
+          "format": "int64",
+          "description": "Идентификатор товара в системе продавца — артикул."
+        },
+        "reserved": {
+          "type": "integer",
+          "format": "int64",
+          "description": "Количество зарезервированных товаров на складе."
+        },
+        "sku": {
+          "type": "integer",
+          "format": "int64",
+          "description": "Идентификатор товара в системе Ozon — SKU."
+        },
+        "warehouse_id": {
+          "type": "integer",
+          "format": "int64",
+          "description": "Идентификатор склада."
+        },
+        "warehouse_name": {
+          "type": "string",
+          "description": "Название склада."
+        }
+      }
+    },
+    "v2GetProductInfoStocksByWarehouseFbsResponseV2": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "type": "string",
+          "description": "Указатель для выборки следующих данных."
+        },
+        "has_next": {
+          "type": "boolean",
+          "description": "`true`, если в ответе вернули не все товары.\n"
+        },
+        "products": {
+          "type": "array",
+          "description": "Остатки товаров.",
+          "items": {
+            "$ref": "#/components/schemas/v2GetProductInfoStocksByWarehouseFbsResponseV2Product"
+          }
+        }
+      }
+    },
+    "product.v1.GetProductInfoStocksByWarehouseFboRequest": {
+      "required": [
+        "limit"
+      ],
+      "type": "object",
+      "title": "object",
+      "properties": {
+        "cursor": {
+          "type": "string",
+          "description": "Указатель для выборки следующих данных."
+        },
+        "limit": {
+          "required": true,
+          "type": "integer",
+          "format": "uint64",
+          "maximum": 1000,
+          "description": "Количество значений в ответе."
+        },
+        "offer_ids": {
+          "type": "array",
+          "maximum": 1000,
+          "description": "Идентификатор товаров в системе продавца — артикул.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "skus": {
+          "type": "array",
+          "maximum": 1000,
+          "description": "Идентификатор товаров в системе Ozon — SKU.",
+          "items": {
+            "type": "string",
+            "format": "int64"
+          }
+        }
+      }
+    },
+    "product.v1.GetProductInfoStocksByWarehouseFboResponse.Product": {
+      "type": "object",
+      "title": "object",
+      "properties": {
+        "offer_id": {
+          "type": "string",
+          "description": "Идентификатор товара в системе продавца — артикул."
+        },
+        "present": {
+          "type": "integer",
+          "format": "int64",
+          "description": "Общее количество товара на складе."
+        },
+        "product_id": {
+          "type": "integer",
+          "format": "int64",
+          "description": "Идентификатор товара в системе Ozon — `product_id`."
+        },
+        "reserved": {
+          "type": "integer",
+          "format": "int64",
+          "description": "Количество зарезервированных товаров на складе."
+        },
+        "sku": {
+          "type": "integer",
+          "format": "int64",
+          "description": "Идентификатор товара в системе Ozon — SKU."
+        },
+        "warehouse_id": {
+          "type": "integer",
+          "format": "int64",
+          "description": "Идентификатор склада. Можно получить с помощью метода [/v1/warehouse/ozon/list](#operation/WarehouseOZONList)."
+        }
+      }
+    },
+    "product.v1.GetProductInfoStocksByWarehouseFboResponse": {
+      "type": "object",
+      "title": "object",
+      "properties": {
+        "cursor": {
+          "type": "string",
+          "description": "Указатель для выборки следующих данных."
+        },
+        "has_next": {
+          "type": "boolean",
+          "description": "`true`, если в ответе вернулись не все значения.\n"
+        },
+        "products": {
+          "type": "array",
+          "description": "Остатки товаров FBO.",
+          "items": {
+            "$ref": "#/components/schemas/product.v1.GetProductInfoStocksByWarehouseFboResponse.Product"
+          }
+        }
+      }
+    },
+    "CreateDocumentB2BSalesJSONReportResponseSellerInfo": {
+      "type": "object",
+      "description": "Информация о продавце.",
+      "properties": {
+        "company_name": {
+          "type": "string",
+          "description": "Название компании."
+        },
+        "inn": {
+          "type": "string",
+          "description": "ИНН."
+        },
+        "kpp": {
+          "type": "string",
+          "description": "КПП."
+        }
+      }
+    }
+  },
+  "currency": {
+    "type": "string",
+    "description": "Валюта ваших цен. Переданное значение должно совпадать с валютой, которая установлена в настройках личного кабинета. По умолчанию передаётся `RUB` — российский рубль.\n\nНапример, если у вас установлена валюта взаиморасчётов юань, передавайте значение `CNY`, иначе вернётся ошибка.\n\nВозможные значения: \n  - `RUB` — российский рубль,\n  - `BYN` — белорусский рубль,\n  - `KZT` — тенге,\n  - `EUR` — евро,\n  - `USD` — доллар США,\n  - `CNY` — юань.\n"
+  },
+  "stockUpdate": "Позволяет изменить информацию о количестве товара в наличии.\n\n<aside class=\"warning\">\nПереданный остаток — количество товара в наличии без учёта зарезервированных товаров. Перед обновлением остатков проверьте количество зарезервированных товаров с помощью метода <a href=\"#operation/ProductAPI_GetProductInfoStocksByWarehouseFbsV2\">/v2/product/info/stocks-by-warehouse/fbs</a>.\n</aside>\n\nЗа один запрос можно изменить наличие для 100 пар товар-склад. С одного аккаунта продавца можно отправить до 80 запросов в минуту.\n\n<aside class=\"warning\">Обновлять остатки у одной пары товар-склад можно только 1 раз в 30 секунд, иначе в параметре <code>result.errors</code> в ответе будет ошибка <code>TOO_MANY_REQUESTS</code>.</aside>\n\nВы можете задать наличие товара только после того, как его статус сменится на `price_sent`.\n\nОстатки крупногабаритных товаров можно обновлять только на предназначенных для них складах.\n\nЕсли запрос содержит оба параметра — `offer_id` и `product_id`, изменения применятся к товару с `offer_id`. Для избежания неоднозначности используйте только один из параметров.\n",
+  "productList": "Метод для получения списка всех товаров.\n\nЕсли вы используете фильтр по идентификатору `offer_id` или `product_id`, остальные параметры заполнять не обязательно.\nВернутся все товары с указанными идентификаторами, независимо от видимости.\nЗа один раз вы можете использовать только одну группу идентификаторов, не больше 1000 товаров.\n\nЕсли вы не используете для отображения идентификаторы, укажите `limit` и `last_id` в следующих запросах.\n",
+  "stockAggregate": {
+    "type": "object",
+    "properties": {
+      "present": {
+        "description": "Сейчас на складе.",
+        "type": "integer",
+        "format": "int32"
+      },
+      "reserved": {
+        "description": "Зарезервировано.",
+        "type": "integer",
+        "format": "int32"
+      },
+      "shipment_type": {
+        "$ref": "#/components/schemas/StockShipmentType"
+      },
+      "sku": {
+        "description": "Идентификатор товара в системе Ozon — SKU.",
+        "type": "integer",
+        "format": "int64"
+      },
+      "type": {
+        "description": "Тип склада:\n- `fbs` — склад продавца, доставка силами Ozon;\n- `rfbs` — склад продавца, доставка силами продавца;\n- `fbo` — склад Ozon;\n- `fbp` — склад партнёра.\n",
+        "type": "string"
+      },
+      "warehouse_ids": {
+        "type": "array",
+        "description": "Идентификаторы складов, на которых хранился или хранится товар.",
+        "deprecated": true,
+        "items": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    }
+  },
+  "clientId": {
+    "description": "Идентификатор клиента.",
+    "in": "header",
+    "name": "Client-Id",
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "introduction": "По вопросам работы с Seller API обращайтесь в поддержку через личный кабинет.\n\n<aside class=\"warning\">Обновляем корневой TLS/SSL-сертификат GlobalSign — вместо него будем использовать <a href=\"https://app.harica.gr/\">HARICA</a>.<br><a href=\"https://dev.ozon.ru/news/775-Izmeneniia-v-Ozon-API-migratsiia-kornevogo-sertifikata-UTs-Ozon/\">Подробнее о переходе на HARICA на платформе разработчиков Ozon for dev</a></aside>\n\n> [Инструкции по работе с маркетплейсом](https://seller-edu.ozon.ru)\n\n> [Информационная платформа и сообщество разработчиков Ozon for dev](https://dev.ozon.ru/)\n\n<aside class=\"warning\">\nС 16.05.2025 в Seller API можно обращаться только back-to-back, прямые запросы из браузера будут запрещены. \nТакие запросы будут падать с ошибкой политики CORS.\n</aside>\n\n<br>\n\n<aside class=\"warning\">\nЕсли оферта неактуальна, доступ к Seller API будет ограничен. Вы получите ошибку <code>403 Offer not signed</code>.\nЧтобы возобновить доступ, примите оферту.\n\n[Подробнее о принятии оферты](https://seller-edu.ozon.ru/how-to-start/step-1-register#как-принять-оферту)\n</aside>\n\nПеред началом работы с Ozon Seller API:\n\n1. Изучите процессы работы с Ozon в [Базе знаний продавца](https://seller-edu.ozon.ru) и [личном кабинете продавца](https://seller.ozon.ru/app/signin).\n2. Определите процессы, которые планируете автоматизировать, и сравните их с процессами вашей компании.\n3. Изучите документацию Seller API и разработайте схему интеграции.\n\nДля работы с Seller API необходим API-ключ. Подробнее в разделе [Авторизация](#tag/Auth).\n\nSeller API работает по UTC. Учитывайте это, когда отправляете запросы и получаете ответы с датами и временем.\n\nПроцесс работы с Seller API можно разделить на блоки:\n- работа с атрибутным деревом,\n- загрузка и обновление товаров,\n- управление ценами,\n- управление остатками товара,\n- управление заказами FBO,\n- управление заказами FBS и rFBS,\n- работа с накладными,\n- получение финансовой информации,\n- получение аналитической информации,\n- управление возвратами,\n- управление чатами.\n"
+}

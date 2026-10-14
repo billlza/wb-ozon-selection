@@ -1,6 +1,7 @@
 import { createSyntheticBCostPolicy } from './b-cost-policy-fixture.mjs';
 import { buildLifecycleBExplicitOtherCosts } from '../../lib/lifecycle-b-evidence-runtime.mjs';
 import { buildRealAConfirmationCard } from "../../lib/real-a-confirmation-card.mjs";
+import { compareGuooRoutes } from "../../lib/guoo-route-comparison.mjs";
 import { runRealAConfirmationToBAndC1 } from "../../lib/real-a-b-c1-flow.mjs";
 import { createSoftwareExecutionRuntime, startSoftwareStep, completeExecutionStep, blockExecutionForTechnicalFailure } from "../../lib/software-execution-state.mjs";
 import { SYNTHETIC_STORE_REF } from "./store-binding-fixture.mjs";
@@ -138,6 +139,45 @@ export function addEvidenceContext(source) {
   return source;
 }
 
+
+export const FIXTURE_FROZEN_ROUTE = "guoo-economy-small";
+export const FIXTURE_LOGISTICS_RULE_VERSION = "guoo-2026-07-20";
+
+/** 一行能通过 assertGuooRouteComparison 的合成资费：只有 17 行落在重量区间里，而它就是夹具冻住的那条线路。 */
+function guooCatalogRow(rowNumber) {
+  const route = rowNumber === 17 ? FIXTURE_FROZEN_ROUTE : `GUOO Synthetic ${rowNumber} PUDO`;
+  return { rowNumber, route, routeText: route, deliveryMethods: [route],
+    sourceRefs: { perKgRmb: { sheetName: "Synthetic", cellRef: `K${rowNumber}` } },
+    unresolvedRules: [],
+    feeCoverage: { status: "complete", additionalPerParcelRmb: 0, evidenceRef: "evidence:synthetic-complete-fees" },
+    evidenceData: { chargeableWeightRule: "actual_weight", perKgRmb: 28.1, perParcelRmb: 17.97,
+      minimumChargeableWeightKg: 0.001, weightRoundingRule: "none", weightRoundingKg: null,
+      productType: "Small", weightLimit: rowNumber === 17 ? "0.001-2KG" : "10-30KG", declaredValueLimitRub: "1501-7000₽",
+      sizeLimit: "尺寸限制：三边之和不超150CM，单边最大尺寸不超60CM，按实重，按克计费",
+      batteryTransportRule: "电池不允许\n只接普货（不接带电、带磁、液体、粉末、刀具、仿牌等产品）" } };
+}
+
+/**
+ * `appendGuooRouteComparison` 落盘时写的就是这个形状：比较结果本身，加上 recordedAt 和 resultRevision。
+ *
+ * `declared: false` 时运输属性没声明，选中那条线路的 eligibility 是「说不准」，`transportVerified` 因此
+ * 为 false——那是真的没核实出来的，不是把字段改一下装出来的。
+ */
+export function savedGuooRouteComparison(candidateId, sourceRevision,
+  { declared = true, ruleVersion = FIXTURE_LOGISTICS_RULE_VERSION } = {}) {
+  const comparison = compareGuooRoutes({ candidateId, sourceRevision,
+    packaging: { weightKg: 0.4, dimensionsCm: { length: 12, width: 12, height: 7 }, sourceRef: "evidence:synthetic-packaging" },
+    salePrice: { amountRub: 2000, sourceRef: "evidence:synthetic-target-sale" },
+    cargoFacts: declared ? { batteryType: "none", batteryEnergyWh: null, generalCargo: true, personalUse: true,
+      irregularShape: false, sourceRef: "evidence:synthetic-cargo" } : null,
+    catalog: { schemaVersion: "guoo-tariff-catalog-v1", sourceRef: "evidence:synthetic-catalog",
+      ruleVersion, observedAt: confirmedAt, sourceNotes: [], unresolvedRules: [],
+      rows: Array.from({ length: 15 }, (_, index) => guooCatalogRow(index + 10)) } });
+  if (comparison.selectedRoute !== FIXTURE_FROZEN_ROUTE || comparison.transportVerified !== declared) {
+    throw new Error("SYNTHETIC_GUOO_COMPARISON_SHAPE_UNEXPECTED");
+  }
+  return { ...comparison, recordedAt: confirmedAt, resultRevision: sourceRevision + 1 };
+}
 
 export async function createSavedConditionalBFixture({ rejected = false } = {}) {
   const source = addEvidenceContext(await candidate());

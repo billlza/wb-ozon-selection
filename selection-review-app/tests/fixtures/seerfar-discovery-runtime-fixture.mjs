@@ -15,7 +15,7 @@ export const syntheticMarketProduct = (sku = 2107989735) => ({
 });
 
 /** Synthetic category and points are isolated test inputs, never operational configuration. */
-export async function createSeerfarDiscoveryRuntimeFixture(t, { products = [syntheticMarketProduct()], hasNextPage = false } = {}) {
+export async function createSeerfarDiscoveryRuntimeFixture(t, { products = [syntheticMarketProduct()], hasNextPage = false, filters = null } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'seerfar-discovery-integration-'));
   const filePath = path.join(directory, 'state.json');
   await fs.writeFile(filePath, JSON.stringify(initialBusinessStateDocument({ now: seerfarDiscoveryAt })));
@@ -30,7 +30,9 @@ export async function createSeerfarDiscoveryRuntimeFixture(t, { products = [synt
     schemaVersion: 'a-discovery-plan-v2', planId: 'plan:synthetic-seerfar', version: 'version:synthetic-1', provider: 'seerfar',
     contractVersion: 'seerfar-category-discovery-v1', direction: 'Explicitly synthetic category integration test',
     requests: [{ requestId: 'request:synthetic-category', method: 'category_detail', platform: 'ozon', categoryId: '100_200',
-      fulfillment: 'rfbs', pageNumber: 1, pageSize: 20, categoryEvidenceRef: 'evidence:synthetic-category', contractEvidenceRef: 'evidence:synthetic-contract' }],
+      fulfillment: 'rfbs', pageNumber: 1, pageSize: 20, categoryEvidenceRef: 'evidence:synthetic-category', contractEvidenceRef: 'evidence:synthetic-contract',
+      // Synthetic owner-declared query conditions; absent unless a test declares them.
+      ...(filters === null ? {} : { filters: structuredClone(filters) }) }],
     budget: { unit: 'seerfar_points', maxRequests: 3, maxCredits: 15, policyRef: 'policy:synthetic-budget', policyVersion: 'version:synthetic-1',
       costEvidenceRef: 'evidence:synthetic-cost-only', estimatedPointsByStep: { quota_before: 0, category_detail: 15, quota_after: 0 } },
     exclusions: ['Explicit brands and IP risk', 'Powered products'],

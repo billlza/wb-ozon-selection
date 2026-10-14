@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   assertSafeRuntimeRecord,
+  assertRuntimeProductionEntityReferenceContext,
   createActorContext,
   createLocalDevelopmentActor,
   createOperationAuditEvent,
@@ -19,6 +20,11 @@ import {
   markSoftwareJobExternalRequestStarted,
   settleSoftwareJob
 } from "../lib/software-job-contract.mjs";
+
+import { authorizedProductionFixture } from "./helpers/c2-software-fixture.mjs";
+import { createProductionPlan } from "../lib/production-plan.mjs";
+import { normalizeProductionEntities, restoreProductionEntities } from "../lib/production-entity-storage.mjs";
+import { fingerprintCanonicalRecord } from "../lib/production-contract-primitives.mjs";
 
 const NOW = "2026-08-25T02:00:00.000Z";
 
@@ -261,20 +267,27 @@ test("改价复用只识别声明的原授权引用，秘密与旁路字段仍�
 });
 
 test("新版 D 容器只放行正式 C1 不透明授权路径，未知版本和旁路秘密仍拒绝", () => {
-  const sourceAuthorization = {
-    schemaVersion: "production-authorization-v1.2",
-    lockedScope: { finalCardInputSnapshot: { c1Snapshot: { seoEvidenceLayer: {
-      providerJobRef: { authorizationRef: { authorizationId: "authorization:c1-ai-draft:opaque-123" } }
-    } } } }
-  };
+  const fixture = authorizedProductionFixture();
+  const productionPlan = structuredClone(createProductionPlan(fixture));
+  const sourceAuthorization = productionPlan.sourceAuthorization;
+  const snapshot = sourceAuthorization.lockedScope.finalCardInputSnapshot;
+  // Keep the real production identity and storage shape; isolate the opaque-ID safety classification.
+  snapshot.c1Snapshot.seoEvidenceLayer = { providerJobRef: { authorizationRef: { authorizationId: "authorization:c1-ai-draft:opaque-123" } } };
+  sourceAuthorization.sourceFinalCardInputFingerprint = fingerprintCanonicalRecord(snapshot);
   for (const schemaVersion of ["d-software-execution-state-v1", "d-software-execution-state-v2"]) {
-    const state = { schemaVersion, productionPlan: { schemaVersion: "production-plan-v1.1", sourceAuthorization } };
+    const state = { schemaVersion, productionPlan };
     assert.doesNotThrow(() => assertSafeRuntimeRecord(state));
-    assert.doesNotThrow(() => assertSafeRuntimeRecord({ lifecycleV11: { skuPackage: { g1Identity: { schemaVersion: "g1-identity-v1" }, dSoftwareExecution: state } } }));
+    const packed = normalizeProductionEntities(state);
+    assert.doesNotThrow(() => assertRuntimeProductionEntityReferenceContext(restoreProductionEntities(packed.value, packed.records)));
+    assert.throws(() => assertRuntimeProductionEntityReferenceContext(restoreProductionEntities({ body: packed.value }, packed.records)), error =>
+      error.message.startsWith("RUNTIME_IDENTITY_INVALID:") && error.cause.message.startsWith("PRODUCTION_AUTHORIZATION_SECRET_REJECTED:"));
+    assert.throws(() => assertSafeRuntimeRecord({ body: state }), error =>
+      error.message.startsWith("RUNTIME_IDENTITY_INVALID:") && error.cause.message.startsWith("PRODUCTION_AUTHORIZATION_SECRET_REJECTED:"));
+    assert.doesNotThrow(() => assertSafeRuntimeRecord({ id: fixture.candidateId, lifecycleV11: { skuPackage: { g1Identity: structuredClone(sourceAuthorization.sourceIdentity), dSoftwareExecution: state } } }));
     assert.throws(() => assertSafeRuntimeRecord({ ...state, extra: { authorizationId: "authorization:c1-ai-draft:opaque-123" } }), /秘密/);
     const secret = structuredClone(state);
     secret.productionPlan.sourceAuthorization.lockedScope.finalCardInputSnapshot.c1Snapshot.seoEvidenceLayer.providerJobRef.authorizationRef.authorizationId = "Bearer private-value";
     assert.throws(() => assertSafeRuntimeRecord(secret), /秘密|授权/);
   }
-  assert.throws(() => assertSafeRuntimeRecord({ schemaVersion: "d-software-execution-state-v999", productionPlan: { schemaVersion: "production-plan-v1.1", sourceAuthorization } }), /秘密/);
+  assert.throws(() => assertSafeRuntimeRecord({ schemaVersion: "d-software-execution-state-v999", productionPlan }), /秘密/);
 });

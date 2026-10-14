@@ -101,7 +101,7 @@ export function createTrainFinalAssetsFixture({ candidateId = "CX-20260803-010",
   const fixture = createFormalC1C2Fixture({ candidateId, returnReserveRate: 0.03, material: "DVP", rightsReviewOptions: { brand: SYNTHETIC_UNBRANDED, rights: SYNTHETIC_NO_THIRD_PARTY_RIGHTS },
     productName: "机械发条DVP火车282件3D拼图", packedWeightKg: 0.21, internationalFreightRmb: 23.87,
     captureId: "test:train:282:210g", skuAttributes: { brand: "Нет бренда", piece_count: 282, mechanism: "mechanical_wind_up" },
-    detailImageLimit: 4, previousProfitModels: before.lifecycleV11.skuPackage.profitModels,
+    previousProfitModels: before.lifecycleV11.skuPackage.profitModels,
     softwareJobId: "software-job:train-final:1", gatewayJobId: "gateway-job:train-final:1",
     authorizationId: "authorization:c1-ai-draft:TRAIN-FINAL" });
   const templates = finalAssets();

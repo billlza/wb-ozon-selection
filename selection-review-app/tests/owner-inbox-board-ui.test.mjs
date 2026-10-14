@@ -1,0 +1,136 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
+import { build } from 'vite';
+import react from '@vitejs/plugin-react';
+
+// 进行中 and 需要你处理 render synthetic display data only: no saved records, no services, no requests.
+let renderer;
+async function pages() {
+  if (!renderer) {
+    const entry = fileURLToPath(new URL('./owner-inbox-board-ui-entry.jsx', import.meta.url));
+    const board = fileURLToPath(new URL('../src/components/PipelineBoard.jsx', import.meta.url));
+    const inbox = fileURLToPath(new URL('../src/components/OwnerInbox.jsx', import.meta.url));
+    const output = await build({ configFile: false, logLevel: 'warn', plugins: [react(), { name: 'owner-inbox-board-ui-test',
+      resolveId: id => id === entry ? entry : null,
+      load: id => id === entry ? `import React from 'react';import {renderToStaticMarkup} from 'react-dom/server';
+      import Board from ${JSON.stringify(board)};import Inbox from ${JSON.stringify(inbox)};
+      export const board=props=>renderToStaticMarkup(<Board {...props}/>);
+      export const inbox=props=>renderToStaticMarkup(<Inbox {...props}/>);` : null }],
+      ssr: { noExternal: true }, build: { ssr: true, write: false, rollupOptions: { input: entry, output: { format: 'es' } } } });
+    const chunk = output.output.find(value => value.type === 'chunk' && value.isEntry);
+    assert.ok(chunk);
+    renderer = await import(`data:text/javascript;base64,${Buffer.from(chunk.code).toString('base64')}`);
+  }
+  return renderer;
+}
+
+const forbidden = () => { throw new Error('RENDER_MUST_NOT_START_WORK'); };
+const candidate = (id, extra = {}) => ({ id, productName: `合成商品 ${id}`, targetStore: 'miska', dataRevision: 4,
+  workflowStatus: 'codex_processing', displayStatus: 'codex_processing', imageUrl: '', needsFromUser: [],
+  updatedAt: '2026-09-09T04:00:00.000Z', createdAt: '2026-09-09T04:00:00.000Z', ...extra });
+const dropped = (id, extra = {}) => candidate(id, { workflowStatus: 'eliminated', displayStatus: 'eliminated',
+  eliminatedAt: '2026-09-11T06:00:00.000Z', eliminationReason: '主人淘汰：品牌风险', dataRevision: 9, ...extra });
+const props = (candidates, extra = {}) => ({ candidates, store: 'miska', onOpenCandidate: forbidden,
+  onEliminateCandidate: forbidden, onRestoreCandidate: forbidden, ...extra });
+
+test('进行中的淘汰收在「更多」里，卡住的写出来，同款各色合成一张卡，已淘汰折在最下面并能恢复', async () => {
+  const choices = [{ sourceSkuId: '11', attributes: { 颜色: '卡其' } }, { sourceSkuId: '12', attributes: { 颜色: '黑色' } }];
+  const html = (await pages()).board(props([
+    candidate('candidate:a', { workflowStatus: 'awaiting_user_direction', intake: { stage: 'queued', sourceKind: 'pinduoduo' } }),
+    candidate('candidate:b', { executionRuntime: { businessPhase: 'B', status: 'running' } }),
+    candidate('candidate:vest', { productName: '合成背心', executionRuntime: { businessPhase: 'C1', status: 'running' },
+      sourceCapture: { selectedSkuIds: ['11'], skuChoices: choices } }),
+    candidate('candidate:black', { productName: '原商品同款：合成背心 · 供应商原色 黑色 · SKU 12',
+      siblingSourceV1: { parentCandidateId: 'candidate:vest', supplierSkuId: '12' }, sourceCapture: { skuChoices: choices },
+      executionRuntime: { businessPhase: 'C1', status: 'blocked', technicalFailure: { kind: 'external_dependency' } } }),
+    dropped('candidate:gone', { productName: '被淘汰的合成商品' })
+  ], { intakeQueue: { items: [{ candidateId: 'candidate:a', stage: 'queued', queue: { position: 1, total: 1 }, batch: null }],
+    pause: null, extension: { online: false } } }));
+  assert.match(html, /共 4 件在做的商品，2 张卡卡住了/u, '已淘汰的不算在进行中里');
+  for (const title of ['找货', '待确认', '准备中', '待上架', '在售']) assert.match(html, new RegExp(`<h3>${title}<span>`, 'u'));
+  assert.doesNotMatch(html, /被淘汰的合成商品<\/b><span class="board-card-status"/u);
+  // 淘汰不在卡面上，收在每张卡的「更多」里；合起来的背心按颜色各一个。
+  assert.equal((html.match(/<details class="board-card-more">/gu) ?? []).length, 3);
+  assert.equal((html.match(/eliminate-button/gu) ?? []).length, 4);
+  assert.match(html, />淘汰「卡其」<\/button>/u);
+  assert.match(html, /<summary aria-label="合成背心 的更多操作">更多<\/summary>/u);
+  assert.match(html, /排队中 · 排第 1 \/ 1/u);
+  assert.match(html, /卡住了：插件没连上，这件排着等/u);
+  // 插件没连上时没有可按的：打开 Chrome 后自己接着找，卡上不给一个点了也没用的按钮。
+  assert.doesNotMatch(html, />接着找<\/button>/u);
+  assert.equal((html.match(/data-testid="board-card"/gu) ?? []).length, 3, '背心两个颜色合成一张卡');
+  assert.match(html, /aria-label="合成背心 的颜色"/u);
+  assert.match(html, />卡其<\/button><span>软件在做<\/span>/u);
+  assert.match(html, />黑色<\/button><span>已停下<\/span>/u);
+  assert.match(html, /卡住了：黑色：外部服务不可用，已停下/u);
+  assert.doesNotMatch(html, /选品处理|上架前确认/u);
+  assert.match(html, /已淘汰 1（默认隐藏）/u);
+  assert.match(html, /主人淘汰：品牌风险/u);
+  assert.match(html, />恢复</u);
+  const empty = (await pages()).board(props([]));
+  assert.match(empty, /本店暂时没有在做的商品/u);
+  assert.doesNotMatch(empty, /已淘汰/u, '没有淘汰过就不出现这一块');
+});
+
+test('需要你处理每行直接写出为什么等你和下一步按钮，不用挨个打开', async () => {
+  const draft = { schemaVersion: 'supplier-draft-v1', sourceUrl: 'https://detail.1688.com/offer/876240928352.html' };
+  const html = (await pages()).inbox(props([
+    candidate('candidate:draft', { productName: '还没填找货的商品', needsFromUser: ['补一个1688链接'] }),
+    candidate('candidate:blocked', { productName: '没过线的商品', supplierDraftV1: draft, needsFromUser: ['确认采购价'],
+      supplierDraftEstimateV1: { estimate: { status: 'ok' }, profitAtDeclaredPurchase: { passes: false, unitProfitRmb: 1.2, marginRate: 0.03 } } }),
+    candidate('candidate:sku', { productName: '等你选规格的商品', supplierDraftV1: draft,
+      sourceCapture: { status: 'captured_waiting_owner_selection' },
+      supplierDraftEstimateV1: { estimate: { status: 'ok' }, profitAtDeclaredPurchase: { passes: true, unitProfitRmb: 41.26 } } }),
+    dropped('candidate:gone')
+  ]));
+  assert.match(html, /共 3 条等你/u);
+  // Every reason is a sentence read from that product's own saved records, on its own line.
+  assert.match(html, /找货还没填/u);
+  assert.match(html, /补一个1688链接/u);
+  assert.match(html, /按你填的到手总价没到本店利润门槛：单件利润 ¥1\.20 · 利润率 3%/u);
+  assert.match(html, /插件已采到1688页面，等你选具体规格/u);
+  for (const label of ['去填找货', '去改找货', '去选规格']) assert.match(html, new RegExp(`>${label}<`, 'u'));
+  assert.equal((html.match(/eliminate-button/gu) ?? []).length, 3, '每行一个淘汰');
+  assert.match(html, /已淘汰 1（默认隐藏）/u);
+  assert.match(html, /主人淘汰：品牌风险/u);
+  const empty = (await pages()).inbox(props([]));
+  assert.match(empty, /现在没有等你处理的商品/u);
+});
+
+test('需要你处理的每一行都开到那件商品自己的页面，「去选规格」不再把主人丢回旧版工程页', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const inbox = await readFile(fileURLToPath(new URL('../src/components/OwnerInbox.jsx', import.meta.url)), 'utf8');
+  const app = await readFile(fileURLToPath(new URL('../src/App.jsx', import.meta.url)), 'utf8');
+  assert.match(inbox, /const open = item => onOpenCandidate\(item\.id\);/u);
+  assert.doesNotMatch(inbox, /onOpenLegacyCandidate/u, '选规格已经是商品页自己的一步，收件箱不再有第二条出口');
+  assert.doesNotMatch(app, /openLegacyCandidate/u);
+  // 旧版A卡仍然进得去，只是要主人自己点，而不是收件箱替他决定。
+  assert.match(app, /view: "review", label: "今日选品评审"/u);
+});
+
+test('需要你处理：同款各色合成一行、每个颜色各有原因和一个按钮，名字用中文，淘汰收在「更多」里', async () => {
+  const choices = [{ sourceSkuId: '11', attributes: { 颜色: '卡其' } }, { sourceSkuId: '12', attributes: { 颜色: '黑色' } }];
+  const html = (await pages()).inbox(props([
+    candidate('candidate:vest', { productName: 'Жилет', needsFromUser: ['确认最终素材'], workflowStatus: 'listing_preparation',
+      executionRuntime: { businessPhase: 'C2', status: 'waiting_owner' }, sourceCapture: { title: '猫咪背心', selectedSkuIds: ['11'], skuChoices: choices } }),
+    candidate('candidate:black', { productName: 'Жилет черный', needsFromUser: ['确认最终素材'], workflowStatus: 'listing_preparation',
+      executionRuntime: { businessPhase: 'C2', status: 'waiting_owner' },
+      siblingSourceV1: { parentCandidateId: 'candidate:vest', supplierSkuId: '12' }, sourceCapture: { skuChoices: choices } }),
+    candidate('candidate:r', { productName: 'Органайзер', workflowStatus: 'awaiting_user_direction', sourceCapture: { title: '桌面收纳盒' },
+      intake: { stage: 'ready', sourceKind: 'pinduoduo' } })
+  ]));
+  assert.equal((html.match(/data-testid="inbox-row"/gu) ?? []).length, 2, '背心两个颜色合成一行');
+  assert.match(html, /<b>猫咪背心<\/b><span class="inbox-row-status">2 个颜色在等你<\/span>/u);
+  assert.match(html, /<strong class="inbox-row-colour">卡其<\/strong>/u);
+  assert.match(html, /<strong class="inbox-row-colour">黑色<\/strong>/u);
+  assert.match(html, /<b>桌面收纳盒<\/b>/u);
+  assert.doesNotMatch(html, /Жилет|Органайзер/u);
+  assert.match(html, /待确认 · 找完了，等你点「做这件」/u);
+  assert.match(html, /准备中 · 等你决定/u);
+  assert.match(html, />去确认<\/button>/u);
+  assert.doesNotMatch(html, />打开<\/button>/u, '下一步按钮就是打开，不再有第二个');
+  assert.doesNotMatch(html, /选品处理|上架前确认|待上架准备/u);
+  assert.equal((html.match(/<details class="board-card-more">/gu) ?? []).length, 3);
+  assert.match(html, />淘汰「黑色」<\/button>/u);
+});

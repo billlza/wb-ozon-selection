@@ -4,7 +4,7 @@ import { PRODUCTION_AUTHORIZATION_VERSION, isProductionExecutionBinding } from "
 import { normalizeC1SourceIdentity } from "./c1-product-plan.mjs";
 import { assertCurrentC1SkuRightsReview } from "./c1-sku-rights-review.mjs";
 import { validateProductionRecord, validateProductionReadbackExpectation } from "./production-record-contract.mjs";
-import { assertNoProductionSecrets, assertNoRawPersistenceKeys, fingerprintCanonicalRecord, isCanonicalFrozenRef } from "./production-contract-primitives.mjs";
+import { assertNoProductionSecrets, assertNoRawPersistenceKeys, fingerprintCanonicalRecord, isCanonicalFrozenRef, isOpaqueProductionSourceRef } from "./production-contract-primitives.mjs";
 import { sameStoreRef } from "./store-binding.mjs";
 
 export const D_E_SOFTWARE_JOB_SCOPE_VERSION = "software-job-scope-v1";
@@ -50,10 +50,6 @@ function boundedScopeText(value, maximum) {
   return typeof value === "string" && value.length > 0 && value.length <= maximum && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
-function opaqueSourceRef(value) {
-  return boundedScopeText(value, 1024) && !placeholderRef(value);
-}
-
 /** Structural envelope contract only; current candidate/source semantics remain in the create/assert functions below. */
 export function normalizeDESoftwareJobScope(scope, { candidateId, skuPackageId, revision, jobType } = {}) {
   requireCondition([D_SCOPE, E_SCOPE].includes(jobType), "DE_JOB_SCOPE_TYPE_INVALID");
@@ -62,8 +58,8 @@ export function normalizeDESoftwareJobScope(scope, { candidateId, skuPackageId, 
     scope.schemaVersion === D_E_SOFTWARE_JOB_SCOPE_VERSION && scope.sideEffectScope === jobType, "DE_JOB_SCOPE_SHAPE_INVALID");
   // PA IDs embed SKU and owner-decision IDs; actual current IDs already exceed
   // the 256-character leaf-reference limit. They are opaque, never URLs to visit.
-  requireCondition(opaqueSourceRef(scope.authorizationRef) && boundedScopeText(scope.variantKey, 256), "DE_JOB_SCOPE_REFERENCE_INVALID");
-  if (jobType === E_SCOPE) requireCondition([scope.sourceProductionRecordId, scope.sourceProductionPlanId].every(opaqueSourceRef),
+  requireCondition(isOpaqueProductionSourceRef(scope.authorizationRef) && boundedScopeText(scope.variantKey, 256), "DE_JOB_SCOPE_REFERENCE_INVALID");
+  if (jobType === E_SCOPE) requireCondition([scope.sourceProductionRecordId, scope.sourceProductionPlanId].every(isOpaqueProductionSourceRef),
     "DE_JOB_SCOPE_REFERENCE_INVALID");
   for (const field of ["candidateId", "skuPackageId", "warehouseRef", "credentialAlias", "merchantSku"]) {
     requireCondition(canonicalSourceRef(scope[field]),

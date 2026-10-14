@@ -17,7 +17,7 @@ async function fixture({status='pending',throwDuringRead=false}={}){
    const document=await d.repository.readSnapshot(),attempt=document.candidates[0].lifecycleV11.skuPackage.dSoftwareExecution.attempt;
    const offer=attempt.request.merchantSku;
    if(request.endpoint==='/v1/product/import/info')return {result:{items:[{offer_id:offer,product_id:status==='pending'?0:910001,status,errors:[]}]}};
-   if(request.endpoint==='/v3/product/info/list')return {items:[{id:910001,offer_id:offer,errors:[],statuses:{status:d.input.adapterCapabilities.inventoryWrite.prerequisitePolicy.priceSent.acceptedValues[0]}}]};
+   if(request.endpoint==='/v3/product/info/list')return {items:[{id:910001,offer_id:offer,is_archived:false,is_autoarchived:false,errors:[],statuses:{status:d.input.adapterCapabilities.inventoryWrite.prerequisitePolicy.priceSent.acceptedValues[0]}}]};
    if(request.endpoint==='/v2/product/info/stocks-by-warehouse/fbs')return {has_next:false,products:[{warehouse_id:Number(d.input.adapterCapabilities.warehouseId),product_id:910001,sku:910002,offer_id:offer,free_stock:0,present:0,reserved:0}]};
    throw new Error('Unexpected endpoint');
   }})})});

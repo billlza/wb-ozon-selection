@@ -49,7 +49,7 @@ async function assertNoOutputOrStaging(fixture) {
 test("prepare produces only the complete code package and leaves persistent content unchanged", async t => {
   const fixture = await syntheticSource(t);
   const receipt = await prepareRuntimePackage(fixture);
-  assert.deepEqual((await fs.readdir(fixture.outputDirectory)).sort(), ["dist", "lib", "node_modules", "package.json", "runtime", "runtime-package.json", "schema", "scripts", "server.mjs", "启动今日选品评审台.command"].sort());
+  assert.deepEqual((await fs.readdir(fixture.outputDirectory)).sort(), ["dist", "docs", "lib", "node_modules", "package.json", "runtime", "runtime-package.json", "schema", "scripts", "server.mjs", "启动今日选品评审台.command"].sort());
   assert.deepEqual(receipt.dependencyVersions, manifest.dependencies);
   assert.deepEqual(await fs.readlink(path.join(fixture.outputDirectory, "node_modules/ali-oss")), ".store/ali-oss");
   assert.equal(await fs.readFile(path.join(fixture.sourceDirectory, "data/candidates.json"), "utf8"), "synthetic persistent candidate sentinel");

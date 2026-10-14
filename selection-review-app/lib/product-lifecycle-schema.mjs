@@ -7,9 +7,10 @@ import {
   assertFinalAssetLocation,
   assertNoProductionSecrets,
   collectProductionSecretErrors,
+  dProductionJobRound,
   fingerprintCanonicalRecord
 } from "./production-contract-primitives.mjs";
-import { validateProductionAuthorizationPreparation, isProductionExecutionBinding } from "./production-authorization-preparation.mjs";
+import { validateProductionAuthorizationPreparation, isProductionExecutionBinding, assertAuthorizedMediaUnchanged } from "./production-authorization-preparation.mjs";
 import { validateC1SkuRightsReviewRecord } from "./c1-sku-rights-review.mjs";
 import { isAssetTransportPrewriteFailure } from "./production-execution-failure.mjs";
 
@@ -138,16 +139,16 @@ const OWNER_DECISION_SNAPSHOT_FIELDS = Object.freeze([
   "schemaVersion", "decisionId", "sourceConfirmationCardId", "sourcePreparationFingerprint",
   "sourceFinalCardInputFingerprint", "sourceC1Fingerprint", "sourceCandidateRevision", "sourceSkuRevision",
   "identity", "buyerTargetPrice", "platformWritePrice", "priceConversion", "stock", "publishScope",
-  "allowedWriteFields", "exclusions", "mediaRequirementsFingerprint", "finalManifestSha256",
+  "allowedWriteFields", "exclusions", "authorizedMediaFingerprint", "finalManifestSha256",
   "finalUploadsFingerprint", "mainImageAssetId", "videoDisposition", "effectiveVideoRequirement"
 ]);
 const SINGLE_OWNER_DECISION_SNAPSHOT_FIELDS = Object.freeze([...OWNER_DECISION_SNAPSHOT_FIELDS, "executionBinding"]);
 const PRODUCTION_EXECUTION_BINDING_FIELDS = Object.freeze(["bindingId", "configurationVersion", "warehouseId"]);
 const LOCKED_SCOPE_FIELDS = Object.freeze([
   "candidateId", "skuPackageId", "variantKey", "platform", "storeRef", "merchantSku", "supplierSkuId",
-  "warehouseRef", "credentialAlias", "schemaRevision", "schemaEvidenceRef", "schemaEvidenceVersion",
+  "warehouseRef", "credentialAlias", "schemaRevision", "schemaEvidenceRef",
   "activeProfitModelVersion", "buyerTargetPrice", "platformWritePrice", "priceConversion", "stock",
-  "mediaRequirementsFingerprint", "finalManifestVersion", "finalManifestSha256", "finalUploadsFingerprint",
+  "authorizedMediaFingerprint", "finalManifestVersion", "finalManifestSha256", "finalUploadsFingerprint",
   "mainImageAssetId", "videoDisposition", "effectiveVideoRequirement", "finalUploads",
   "finalCardInputSnapshot", "publishScope", "allowedWriteFields", "exclusions"
 ]);
@@ -158,7 +159,7 @@ const FINAL_CARD_FIELDS = Object.freeze([
 ]);
 const FINAL_UPLOAD_FIELDS = Object.freeze([
   "assetId", "mediaType", "assetRef", "fileName", "assetVersion", "sha256", "sourceEvidenceRef",
-  "stableUrlEvidenceRef", "usageAuthorization", "sourceType", "order", "role", "slotId", "byteSize",
+  "stableUrlEvidenceRef", "usageAuthorization", "sourceType", "order", "role", "byteSize",
   "width", "height", "addedAt", "lifecycleArea", "ownerConfirmed", "productionEligible"
 ]);
 const D_HANDOFF_FIELDS = Object.freeze([
@@ -542,9 +543,11 @@ function validateFinalUploads(finalUploads, lockedScope, errors) {
   finalUploads.forEach((asset, index) => {
     const path = `productionAuthorization.lockedScope.finalUploads[${index}]`;
     if (!validateExactObject(asset, FINAL_UPLOAD_FIELDS, path, errors)) return;
-    for (const field of ["assetId", "assetRef", "fileName", "assetVersion", "sha256", "sourceEvidenceRef", "stableUrlEvidenceRef", "role", "slotId", "addedAt"]) {
+    for (const field of ["assetId", "assetRef", "fileName", "assetVersion", "sha256", "sourceEvidenceRef", "stableUrlEvidenceRef", "addedAt"]) {
       if (!isNonEmptyString(asset[field])) push(errors, `${path}.${field}`, "必须是非空字符串");
     }
+    // 主人给的第一张就是主图，其余按序进图库；角色只能由顺序推出来，软件不许自己指定。
+    if (asset.role !== (index === 0 ? "main_image" : "gallery_image")) push(errors, `${path}.role`, "角色必须由主人给的顺序推出");
     if (!SHA256_PATTERN.test(String(asset.sha256 || ""))) push(errors, `${path}.sha256`, "必须是SHA256");
     if (!["image", "video"].includes(asset.mediaType)) push(errors, `${path}.mediaType`, "必须是image或video");
     if (asset.sourceType !== "owner_provided_final_upload" || asset.lifecycleArea !== "finalUploads" || asset.ownerConfirmed !== true || asset.productionEligible !== true) {
@@ -569,8 +572,15 @@ function validateFinalUploads(finalUploads, lockedScope, errors) {
       push(errors, `${path}.assetRef`, "必须是登记的不可变本地素材或有证据的稳定HTTPS素材");
     }
   });
-  if (mainCount !== 1 || !ids.has(lockedScope.mainImageAssetId) || finalUploads.find((asset) => asset.role === "main_image")?.assetId !== lockedScope.mainImageAssetId) {
-    push(errors, "productionAuthorization.lockedScope.mainImageAssetId", "必须且只能锁定一个首图");
+  if (mainCount !== 1 || !ids.has(lockedScope.mainImageAssetId) || finalUploads[0]?.assetId !== lockedScope.mainImageAssetId ||
+      finalUploads[0]?.mediaType !== "image") {
+    push(errors, "productionAuthorization.lockedScope.mainImageAssetId", "必须且只能锁定主人排第一张的图片为首图");
+  }
+  // 授权的就是发出去的：锁定范围里这批地址、这个顺序一旦被换，指纹立刻对不上。
+  try {
+    assertAuthorizedMediaUnchanged(finalUploads, lockedScope.authorizedMediaFingerprint, "lockedScope");
+  } catch (error) {
+    push(errors, "productionAuthorization.lockedScope.authorizedMediaFingerprint", error.message);
   }
   if (lockedScope.videoDisposition === "includes_video" && videoCount === 0) push(errors, "productionAuthorization.lockedScope.videoDisposition", "声明包含视频时必须有视频素材");
   if (lockedScope.videoDisposition === "excludes_video" && videoCount > 0) push(errors, "productionAuthorization.lockedScope.videoDisposition", "声明排除视频时不得夹带视频素材");
@@ -654,7 +664,7 @@ export function validateProductionAuthorizationRecord(value, context = {}) {
 
   const scope = value.lockedScope;
   if (validateExactObject(scope, LOCKED_SCOPE_FIELDS, `${path}.lockedScope`, errors)) {
-    for (const field of ["candidateId", "skuPackageId", "variantKey", "platform", "merchantSku", "supplierSkuId", "warehouseRef", "credentialAlias", "schemaRevision", "schemaEvidenceRef", "schemaEvidenceVersion", "activeProfitModelVersion", "mainImageAssetId"]) {
+    for (const field of ["candidateId", "skuPackageId", "variantKey", "platform", "merchantSku", "supplierSkuId", "warehouseRef", "credentialAlias", "schemaRevision", "schemaEvidenceRef", "activeProfitModelVersion", "mainImageAssetId"]) {
       if (!isNonEmptyString(scope[field])) push(errors, `${path}.lockedScope.${field}`, "必须是非空字符串");
     }
     if (!sameJson(scope.storeRef, value.identity?.storeRef) || scope.candidateId !== value.identity?.candidateId || scope.skuPackageId !== value.identity?.skuPackageId || scope.platform !== value.identity?.platform || scope.supplierSkuId !== value.identity?.supplierSkuId || scope.merchantSku !== value.identity?.merchantSku || scope.warehouseRef !== value.identity?.warehouseRef || scope.credentialAlias !== value.identity?.credentialAlias) push(errors, `${path}.lockedScope`, "身份、平台、结构化店铺与SKU必须同源");
@@ -666,7 +676,7 @@ export function validateProductionAuthorizationRecord(value, context = {}) {
       if (Number.isFinite(converted) && Math.abs(converted - scope.platformWritePrice?.amount) > 0.02) push(errors, `${path}.lockedScope.priceConversion`, "RUB/CNY价格换算不一致");
     }
     if (!Number.isInteger(scope.stock) || scope.stock < 0) push(errors, `${path}.lockedScope.stock`, "必须由主人明确锁定非负整数库存");
-    for (const field of ["mediaRequirementsFingerprint", "finalManifestSha256", "finalUploadsFingerprint"]) if (!SHA256_PATTERN.test(String(scope[field] || ""))) push(errors, `${path}.lockedScope.${field}`, "必须是SHA256");
+    for (const field of ["authorizedMediaFingerprint", "finalManifestSha256", "finalUploadsFingerprint"]) if (!SHA256_PATTERN.test(String(scope[field] || ""))) push(errors, `${path}.lockedScope.${field}`, "必须是SHA256");
     if (scope.finalManifestVersion !== "c2-final-manifest-v1") push(errors, `${path}.lockedScope.finalManifestVersion`, "必须使用c2-final-manifest-v1");
     if (!["includes_video", "excludes_video"].includes(scope.videoDisposition)) push(errors, `${path}.lockedScope.videoDisposition`, "视频处置无效");
     if (!hasExactKeys(scope.effectiveVideoRequirement, ["status", "requiredBy", "evidenceRefs"]) || !["required", "not_required"].includes(scope.effectiveVideoRequirement?.status) || !isNonEmptyString(scope.effectiveVideoRequirement?.requiredBy) || !Array.isArray(scope.effectiveVideoRequirement?.evidenceRefs)) push(errors, `${path}.lockedScope.effectiveVideoRequirement`, "必须锁定条件视频要求");
@@ -677,14 +687,14 @@ export function validateProductionAuthorizationRecord(value, context = {}) {
       const card = scope.finalCardInputSnapshot;
       validateAuthorizationG1(card.identity, `${path}.lockedScope.finalCardInputSnapshot.identity`, errors, { source: true });
       if (card.schemaVersion !== "c2-final-card-input-snapshot-v1" || card.skuPackageId !== scope.skuPackageId || card.variantKey !== scope.variantKey || card.sourceC1Fingerprint !== value.sourceC1Fingerprint || card.resultDataRevision !== value.authorizedDataRevision || card.sourceDataRevision + 1 !== card.resultDataRevision || card.activeProfitModelVersion !== scope.activeProfitModelVersion || card.activeProfitModel?.result !== "passed" || !sameJson(card.identity, value.sourceIdentity)) push(errors, `${path}.lockedScope.finalCardInputSnapshot`, "最终卡、身份、利润与revision必须同源");
-      if (singleOwner && (card.activeProfitModel?.commissionMode !== "exact" ||
+      if (singleOwner && (!["exact", "official_reference"].includes(card.activeProfitModel?.commissionMode) ||
           scope.buyerTargetPrice?.amount !== card.activeProfitModel?.recommendedSalePriceRub || scope.platformWritePrice?.amount !== card.activeProfitModel?.recommendedSalePriceCny ||
-          !sameJson(scope.priceConversion, card.activeProfitModel?.priceConversion))) push(errors, `${path}.lockedScope.platformWritePrice`, "新版授权价格必须保持当前冻结精确利润方案，不得原地改价");
+          !sameJson(scope.priceConversion, card.activeProfitModel?.priceConversion))) push(errors, `${path}.lockedScope.platformWritePrice`, "新版授权价格必须保持当前冻结正式利润方案，不得原地改价");
       if (fingerprintCanonicalRecord(card) !== value.sourceFinalCardInputFingerprint) push(errors, `${path}.sourceFinalCardInputFingerprint`, "最终卡指纹不一致");
       if (fingerprintCanonicalRecord({ g1Identity: card.identity, c1Snapshot: card.c1Snapshot }) !== value.sourceC1Fingerprint) push(errors, `${path}.sourceC1Fingerprint`, "C1指纹不一致");
     }
     if (fingerprintCanonicalRecord({ collected: [], aiDrafts: [], finalUploads: scope.finalUploads }) !== scope.finalUploadsFingerprint) push(errors, `${path}.lockedScope.finalUploadsFingerprint`, "finalUploads指纹不一致");
-    if (fingerprintCanonicalRecord({ schemaVersion: "c2-final-manifest-v1", mediaRequirementsFingerprint: scope.mediaRequirementsFingerprint, effectiveVideoRequirement: scope.effectiveVideoRequirement, mainImageAssetId: scope.mainImageAssetId, videoDisposition: scope.videoDisposition, assets: scope.finalUploads }) !== scope.finalManifestSha256) push(errors, `${path}.lockedScope.finalManifestSha256`, "最终素材清单指纹不一致");
+    if (fingerprintCanonicalRecord({ schemaVersion: "c2-final-manifest-v1", authorizedMediaFingerprint: scope.authorizedMediaFingerprint, effectiveVideoRequirement: scope.effectiveVideoRequirement, mainImageAssetId: scope.mainImageAssetId, videoDisposition: scope.videoDisposition, assets: scope.finalUploads }) !== scope.finalManifestSha256) push(errors, `${path}.lockedScope.finalManifestSha256`, "最终素材清单指纹不一致");
     if (!["create_draft_only", "create_and_allow_validation_moderation"].includes(scope.publishScope)) push(errors, `${path}.lockedScope.publishScope`, "授权范围无效");
     if (!Array.isArray(scope.allowedWriteFields) || scope.allowedWriteFields.length === 0 || new Set(scope.allowedWriteFields).size !== scope.allowedWriteFields.length || scope.allowedWriteFields.some((field) => !PRODUCTION_WRITE_FIELDS.has(field))) push(errors, `${path}.lockedScope.allowedWriteFields`, "写字段必须非空、唯一且来自白名单");
     if (!Array.isArray(scope.exclusions) || new Set(scope.exclusions).size !== scope.exclusions.length || scope.exclusions.some((field) => !isNonEmptyString(field))) push(errors, `${path}.lockedScope.exclusions`, "排除项必须是唯一非空字符串");
@@ -692,7 +702,7 @@ export function validateProductionAuthorizationRecord(value, context = {}) {
         !sameJson(ownerSnapshot?.platformWritePrice, scope.platformWritePrice) || !sameJson(ownerSnapshot?.priceConversion, scope.priceConversion) ||
         ownerSnapshot?.stock !== scope.stock || ownerSnapshot?.publishScope !== scope.publishScope ||
         !sameJson(ownerSnapshot?.allowedWriteFields, scope.allowedWriteFields) || !sameJson(ownerSnapshot?.exclusions, scope.exclusions) ||
-        ownerSnapshot?.mediaRequirementsFingerprint !== scope.mediaRequirementsFingerprint || ownerSnapshot?.finalManifestSha256 !== scope.finalManifestSha256 ||
+        ownerSnapshot?.authorizedMediaFingerprint !== scope.authorizedMediaFingerprint || ownerSnapshot?.finalManifestSha256 !== scope.finalManifestSha256 ||
         ownerSnapshot?.finalUploadsFingerprint !== scope.finalUploadsFingerprint || ownerSnapshot?.mainImageAssetId !== scope.mainImageAssetId ||
         ownerSnapshot?.videoDisposition !== scope.videoDisposition || !sameJson(ownerSnapshot?.effectiveVideoRequirement, scope.effectiveVideoRequirement)) {
       push(errors, `${path}.ownerDecisionSnapshot`, "主人决定必须不可变锁定生产身份、价格、库存、范围与媒体条件");
@@ -720,8 +730,8 @@ export function validateProductionAuthorizationRecord(value, context = {}) {
         push(errors, `${path}.sourcePreparationFingerprint`, error.message);
       }
       if (value.sourcePreparationFingerprint !== preparation.preparationFingerprint || value.sourceFinalCardInputFingerprint !== preparation.finalCardInputFingerprint || value.sourceC1Fingerprint !== preparation.sourceC1Fingerprint || value.authorizedDataRevision !== preparation.resultDataRevision || !sameJson(value.sourceIdentity, preparation.finalCardInputSnapshot?.identity)) push(errors, `${path}.sourcePreparationFingerprint`, "必须与同一C2 preparation同源");
-      if (scope?.mediaRequirementsFingerprint !== preparation.mediaRequirementsFingerprint || scope?.finalManifestSha256 !== preparation.finalManifestSha256 || scope?.finalUploadsFingerprint !== preparation.finalUploadsFingerprint || scope?.mainImageAssetId !== preparation.mainImageAssetId || scope?.videoDisposition !== preparation.videoDisposition || !sameJson(scope?.effectiveVideoRequirement, preparation.effectiveVideoRequirement) || !sameJson(scope?.finalUploads, preparation.finalUploads) || !sameJson(scope?.finalCardInputSnapshot, preparation.finalCardInputSnapshot)) push(errors, `${path}.lockedScope`, "媒体、最终卡和preparation必须逐字段同源");
-      if (scope?.schemaRevision !== preparation.targetContext?.schemaRevision || scope?.schemaEvidenceRef !== preparation.targetContext?.schemaEvidenceRef || scope?.schemaEvidenceVersion !== preparation.targetContext?.schemaEvidenceVersion) push(errors, `${path}.lockedScope.schemaRevision`, "Schema证据必须来自同一preparation");
+      if (scope?.authorizedMediaFingerprint !== preparation.authorizedMediaFingerprint || scope?.finalManifestSha256 !== preparation.finalManifestSha256 || scope?.finalUploadsFingerprint !== preparation.finalUploadsFingerprint || scope?.mainImageAssetId !== preparation.mainImageAssetId || scope?.videoDisposition !== preparation.videoDisposition || !sameJson(scope?.effectiveVideoRequirement, preparation.effectiveVideoRequirement) || !sameJson(scope?.finalUploads, preparation.finalUploads) || !sameJson(scope?.finalCardInputSnapshot, preparation.finalCardInputSnapshot)) push(errors, `${path}.lockedScope`, "媒体、最终卡和preparation必须逐字段同源");
+      if (scope?.schemaRevision !== preparation.targetContext?.schemaRevision || scope?.schemaEvidenceRef !== preparation.targetContext?.schemaEvidenceRef) push(errors, `${path}.lockedScope.schemaRevision`, "Schema证据必须来自同一preparation");
     }
     if (!sameJson(value.sourceIdentity, pkg.g1Identity) || scope?.candidateId !== pkg.g1Identity?.candidateId || scope?.skuPackageId !== pkg.skuPackageId || scope?.variantKey !== pkg.variantKey || scope?.platform !== pkg.targetPlatform || scope?.storeRef?.stableStoreId !== pkg.targetStore || scope?.supplierSkuId !== pkg.supplierSkuId) push(errors, `${path}.identity`, "必须与当前SKU生命周期G1身份同源");
     const lifecycleState = context.lifecycleState || (pkg.productionAuthorization === value ? "persisted" : "source");
@@ -801,7 +811,7 @@ function validateDHandoff(value, pkg, errors) {
     if (!isObject(ref) || ref.jobType !== "d_production_execution" || ref.candidateId !== value.candidateId ||
         ref.skuPackageId !== value.skuPackageId || ref.sourceRevision !== value.sourceCandidateRevision ||
         ref.resultRevision !== value.resultCandidateRevision || ref.inputFingerprint !== fingerprint ||
-        ref.jobId !== `d-production-job:${fingerprint}`) {
+        dProductionJobRound(ref.jobId, fingerprint) !== 1) {
       push(errors, "dHandoff.softwareJobRef", "必须精确绑定同一PA的唯一D作业和冻结修订");
     }
   }

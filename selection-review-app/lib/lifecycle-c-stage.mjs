@@ -1,4 +1,5 @@
 import { createC1ProductPlan, verifyC1ProductFacts } from "./c1-product-plan.mjs";
+import { resolveC1SkuRightsReviewForFacts } from "./c1-sku-rights-review.mjs";
 import { createC1SeoDraft } from "./c1-seo-draft.mjs";
 import { confirmFinalUploads, createC2AssetLifecycle } from "./c2-asset-lifecycle.mjs";
 import { createFinalProductPlanConfirmationCard } from "./final-product-plan-confirmation-card.mjs";
@@ -41,8 +42,15 @@ export function completeC1AndStartC2({
     }).skuPackage;
   }
   if (current.c1ProductPlan?.status === "inputs_ready") {
+    // 主人签过的那份权利声明必须跟着进来。不传它，事实冻结出来的计划会因为
+    // 「已保存记录与冻结快照对不上」被 C1_RIGHTS_RECORD_DECLARATION_MISMATCH 判废——
+    // 也就是说：只要主人签了声明，这条通用C1入口反而走不通了（2026-09-17 实测）。
+    // 编排器那条路（c1-software-orchestrator）一直是先 resolve 再传，这里漏了同一步。
+    // 声明本身仍然只是一次声明：它不驱动状态机，是这个显式入口来消费它。
+    const rights = resolveC1SkuRightsReviewForFacts({ skuPackage: current, observedAt: completedAt });
     current = verifyC1ProductFacts({
       skuPackage: current,
+      skuRightsReview: rights.review,
       verifiedAt: completedAt
     }).skuPackage;
   }

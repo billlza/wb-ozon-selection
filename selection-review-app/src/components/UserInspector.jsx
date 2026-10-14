@@ -1,16 +1,17 @@
 import { useMemo, useState } from "react";
 import { buildBExactCommissionInput } from "../bExactCommissionInput.js";
 import FormRevisionNotice, { useCandidateForm, useSubmit } from "./FormRevisionNotice.jsx";
+import { platformOfStore } from "../../lib/store-registry.mjs";
 import { optionalNumber, candidatePlatform, safeWebUrl } from "../formState.js";
 import { finiteDisplayNumber, formatMoney, formatPercent } from "../finiteDisplay.js";
 import { buildCandidateCommentInput, shouldClearSubmittedComment } from "../commentInput.js";
-import { selectedC2DraftAssets } from "../../lib/c2-upload-draft.mjs";
-import { buildC2FinalAssetInput, c2MediaSlots } from "../c2FinalAssetInput.js";
-import { productionAuthorizationInputFromCard } from "../productionAuthorizationInput.js";
-import ProductionOwnerDecisionForm from "./ProductionOwnerDecisionForm.jsx";
+import C2FinalAssetsPanel from "./C2FinalAssetsPanel.jsx";
+export { default as C2FinalAssetsPanel } from "./C2FinalAssetsPanel.jsx";
+import FinalProductPlanCard from "./FinalProductPlanCard.jsx";
 import FinalPricingReviewForm from "./FinalPricingReviewForm.jsx";
 import C1RightsReviewPanel from "./C1RightsReviewPanel.jsx";
 import C1PaidDraftPanel from "./C1PaidDraftPanel.jsx";
+import C1OzonAttributePanel from "./C1OzonAttributePanel.jsx";
 import { candidateStoreFrozen, candidateProductionFactsFrozen } from "../../lib/candidate-user-fields.mjs";
 import { STORE_LABELS } from "../constants";
 import { salesCaptureFailurePresentation } from "../extensionStatus";
@@ -307,6 +308,31 @@ function MissingField({ field, form, update }) {
   return <label>{definition[0]}<input type="text" inputMode={definition[1]} value={form[field]} onChange={(event) => update(field, event.target.value)} /></label>;
 }
 
+/**
+ * 「这件的佣金还是估算的」那一块。
+ *
+ * 它摆在所有阶段面板的最前面，不属于任何一个阶段——主人从条件测算走到上架之间会换好几屏、隔好几天，只在
+ * 出事那一屏说一次他会忘，忘了最坏的结果是拿一个估算费率去上架。
+ *
+ * 整块由服务端构建（`estimatedCommissionNoticeStepV1`），页面一个字都不自己写：上架那道闸门和这几句话读的
+ * 是同一份记录的同一个字段，所以不会出现「页面说没事、服务端拦下来」这种事。佣金换成精确的那一刻服务端把
+ * present 置为 false，这一块自己消失。
+ *
+ * 不是警告。利润门槛本来就过了，市场价也容得下——所以这里用 role="status" 而不是 alert，样式也跟着选品页
+ * 那几块说明走，不用红字。
+ */
+export function EstimatedCommissionNotice({ step }) {
+  if (step?.present !== true) return null;
+  const sentences = Array.isArray(step.sentences) ? step.sentences : [];
+  if (sentences.length === 0) return null;
+  return (
+    <div className="source-capture-summary" role="status" aria-label="佣金还是估算的">
+      <b>这件商品的佣金还是估算的，上架之前要先复算一次</b>
+      {sentences.map(sentence => <span key={sentence}>{sentence}</span>)}
+    </div>
+  );
+}
+
 function NeedsDataPanel({ candidate, onUpdate, identity, onRecalculateBWithExactCommission }) {
   const [form, setForm, guard] = useCandidateForm(candidate, formFromCandidate(candidate));
   const { saving, error, run } = useSubmit();
@@ -325,19 +351,28 @@ function NeedsDataPanel({ candidate, onUpdate, identity, onRecalculateBWithExact
       !saving && !guard.conflict && Boolean(onRecalculateBWithExactCommission);
     return (
       <section className="workflow-card needs-card" aria-label="B条件测算">
-        <h3>{view?.canRecalculate ? "精确费用已齐，可以复算正式利润" : "条件测算已保存，等待精确佣金"}</h3>
+        {/* 这条路能用两种证据收尾（店里实收 / 官方费率表），所以名字不能再叫「精确费用」——
+            那是在替软件许一个它不一定做得到的承诺。标题、按钮和下面那一行说的是同一件事。 */}
+        <h3>{view?.canRecalculate ? "已经有更好的费用证据，可以重算利润" : "条件测算已保存，等更好的费用证据"}</h3>
         <p>供货方案已确认。当前保存的仍是条件测算，未通过正式B，也未进入C1。</p>
         {conditional ? <p>估算佣金率 {formatPercent(profit.commissionRate, 2)} · 条件单件利润 {formatMoney(profit.unitProfitRmb)} · 条件利润率 {formatPercent(profit.profitMargin, 2)}</p>
           : <p>当前条件测算记录待核对，暂不展示利润数字。</p>}
-        <p>无需重新填写已确认的供货价格和包装。{view?.message || "精确费用证据尚未核对，系统不会自动重试。"}</p>
+        <p>无需重新填写已确认的供货价格和包装。{view?.message || "还没有比估算更好的费用证据可用，系统不会自动重试。"}</p>
         {view?.canRecalculate ? <>
+          {/* 这一次会用哪一种证据，点之前就摆在按钮上面，不是点完才说。 */}
+          {view.commissionEvidenceLabel
+            ? <p>这一次会用：{view.commissionEvidenceLabel}
+              {view.commissionRate === null ? "" : ` ${formatPercent(view.commissionRate, 2)}`}。
+              {view.commissionEvidenceMode === "official_reference"
+                ? "这不是你这个店被扣过的钱，是公开费率表上写着的数；上架之前仍然要读到店里的实收费率。" : ""}</p>
+            : null}
           <FormRevisionNotice guard={guard} disabled={saving} />
-          {!ownerAuthenticated ? <p>请先登录主人身份后复算。</p> : null}
+          {!ownerAuthenticated ? <p>请先登录主人身份后重算。</p> : null}
           <button type="button" className="button primary" disabled={!canRecalculate}
             onClick={() => run(async () => {
               guard.assertCurrent();
               await onRecalculateBWithExactCommission(buildBExactCommissionInput({ candidate, sourceRevision: guard.sourceRevision }));
-            })}>{saving ? "正在复算正式利润…" : "使用精确费用复算"}</button>
+            })}>{saving ? "正在重算正式利润…" : "用更好的费用证据重算"}</button>
         </> : null}
         {error ? <p role="alert">{error}</p> : null}
       </section>
@@ -506,146 +541,68 @@ function WbMarketSummary({ candidate, presentation }) {
   );
 }
 
-function formatAssetSize(byteSize) {
-  if (!Number.isFinite(byteSize) || byteSize < 0) return "大小未取得";
-  const bytes = byteSize;
-  return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
-}
-
-function assetRoleLabel(role) {
-  if (role === "main_image") return "主图";
-  if (role === "detail_image") return "详情图";
-  return role || "槽位待选择";
-}
-
-export function C2FinalAssetsPanel({ candidate, onUpload, onSave, onConfirm }) {
-  const [lastReceipt, setLastReceipt] = useState(null);
-  const [ownerChecked, setOwnerChecked] = useState(false);
-  const operation = useSubmit();
-  const saved = candidate.lifecycleV11?.c2UploadDraft;
-  const draft = lastReceipt?.candidateId === candidate.id && lastReceipt.revision > (saved?.revision ?? 0) ? lastReceipt : saved;
-  const assets = selectedC2DraftAssets(draft);
-  const slots = c2MediaSlots(candidate);
-  const maximum = slots.reduce((total, slot) => total + slot.maxCount, 0);
-  const dataRevision = draft?.sourceCandidateRevision ?? candidate.dataRevision;
-  const draftRevision = draft?.revision ?? 0;
-  const sourceChanged = dataRevision !== candidate.dataRevision || (draft && (
-    draft.skuPackageId !== candidate.lifecycleV11?.skuPackage?.skuPackageId ||
-    draft.sourceSkuRevision !== candidate.lifecycleV11?.skuPackage?.dataRevision ||
-    draft.requirementsFingerprint !== candidate.lifecycleV11?.skuPackage?.c2FinalAssets?.mediaRequirements?.requirementsFingerprint));
-  const unfinished = draft?.uploads.filter(upload => upload.status !== "ready") || [];
-  const disabled = operation.saving || sourceChanged || unfinished.some(upload => upload.status === "uploading");
-  const identity = `${candidate.id}:${dataRevision}:${draftRevision}`;
-  const [checkedIdentity, setCheckedIdentity] = useState("");
-
-  function acceptReceipt(result) {
-    if (result?.candidateId !== candidate.id || result.dataRevision !== dataRevision ||
-        result.draft?.candidateId !== candidate.id || result.draft.sourceCandidateRevision !== dataRevision ||
-        !Number.isSafeInteger(result.draft.revision) || result.draft.revision <= draftRevision) {
-      throw new Error("素材保存回执与本次商品或修订不一致，请刷新核对；不会自动重复提交。");
-    }
-    setLastReceipt(result.draft);
-    setOwnerChecked(false);
-    return result.draft;
-  }
-
-  async function chooseFiles(event) {
-    const files = Array.from(event.target.files || []);
-    event.target.value = "";
-    if (!files.length || disabled) return;
-    return operation.run(async () => {
-      if (files.length + assets.length > maximum) throw new Error(`当前平台素材槽位合计最多${maximum}个，请减少本次选择数量。`);
-      let revision = draftRevision;
-      setOwnerChecked(false);
-      for (const file of files) {
-        const receipt = await onUpload(file, { dataRevision, draftRevision: revision });
-        revision = acceptReceipt(receipt).revision;
-      }
-    });
-  }
-
-  function saveSelection(next) {
-    return operation.run(async () => {
-      setOwnerChecked(false);
-      const selection = next.map((asset, index) => ({ assetId: asset.assetId, slotId: asset.slotId || null, order: index + 1 }));
-      acceptReceipt(await onSave({ dataRevision, draftRevision, selection }));
-    });
-  }
-
-  function moveAsset(index, delta) {
-    const next = [...assets];
-    [next[index], next[index + delta]] = [next[index + delta], next[index]];
-    return saveSelection(next);
-  }
-
-  let preview = null;
-  let requirementsError = "";
-  try { preview = buildC2FinalAssetInput({ candidate, sourceRevision: dataRevision, draftRevision, assets, ownerChecked: true }); }
-  catch (failure) { requirementsError = failure.message; }
-  const canConfirm = preview !== null && ownerChecked && checkedIdentity === identity && !disabled && Boolean(onConfirm);
-  function confirmAssets() {
-    if (!canConfirm) return;
-    return operation.run(() => onConfirm(buildC2FinalAssetInput({ candidate, sourceRevision: dataRevision, draftRevision, assets, ownerChecked })));
-  }
-
-  return (
-    <div className="c2-final-assets-panel">
-      {sourceChanged && <p role="alert">商品或C1资料已变化。旧素材清单已保留，请先核对绑定；不会自动挪到新SKU。</p>}
-      {operation.error && <p role="alert">{operation.error}；本轮已停止，没有自动重试。已保存的文件可刷新查看。</p>}
-      <div className="c2-final-assets-heading">
-        <div><b>C2 最终上传素材</b><span>上传、槽位和顺序会保存在本地；最后一次确认才锁定最终素材。</span></div>
-        <span className="c2-asset-count">{assets.length}/{Number.isFinite(maximum) ? maximum : "待取得"}</span>
-      </div>
-      <label className={`c2-file-picker ${disabled ? "disabled" : ""}`}>
-        <input type="file" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" disabled={disabled || !onUpload || !maximum} onChange={chooseFiles} />
-        <b>{operation.saving ? "正在保存素材清单…" : "添加最终图片"}</b>
-        <small>可一次多选JPG、PNG、WEBP静态图片；每文件不超过100MB、2000万像素。视频内容校验尚未配置。平台最终要求另行核验。</small>
-      </label>
-      {unfinished.map(upload => <p key={upload.uploadId} role="alert">{upload.fileName}：{upload.status === "uploading" ? "尚未取得完整上传回执，需要核对本地记录" : upload.failureCode === "upload_rejected" ? "内容校验未通过，未保存为可用素材" : "上传未完成，登记已保留"}。</p>)}
-      {assets.length ? (
-        <ol className="c2-final-asset-list">
-          {assets.map((asset, index) => (
-            <li key={asset.assetId} className={slots.find(slot => slot.slotId === asset.slotId)?.role === "main_image" ? "is-main" : ""}>
-              <div className="c2-final-asset-order">{index + 1}</div>
-              {asset.mediaType === "image" && <img className="c2-local-preview" src={`/api/candidates/${encodeURIComponent(candidate.id)}/lifecycle/c2/local-assets/${encodeURIComponent(asset.assetId)}`} alt={asset.fileName} />}
-              <div className="c2-final-asset-copy">
-                <b>{asset.fileName}</b>
-                <span>{assetRoleLabel(slots.find(slot => slot.slotId === asset.slotId)?.role)} · {formatAssetSize(asset.byteSize)}</span>
-                <label>素材用途
-                  <select aria-label={`素材${index + 1}槽位`} value={asset.slotId || ""} disabled={disabled || !onSave}
-                    onChange={event => saveSelection(assets.map(item => item.assetId === asset.assetId ? { ...item, slotId: event.target.value || null } : item))}>
-                    <option value="">请选择用途</option>
-                    {slots.filter(slot => slot.mediaType === asset.mediaType).map(slot => <option key={slot.slotId} value={slot.slotId}>{assetRoleLabel(slot.role)} · {slot.minCount}–{slot.maxCount}</option>)}
-                  </select>
-                </label>
-              </div>
-              <div className="c2-final-asset-actions">
-                <button type="button" className="button secondary" disabled={index === 0 || disabled || !onSave} onClick={() => moveAsset(index, -1)}>上移</button>
-                <button type="button" className="button secondary" disabled={index === assets.length - 1 || disabled || !onSave} onClick={() => moveAsset(index, 1)}>下移</button>
-                <button type="button" className="button secondary danger" disabled={disabled || !onSave} onClick={() => saveSelection(assets.filter(item => item.assetId !== asset.assetId))}>移出清单</button>
-              </div>
-            </li>
-          ))}
-        </ol>
-      ) : <p className="c2-empty-assets">尚未选择最终素材。当前商品仍停在C2，不会自动进入生产。</p>}
-      {requirementsError && assets.length > 0 && <p className="field-error">{requirementsError}</p>}
-      <label className="c2-owner-confirmation">
-        <input type="checkbox" checked={ownerChecked && checkedIdentity === identity} disabled={!assets.length || disabled} onChange={event => { setOwnerChecked(event.target.checked); setCheckedIdentity(identity); }} />
-        <span>我确认以上文件属于当前SKU，并确认所选用途、唯一首图、顺序和本次{assets.some(asset => asset.mediaType === "video") ? "包含视频" : "不含视频"}。</span>
-      </label>
-      <button type="button" className="button primary" disabled={!canConfirm} onClick={confirmAssets}>{operation.saving ? "正在保存…" : "确认最终素材并生成方案卡"}</button>
-      <small>这次确认只完成C2并生成最终商品方案卡，不创建生产授权、不派发任务、不访问或写入店铺。需要公开转存的素材将在取得精确生产授权后由软件处理。</small>
-    </div>
-  );
-}
-
 function captureExecutionConfirmed(candidate, capture, proof) {
   return proof?.currentExecutionConfirmed === true &&
     proof.candidateId === candidate.id && proof.candidateRevision === candidate.dataRevision &&
     typeof proof.captureId === "string" && proof.captureId.trim().length > 0 && proof.captureId === capture.captureId;
 }
 
-function ListingPreparationPanel({ candidate, onRecoveryAction, onCapture, onSelectSku, onUploadLifecycleFinalAsset, onSaveC2UploadDraft, onConfirmLifecycleFinalAssets, onSaveProductionOwnerDecision, onSaveFinalPricingReview, onSaveC1RightsReview, onAuthorizeC1PaidDraft, onContinueSavedC1Draft, onRetryC1KeywordHandoff, productionIdentity }) {
+
+/**
+ * 对标样本。
+ *
+ * 最终定价那一步要「多个有效样本比较」，只有 1 条不能形成比较；关键词本地素材同样要 3–5 个已审查竞品。
+ * 两处读的都是 candidate.salesSnapshotsV11，而在 2026-09-17 之前**没有任何入口能往里加第二个商品**——
+ * A 阶段那个采集面板采的是这件商品自己那一页，而且进了 C 阶段就不再显示。
+ *
+ * 这里补上那个入口：主人自己贴地址，软件不替他从类目里挑「像的」商品当可比样本。
+ * 采回来的快照带 comparable 标记，反推「这件商品自己的页面」时会跳过它们。
+ */
+function ComparableCapturePanel({ candidate, captureControl, onStart }) {
+  const [url, setUrl] = useState("");
+  const { saving, error, run } = useSubmit();
+  const snapshots = Array.isArray(candidate.salesSnapshotsV11) ? candidate.salesSnapshotsV11 : [];
+  const comparables = snapshots.filter(snapshot => snapshot?.comparable === true);
+  const own = snapshots.filter(snapshot => snapshot?.comparable !== true);
+  const busy = captureControl?.status === "busy";
+  const valid = /^https:\/\/(?:www\.)?ozon\.ru\/product\/[^\s]+$/i.test(url.trim());
+  if (!candidate.lifecycleV11?.skuPackage) return null;
+  return (
+    <section className="workflow-card">
+      <h3>对标样本</h3>
+      <p>最终定价要多个有效样本比较，只有 1 条不能形成比较。这里由你贴 Ozon 商品页地址，
+        软件<strong>不替你从类目里挑「像的」商品</strong>当可比样本。每次读一个页面，只读不写。</p>
+      <p>当前：这件商品自己的快照 {own.length} 条 · <strong>对标 {comparables.length} 条</strong>
+        {comparables.length < 2 ? "（最终定价至少要 2 条有效样本，3 条起不再提示不足）" : ""}</p>
+      {comparables.length ? (
+        <ul className="c2-final-asset-list">
+          {comparables.map(snapshot => (
+            <li key={snapshot.snapshotId}>
+              <div className="c2-final-asset-copy">
+                <b>{snapshot.title}</b>
+                <span>{snapshot.currentPrice} {snapshot.currency} · {snapshot.productUrl}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <label>Ozon 商品页地址
+        {/* 采集进行中只禁按钮，不禁输入：贴一个地址不伤害任何东西，而等插件那几十秒里
+            把下一个地址先贴好是很自然的事。2026-09-17 主人第一次用就卡在这儿。 */}
+        <input type="url" value={url} placeholder="https://www.ozon.ru/product/..." disabled={saving}
+          onChange={event => setUrl(event.target.value)} />
+      </label>
+      {url.trim() && !valid ? <p role="alert">这不是一个 Ozon 商品页地址，软件不改写它去凑一个。</p> : null}
+      {error ? <p role="alert">{error}</p> : null}
+      <button type="button" className="button secondary" disabled={!valid || saving || busy}
+        onClick={() => run(async () => { await onStart(url.trim()); setUrl(""); })}>
+        {saving ? "正在连接Chrome…" : busy ? "其他商品正在采集" : "用Chrome读这个对标页面（一次）"}
+      </button>
+    </section>
+  );
+}
+
+function ListingPreparationPanel({ candidate, captureControl, onStartOzonSalesCapture, onRecoveryAction, onCapture, onSelectSku, onUploadLifecycleFinalAsset, onSaveC2UploadDraft, onConfirmLifecycleFinalAssets, onSaveProductionOwnerDecision, onSaveFinalPricingReview, onSaveC1RightsReview, onAuthorizeC1PaidDraft, onContinueSavedC1Draft, onReadOriginalC1DraftResult, onRetryC1KeywordHandoff, onContinueC1Preparation, onBackfillC1SupplyAttributes, onSaveC1OzonAttributeMapping, onLoadC1OzonAttributes, onReadC1ColorDictionary, onRefreshC1CategorySchema, onProposeC1OzonAttributes, productionIdentity }) {
   const handoff = candidate.listingHandoff || {};
   const preparation = candidate.listingPreparation || {};
   const sourceCapture = candidate.sourceCapture || {};
@@ -679,17 +636,12 @@ function ListingPreparationPanel({ candidate, onRecoveryAction, onCapture, onSel
   const c2Assets = lifecycleSku?.c2FinalAssets || null;
   const activeProfit = lifecycleSku?.profitModels?.find((model) => model.profitModelVersion === lifecycleSku.activeProfitModelVersion) || null;
   const finalCard = lifecycleSku?.productionConfirmationCard || null;
-  const currentFinalCard = finalCard && Number.isInteger(finalCard.cardRevision) && finalCard.cardRevision >= 1 &&
-    finalCard.status === "awaiting_owner_business_confirmation" && finalCard.ownerDecision === null;
-  const productionScope = lifecycleSku?.productionAuthorization?.lockedScope || null;
-  const localFinalAssets = (productionScope?.finalUploads || []).some((asset) => !/^https:\/\//i.test(asset.assetRef || ""));
   const supplierFactSummary = (c1Plan?.productAttributes?.supplierAttributes || [])
     .filter((item) => item?.fact?.verificationStatus === "confirmed")
     .map((item) => `${item.fieldKey}：${String(item.fact.value)}`)
     .join(" · ");
   const materialFact = c1Plan?.productAttributes?.material;
   const batteryFact = c1Plan?.batteryAssessment?.assessment;
-  const authorizationReadiness = productionAuthorizationInputFromCard(candidate, finalCard);
   const [selectedSkuIds, setSelectedSkuIds, guard] = useCandidateForm(candidate, suggestedSkuKey ? suggestedSkuKey.split("|") : []);
   const { saving, error, run: submitOnce } = useSubmit();
 
@@ -753,37 +705,15 @@ function ListingPreparationPanel({ candidate, onRecoveryAction, onCapture, onSel
             {c1Plan?.seoTitleDraft?.text ? <span>俄语标题草稿：{c1Plan.seoTitleDraft.text}</span> : null}
             <span>关键词证据：仅展示当前冻结草稿；来源与用量请以正式作业回执为准，缺失不记为0。</span>
             <span>最终素材：{c2Assets?.assets?.finalUploads?.length || 0}个 · 生产授权：{lifecycleSku.productionAuthorization ? "已生成" : "未生成"} · 平台写入：0</span>
-            {finalCard ? (
-              <div className="lifecycle-final-card">
-                <b>最终商品方案确认卡 · {lifecycleSku.productionAuthorization ? lifecycleSku.productionAuthorization.schemaVersion === "production-authorization-v1.2" ? "主人精确生产授权已保存" : "历史生产授权，只读" : finalCard.ownerDecision ? "历史主人决定，只读" : "等待主人确认完整生产方案"}</b>
-                <span>标题：{finalCard.seoDraft?.title?.text}</span>
-                <span>精确SKU：{finalCard.productInformation?.sku?.value?.supplierSkuId} · 建议售价：{finalCard.profitResult?.recommendedSalePrice?.value?.rub} RUB</span>
-                <span>利润：{formatMoney(finalCard.profitResult?.unitProfitRmb?.value)} · 利润率 {formatPercent(finalCard.profitResult?.profitMargin?.value, 2)}</span>
-                {finalCard.profitResult?.finalPricingReview ? <span>最终价格比较：核心样本 {finalCard.profitResult.finalPricingReview.value.coreSampleIds.length} 条；{finalCard.profitResult.finalPricingReview.value.insufficientSamples ? "样本不足三条，已明确记录" : "核心样本齐全"}。</span>
-                  : !lifecycleSku.productionAuthorization ? <span>此价格仍为B阶段参考价，最终多样本比较尚未保存。</span> : null}
-                <span>最终上传顺序：{(finalCard.c2Assets?.finalUploads || []).map((asset) => asset.fileName || asset.assetId).join(" → ")}</span>
-                {finalCard.riskAndUnknowns?.marketReferenceMismatch ? <span>风险：销售端参考商品与当前精确供应SKU存在规格差异；请以确认卡中保存的差异证据为准。</span> : null}
-                {lifecycleSku.productionAuthorization ? (
-                  <>
-                    <span>买家目标成交价：{productionScope?.buyerTargetPrice?.amount ?? finalCard.profitResult?.recommendedSalePrice?.value?.rub} {productionScope?.buyerTargetPrice?.currency || "RUB"}</span>
-                    <span>Ozon后台实际写入价：{productionScope?.platformWritePrice ? `${productionScope.platformWritePrice.amount} ${productionScope.platformWritePrice.currency}` : "历史授权，禁止继续生产"}</span>
-                    <span>上架最短路径：Seller API自动填写类目、属性、价格、包装并独立回读；{localFinalAssets ? "本机素材只保留一次人工多选" : "素材也可由API直接处理"}。</span>
-                    <small>浏览器不再承担逐字段填表；后台价格字段只允许CNY。库存只按主人此次授权中锁定的准确值写入。</small>
-                  </>
-                ) : (
-                  <>
-                    <small>{authorizationReadiness.reason}</small>
-                    {!currentFinalCard ? <p>历史确认卡和主人决定保持只读，不能自动转成新版授权。</p> : null}
-                    {currentFinalCard ? <ProductionOwnerDecisionForm key={finalCard.cardRevision} candidate={candidate} identity={productionIdentity} onSave={onSaveProductionOwnerDecision} /> : null}
-                  </>
-                )}
-              </div>
-            ) : null}
+            {finalCard ? <FinalProductPlanCard candidate={candidate} identity={productionIdentity}
+              onSaveProductionOwnerDecision={onSaveProductionOwnerDecision} onSaveFinalPricingReview={onSaveFinalPricingReview} /> : null}
           </div>
         ) : null}
         {lifecycleSku?.businessPhase === "C1" && c1Plan ? <C1RightsReviewPanel candidate={candidate} identity={productionIdentity} onSave={onSaveC1RightsReview} /> : null}
-        <C1PaidDraftPanel candidate={candidate} identity={productionIdentity} onAuthorize={onAuthorizeC1PaidDraft} onContinueSaved={onContinueSavedC1Draft} onRetryKeywordHandoff={onRetryC1KeywordHandoff} />
-        {lifecycleSku?.businessPhase === "C2" && !lifecycleSku.productionAuthorization ? <FinalPricingReviewForm candidate={candidate} onSave={onSaveFinalPricingReview} disabled={productionIdentity?.canSaveProductionOwnerDecision !== true} /> : null}
+        <C1OzonAttributePanel candidate={candidate} identity={productionIdentity} onBackfill={onBackfillC1SupplyAttributes} onSaveMapping={onSaveC1OzonAttributeMapping} onRefreshSchema={onRefreshC1CategorySchema} onProposeAttributes={onProposeC1OzonAttributes} onLoadMappingFacts={onLoadC1OzonAttributes} onReadColorDictionary={onReadC1ColorDictionary} />
+        <ComparableCapturePanel candidate={candidate} captureControl={captureControl} onStart={onStartOzonSalesCapture} />
+        <C1PaidDraftPanel candidate={candidate} identity={productionIdentity} onAuthorize={onAuthorizeC1PaidDraft} onContinueSaved={onContinueSavedC1Draft} onReadOriginalResult={onReadOriginalC1DraftResult} onRetryKeywordHandoff={onRetryC1KeywordHandoff} onContinuePreparation={onContinueC1Preparation} />
+        {lifecycleSku?.businessPhase === "C2" && !finalCard && !lifecycleSku.productionAuthorization ? <FinalPricingReviewForm candidate={candidate} onSave={onSaveFinalPricingReview} disabled={productionIdentity?.canSaveProductionOwnerDecision !== true} /> : null}
         {lifecycleSku?.businessPhase === "C2" && c2Assets?.status === "awaiting_final_uploads" ? (
           c2Assets.softwareState ? (
             <C2FinalAssetsPanel candidate={candidate} onUpload={onUploadLifecycleFinalAsset} onSave={onSaveC2UploadDraft} onConfirm={onConfirmLifecycleFinalAssets} />
@@ -901,7 +831,7 @@ function ReadyPanel({ candidate, rules, onMarkListed }) {
   const [showListedForm, setShowListedForm] = useState(false);
   const { saving, error, run } = useSubmit();
   const emptyForm = () => ({
-    platform: candidate.targetStore === "wb" ? "wb" : ["dandanshu", "miska"].includes(candidate.targetStore) ? "ozon" : "",
+    platform: platformOfStore(candidate.targetStore) ?? "",
     productId: "",
     merchantSku: "",
     productUrl: "",
@@ -1296,9 +1226,11 @@ function OzonSalesCapturePanel({ candidate, captureControl, extensionStatus, onS
   );
 }
 
-export default function UserInspector({ candidate, rules, captureControl, extensionStatus, onUpdate, onEvaluate, onComment, onMarkListed, onRecoveryAction, onStartSourceCapture, onStartOzonSalesCapture, onSelectSourceCaptureSku, onUploadLifecycleFinalAsset, onSaveC2UploadDraft, onConfirmLifecycleFinalAssets, onSaveProductionOwnerDecision, onSaveFinalPricingReview, onSaveC1RightsReview, onAuthorizeC1PaidDraft, onContinueSavedC1Draft, onRetryC1KeywordHandoff, onRecalculateBWithExactCommission, productionIdentity }) {
+export default function UserInspector({ candidate, rules, captureControl, extensionStatus, onUpdate, onEvaluate, onComment, onMarkListed, onRecoveryAction, onStartSourceCapture, onStartOzonSalesCapture, onSelectSourceCaptureSku, onUploadLifecycleFinalAsset, onSaveC2UploadDraft, onConfirmLifecycleFinalAssets, onSaveProductionOwnerDecision, onSaveFinalPricingReview, onSaveC1RightsReview, onAuthorizeC1PaidDraft, onContinueSavedC1Draft, onReadOriginalC1DraftResult, onRetryC1KeywordHandoff, onContinueC1Preparation, onBackfillC1SupplyAttributes, onSaveC1OzonAttributeMapping, onLoadC1OzonAttributes, onReadC1ColorDictionary, onRefreshC1CategorySchema, onProposeC1OzonAttributes, onRecalculateBWithExactCommission, productionIdentity }) {
   return (
     <section className="workflow-region">
+      {/* 不属于任何一个阶段，所以摆在所有阶段面板之前：从条件测算一路到上架之前的每一屏都看得见。 */}
+      <EstimatedCommissionNotice step={candidate.estimatedCommissionNoticeStepV1} />
       {candidate.lifecycleV11?.c1PricingReuse ? (
         <div className="source-capture-summary" role="status">
           <b>{candidate.lifecycleV11.c1PricingReuse.status === "reused" ? "改价后的文案核验已完成" : "改价后的文案复用待处理"}</b>
@@ -1309,7 +1241,7 @@ export default function UserInspector({ candidate, rules, captureControl, extens
       {candidate.workflowStatus === "awaiting_user_direction" ? <DirectionPanel candidate={candidate} onEvaluate={onEvaluate} /> : null}
       {candidate.workflowStatus === "codex_processing" ? <ProcessingPanel candidate={candidate} onRecoveryAction={onRecoveryAction} /> : null}
       {candidate.workflowStatus === "listing_preparation" ? (
-        <ListingPreparationPanel candidate={candidate} onRecoveryAction={onRecoveryAction} onCapture={onStartSourceCapture} onSelectSku={onSelectSourceCaptureSku} onUploadLifecycleFinalAsset={onUploadLifecycleFinalAsset} onSaveC2UploadDraft={onSaveC2UploadDraft} onConfirmLifecycleFinalAssets={onConfirmLifecycleFinalAssets} onSaveProductionOwnerDecision={onSaveProductionOwnerDecision} onSaveFinalPricingReview={onSaveFinalPricingReview} onSaveC1RightsReview={onSaveC1RightsReview} onAuthorizeC1PaidDraft={onAuthorizeC1PaidDraft} onContinueSavedC1Draft={onContinueSavedC1Draft} onRetryC1KeywordHandoff={onRetryC1KeywordHandoff} productionIdentity={productionIdentity} />
+        <ListingPreparationPanel candidate={candidate} captureControl={captureControl} onStartOzonSalesCapture={onStartOzonSalesCapture} onRecoveryAction={onRecoveryAction} onCapture={onStartSourceCapture} onSelectSku={onSelectSourceCaptureSku} onUploadLifecycleFinalAsset={onUploadLifecycleFinalAsset} onSaveC2UploadDraft={onSaveC2UploadDraft} onConfirmLifecycleFinalAssets={onConfirmLifecycleFinalAssets} onSaveProductionOwnerDecision={onSaveProductionOwnerDecision} onSaveFinalPricingReview={onSaveFinalPricingReview} onSaveC1RightsReview={onSaveC1RightsReview} onAuthorizeC1PaidDraft={onAuthorizeC1PaidDraft} onContinueSavedC1Draft={onContinueSavedC1Draft} onReadOriginalC1DraftResult={onReadOriginalC1DraftResult} onRetryC1KeywordHandoff={onRetryC1KeywordHandoff} onContinueC1Preparation={onContinueC1Preparation} onBackfillC1SupplyAttributes={onBackfillC1SupplyAttributes} onSaveC1OzonAttributeMapping={onSaveC1OzonAttributeMapping} onLoadC1OzonAttributes={onLoadC1OzonAttributes} onReadC1ColorDictionary={onReadC1ColorDictionary} onRefreshC1CategorySchema={onRefreshC1CategorySchema} onProposeC1OzonAttributes={onProposeC1OzonAttributes} productionIdentity={productionIdentity} />
       ) : null}
       <StoreSelectionPanel key={candidate.id} candidate={candidate} onUpdate={onUpdate} />
       {candidate.workflowStatus === "needs_user_data" ? <NeedsDataPanel candidate={candidate} onUpdate={onUpdate} identity={productionIdentity} onRecalculateBWithExactCommission={onRecalculateBWithExactCommission} /> : null}

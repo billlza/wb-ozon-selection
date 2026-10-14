@@ -32,7 +32,6 @@ import {
   fingerprintProductionAuthorizationPreparation,
   fingerprintFinalManifest,
   fingerprintFinalUploads,
-  fingerprintMediaRequirements,
   validateProductionAuthorizationPreparation
 } from "../lib/production-authorization-preparation.mjs";
 import {
@@ -190,8 +189,7 @@ function finalVideo() {
     usageAuthorization: { status: "owner_authorized_for_listing", evidenceRef: "owner-confirmation:shelf-final-v1" },
     sourceType: "owner_provided_final_upload",
     order: 3,
-    role: "product_video",
-    slotId: "product-video"
+    role: "gallery_image"
   };
 }
 
@@ -209,8 +207,9 @@ test("普通非火车SKU只从C1事实、draft_only SEO和三素材域准备C2�
   assert.deepEqual(prepared.identity, pkg.g1Identity);
   assert.equal(Object.hasOwn(prepared.identity, "variantKey"), false);
   assert.equal(prepared.variantKey, pkg.variantKey);
-  assert.equal(pkg.c1ProductPlan.mediaRequirements.status, "confirmed");
-  assert.deepEqual(pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements.storeRef, pkg.g1Identity.storeRef);
+  // 槽位合同已废止：C1 不再交出媒体摘要，冻结 Schema 也不再携带槽位。
+  assert.equal(Object.hasOwn(pkg.c1ProductPlan, "mediaRequirements"), false);
+  assert.equal(Object.hasOwn(pkg.c1ProductPlan.inputSnapshots.platformSchemaRules, "mediaRequirements"), false);
   assert.equal(prepared.c1.seoDraft.status, "draft_only");
   assert.equal(prepared.assets.collected[0].productionEligible, false);
   assert.equal(prepared.assets.aiDrafts[0].productionEligible, false);
@@ -314,8 +313,8 @@ test("G1身份、C1冻结引用、Schema媒体与revision必须同源", () => {
     [/CANONICAL_GATE_BLOCKED/, (pkg) => { pkg.c1ProductPlan.frozenInputRefs.storeRef = "store:ozon:other"; }],
     [/CANONICAL_GATE_BLOCKED/, (pkg) => { pkg.c1ProductPlan.identity.targetStore = "store:ozon:other"; }],
     [/C1_SKU_RIGHTS_REVIEW_SCOPE_MISMATCH/, (pkg) => { pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.storeRef = "store:ozon:other"; }],
-    [/MEDIA_REQUIREMENTS_INVALID/, (pkg) => { pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements.storeRef = "store:ozon:other"; }],
-    [/MEDIA_REQUIREMENTS_INVALID/, (pkg) => { pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements.sourceDataRevision = 6; }],
+    [/TARGET_CONTEXT_INVALID/, (pkg) => { pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.store = "store:ozon:other"; }],
+    [/TARGET_CONTEXT_INVALID/, (pkg) => { pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements = { imageSlots: [] }; }],
     [/CANONICAL_GATE_BLOCKED/, (pkg) => { pkg.c1ProductPlan.revisionRefs.resultRevision = 7; }]
   ];
   for (const [expected, mutate] of cases) {
@@ -386,7 +385,7 @@ test("新版C1 canonical正式provider、关键词、revision和顶层unknown任
     },
     {
       expected: /CANONICAL_GATE_BLOCKED/,
-      mutate: (pkg) => { pkg.c1ProductPlan.mediaRequirements.requiredSlots.pop(); }
+      mutate: (pkg) => { pkg.c1ProductPlan.schemaSnapshotRef = "schema:other"; }
     }
   ];
   for (const { expected, mutate } of cases) {
@@ -438,18 +437,15 @@ test("非阻断informational unknown保留在最终卡事实快照但从canonica
   );
 });
 
-test("真实C1冻结输入缺少角色数量和证据版本时明确fail-closed且不猜补", () => {
+test("冻结Schema缺少平台或店铺身份时明确fail-closed且不猜补", () => {
   const pkg = packageFixture();
-  pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements = {
-    requiredSlots: structuredClone(pkg.c1ProductPlan.mediaRequirements.requiredSlots),
-    videoRequirement: "not_required"
-  };
+  pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.schemaRevision = "schema-v9";
   assert.throws(() => createC2SoftwareContainer({
     skuPackage: pkg,
     expectedDataRevision: 7,
     assetRegions: assetRegions(),
     createdAt: NOW
-  }), /MEDIA_REQUIREMENTS_INVALID/);
+  }), /TARGET_CONTEXT_INVALID/);
   assert.equal(pkg.c2FinalAssets, null);
   assert.equal(pkg.productionAuthorization, null);
 });
@@ -541,7 +537,6 @@ test("主人锁定素材版本、SHA、首图和顺序后才进入c2_ready", () 
   assert.equal(confirmed.productionAuthorizationPreparation.targetContext.schemaEvidenceRef, "schema:fixture:ozon:bathroom-shelf");
   assert.equal(confirmed.productionAuthorizationPreparation.sourceDataRevision, 8);
   assert.equal(confirmed.productionAuthorizationPreparation.resultDataRevision, 9);
-  assert.equal(confirmed.productionAuthorizationPreparation.mediaRequirements.sourceDataRevision, 8);
   assert.equal(
     confirmed.productionAuthorizationPreparation.finalCardInputSnapshot.sourceDataRevision,
     confirmed.productionAuthorizationPreparation.sourceDataRevision
@@ -551,16 +546,16 @@ test("主人锁定素材版本、SHA、首图和顺序后才进入c2_ready", () 
     confirmed.productionAuthorizationPreparation.resultDataRevision
   );
   assert.equal(
-    Object.hasOwn(confirmed.productionAuthorizationPreparation.finalCardInputSnapshot.c1Snapshot.inputSnapshots.platformSchemaRules.mediaRequirements, "sourceDataRevision"),
+    Object.hasOwn(confirmed.productionAuthorizationPreparation.finalCardInputSnapshot.c1Snapshot.inputSnapshots.platformSchemaRules, "mediaRequirements"),
     false
   );
   assert.equal(
-    confirmed.productionAuthorizationPreparation.mediaRequirements.schemaRevision,
-    confirmed.productionAuthorizationPreparation.finalCardInputSnapshot.c1Snapshot.inputSnapshots.platformSchemaRules.mediaRequirements.schemaRevision
+    confirmed.productionAuthorizationPreparation.targetContext.schemaRevision,
+    confirmed.productionAuthorizationPreparation.finalCardInputSnapshot.c1Snapshot.inputSnapshots.platformSchemaRules.schemaRevision
   );
   assert.equal(
-    confirmed.productionAuthorizationPreparation.mediaRequirements.evidenceRef,
-    confirmed.productionAuthorizationPreparation.finalCardInputSnapshot.c1Snapshot.inputSnapshots.platformSchemaRules.mediaRequirements.evidenceRef
+    confirmed.productionAuthorizationPreparation.targetContext.schemaEvidenceRef,
+    confirmed.productionAuthorizationPreparation.finalCardInputSnapshot.c1Snapshot.inputSnapshots.platformSchemaRules.evidenceId
   );
   assert.equal(
     validateProductionAuthorizationPreparation({
@@ -570,7 +565,13 @@ test("主人锁定素材版本、SHA、首图和顺序后才进入c2_ready", () 
     }),
     confirmed.productionAuthorizationPreparation
   );
-  assert.deepEqual(confirmed.productionAuthorizationPreparation.mediaRequirements, confirmed.c2AssetLifecycle.mediaRequirements);
+  assert.deepEqual(confirmed.productionAuthorizationPreparation.targetContext, {
+    platform: confirmed.c2AssetLifecycle.targetContext.platform,
+    targetStore: confirmed.c2AssetLifecycle.targetContext.targetStore,
+    storeRef: confirmed.c2AssetLifecycle.targetContext.storeRef,
+    schemaRevision: confirmed.c2AssetLifecycle.targetContext.schemaRevision,
+    schemaEvidenceRef: confirmed.c2AssetLifecycle.targetContext.schemaEvidenceRef
+  });
   assert.deepEqual(confirmed.productionAuthorizationPreparation.finalUploads, confirmed.c2AssetLifecycle.assets.finalUploads);
   assert.deepEqual(
     confirmed.productionAuthorizationPreparation.ownerFinalUploadConfirmation,
@@ -832,10 +833,9 @@ test("已存准备对象即使同步重算Level-1指纹仍拒绝伪canonical授�
     { expectedPath: "activeProfitModel", mutate: (preparation) => {
       preparation.finalCardInputSnapshot.activeProfitModel.unitProfitRmb = 999;
     } },
-    { expectedPath: "mediaRequirements", mutate: (preparation) => {
-      preparation.frozenC1Handoff.mediaRequirements.requiredSlots.pop();
-      preparation.finalCardInputSnapshot.canonicalC1.mediaRequirements.requiredSlots.pop();
-      preparation.finalCardInputSnapshot.c1Snapshot.mediaRequirements.requiredSlots.pop();
+    { expectedPath: "productionAuthorizationPreparation", mutate: (preparation) => {
+      // 主人授权的是这批地址：换掉任何一张都必须被拦下。
+      preparation.finalUploads[1].assetRef = "https://assets.example.com/owner/swapped-v1.jpg";
     } },
     { expectedPath: "unknownManifest", mutate: (preparation) => {
       preparation.finalCardInputSnapshot.c1Snapshot.unknownManifest.push({
@@ -856,8 +856,7 @@ test("已存准备对象即使同步重算Level-1指纹仍拒绝伪canonical授�
       delete preparation.finalCardInputSnapshot.c1Snapshot.exactSkuVerification;
     } },
     { expectedPath: "platformSchemaRules", mutate: (preparation) => {
-      preparation.finalCardInputSnapshot.c1Snapshot.inputSnapshots.platformSchemaRules.mediaRequirements.categoryId =
-        "category:ozon:other";
+      preparation.finalCardInputSnapshot.c1Snapshot.inputSnapshots.platformSchemaRules.schemaRevision = "schema-v9";
     } },
     { expectedPath: "frozenInputRefs", mutate: (preparation) => {
       preparation.frozenC1Handoff.frozenInputRefs.sourceRevision = 999;
@@ -1163,15 +1162,13 @@ test("多SKU、修订和C1指纹隔离，禁止串用或漂移覆盖", () => {
   }), /SOURCE_DRIFT/);
 });
 
-test("媒体要求只接受当前platform、storeRef、category、Schema版本证据且必填unknown必须清零", () => {
+test("目标绑定只接受当前platform、storeRef和Schema证据，且必填unknown必须清零", () => {
   const mutations = [
-    (pkg) => { pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements.platform = "wb"; },
-    (pkg) => { pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements.storeRef = "store:ozon:other"; },
-    (pkg) => { pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements.categoryId = "category:ozon:other"; },
-    (pkg) => { pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements.schemaRevision = "schema-v2"; },
-    (pkg) => { pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements.evidenceRef = "schema:other"; },
     (pkg) => { pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.platform = "wb"; },
-    (pkg) => { pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.evidenceId = "schema:other"; }
+    (pkg) => { pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.store = "store:ozon:other"; },
+    (pkg) => { pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.evidenceId = "schema:other"; },
+
+    (pkg) => { pkg.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements = { imageSlots: [] }; }
   ];
   for (const mutate of mutations) {
     const pkg = packageFixture();
@@ -1181,7 +1178,7 @@ test("媒体要求只接受当前platform、storeRef、category、Schema版本�
       expectedDataRevision: 7,
       assetRegions: assetRegions(),
       preparedAt: NOW
-    }), /MEDIA_REQUIREMENTS_INVALID/);
+    }), /TARGET_CONTEXT_INVALID|C1_SKU_RIGHTS_REVIEW_SCOPE_MISMATCH/);
     assert.equal(pkg.c2FinalAssets, null);
     assert.equal(pkg.productionAuthorization, null);
   }
@@ -1204,23 +1201,24 @@ test("媒体要求只接受当前platform、storeRef、category、Schema版本�
   assert.equal(unknown.productionAuthorization, null);
 });
 
-test("图片槽位、稳定地址、来源授权和三区独立身份共同组成硬门", () => {
+test("首图顺序、稳定地址、来源授权和三区独立身份共同组成硬门", () => {
   const initialized = createC2SoftwareContainer({
     skuPackage: packageFixture(), expectedDataRevision: 7, assetRegions: assetRegions(), createdAt: NOW
   });
 
+  // 主人排第一张的必须是图片，而且软件不许自己给别的图安主图角色。
+  const forgedRole = finalAssets();
+  forgedRole[1].role = "main_image";
   assert.throws(() => prepareC2FinalUploadManifest({
-    skuPackage: initialized.skuPackage,
-    expectedDataRevision: 8,
-    finalUploadAssets: [finalAssets()[0]],
-    preparedAt: LATER
-  }), /MEDIA_SLOT_MISMATCH/);
+    skuPackage: initialized.skuPackage, expectedDataRevision: 8, finalUploadAssets: forgedRole, preparedAt: LATER
+  }), /FINAL_ASSET_INVALID/);
 
-  const unknownSlot = finalAssets();
-  unknownSlot[1].slotId = "unknown-slot";
+  const reordered = finalAssets();
+  reordered[0].order = 2;
+  reordered[1].order = 1;
   assert.throws(() => prepareC2FinalUploadManifest({
-    skuPackage: initialized.skuPackage, expectedDataRevision: 8, finalUploadAssets: unknownSlot, preparedAt: LATER
-  }), /MEDIA_SLOT_MISMATCH/);
+    skuPackage: initialized.skuPackage, expectedDataRevision: 8, finalUploadAssets: reordered, preparedAt: LATER
+  }), /FINAL_ASSET_INVALID/);
 
   for (const invalidUrl of [
     "/owner/local.jpg",
@@ -1290,9 +1288,7 @@ test("finalUploads直接导出边界复用公共秘密门并保留合法稳定UR
   const normalize = (assets) => normalizeC2FinalUploads({
     finalUploadAssets: assets,
     existingAssets: initialized.c2AssetLifecycle.assets,
-    mediaRequirements: initialized.c2AssetLifecycle.mediaRequirements,
     effectiveVideoRequirement: resolveC2EffectiveVideoRequirement({
-      mediaRequirements: initialized.c2AssetLifecycle.mediaRequirements,
       skuPackage: initialized.skuPackage
     }),
     addedAt: LATER
@@ -1333,11 +1329,11 @@ test("finalUploads直接导出边界复用公共秘密门并保留合法稳定UR
   immutableSuccessAssets[0].assetRef = "https://assets.example.com/owner/shelf-main-v1.jpg?x-oss-process=image";
   const successAssetsBefore = structuredClone(immutableSuccessAssets);
   const successExistingBefore = structuredClone(initialized.c2AssetLifecycle.assets);
-  const successRequirementsBefore = structuredClone(initialized.c2AssetLifecycle.mediaRequirements);
+  const successRequirementsBefore = structuredClone(initialized.c2AssetLifecycle.targetContext);
   assert.equal(normalize(immutableSuccessAssets).assets[0].assetRef, immutableSuccessAssets[0].assetRef);
   assert.deepEqual(immutableSuccessAssets, successAssetsBefore);
   assert.deepEqual(initialized.c2AssetLifecycle.assets, successExistingBefore);
-  assert.deepEqual(initialized.c2AssetLifecycle.mediaRequirements, successRequirementsBefore);
+  assert.deepEqual(initialized.c2AssetLifecycle.targetContext, successRequirementsBefore);
 
   const unsafeQueryKeys = [
     "authorization", "bearer", "basic", "cookie", "cookies", "cookiejar", "headers", "requestHeaders",
@@ -1359,11 +1355,11 @@ test("finalUploads直接导出边界复用公共秘密门并保留合法稳定UR
   immutableFailureAssets[0].assetRef = "https://assets.example.com/owner/shelf-main-v1.jpg?x-oss-security-token=temporary";
   const failureAssetsBefore = structuredClone(immutableFailureAssets);
   const failureExistingBefore = structuredClone(initialized.c2AssetLifecycle.assets);
-  const failureRequirementsBefore = structuredClone(initialized.c2AssetLifecycle.mediaRequirements);
+  const failureRequirementsBefore = structuredClone(initialized.c2AssetLifecycle.targetContext);
   assert.throws(() => normalize(immutableFailureAssets), /C2_FINAL_ASSET_ADDRESS_INVALID/);
   assert.deepEqual(immutableFailureAssets, failureAssetsBefore);
   assert.deepEqual(initialized.c2AssetLifecycle.assets, failureExistingBefore);
-  assert.deepEqual(initialized.c2AssetLifecycle.mediaRequirements, failureRequirementsBefore);
+  assert.deepEqual(initialized.c2AssetLifecycle.targetContext, failureRequirementsBefore);
   for (const key of ["authorization", "bearer", "cookie", "credentials"]) {
     let encodedKey = [...key].map((character) =>
       `%${character.charCodeAt(0).toString(16).padStart(2, "0")}`).join("");
@@ -1425,23 +1421,10 @@ test("视频默认not_required，只有Schema或当前SKU主人证据能升级�
   assert.equal(defaultManifest.effectiveVideoRequirement.status, "not_required");
   assert.equal(defaultManifest.videoDisposition, "excludes_video");
 
-  const schemaRequiredPackage = packageFixture();
-  schemaRequiredPackage.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements.schemaVideoRequirement = {
-    status: "required",
-    requiredBy: "schema",
-    evidenceRef: schemaRequiredPackage.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements.evidenceRef
-  };
-  schemaRequiredPackage.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements.videoSlots[0].minCount = 1;
-  schemaRequiredPackage.c1ProductPlan.mediaRequirements.videoRequirement = "required";
-  schemaRequiredPackage.c1ProductPlan.mediaRequirements.requiredSlots.push({
-    slotId: "product-video", mediaType: "video", required: true
-  });
+  // 冻结 Schema 从没交出过视频要求：视频现在只能由主人自己要求（见下面的 ownerVideoRequirement 用例）。
   const schemaRequiredC2 = createC2SoftwareContainer({
-    skuPackage: schemaRequiredPackage, expectedDataRevision: 7, assetRegions: assetRegions(), createdAt: NOW
+    skuPackage: packageFixture(), expectedDataRevision: 7, assetRegions: assetRegions(), createdAt: NOW
   });
-  assert.throws(() => prepareC2FinalUploadManifest({
-    skuPackage: schemaRequiredC2.skuPackage, expectedDataRevision: 8, finalUploadAssets: finalAssets(), preparedAt: LATER
-  }), /VIDEO_REQUIRED|MEDIA_SLOT_MISMATCH/);
   const withVideo = [...finalAssets(), finalVideo()];
   const schemaVideoManifest = prepareC2FinalUploadManifest({
     skuPackage: schemaRequiredC2.skuPackage, expectedDataRevision: 8, finalUploadAssets: withVideo, preparedAt: LATER
@@ -1508,10 +1491,10 @@ test("视频默认not_required，只有Schema或当前SKU主人证据能升级�
   assert.equal(ownerVideoConfirmed.dHandoffCreated, false);
 
   const contradictory = packageFixture();
-  contradictory.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements.videoSlots[0].minCount = 1;
+  contradictory.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements = { videoSlots: [{ minCount: 1 }] };
   assert.throws(() => createC2SoftwareContainer({
     skuPackage: contradictory, expectedDataRevision: 7, assetRegions: assetRegions(), createdAt: NOW
-  }), /CANONICAL_GATE_BLOCKED|MEDIA_REQUIREMENTS_INVALID/);
+  }), /CANONICAL_GATE_BLOCKED|TARGET_CONTEXT_INVALID/);
 });
 
 test("确认边界重验C1、媒体要求、素材版本并支持完全相同输入幂等重试", () => {
@@ -1523,14 +1506,14 @@ test("确认边界重验C1、媒体要求、素材版本并支持完全相同输
   });
 
   const c1Drift = structuredClone(initialized.skuPackage);
-  c1Drift.c1ProductPlan.inputSnapshots.platformSchemaRules.mediaRequirements.evidenceVersion = "media-requirements-v2";
+  c1Drift.c1ProductPlan.inputSnapshots.platformSchemaRules.schemaRevision = "schema-v2";
   assert.throws(() => confirmC2SoftwareFinalUploads({
     skuPackage: c1Drift,
     expectedDataRevision: 8,
     finalManifest: manifest,
     ownerDecision: ownerDecision(manifest),
     confirmedAt: LATER
-  }), /SOURCE_DRIFT|MEDIA_REQUIREMENTS_DRIFT/);
+  }), /SOURCE_DRIFT|TARGET_CONTEXT_DRIFT/);
 
   const assetDrift = structuredClone(manifest);
   assetDrift.assets[1].assetVersion = "final-v2";
@@ -1568,7 +1551,7 @@ test("确认边界重验C1、媒体要求、素材版本并支持完全相同输
     (pkg) => { pkg.c2FinalAssets.productionAuthorizationPreparation.ownerConfirmationAt = NOW; },
     (pkg) => { pkg.c2FinalAssets.productionAuthorizationPreparation.finalManifestVersion = "c2-final-manifest-v2"; },
     (pkg) => { pkg.c2FinalAssets.productionAuthorizationPreparation.targetContext.storeRef = "store:ozon:other"; },
-    (pkg) => { pkg.c2FinalAssets.productionAuthorizationPreparation.mediaRequirements.imageSlots[0].maxCount = 2; },
+    (pkg) => { pkg.c2FinalAssets.productionAuthorizationPreparation.finalUploads[1].assetRef = "https://assets.example.com/owner/swapped-v1.jpg"; },
     (pkg) => { pkg.c2FinalAssets.productionAuthorizationPreparation.frozenC1Handoff.keywordEvidenceRefs = ["keyword:other"]; },
     (pkg) => { pkg.c2FinalAssets.productionAuthorizationPreparation.finalUploads[0].order = 2; },
     (pkg) => { pkg.c2FinalAssets.productionAuthorizationPreparation.effectiveVideoRequirement.status = "required"; },
@@ -2098,7 +2081,7 @@ test("任何percent编码在canonical引用门、容器与准备对象均fail-cl
     stored.c2FinalAssets.assets.finalUploads = structuredClone(preparation.finalUploads);
     preparation.finalUploadsFingerprint = fingerprintFinalUploads(preparation.finalUploads);
     preparation.finalManifestSha256 = fingerprintFinalManifest({
-      mediaRequirementsFingerprint: preparation.mediaRequirementsFingerprint,
+      authorizedMediaFingerprint: preparation.authorizedMediaFingerprint,
       effectiveVideoRequirement: preparation.effectiveVideoRequirement,
       mainImageAssetId: preparation.mainImageAssetId,
       videoDisposition: preparation.videoDisposition,
@@ -2211,7 +2194,7 @@ test("嵌套赋值在公共门、容器与准备对象中逐边界拒绝", async
     stored.c2FinalAssets.assets.finalUploads = structuredClone(preparation.finalUploads);
     preparation.finalUploadsFingerprint = fingerprintFinalUploads(preparation.finalUploads);
     preparation.finalManifestSha256 = fingerprintFinalManifest({
-      mediaRequirementsFingerprint: preparation.mediaRequirementsFingerprint,
+      authorizedMediaFingerprint: preparation.authorizedMediaFingerprint,
       effectiveVideoRequirement: preparation.effectiveVideoRequirement,
       mainImageAssetId: preparation.mainImageAssetId,
       videoDisposition: preparation.videoDisposition,
@@ -2595,7 +2578,7 @@ test("C1 opaque authorizationId只在已批准语义路径通过两道公共门"
     publishedStringConstraintAccepts(inputSchema, inputSchema.$defs.paidAuthorizationRef.properties.authorizationId, opaqueAuthorizationId),
     true
   );
-  const lifecycleAuthorizationId = lifecycleSchema.$defs.canonicalC1Handoff.properties.draftOnlySeo
+  const lifecycleAuthorizationId = lifecycleSchema.$defs.canonicalC1Handoff.properties.draftOnlySeo.oneOf[0]
     .properties.providerJobRef.properties.authorizationRef.properties.authorizationId;
   assert.equal(publishedStringConstraintAccepts(lifecycleSchema, lifecycleAuthorizationId, opaqueAuthorizationId), true);
   assert.deepEqual(inputSchema.$defs.referenceValue.oneOf[0], { $ref: "#/$defs/c2SecretCheckedContractString" });
@@ -2727,7 +2710,6 @@ test("analysis素材允许canonical opaque引用而finalUploads只允许稳定HT
   assert.throws(() => normalizeC2FinalUploads({
     finalUploadAssets: opaqueFinalAssets,
     existingAssets: result.skuPackage.c2FinalAssets.assets,
-    mediaRequirements: result.skuPackage.c2FinalAssets.mediaRequirements,
     effectiveVideoRequirement: result.skuPackage.c2FinalAssets.effectiveVideoRequirement,
     addedAt: LATER
   }), /C2_REFERENCE_REJECTED_NONCANONICAL/);
@@ -2966,7 +2948,7 @@ test("发布的C2 Schema冻结软件状态、三域和下游边界", async () =>
   assert.equal(inputSchema.$defs.executionPolicy.properties.gptImageAllowed.const, false);
   assert.equal(inputSchema.$defs.executionPolicy.properties.gateway4318Allowed.const, false);
   assert.equal(lifecycleSchema.additionalProperties, false);
-  assert.ok(lifecycleSchema.required.includes("mediaRequirements"));
+  assert.ok(lifecycleSchema.required.includes("targetContext"));
   assert.ok(lifecycleSchema.required.includes("unknownManifest"));
   assert.ok(lifecycleSchema.required.includes("productionAuthorizationPreparation"));
   assert.ok(lifecycleSchema.required.includes("ownerVideoRequirement"));
@@ -3013,10 +2995,10 @@ test("发布的C2 Schema冻结软件状态、三域和下游边界", async () =>
     assert.equal(publishedStringConstraintAccepts(lifecycleSchema, refSchema, "https://user:pass@x.test/path"), false);
   }
   assert.equal(lifecycleSchema.properties.generationIntegrations.additionalProperties, false);
-  assert.ok(lifecycleSchema.properties.softwareState.required.includes("mediaRequirementsFingerprint"));
+  assert.equal(lifecycleSchema.properties.softwareState.required.includes("authorizedMediaFingerprint"), false);
   const preparationSchema = lifecycleSchema.properties.productionAuthorizationPreparation.oneOf[1];
   for (const field of [
-    "targetContext", "frozenC1Handoff", "mediaRequirements", "finalUploads", "effectiveVideoRequirement",
+    "targetContext", "frozenC1Handoff", "authorizedMediaFingerprint", "finalUploads", "effectiveVideoRequirement",
     "ownerFinalUploadConfirmation", "finalCardInputSnapshot", "finalCardInputFingerprint",
     "ownerFinalCardAuthorizationDecision", "pendingAuthorizationInputs", "preparationFingerprint"
   ]) assert.ok(preparationSchema.required.includes(field));
@@ -3098,7 +3080,7 @@ test("发布Schema拒绝伪正式provider、秘密回执、原始响应、弱rev
   }
   const canonical = schema.$defs.canonicalC1Handoff;
   const frozen = canonical.properties.frozenInputRefs;
-  const draftSchema = canonical.properties.draftOnlySeo;
+  const draftSchema = canonical.properties.draftOnlySeo.oneOf[0];
   const job = draftSchema.properties.providerJobRef;
   const authorization = job.properties.authorizationRef;
   const scope = authorization.properties.scope;
@@ -3130,9 +3112,7 @@ test("发布Schema拒绝伪正式provider、秘密回执、原始响应、弱rev
     job.properties.receiptRef,
     authorization.properties.authorizationId,
     canonical.properties.keywordEvidenceRefs.items,
-    canonical.properties.schemaSnapshotRef,
-    canonical.properties.mediaRequirements.properties.schemaSnapshotRef,
-    canonical.properties.mediaRequirements.properties.sourceRefs.items
+    canonical.properties.schemaSnapshotRef
   ];
   for (const value of [
     "", " ", "https://provider.example/receipt", "receipt:token=secret", "cookie:session",
@@ -3279,7 +3259,6 @@ function c2TransportPayload({ skuPackage, jobRef, stagedAssets, stagedAssetManif
     sha256: asset.sha256,
     order: asset.order,
     role: asset.role,
-    slotId: asset.slotId,
     stableUrl: `${stableUrlPrefix}/${index + 1}.jpg`,
     stableUrlEvidenceRef: `stable-url-evidence:${jobRef.jobId.split(":").pop()}:${index + 1}`
   }));
@@ -3288,21 +3267,13 @@ function c2TransportPayload({ skuPackage, jobRef, stagedAssets, stagedAssetManif
     assetRef: asset.stableUrl,
     stableUrlEvidenceRef: asset.stableUrlEvidenceRef
   }));
-  const { requirementsFingerprint: _oldRequirementsFingerprint, ...mediaCore } = skuPackage.c2FinalAssets.mediaRequirements;
-  const mediaRequirements = {
-    ...structuredClone(mediaCore),
-    sourceDataRevision: skuPackage.dataRevision
-  };
-  mediaRequirements.requirementsFingerprint = fingerprintMediaRequirements(mediaRequirements);
   const effectiveVideoRequirement = resolveC2EffectiveVideoRequirement({
-    mediaRequirements,
     skuPackage,
     ownerVideoRequirement: skuPackage.c2FinalAssets.ownerVideoRequirement
   });
   const normalized = normalizeC2FinalUploads({
     finalUploadAssets: finalAssets,
     existingAssets: skuPackage.c2FinalAssets.assets,
-    mediaRequirements,
     effectiveVideoRequirement,
     addedAt: settledAt
   });
@@ -3315,7 +3286,7 @@ function c2TransportPayload({ skuPackage, jobRef, stagedAssets, stagedAssetManif
     revision: jobRef.resultRevision,
     stagedAssetManifestFingerprint,
     finalManifestSha256: fingerprintC2FinalManifest({
-      mediaRequirementsFingerprint: mediaRequirements.requirementsFingerprint,
+      authorizedMediaFingerprint: normalized.authorizedMediaFingerprint,
       effectiveVideoRequirement,
       mainImageAssetId: normalized.mainImageAssetId,
       videoDisposition: normalized.videoDisposition,
@@ -3440,7 +3411,7 @@ function stableTransportFixture({
     confirmedAt: NOW,
     confirmationRef: "owner-confirmation:c2-staging:repository-fixture",
     approvedStagedAssetManifestFingerprint: preparedStaging.stagedAssetManifestFingerprint,
-    approvedMediaRequirementsFingerprint: preparedStaging.mediaContract.mediaRequirements.requirementsFingerprint,
+    approvedSourceC1Fingerprint: preparedStaging.targetContract.targetContext.sourceC1Fingerprint,
     approvedAssetIds: preparedStaging.staged.assets.map((asset) => asset.assetId),
     approvedMainImageAssetId: preparedStaging.staged.mainImageAssetId,
     approvedVideoDisposition: preparedStaging.staged.videoDisposition
@@ -3890,13 +3861,13 @@ test("C2稳定传输以staged文件身份确认并只在verified结果后重算f
     confirmedAt: NOW,
     confirmationRef: "owner-confirmation:c2-staging:fixture",
     approvedStagedAssetManifestFingerprint: stagedAssetManifestFingerprint,
-    approvedMediaRequirementsFingerprint: preparedStaging.mediaContract.mediaRequirements.requirementsFingerprint,
+    approvedSourceC1Fingerprint: preparedStaging.targetContract.targetContext.sourceC1Fingerprint,
     approvedAssetIds: stagedAssets.map((asset) => asset.assetId),
     approvedMainImageAssetId: stagedAssets[0].assetId,
     approvedVideoDisposition: "excludes_video"
   };
   assert.equal(ownerStagingConfirmation.approvedStagedAssetManifestFingerprint, preparedStaging.stagedAssetManifestFingerprint);
-  assert.equal(ownerStagingConfirmation.approvedMediaRequirementsFingerprint, preparedStaging.mediaContract.mediaRequirements.requirementsFingerprint);
+  assert.equal(ownerStagingConfirmation.approvedSourceC1Fingerprint, preparedStaging.targetContract.targetContext.sourceC1Fingerprint);
   assert.deepEqual(ownerStagingConfirmation.approvedAssetIds, preparedStaging.staged.assets.map((asset) => asset.assetId));
   assert.equal(ownerStagingConfirmation.approvedMainImageAssetId, preparedStaging.staged.mainImageAssetId);
   assert.equal(ownerStagingConfirmation.approvedVideoDisposition, preparedStaging.staged.videoDisposition);
@@ -3980,7 +3951,7 @@ test("B3-0a同一Repository事务排队并收口唯一C2稳定传输作业", asy
     confirmedAt: NOW,
     confirmationRef: "owner-confirmation:c2-staging:repository-fixture",
     approvedStagedAssetManifestFingerprint: preparedStaging.stagedAssetManifestFingerprint,
-    approvedMediaRequirementsFingerprint: preparedStaging.mediaContract.mediaRequirements.requirementsFingerprint,
+    approvedSourceC1Fingerprint: preparedStaging.targetContract.targetContext.sourceC1Fingerprint,
     approvedAssetIds: preparedStaging.staged.assets.map((asset) => asset.assetId),
     approvedMainImageAssetId: preparedStaging.staged.mainImageAssetId,
     approvedVideoDisposition: preparedStaging.staged.videoDisposition

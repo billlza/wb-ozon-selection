@@ -287,3 +287,61 @@ test("a conflicting brand declaration is saved as a blocked business result, not
   assert.equal(result.result.rightsReviewRecord.ownerDeclaration.brand.name, f.input.brand.name);
   assert.deepEqual(result.candidate.lifecycleV11.skuPackage.selectedSupplySnapshot, f.candidate.lifecycleV11.skuPackage.selectedSupplySnapshot);
 });
+
+test("「做这件」卡上的声明：C1 计划生成后由软件原样记下，声明人仍是主人；没有许可、老许可、过期、已冻结或已声明都不记", async () => {
+  const { GATE1_AUTOPILOT_ACTOR_SOURCE, GATE1_AUTOPILOT_ACTOR_USER_ID, buildGate1AutopilotGrant } = await import("../lib/gate1-autopilot.mjs");
+  const { buildGate1RightsDeclaration } = await import("../lib/gate1-rights-declaration.mjs");
+  const DECLARED = "2026-08-12T12:00:00.000Z";
+  const software = createActorContext({ userId: GATE1_AUTOPILOT_ACTOR_USER_ID, sessionId: "gate1-autopilot:rights", actorType: "software",
+    roles: ["operator"], source: GATE1_AUTOPILOT_ACTOR_SOURCE, authenticatedAt: AT });
+  const decision = { decision: "accept", decidedAt: DECLARED, roundIndex: 0 };
+  function prepared({ checked = false, grant = "v3" } = {}) {
+    const f = fixture({ checked });
+    f.candidate.gate1DecisionV1 = decision;
+    if (grant) {
+      const built = buildGate1AutopilotGrant({ candidateId: f.candidate.id, sourceRevision: 1, decision, via: "gate1_accept",
+        grantedAt: DECLARED, grantedBy: owner.userId });
+      f.candidate.gate1AutopilotGrantV1 = grant === "v2" ? { ...built, scopeVersion: "gate1-autopilot-scope-v2",
+        scope: built.scope.filter(step => step !== "c1_apply_rights") } : structuredClone(built);
+    }
+    f.candidate.gate1RightsDeclarationV1 = structuredClone(buildGate1RightsDeclaration({ candidateId: f.candidate.id, sourceRevision: 1,
+      input: { brandStatus: "unbranded", brandName: null, rights: "no_third_party_rights_identified", validMonths: 3 }, decision,
+      declaredByUserId: owner.userId, declaredAt: DECLARED }));
+    const sku = f.candidate.lifecycleV11.skuPackage;
+    const input = { candidateId: f.candidate.id, skuPackageId: sku.skuPackageId, expectedRevision: f.candidate.dataRevision,
+      expectedC1PlanId: sku.c1ProductPlan.c1PlanId, idempotencyKey: `gate1-autopilot:c1_apply_rights:${f.candidate.dataRevision}`,
+      auditEventId: `gate1-autopilot-audit:c1_apply_rights:${f.candidate.dataRevision}` };
+    return { ...f, applyInput: input, repository: createMemoryBusinessStateRepository(f.document) };
+  }
+  const none = prepared({ grant: null });
+  await assert.rejects(useCase(none.repository).applyGate1Declaration({ actor: software, input: none.applyInput }), hasCode("C1_RIGHTS_GATE1_GRANT_REQUIRED"));
+  const old = prepared({ grant: "v2" });
+  await assert.rejects(useCase(old.repository).applyGate1Declaration({ actor: software, input: old.applyInput }), hasCode("C1_RIGHTS_GATE1_GRANT_REQUIRED"));
+  const f = prepared();
+  await assert.rejects(useCase(f.repository).applyGate1Declaration({ actor: owner, input: f.applyInput }), hasCode("C1_RIGHTS_GATE1_SOFTWARE_ONLY"));
+  await assert.rejects(useCase(f.repository).applyGate1Declaration({ actor: software, input: { ...f.applyInput, brand: f.input.brand } }),
+    hasCode("C1_RIGHTS_INPUT_INVALID"));
+  await assert.rejects(useCase(f.repository, () => "2026-11-12T12:00:00.000Z").applyGate1Declaration({ actor: software, input: f.applyInput }),
+    hasCode("C1_RIGHTS_GATE1_DECLARATION_UNAVAILABLE"), "三个月过了就不记");
+  assert.equal((await f.repository.readSnapshot()).candidates[0].dataRevision, f.candidate.dataRevision, "被拒的什么都没改");
+
+  const saved = await useCase(f.repository).applyGate1Declaration({ actor: software, input: f.applyInput });
+  assert.equal(saved.status, "committed");
+  const sku = saved.candidate.lifecycleV11.skuPackage;
+  const record = sku.c1RightsReviewRecord;
+  assert.equal(saved.candidate.dataRevision, f.candidate.dataRevision + 1);
+  assert.equal(saved.candidate.lastModifiedBy, "software");
+  assert.equal(record.declaredByUserId, owner.userId, "声明人仍是主人");
+  assert.equal(record.declaredAt, AT);
+  assert.deepEqual(record.ownerDeclaration, { brand: { status: "unbranded", name: null },
+    rights: { status: "verified", basis: "no_third_party_rights_identified" }, reviewedAt: DECLARED, expiresAt: "2026-11-12T12:00:00.000Z" });
+  assert.deepEqual(saved.result.rightsView, { status: "verified", code: null });
+  assert.equal(saved.result.gate1DeclarationId, f.candidate.gate1RightsDeclarationV1.declarationId);
+  assert.deepEqual(sku.c1ProductPlan, f.candidate.lifecycleV11.skuPackage.c1ProductPlan, "不替换计划");
+  assert.equal(resolveC1SkuRightsReviewForFacts({ skuPackage: sku, observedAt: AT }).status, "verified");
+  const again = { ...f.applyInput, expectedRevision: saved.candidate.dataRevision, idempotencyKey: "gate1-autopilot:again", auditEventId: "gate1-autopilot-audit:again" };
+  await assert.rejects(useCase(f.repository).applyGate1Declaration({ actor: software, input: again }), hasCode("C1_RIGHTS_GATE1_ALREADY_DECLARED"));
+
+  const frozen = prepared({ checked: true });
+  await assert.rejects(useCase(frozen.repository).applyGate1Declaration({ actor: software, input: frozen.applyInput }), hasCode("C1_RIGHTS_GATE1_PLAN_FROZEN"));
+});

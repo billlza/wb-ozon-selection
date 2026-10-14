@@ -19,9 +19,9 @@ import {
   fingerprintC2FinalManifest,
   fingerprintC2SourceC1,
   normalizeC2FinalUploads,
-  normalizeC2MediaContract,
+  normalizeC2TargetContract,
   normalizeC2OwnerVideoRequirement,
-  resolveC2FinalConfirmationMediaContract,
+  resolveC2FinalConfirmationTargetContract,
   resolveC2EffectiveVideoRequirement
 } from "./c2-asset-lifecycle.mjs";
 
@@ -196,7 +196,6 @@ function c1InputSnapshot(plan, canonicalC1) {
       batteryAssessment: structuredClone(plan.batteryAssessment),
       categoryRestrictions: structuredClone(plan.categoryRestrictions),
       platformCompliance: structuredClone(plan.platformCompliance),
-      mediaRequirements: structuredClone(plan.inputSnapshots.platformSchemaRules.mediaRequirements),
       unknownManifest: structuredClone(plan.unknownManifest)
     },
     seoDraft: {
@@ -219,7 +218,7 @@ export function prepareC2SoftwareInput({ skuPackage, expectedDataRevision, asset
   if (skuPackage.businessPhase !== "C1" || skuPackage.c1ProductPlan?.status !== "seo_draft_ready") {
     throw new Error("C2_SOFTWARE_GATE_REJECTED: 当前SKU不是已完成SEO草稿的C1");
   }
-  const mediaContract = normalizeC2MediaContract(skuPackage);
+  const targetContract = normalizeC2TargetContract(skuPackage);
   assertCurrentC1SkuRightsReview({ plan: skuPackage.c1ProductPlan, sourceIdentity: skuPackage.g1Identity, observedAt: preparedAt });
 
   if (!isoDateTime(preparedAt)) throw new Error("C2_SOFTWARE_INPUT_INVALID: 准备时间无效");
@@ -230,10 +229,10 @@ export function prepareC2SoftwareInput({ skuPackage, expectedDataRevision, asset
     status: "ready",
     preparedAt,
     expectedDataRevision,
-    identity: structuredClone(mediaContract.g1Identity),
-    variantKey: mediaContract.variantKey,
+    identity: structuredClone(targetContract.g1Identity),
+    variantKey: targetContract.variantKey,
     sourceC1Fingerprint,
-    c1: c1InputSnapshot(skuPackage.c1ProductPlan, mediaContract.canonicalC1),
+    c1: c1InputSnapshot(skuPackage.c1ProductPlan, targetContract.canonicalC1),
     assets: normalizedAssets,
     executionPolicy: {
       externalAccessAllowed: false,
@@ -305,17 +304,16 @@ export function createC2SoftwareContainer({ skuPackage, expectedDataRevision, as
   });
 }
 
-function normalizeFinalAssets({ skuPackage, mediaContract, finalUploadAssets, effectiveVideoRequirement, addedAt }) {
+function normalizeFinalAssets({ skuPackage, finalUploadAssets, effectiveVideoRequirement, addedAt }) {
   const normalized = normalizeC2FinalUploads({
     finalUploadAssets,
     existingAssets: skuPackage.c2FinalAssets.assets,
-    mediaRequirements: mediaContract.mediaRequirements,
     effectiveVideoRequirement,
     addedAt
   });
   const assetIds = normalized.assets.map((asset) => asset.assetId);
   const manifestSha256 = fingerprintC2FinalManifest({
-    mediaRequirementsFingerprint: mediaContract.mediaRequirements.requirementsFingerprint,
+    authorizedMediaFingerprint: normalized.authorizedMediaFingerprint,
     effectiveVideoRequirement,
     mainImageAssetId: normalized.mainImageAssetId,
     videoDisposition: normalized.videoDisposition,
@@ -324,7 +322,6 @@ function normalizeFinalAssets({ skuPackage, mediaContract, finalUploadAssets, ef
   return {
     ...normalized,
     assetIds,
-    mediaRequirementsFingerprint: mediaContract.mediaRequirements.requirementsFingerprint,
     manifestSha256
   };
 }
@@ -348,16 +345,14 @@ export function prepareC2FinalUploadManifest({
   }
   if (!isoDateTime(preparedAt)) throw new Error("C2_SOFTWARE_INPUT_INVALID: 最终素材清单时间无效");
   assertCurrentC1SkuRightsReview({ plan: skuPackage.c1ProductPlan, sourceIdentity: skuPackage.g1Identity, observedAt: preparedAt });
-  const mediaContract = resolveC2FinalConfirmationMediaContract(skuPackage);
+  const targetContract = resolveC2FinalConfirmationTargetContract(skuPackage);
   const normalizedOwnerVideoRequirement = normalizeC2OwnerVideoRequirement(ownerVideoRequirement, skuPackage);
   const effectiveVideoRequirement = resolveC2EffectiveVideoRequirement({
-    mediaRequirements: mediaContract.mediaRequirements,
     skuPackage,
     ownerVideoRequirement: normalizedOwnerVideoRequirement
   });
   const manifest = normalizeFinalAssets({
     skuPackage,
-    mediaContract,
     finalUploadAssets,
     effectiveVideoRequirement,
     addedAt: preparedAt
@@ -368,7 +363,8 @@ export function prepareC2FinalUploadManifest({
     preparedAt,
     skuPackageId: skuPackage.skuPackageId,
     sourceDataRevision: skuPackage.dataRevision,
-    mediaRequirementsFingerprint: manifest.mediaRequirementsFingerprint,
+    sourceC1Fingerprint: targetContract.targetContext.sourceC1Fingerprint,
+    authorizedMediaFingerprint: manifest.authorizedMediaFingerprint,
     ownerVideoRequirement: structuredClone(normalizedOwnerVideoRequirement),
     effectiveVideoRequirement,
     manifestSha256: manifest.manifestSha256,
@@ -407,27 +403,25 @@ export function confirmC2SoftwareFinalUploads({
       (completed && finalManifest.sourceDataRevision !== skuPackage.c2FinalAssets.productionAuthorizationPreparation?.sourceDataRevision)) {
     throw new Error("C2_SOFTWARE_FINAL_MANIFEST_INVALID: 最终素材清单revision与当前确认状态不一致");
   }
-  const mediaContract = resolveC2FinalConfirmationMediaContract(skuPackage);
+  const targetContract = resolveC2FinalConfirmationTargetContract(skuPackage);
   const effectiveVideoRequirement = resolveC2EffectiveVideoRequirement({
-    mediaRequirements: mediaContract.mediaRequirements,
     skuPackage: completed
       ? { ...skuPackage, dataRevision: finalManifest.sourceDataRevision }
       : skuPackage,
     ownerVideoRequirement: finalManifest.ownerVideoRequirement
   });
   if (!sameJson(effectiveVideoRequirement, finalManifest.effectiveVideoRequirement) ||
-      finalManifest.mediaRequirementsFingerprint !== mediaContract.mediaRequirements.requirementsFingerprint) {
-    throw new Error("C2_SOFTWARE_FINAL_MANIFEST_INVALID: 媒体要求或条件视频合同已漂移");
+      finalManifest.sourceC1Fingerprint !== targetContract.targetContext.sourceC1Fingerprint) {
+    throw new Error("C2_SOFTWARE_FINAL_MANIFEST_INVALID: C1来源或条件视频合同已漂移");
   }
   const manifest = normalizeFinalAssets({
     skuPackage,
-    mediaContract,
     finalUploadAssets: finalManifest.assets,
     effectiveVideoRequirement,
     addedAt: finalManifest.preparedAt
   });
   if (manifest.manifestSha256 !== finalManifest.manifestSha256 ||
-      manifest.mediaRequirementsFingerprint !== finalManifest.mediaRequirementsFingerprint ||
+      manifest.authorizedMediaFingerprint !== finalManifest.authorizedMediaFingerprint ||
       manifest.mainImageAssetId !== finalManifest.mainImageAssetId ||
       manifest.videoDisposition !== finalManifest.videoDisposition ||
       !sameJson(manifest.assetIds, finalManifest.approvedAssetIds)) {
@@ -436,11 +430,11 @@ export function confirmC2SoftwareFinalUploads({
   if (!isObject(ownerDecision) || ownerDecision.status !== "confirmed" || ownerDecision.confirmedBy !== "owner" ||
       ownerDecision.approvedManifestVersion !== C2_FINAL_MANIFEST_VERSION ||
       ownerDecision.approvedManifestSha256 !== manifest.manifestSha256 ||
-      ownerDecision.approvedMediaRequirementsFingerprint !== manifest.mediaRequirementsFingerprint ||
+      ownerDecision.approvedAuthorizedMediaFingerprint !== manifest.authorizedMediaFingerprint ||
       ownerDecision.approvedMainImageAssetId !== manifest.mainImageAssetId ||
       ownerDecision.approvedVideoDisposition !== manifest.videoDisposition ||
       !sameJson(ownerDecision.approvedAssetIds, manifest.assetIds)) {
-    throw new Error("C2_SOFTWARE_OWNER_CONFIRMATION_REQUIRED: 主人确认必须锁定最终素材版本、SHA256、ID顺序、首图、媒体要求和视频处置");
+    throw new Error("C2_SOFTWARE_OWNER_CONFIRMATION_REQUIRED: 主人确认必须锁定最终素材版本、SHA256、ID顺序、首图、实际授权图片地址清单和视频处置");
   }
   assertNoRawPersistenceKeys(ownerDecision, "ownerDecision", { errorCode: "C2_SOFTWARE_SENSITIVE_INPUT_REJECTED" });
   assertNoProductionSecrets(ownerDecision, "ownerDecision");
@@ -484,7 +478,7 @@ export function confirmC2SoftwareFinalUploads({
     finalManifest: {
       schemaVersion: C2_FINAL_MANIFEST_VERSION,
       manifestSha256: manifest.manifestSha256,
-      mediaRequirementsFingerprint: manifest.mediaRequirementsFingerprint,
+      authorizedMediaFingerprint: manifest.authorizedMediaFingerprint,
       mainImageAssetId: manifest.mainImageAssetId,
       videoDisposition: manifest.videoDisposition,
       assets: manifest.assets
@@ -525,7 +519,6 @@ export function recordC2SoftwareTechnicalFailure({ skuPackage, expectedDataRevis
     businessPhase: skuPackage.businessPhase,
     lifecycleStatus: skuPackage.c2FinalAssets.softwareState.lifecycleStatus,
     sourceC1Fingerprint: skuPackage.c2FinalAssets.softwareState.sourceC1Fingerprint,
-    mediaRequirementsFingerprint: skuPackage.c2FinalAssets.softwareState.mediaRequirementsFingerprint,
     assetManifestFingerprint: skuPackage.c2FinalAssets.softwareState.assetManifestFingerprint,
     failure: {
       layer: failure.layer,

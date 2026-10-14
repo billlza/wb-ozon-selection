@@ -1,3 +1,4 @@
+import { allocatedTestPorts } from './helpers/api-process-lifecycle.mjs';
 import { createSyntheticDCompletionAdapter } from "./helpers/d-synthetic-completion-adapter.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -10,7 +11,7 @@ import { savedDProductionJobFixture } from "./fixtures/d-production-saved-job-fi
 import { commitSingleOwnerProductionAuthorization } from "../lib/production-authorization.mjs";
 import { runPersistedDExecution } from "../lib/d-e-software-integration.mjs";
 
-const port = Number(process.env.SELECTION_REVIEW_TEST_PORT);
+const { api: port } = allocatedTestPorts();
 
 test("saved continuation requires authenticated owner, closed current input, exact job and available service without modifying queued work", async t => {
   const fixture = await productionOwnerDecisionHttpFixture();

@@ -10,6 +10,7 @@ import { createC1ProductPlan, verifyC1ProductFacts } from "../../lib/c1-product-
 import { buildC1AiDraftRequest, mergeC1AiDraftReceipt, createC1AiAccounting } from "../../lib/c1-ai-draft-contract.mjs";
 import { fingerprintCanonicalRecord } from "../../lib/production-contract-primitives.mjs";
 import { createC2SoftwareContainer } from "../../lib/c2-software-orchestrator.mjs";
+import { projectC1CompetitorTextSnapshot } from "../../lib/c1-software-input-preparation.mjs";
 import { authorizedExecution, settledExecution } from "./c1-ai-draft-fixture.mjs";
 import { attachPassedMarketAssessment } from "../helpers/market-assessment-fixture.mjs";
 import { createTrainCandidateInput } from "./legacy-candidate-input-fixture.mjs";
@@ -18,7 +19,7 @@ import { packageFixture } from "./c2-source-package-fixture.mjs";
 export const VARIANT = "规格:豪华小火车";
 export const FORMAL_C1_CREATED_AT = "2026-08-12T13:00:00.000Z";
 
-export function phase7PassedState({ sellerType = "cross_border_cn", fullC1Facts = false,
+export function phase7PassedState({ sellerType = "cross_border_cn", fullC1Facts = false, commissionMode = "exact",
   candidateId = "CX-20260803-010", supplierSkuId = "4993364145574", variantKey = VARIANT,
   sourceOfferId = "712421624571", productName = "机械发条木质火车", material = "DVP木纤维板", skuAttributes = {},
   captureId = "SC-8f132e8e-425e-401a-8c72-13c32290d8b8", productUrl, imageUrl, categoryPath,
@@ -131,7 +132,7 @@ export function phase7PassedState({ sellerType = "cross_border_cn", fullC1Facts 
     platformFeeEvidence: {
       costPolicyContext, costPolicySnapshot,
       evidenceId: "platform-fees:ozon:dandanshu:17028665:rfbs:2026-08-12",
-      commissionEvidenceMode: "exact",
+      commissionEvidenceMode: commissionMode,
       commissionRate: 0.14,
       sourceType: "real_same_description_category_seller_api",
       otherCosts: {
@@ -188,23 +189,25 @@ export function platformSchemaEvidence({ storeRef } = {}) {
 /** Synthetic evidence and receipt for the real B/C1 functions; this is not a persisted or platform completion. */
 export function createFormalC1DraftFixture({ at = FORMAL_C1_CREATED_AT, candidateRevision = 27,
   softwareJobId = "software-job:formal-c1:1", gatewayJobId = "gateway-job:synthetic:1",
-  authorizationId = "authorization:c1-ai-draft:FORMAL-C1", detailImageLimit = 3,
-  categoryName = "3D-пазл", rightsReviewOptions = { brand: SYNTHETIC_LICENSED_BRAND, rights: SYNTHETIC_LICENSED_RIGHTS }, ...sourceOptions
+  authorizationId = "authorization:c1-ai-draft:FORMAL-C1",
+  categoryName = "3D-пазл", projectCompetitorTexts = false, platformAttributes = null,
+  platformRequiredFields = null,
+  rightsReviewOptions = { brand: SYNTHETIC_LICENSED_BRAND, rights: SYNTHETIC_LICENSED_RIGHTS }, ...sourceOptions
 } = {}) {
   const state = phase7PassedState({ ...sourceOptions, fullC1Facts: true });
   const schema = platformSchemaEvidence({ storeRef: state.skuPackage.g1Identity.storeRef });
   schema.storeRef = structuredClone(state.skuPackage.g1Identity.storeRef);
   schema.categoryName = categoryName;
+  schema.ruleVersion = schema.schemaRevision;
   schema.categoryId = "category:ozon:3d-puzzle";
-  schema.requiredFields = [{ fieldKey: "material", label: "材质", required: true, sourceAttributeKeys: ["material"] }];
+  schema.requiredFields = platformRequiredFields === null
+    ? [{ fieldKey: "material", label: "材质", required: true, sourceAttributeKeys: ["material"] }]
+    : structuredClone(platformRequiredFields);
   schema.categoryRestrictions = [];
+  if (platformAttributes !== null) schema.attributes = structuredClone(platformAttributes);
   schema.platformCompliance = { status: "clear" };
   const declared = packageFixture({ executableOzon: true }).c1ProductPlan.inputSnapshots.platformSchemaRules;
   schema.writeBindings = { ...structuredClone(declared.writeBindings), evidenceRef: schema.evidenceId, schemaRevision: schema.schemaRevision };
-  schema.mediaRequirements = { ...structuredClone(declared.mediaRequirements), evidenceRef: schema.evidenceId,
-    platform: schema.platform, targetStore: schema.store, storeRef: structuredClone(schema.storeRef),
-    categoryId: schema.categoryId, schemaRevision: schema.schemaRevision };
-  schema.mediaRequirements.imageSlots.find(slot => slot.role === "detail_image").maxCount = detailImageLimit;
   const before = structuredClone(state.skuPackage);
   const created = createC1ProductPlan({ ...state, platformSchemaEvidence: schema, createdAt: at });
   const skuRightsReview = rightsReviewOptions === null ? null : syntheticSkuRightsReview({ ...rightsReviewOptions,
@@ -213,7 +216,8 @@ export function createFormalC1DraftFixture({ at = FORMAL_C1_CREATED_AT, candidat
   const verifiedCategoryName = checked.c1ProductPlan.platformCategory.categoryName.value;
   const keywordRef = "keyword:synthetic:3d-puzzle";
   const request = buildC1AiDraftRequest({ skuPackage: checked.skuPackage,
-    competitorTextSnapshot: { snapshotId: "competitor-text:synthetic:3d-puzzle", evidenceRef: "text:synthetic:3d-puzzle",
+    competitorTextSnapshot: projectCompetitorTexts ? projectC1CompetitorTextSnapshot(checked.c1ProductPlan) : {
+      snapshotId: "competitor-text:synthetic:3d-puzzle", evidenceRef: "text:synthetic:3d-puzzle",
       sourceSalesSnapshotId: checked.c1ProductPlan.inputRefs.salesSnapshotId, observedAt: at,
       texts: [{ textId: "text:synthetic:1", text: verifiedCategoryName, sourceRef: "competitor:synthetic:1" }] },
     keywordEvidence: { evidenceId: "seo:synthetic:3d-puzzle", status: "ready", targetPlatform: "ozon",

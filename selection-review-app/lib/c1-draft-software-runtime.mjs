@@ -24,8 +24,7 @@ export class C1DraftRuntimeUnavailableError extends Error {
 export function createC1DraftSoftwareRuntime({ useCase, loadSavedExecution = null }) {
   if (!useCase || typeof useCase.runSaved !== "function" ||
       (loadSavedExecution !== null && typeof loadSavedExecution !== "function")) throw new Error("C1_DRAFT_RUNTIME_DEPENDENCY_INVALID");
-  return Object.freeze({
-    async continueSavedCurrent(input) {
+  async function savedWorkerInput(input) {
       closed(input, ["candidateId", "expectedRevision", "jobId"]);
       assertSoftwareJobStrictRef(input.candidateId, "candidateId");
       assertSoftwareJobStrictRef(input.jobId, "jobId");
@@ -38,7 +37,15 @@ export function createC1DraftSoftwareRuntime({ useCase, loadSavedExecution = nul
       authorizeOperation({ actor: worker, requiredRoles: ["operator"] });
       assertSoftwareJobStrictRef(execution.leaseId, "leaseId");
       if (!Number.isInteger(execution.leaseDurationMs) || execution.leaseDurationMs < 1000 || execution.leaseDurationMs > 1_800_000) throw new Error("C1_DRAFT_RUNTIME_INPUT_INVALID");
-      return useCase.runSaved({ actor: worker, input: { ...input, leaseId: execution.leaseId, leaseDurationMs: execution.leaseDurationMs } });
+      return { actor: worker, input: { ...input, leaseId: execution.leaseId, leaseDurationMs: execution.leaseDurationMs } };
+  }
+  return Object.freeze({
+    async continueSavedCurrent(input) {
+      return useCase.runSaved(await savedWorkerInput(input));
+    },
+    async reconcileSavedCurrent(input) {
+      if (typeof useCase.reconcileSaved !== "function") throw new C1DraftRuntimeUnavailableError();
+      return useCase.reconcileSaved(await savedWorkerInput(input));
     }
   });
 }

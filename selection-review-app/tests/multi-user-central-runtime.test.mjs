@@ -104,7 +104,7 @@ test("生产状态只能通过中央Repository边界，页面/插件/Worker/Code
 });
 
 test("本机依赖门禁拒绝领域代码写死地址、个人目录和固定Worker，仅允许明确本地适配器", () => {
-  const source = "fetch('http://127.0.0.1:4317'); const root='/Users/shuaizhang/data'; const worker='fixed-worker';";
+  const source = "fetch('http://127.0.0.1:4317'); const root='/Users/fixture-user/data'; const worker='fixed-worker';";
   assert.deepEqual(findLocalMachineDependencies(source).map((item) => item.rule), [
     "loopback_address", "personal_home_path", "fixed_worker_identity"
   ]);
@@ -155,13 +155,17 @@ test("生产源码新增本机假设必须进入明确审计文件，不能静�
     ["extension/1688-capture/bridge.js", ["worker_adapter", { loopback_address: 1 }]],
     ["extension/1688-capture/capture-request.js", ["worker_adapter", { loopback_address: 1 }]],
     ["lib/c1-seo-draft.mjs", ["local_adapter", { personal_home_path: 2 }]],
-    ["lib/codex-dispatcher.mjs", ["local_adapter", { loopback_address: 1, personal_home_path: 4 }]],
+    ["lib/codex-dispatcher.mjs", ["local_adapter", { loopback_address: 1, dynamic_home_dependency: 1 }]],
     ["lib/http-api-boundary.mjs", ["local_adapter", { loopback_address: 1 }]],
     ["lib/lifecycle-b-real-evidence-readers.mjs", ["local_adapter", { loopback_address: 2 }]],
     ["lib/multi-user-central-runtime.mjs", ["local_adapter", { loopback_address: 3, fixed_worker_identity: 3 }]],
     ["lib/ozon-de-http-transport.mjs", ["local_adapter", { loopback_address: 2 }]],
+    // 当前本地开发凭据适配器：URL由配置注入，但只允许本机Ozon凭据服务；不宣称可直接部署到中央服务。
+    ["lib/ozon-dictionary-value-reader.mjs", ["local_adapter", { loopback_address: 2 }]],
     ["lib/runtime-configuration.mjs", ["local_adapter", { loopback_address: 8 }]],
     ["lib/runtime-identity-provider.mjs", ["local_adapter", { loopback_address: 4 }]],
+    // 采集开始信号只被内容脚本在 http://127.0.0.1:4317 这一个来源上接受，所以给主人的那两句话必须写出这个地址。
+    ["src/captureStart.js", ["local_adapter", { loopback_address: 3 }]],
     ["lib/workflow-map.mjs", ["local_adapter", { personal_home_path: 3 }]]
   ]);
   const checked = [];
@@ -234,7 +238,8 @@ test("服务先初始化身份和闭集新A中断对账，仅显式配置可启�
   const listenIndex = serverSource.indexOf("server.listen(port, host");
   assert.ok(identityIndex >= 0, "身份提供器必须先验证私有存储");
   assert.ok(listenIndex > identityIndex, "身份初始化完成之前不能监听请求");
-  const reconciliation = "await softwareJobStore.reconcileAfterRestart({jobTypes:['a_product_discovery','a_product_detail_read']});";
+  // D/E 三类作业是上一轮明确加进重启对账的（见 tests/d-e-restart-filter.test.mjs），这里跟着当前源码断言。
+  const reconciliation = "await softwareJobStore.reconcileAfterRestart({jobTypes:['a_product_discovery','a_product_detail_read',\n  'd_production_execution','e_d_platform_observation','e_independent_readback']});";
   const reconciliationIndex=serverSource.indexOf(reconciliation);
   assert.ok(reconciliationIndex>identityIndex&&reconciliationIndex<listenIndex);
   assert.equal([...serverSource.matchAll(/(?:softwareJobStore\.)?reconcileAfterRestart\s*\(/g)].length,1);

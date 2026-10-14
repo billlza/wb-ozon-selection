@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import {
   CodexDispatcher,
@@ -31,13 +31,14 @@ const candidate = {
   authorizationStatus: "clear"
 };
 
-test("default dispatch skill catalog preserves the registered names and paths", () => {
+test("default dispatch skill catalog preserves the registered names and local home layout", () => {
   const catalog = createDispatchSkillCatalog();
+  const localHome = homedir();
   assert.deepEqual(Object.values(catalog), [
-    { name: "ozon-wb-pricing", path: "/Users/shuaizhang/.codex/skills/ozon-wb-pricing/SKILL.md" },
-    { name: "optimize-ecommerce-seo", path: "/Users/shuaizhang/Documents/电商能力实验室/optimize-ecommerce-seo/SKILL.md" },
-    { name: "wb-listing-launch", path: "/Users/shuaizhang/.codex/skills/wb-listing-launch/SKILL.md" },
-    { name: "wb-safe-write", path: "/Users/shuaizhang/.codex/skills/wb-safe-write/SKILL.md" }
+    { name: "ozon-wb-pricing", path: path.join(localHome, ".codex", "skills", "ozon-wb-pricing", "SKILL.md") },
+    { name: "optimize-ecommerce-seo", path: path.join(localHome, "Documents", "电商能力实验室", "optimize-ecommerce-seo", "SKILL.md") },
+    { name: "wb-listing-launch", path: path.join(localHome, ".codex", "skills", "wb-listing-launch", "SKILL.md") },
+    { name: "wb-safe-write", path: path.join(localHome, ".codex", "skills", "wb-safe-write", "SKILL.md") }
   ]);
   assert.strictEqual(createDispatchSkillCatalog({ directory: null }), catalog);
   assert.ok(Object.isFrozen(catalog));

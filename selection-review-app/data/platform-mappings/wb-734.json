@@ -1,0 +1,21 @@
+{
+  "mappingVersion": "wb-734-2026-10-10",
+  "platform": "wb",
+  "category": { "subjectId": 734, "subjectName": "Жилеты для животных", "parentId": 723, "parentName": "Товары для животных" },
+  "evidence": {
+    "source": "WB Content API 只读查询：GET /content/v2/object/all?name=жилет、GET /content/v2/object/charcs/734",
+    "checkedAt": "2026-10-10T01:35:29Z",
+    "note": "该类目 32 项属性在 WB 接口里都没有标为必填；下面只列中立核心能直接提供或应该提供的几项。颜色取值必须是 WB 颜色字典里的名称（例如 хаки 在字典里归在 зеленый 下）。"
+  },
+  "attributes": [
+    { "platformAttributeId": 14177449, "name": "Цвет", "from": "color", "use": "ru", "maxCount": 5 },
+    { "platformAttributeId": 14177450, "name": "Состав", "from": "fact:material", "use": "ru", "maxCount": 20 },
+    { "platformAttributeId": 88952, "name": "Вес товара с упаковкой (г)", "from": "fact:packedWeightKg", "scale": 1000 },
+    { "platformAttributeId": 90849, "name": "Длина упаковки", "from": "fact:packageDimensionsCm.length" },
+    { "platformAttributeId": 90745, "name": "Ширина упаковки", "from": "fact:packageDimensionsCm.width" },
+    { "platformAttributeId": 90846, "name": "Высота упаковки", "from": "fact:packageDimensionsCm.height" },
+    { "platformAttributeId": 14177451, "name": "Страна производства", "from": "fact:countryOfOrigin", "use": "ru" },
+    { "platformAttributeId": 4, "name": "Вид застежки", "from": "fact:closureType", "use": "ru", "required": false },
+    { "platformAttributeId": 12285, "name": "Вид животного", "from": "fact:intendedUses", "use": "ru", "required": false, "maxCount": 3 }
+  ]
+}

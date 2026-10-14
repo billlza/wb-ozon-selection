@@ -30,7 +30,7 @@ export async function persistC1KeywordPlanningLocalMaterial({
       !nonEmpty(producedAt) || Number.isNaN(Date.parse(producedAt)) || typeof producer !== "function") {
     throw new Error("C1_KEYWORD_LOCAL_MATERIAL_PERSISTENCE_INPUT_INVALID");
   }
-  authorizeOperation({ actor, requiredRoles: ["operator"] });
+  authorizeOperation({ actor, requiredRoles: ["operator", "owner"] });
   const snapshot = await repository.readSnapshot();
   const observed = snapshot.candidates?.find((entry) => entry.id === candidateId);
   if (!observed) throw new Error("C1_KEYWORD_LOCAL_MATERIAL_CANDIDATE_NOT_FOUND");
@@ -49,7 +49,7 @@ export async function persistC1KeywordPlanningLocalMaterial({
     repository,
     runtimeMode,
     actor,
-    requiredRoles: ["operator"],
+    requiredRoles: ["operator", "owner"],
     action: "produce_c1_keyword_planning_local_material",
     candidateId,
     skuPackageId,
@@ -64,6 +64,12 @@ export async function persistC1KeywordPlanningLocalMaterial({
       if (produced.production.inputFingerprint !== preview.production.inputFingerprint) throw new Error("C1_KEYWORD_LOCAL_MATERIAL_INPUT_DRIFT");
       const next = structuredClone(candidate);
       next.lifecycleV11 = { ...structuredClone(next.lifecycleV11 || {}) };
+      const previous = next.lifecycleV11.c1KeywordPlanningLocalMaterialV1;
+      if (previous && previous.materialFingerprint !== produced.material?.materialFingerprint) {
+        next.lifecycleV11.c1KeywordPlanningLocalMaterialHistoryV1 = [
+          ...(next.lifecycleV11.c1KeywordPlanningLocalMaterialHistoryV1 ?? []), structuredClone(previous)
+        ];
+      }
       next.lifecycleV11.c1KeywordPlanningLocalMaterialProductionV1 = structuredClone(produced.production);
       if (produced.material) next.lifecycleV11.c1KeywordPlanningLocalMaterialV1 = structuredClone(produced.material);
       else delete next.lifecycleV11.c1KeywordPlanningLocalMaterialV1;

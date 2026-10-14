@@ -92,7 +92,8 @@
         },
         "additionalProperties": {
           "$ref": "#/$defs/noSensitivePropertyNames"
-        }
+        },
+        "type": "object"
       },
       "else": {
         "if": {
@@ -101,7 +102,8 @@
         "then": {
           "items": {
             "$ref": "#/$defs/noSensitivePropertyNames"
-          }
+          },
+          "type": "array"
         }
       }
     },
@@ -117,7 +119,8 @@
         },
         "additionalProperties": {
           "$ref": "#/$defs/noTransportCredentialPropertyNames"
-        }
+        },
+        "type": "object"
       },
       "else": {
         "if": {
@@ -126,7 +129,8 @@
         "then": {
           "items": {
             "$ref": "#/$defs/noTransportCredentialPropertyNames"
-          }
+          },
+          "type": "array"
         }
       }
     },
@@ -142,7 +146,8 @@
         },
         "additionalProperties": {
           "$ref": "#/$defs/noCompositeSecretPropertyNames"
-        }
+        },
+        "type": "object"
       },
       "else": {
         "if": {
@@ -151,7 +156,8 @@
         "then": {
           "items": {
             "$ref": "#/$defs/noCompositeSecretPropertyNames"
-          }
+          },
+          "type": "array"
         }
       }
     },
@@ -165,11 +171,16 @@
           "$ref": "#/$defs/c2SecretCheckedContractString"
         },
         {
-          "type": [
-            "integer",
-            "number",
-            "boolean",
-            "null"
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         {
@@ -534,63 +545,89 @@
       }
     },
     "draftOnlySeo": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "status",
-        "formalProviderResultAccepted",
-        "reason",
-        "aiRequestId",
-        "aiRequestFingerprint",
-        "inputFingerprint",
-        "sourceRevision",
-        "receiptRef",
-        "providerJobRef"
-      ],
-      "properties": {
-        "status": {
-          "const": "draft_only"
-        },
-        "formalProviderResultAccepted": {
-          "const": true
-        },
-        "reason": {
-          "type": "null"
-        },
-        "aiRequestId": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/opaqueEvidenceRef"
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "formalProviderResultAccepted",
+            "reason",
+            "aiRequestId",
+            "aiRequestFingerprint",
+            "inputFingerprint",
+            "sourceRevision",
+            "receiptRef",
+            "providerJobRef"
+          ],
+          "properties": {
+            "status": {
+              "const": "draft_only"
             },
-            {
-              "$ref": "#/$defs/canonicalFrozenRef"
-            }
-          ]
-        },
-        "aiRequestFingerprint": {
-          "$ref": "#/$defs/fingerprint"
-        },
-        "inputFingerprint": {
-          "$ref": "#/$defs/fingerprint"
-        },
-        "sourceRevision": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "receiptRef": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/opaqueEvidenceRef"
+            "formalProviderResultAccepted": {
+              "const": true
             },
-            {
-              "$ref": "#/$defs/canonicalFrozenRef"
+            "reason": {
+              "type": "null"
+            },
+            "aiRequestId": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/opaqueEvidenceRef"
+                },
+                {
+                  "$ref": "#/$defs/canonicalFrozenRef"
+                }
+              ]
+            },
+            "aiRequestFingerprint": {
+              "$ref": "#/$defs/fingerprint"
+            },
+            "inputFingerprint": {
+              "$ref": "#/$defs/fingerprint"
+            },
+            "sourceRevision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "receiptRef": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/opaqueEvidenceRef"
+                },
+                {
+                  "$ref": "#/$defs/canonicalFrozenRef"
+                }
+              ]
+            },
+            "providerJobRef": {
+              "$ref": "#/$defs/providerJobRef"
+            },
+            "pricingReuseRecord": {
+              "oneOf": [
+                {
+                  "$ref": "c1-product-plan-v1.1#/$defs/c1PricingReuseRecord"
+                },
+                {
+                  "$ref": "c2-asset-lifecycle-v1.1.schema.json#/$defs/c1PricingReuseReference"
+                }
+              ]
             }
-          ]
+          }
         },
-        "providerJobRef": {
-          "$ref": "#/$defs/providerJobRef"
+        {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/draftOnlySeo"
+        },
+        {
+          "$ref": "c1-editorial-source-v2.schema.json#/$defs/draftOnlySeo"
+        },
+        {
+          "$ref": "c2-asset-lifecycle-v1.1.schema.json#/$defs/editorialDraftReference"
+        },
+        {
+          "$ref": "c1-sibling-formal-reuse-v1.schema.json#/$defs/draftOnlySeo"
         }
-      }
+      ]
     },
     "frozenInputRefs": {
       "type": "object",
@@ -690,94 +727,6 @@
         }
       }
     },
-    "requiredMediaSlot": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "slotId",
-        "mediaType",
-        "required"
-      ],
-      "properties": {
-        "slotId": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/opaqueEvidenceRef"
-            },
-            {
-              "$ref": "#/$defs/canonicalFrozenRef"
-            }
-          ]
-        },
-        "mediaType": {
-          "enum": [
-            "image",
-            "video"
-          ]
-        },
-        "required": {
-          "const": true
-        }
-      }
-    },
-    "mediaRequirements": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "status",
-        "schemaSnapshotRef",
-        "sourceRefs",
-        "requiredSlots",
-        "videoRequirement",
-        "reason"
-      ],
-      "properties": {
-        "status": {
-          "const": "confirmed"
-        },
-        "schemaSnapshotRef": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/opaqueEvidenceRef"
-            },
-            {
-              "$ref": "#/$defs/canonicalFrozenRef"
-            }
-          ]
-        },
-        "sourceRefs": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {
-            "allOf": [
-              {
-                "$ref": "#/$defs/safeSourceRef"
-              },
-              {
-                "$ref": "#/$defs/canonicalFrozenRef"
-              }
-            ]
-          }
-        },
-        "requiredSlots": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/requiredMediaSlot"
-          }
-        },
-        "videoRequirement": {
-          "enum": [
-            "required",
-            "not_required"
-          ]
-        },
-        "reason": {
-          "type": "null"
-        }
-      }
-    },
     "canonicalHandoff": {
       "type": "object",
       "additionalProperties": false,
@@ -790,7 +739,6 @@
         "schemaSnapshotRef",
         "draftOnlySeo",
         "keywordEvidenceRefs",
-        "mediaRequirements",
         "unknownManifest"
       ],
       "properties": {
@@ -836,9 +784,6 @@
               }
             ]
           }
-        },
-        "mediaRequirements": {
-          "$ref": "#/$defs/mediaRequirements"
         },
         "unknownManifest": {
           "type": "array",
@@ -896,6 +841,12 @@
         },
         "productionApproved": {
           "const": false
+        },
+        "assertions": {
+          "$ref": "c1-ai-draft-receipt-v1.schema.json#/$defs/citedText/properties/assertions"
+        },
+        "reviewZh": {
+          "$ref": "c1-ai-draft-receipt-v1.schema.json#/$defs/reviewText/properties/reviewZh"
         }
       }
     },
@@ -941,6 +892,15 @@
               }
             ]
           }
+        },
+        "assertions": {
+          "$ref": "c1-ai-draft-receipt-v1.schema.json#/$defs/citedText/properties/assertions"
+        },
+        "reviewZh": {
+          "$ref": "c1-ai-draft-receipt-v1.schema.json#/$defs/reviewKeyword/properties/reviewZh"
+        },
+        "keywordRole": {
+          "$ref": "c1-ai-draft-receipt-v1.schema.json#/$defs/reviewKeyword/properties/keywordRole"
         }
       }
     },
@@ -969,79 +929,149 @@
       }
     },
     "seoEvidenceLayer": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "draftVersion",
-        "executionStatus",
-        "aiRequestId",
-        "aiRequestFingerprint",
-        "inputFingerprint",
-        "sourceRevision",
-        "aiReceiptId",
-        "providerJobRef",
-        "inputEvidenceRefs",
-        "productionWrites"
-      ],
-      "properties": {
-        "draftVersion": {
-          "$ref": "#/$defs/opaqueEvidenceRef"
-        },
-        "executionStatus": {
-          "const": "draft_only"
-        },
-        "aiRequestId": {
-          "allOf": [
-            {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "draftVersion",
+            "executionStatus",
+            "aiRequestId",
+            "aiRequestFingerprint",
+            "inputFingerprint",
+            "sourceRevision",
+            "aiReceiptId",
+            "providerJobRef",
+            "inputEvidenceRefs",
+            "productionWrites"
+          ],
+          "properties": {
+            "draftVersion": {
               "$ref": "#/$defs/opaqueEvidenceRef"
             },
-            {
-              "$ref": "#/$defs/canonicalFrozenRef"
-            }
-          ]
-        },
-        "aiRequestFingerprint": {
-          "$ref": "#/$defs/fingerprint"
-        },
-        "inputFingerprint": {
-          "$ref": "#/$defs/fingerprint"
-        },
-        "sourceRevision": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "aiReceiptId": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/opaqueEvidenceRef"
+            "executionStatus": {
+              "const": "draft_only"
             },
-            {
-              "$ref": "#/$defs/canonicalFrozenRef"
-            }
-          ]
-        },
-        "inputEvidenceRefs": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {
-            "allOf": [
-              {
-                "$ref": "#/$defs/opaqueEvidenceRef"
-              },
-              {
-                "$ref": "#/$defs/canonicalFrozenRef"
+            "aiRequestId": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/opaqueEvidenceRef"
+                },
+                {
+                  "$ref": "#/$defs/canonicalFrozenRef"
+                }
+              ]
+            },
+            "aiRequestFingerprint": {
+              "$ref": "#/$defs/fingerprint"
+            },
+            "inputFingerprint": {
+              "$ref": "#/$defs/fingerprint"
+            },
+            "sourceRevision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "aiReceiptId": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/opaqueEvidenceRef"
+                },
+                {
+                  "$ref": "#/$defs/canonicalFrozenRef"
+                }
+              ]
+            },
+            "inputEvidenceRefs": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/opaqueEvidenceRef"
+                  },
+                  {
+                    "$ref": "#/$defs/canonicalFrozenRef"
+                  }
+                ]
               }
+            },
+            "providerJobRef": {
+              "$ref": "#/$defs/providerJobRef"
+            },
+            "productionWrites": {
+              "const": 0
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "locale": {
+              "const": "ru-RU"
+            },
+            "targetPlatform": {
+              "enum": [
+                "ozon",
+                "wb"
+              ]
+            },
+            "provider": {
+              "enum": [
+                "terra",
+                "sol"
+              ]
+            },
+            "modelVersion": {
+              "$ref": "#/$defs/opaqueEvidenceRef"
+            },
+            "serviceVersion": {
+              "$ref": "#/$defs/opaqueEvidenceRef"
+            },
+            "attempt": {
+              "const": 1
+            },
+            "outputFingerprint": {
+              "$ref": "#/$defs/fingerprint"
+            },
+            "finalApprovalGranted": {
+              "const": false
+            },
+            "executionPolicy": {
+              "$ref": "c1-ai-draft-request-v1.schema.json#/properties/executionPolicy"
+            },
+            "factDefinitionsVersion": {
+              "const": "c1-fact-definitions-v1"
+            },
+            "outputContractVersion": {
+              "const": "c1-ai-draft-output-v3"
+            },
+            "russianAttributes": {
+              "$ref": "c1-ai-draft-receipt-v1.schema.json#/properties/output/oneOf/2/properties/russianAttributes"
+            },
+            "categoryPathReview": {
+              "$ref": "c1-ai-draft-receipt-v1.schema.json#/properties/output/oneOf/2/properties/categoryPathReview"
+            }
+          },
+          "dependentRequired": {
+            "outputContractVersion": [
+              "russianAttributes"
+            ],
+            "russianAttributes": [
+              "outputContractVersion"
+            ],
+            "categoryPathReview": [
+              "outputContractVersion"
             ]
           }
         },
-        "providerJobRef": {
-          "$ref": "#/$defs/providerJobRef"
+        {
+          "$ref": "c1-editorial-source-v1.schema.json#/$defs/evidenceLayer"
         },
-        "productionWrites": {
-          "const": 0
+        {
+          "$ref": "c1-editorial-source-v2.schema.json#/$defs/evidenceLayer"
         }
-      }
+      ]
     },
     "seoDraft": {
       "type": "object",
@@ -1066,7 +1096,7 @@
         },
         "bulletPoints": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "items": {
             "$ref": "#/$defs/draftSegment"
           }
@@ -1077,7 +1107,34 @@
         "evidenceLayer": {
           "$ref": "#/$defs/seoEvidenceLayer"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "evidenceLayer": {
+                "type": "object",
+                "required": [
+                  "factDefinitionsVersion"
+                ],
+                "properties": {
+                  "factDefinitionsVersion": {
+                    "const": "c1-fact-definitions-v1"
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "bulletPoints": {
+                "minItems": 1,
+                "type": "array"
+              }
+            }
+          }
+        }
+      ]
     },
     "formalFactString": {
       "type": "string",
@@ -1157,11 +1214,16 @@
           "$ref": "#/$defs/formalFactString"
         },
         {
-          "type": [
-            "number",
-            "integer",
-            "boolean",
-            "null"
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         {
@@ -1480,6 +1542,43 @@
           "items": {
             "$ref": "#/$defs/requiredPlatformFieldFact"
           }
+        },
+        "ozonAttributes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "fieldKey",
+              "label",
+              "dictionaryValueId",
+              "sourceFactPath",
+              "fact"
+            ],
+            "properties": {
+              "fieldKey": {
+                "$ref": "#/$defs/c2SecretCheckedContractString"
+              },
+              "label": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "dictionaryValueId": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "sourceFactPath": {
+                "$ref": "#/$defs/c2SecretCheckedContractString"
+              },
+              "fact": {
+                "$ref": "#/$defs/sourcedFact"
+              }
+            }
+          }
         }
       }
     },
@@ -1627,6 +1726,22 @@
         },
         "requiredFieldGapCount": {
           "$ref": "#/$defs/sourcedFact"
+        },
+        "skuRightsReview": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "brand",
+            "rights"
+          ],
+          "properties": {
+            "brand": {
+              "$ref": "#/$defs/sourcedFact"
+            },
+            "rights": {
+              "$ref": "#/$defs/sourcedFact"
+            }
+          }
         }
       }
     },
@@ -1658,360 +1773,18 @@
         },
         "schemaRevision": {
           "$ref": "#/$defs/confirmedSourcedFact"
-        }
-      }
-    },
-    "detailedMediaSlot": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "slotId",
-        "role",
-        "minCount",
-        "maxCount"
-      ],
-      "properties": {
-        "slotId": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/c2SecretCheckedContractString"
-            },
-            {
-              "$ref": "#/$defs/canonicalFrozenRef"
-            }
-          ]
         },
-        "role": {
-          "$ref": "#/$defs/c2SecretCheckedContractString"
+        "evidenceId": {
+          "$ref": "#/$defs/sourcedFact"
         },
-        "minCount": {
-          "type": "integer",
-          "minimum": 0
+        "requiredFields": {
+          "$ref": "#/$defs/sourcedFact"
         },
-        "maxCount": {
-          "type": "integer",
-          "minimum": 1
-        }
-      }
-    },
-    "detailedMediaRequirements": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schemaVersion",
-        "evidenceRef",
-        "evidenceVersion",
-        "platform",
-        "targetStore",
-        "storeRef",
-        "categoryId",
-        "schemaRevision",
-        "sourceDataRevision",
-        "imageSlots",
-        "videoSlots",
-        "schemaVideoRequirement"
-      ],
-      "properties": {
-        "schemaVersion": {
-          "const": "c2-media-requirements-v1"
+        "writeBindings": {
+          "$ref": "#/$defs/sourcedFact"
         },
-        "evidenceRef": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/opaqueEvidenceRef"
-            },
-            {
-              "$ref": "#/$defs/canonicalFrozenRef"
-            }
-          ]
-        },
-        "evidenceVersion": {
-          "$ref": "#/$defs/c2SecretCheckedContractString"
-        },
-        "platform": {
-          "$ref": "#/$defs/c2SecretCheckedContractString"
-        },
-        "targetStore": {
-          "$ref": "#/$defs/c2SecretCheckedContractString"
-        },
-        "storeRef": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/c2SecretCheckedContractString"
-            },
-            {
-              "$ref": "#/$defs/canonicalFrozenRef"
-            }
-          ]
-        },
-        "categoryId": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/c2SecretCheckedContractString"
-            },
-            {
-              "$ref": "#/$defs/canonicalFrozenRef"
-            }
-          ]
-        },
-        "schemaRevision": {
-          "$ref": "#/$defs/c2SecretCheckedContractString"
-        },
-        "sourceDataRevision": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "imageSlots": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/$defs/detailedMediaSlot"
-          }
-        },
-        "videoSlots": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/detailedMediaSlot"
-          }
-        },
-        "schemaVideoRequirement": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "status"
-          ],
-          "properties": {
-            "status": {
-              "enum": [
-                "required",
-                "not_required"
-              ]
-            },
-            "requiredBy": {
-              "enum": [
-                "schema",
-                "default"
-              ]
-            },
-            "evidenceRef": {
-              "oneOf": [
-                {
-                  "type": "null"
-                },
-                {
-                  "$ref": "#/$defs/opaqueEvidenceRef"
-                }
-              ]
-            }
-          }
-        },
-        "contentRules": {
-          "oneOf": [
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "schemaVersion",
-                "status",
-                "reason"
-              ],
-              "properties": {
-                "schemaVersion": {
-                  "const": "c2-media-content-rules-v1"
-                },
-                "status": {
-                  "const": "missing"
-                },
-                "reason": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              }
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "schemaVersion",
-                "status",
-                "evidenceRef",
-                "evidenceVersion",
-                "checkedAt",
-                "validUntil",
-                "slotRules"
-              ],
-              "properties": {
-                "schemaVersion": {
-                  "const": "c2-media-content-rules-v1"
-                },
-                "status": {
-                  "const": "verified"
-                },
-                "evidenceRef": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "evidenceVersion": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "checkedAt": {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                "validUntil": {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                "slotRules": {
-                  "type": "array",
-                  "minItems": 1,
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                      "slotId",
-                      "mediaType",
-                      "mimeTypes",
-                      "byteSize",
-                      "width",
-                      "height",
-                      "aspectRatio"
-                    ],
-                    "properties": {
-                      "slotId": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "mediaType": {
-                        "enum": [
-                          "image",
-                          "video"
-                        ]
-                      },
-                      "mimeTypes": {
-                        "type": "array",
-                        "minItems": 1,
-                        "uniqueItems": true,
-                        "items": {
-                          "enum": [
-                            "image/jpeg",
-                            "image/png",
-                            "image/webp",
-                            "video/mp4"
-                          ]
-                        }
-                      },
-                      "byteSize": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "min",
-                          "max"
-                        ],
-                        "properties": {
-                          "min": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "max": {
-                            "oneOf": [
-                              {
-                                "type": "integer",
-                                "minimum": 0,
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "const": "unrestricted"
-                              }
-                            ]
-                          }
-                        }
-                      },
-                      "width": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "min",
-                          "max"
-                        ],
-                        "properties": {
-                          "min": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "max": {
-                            "oneOf": [
-                              {
-                                "type": "integer",
-                                "minimum": 0,
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "const": "unrestricted"
-                              }
-                            ]
-                          }
-                        }
-                      },
-                      "height": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "min",
-                          "max"
-                        ],
-                        "properties": {
-                          "min": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
-                          "max": {
-                            "oneOf": [
-                              {
-                                "type": "integer",
-                                "minimum": 0,
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "const": "unrestricted"
-                              }
-                            ]
-                          }
-                        }
-                      },
-                      "aspectRatio": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "min",
-                          "max"
-                        ],
-                        "properties": {
-                          "min": {
-                            "type": "number",
-                            "minimum": 0
-                          },
-                          "max": {
-                            "oneOf": [
-                              {
-                                "type": "number",
-                                "minimum": 0,
-                                "exclusiveMinimum": 0
-                              },
-                              {
-                                "const": "unrestricted"
-                              }
-                            ]
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          ]
+        "collectedAt": {
+          "$ref": "#/$defs/sourcedFact"
         }
       }
     },
@@ -2032,7 +1805,8 @@
               "$ref": "#/$defs/formalFactString"
             },
             {
-              "minLength": 1
+              "minLength": 1,
+              "type": "string"
             }
           ]
         },
@@ -2042,7 +1816,8 @@
               "$ref": "#/$defs/formalFactString"
             },
             {
-              "minLength": 1
+              "minLength": 1,
+              "type": "string"
             }
           ]
         },
@@ -2080,7 +1855,6 @@
         "batteryAssessment",
         "categoryRestrictions",
         "platformCompliance",
-        "mediaRequirements",
         "unknownManifest"
       ],
       "properties": {
@@ -2104,9 +1878,6 @@
         },
         "platformCompliance": {
           "$ref": "#/$defs/platformComplianceFacts"
-        },
-        "mediaRequirements": {
-          "$ref": "#/$defs/detailedMediaRequirements"
         },
         "unknownManifest": {
           "type": "array",
@@ -2452,6 +2223,47 @@
           "$ref": "#/$defs/canonicalStableHttpsAssetRef"
         }
       ]
+    },
+    "targetContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "platform",
+        "targetStore",
+        "storeRef",
+        "schemaRevision",
+        "schemaEvidenceRef",
+        "sourceDataRevision",
+        "sourceC1Fingerprint"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "c2-target-context-v1"
+        },
+        "platform": {
+          "$ref": "#/$defs/c2SecretCheckedContractString"
+        },
+        "targetStore": {
+          "$ref": "#/$defs/c2SecretCheckedContractString"
+        },
+        "storeRef": {
+          "$ref": "#/$defs/c2SecretCheckedContractString"
+        },
+        "schemaRevision": {
+          "$ref": "#/$defs/c2SecretCheckedContractString"
+        },
+        "schemaEvidenceRef": {
+          "$ref": "#/$defs/opaqueEvidenceRef"
+        },
+        "sourceDataRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sourceC1Fingerprint": {
+          "$ref": "#/$defs/fingerprint"
+        }
+      }
     }
   }
 }

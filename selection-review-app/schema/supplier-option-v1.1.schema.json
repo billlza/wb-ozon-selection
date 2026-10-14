@@ -79,7 +79,7 @@
       ],
       "properties": {
         "supplierOptionId": { "type": "string", "minLength": 1 },
-        "sourcePlatform": { "const": "1688" },
+        "sourcePlatform": { "enum": ["1688", "pinduoduo"] },
         "productUrl": { "type": "string", "format": "uri" },
         "offerId": { "type": "string", "minLength": 1 },
         "supplierSalesEvidence": { "oneOf": [{ "type": "object" }, { "$ref": "#/$defs/unknown" }] },

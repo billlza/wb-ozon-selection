@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { stopApiProcess } from "./helpers/api-process-lifecycle.mjs";
 import { productionAuthorizationInputFixture } from "./helpers/c2-software-fixture.mjs";
 import { validateProductionAuthorizationRecord } from "../lib/product-lifecycle-schema.mjs";
+import { restoreProductionEntities } from "../lib/production-entity-storage.mjs";
 import { createFormalC1DraftFixture } from "./fixtures/formal-c1-flow-fixture.mjs";
 
 const appDir = fileURLToPath(new URL("..", import.meta.url));
@@ -23,19 +24,14 @@ test("local owner authentication, one exact production confirmation and restart 
   await mkdir(businessDirectory);
   const dataFile = path.join(businessDirectory, "state.json");
   const fixture = productionAuthorizationInputFixture({ candidateId: "SYNTHETIC-OWNER-FLOW" });
-  const sourceSku = fixture.skuPackage;
-  const candidate = { id: fixture.candidateId, dataRevision: fixture.sourceCandidateRevision, productName: "合成主人授权验证商品",
-    targetPlatform: sourceSku.targetPlatform, targetStore: sourceSku.targetStore, storeRef: structuredClone(sourceSku.g1Identity.storeRef),
-    workflowStatus: "listing_preparation", history: [], lifecycleV11: { skuPackage: sourceSku } };
-  const conversion = sourceSku.c2FinalAssets.productionAuthorizationPreparation.finalCardInputSnapshot.activeProfitModel.priceConversion;
+  const candidate = { ...structuredClone(fixture.candidate), productName: "合成主人授权验证商品",
+    workflowStatus: "listing_preparation", history: [] };
   const binding = { ...fixture.commercialDecision.executionBinding, platform: "ozon", storeRef: candidate.storeRef,
     storeName: "合成测试店铺", warehouseName: "合成测试仓库", warehouseRef: fixture.commercialDecision.warehouseRef,
     credentialAlias: fixture.commercialDecision.credentialAlias,
     verification: { evidenceRef: "configuration-evidence:synthetic:owner-api", checkedAt: "2026-08-01T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z" } };
   const source = { meta: { version: 2, automationStarted: false }, rules: {}, candidates: [candidate], dispatches: [],
-    evidencePacks: [{ id: conversion.evidenceRef, kind: "exchange_rate", status: "active", scope: { pair: "RUB/CNY" },
-      sourceType: "official", sourceRef: "https://www.cbr.ru/currency_base/daily/", checkedAt: "2026-08-07T00:00:00.000Z",
-      expiresAt: "2099-01-01T00:00:00.000Z", evidenceData: { rubPerCny: conversion.rubPerCny } }] };
+    evidencePacks: fixture.evidencePacks.map(pack => ({ ...structuredClone(pack), expiresAt: "2099-01-01T00:00:00.000Z" })) };
   const rightsFixtures = [false, true].map(frozen => {
     const formal = createFormalC1DraftFixture({ candidateId: frozen ? "SYNTHETIC-C1-FROZEN" : "SYNTHETIC-C1-RIGHTS", storeRef: candidate.storeRef });
     const entry = { ...structuredClone(formal.candidate), workflowStatus: "listing_preparation" };
@@ -123,7 +119,7 @@ test("local owner authentication, one exact production confirmation and restart 
   const savedBytes = await readFile(dataFile);
   const saved = JSON.parse(savedBytes);
   const current = saved.candidates[0];
-  const sku = current.lifecycleV11.skuPackage;
+  const sku = restoreProductionEntities(current, saved.productionEntityRecords).lifecycleV11.skuPackage;
   assert.equal(sku.productionAuthorization.schemaVersion, "production-authorization-v1.2");
   assert.equal(sku.productionAuthorization.authorizedByActorId, ownerId);
   assert.deepEqual(sku.productionAuthorization.executionBinding, fixture.commercialDecision.executionBinding);

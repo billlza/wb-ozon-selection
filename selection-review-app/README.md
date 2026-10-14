@@ -28,6 +28,14 @@ node scripts/prepare-local-runtime.mjs --output /absolute/new/runtime-directory
 - `SELECTION_REVIEW_IDENTITY_PROVIDER=local_owner_password`：启用单机主人登录，限本地回环服务。另须明确指定`SELECTION_REVIEW_OWNER_IDENTITY_FILE`为独立私有目录中的绝对文件路径，不能放进源码、候选/工作流数据或素材目录。未识别的提供器在启动时拒绝，不退回开发身份。
 - 网关和平台证据服务地址须通过当前运行配置显式提供；地址存在不表示身份、授权或服务已经接通。
 
+本机密钥统一经`lib/credential-store.mjs`读取，按操作系统选择后端，条目仍用原来的服务名和账户名（例如`egg-ozon-operations-center`下的`seerfar-open-api`）。换到别的系统时，在那台机器上用同样的名字存一次：
+
+- macOS 钥匙串：沿用现有条目，`security find-generic-password -s <服务名> -a <账户名>`可确认存在（不加`-w`不显示值）。
+- Windows 凭据管理器：普通凭据，目标写成`<服务名>/<账户名>`，例如`cmdkey /generic:egg-ozon-operations-center/seerfar-open-api /user:seerfar-open-api /pass`（不带值时命令行会提示输入）。
+- Linux Secret Service：`secret-tool store --label=<说明> service <服务名> account <账户名>`，值从提示输入。
+
+中央服务不走本机凭据层，改为注入自己的秘密存储；测试只用`createFakeCredentialStore`里的合成值。
+
 未配置、错店、过期或缺少证据时显示缺口。未知费用、用量、扣款和平台状态不记为0。真实秘密不得写入候选、配置声明、源码或日志。
 
 启用本地主人登录后，主人在页面自行完成首次设置。私有目录和文件分别只向当前系统用户开放；账户使用标准scrypt口令核验，首次保存不能覆盖已有账户。会话仅留当前进程，退出、闲置30分钟、最长8小时或服务重启后失效；自动刷新不延长会话。首次保存结果不明时身份入口明确停止，须重启核对。密码、核验值及会话cookie不进入候选、业务操作日志或运行包；登录只建立身份，不确认商品、授权付费或执行生产。

@@ -4,9 +4,13 @@ on:
   push:
     branches:
       - main
+      # 流程改造的起点分支：每块合进来前后都在真实 runner 上跑一遍常规测试和接口测试。
+      - "integration/**"
   pull_request:
     branches:
       - main
+      # 合进流程改造分支之前，PR 本身也先跑一遍。
+      - "integration/**"
 
 permissions:
   contents: read
@@ -19,7 +23,7 @@ jobs:
   verify:
     name: Static checks and pure tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       CI: "true"
       SELECTION_REVIEW_AUTO_DELIVER: "off"

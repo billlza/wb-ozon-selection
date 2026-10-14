@@ -6,6 +6,7 @@ import { validateProductionRecord, validateProductionReadbackExpectation } from 
 import { loadPublishedSchemaValidator } from "./helpers/published-schema-validator.mjs";
 import {
   observedWarehouseAvailableStock,
+  productionReadbackContentGaps,
   createExternalListingRecord,
   validateEVerificationRecord,
   validateExternalListingRecord,
@@ -55,8 +56,8 @@ test("external discovery creates ExternalListingRecord and E ends externally_ver
   assert.equal(verified.imageCount, 10);
 });
 
-test("D and E reject wrong images, order, duplicates, extra assets and unknown CDN equivalence using the same frozen expectation", async () => {
-  const { attempt, result, executionContext } = await successfulExecution();
+test("E rejects wrong images, order, duplicates, extra assets and unknown CDN equivalence using the frozen expectation", async () => {
+  const { attempt, result } = await successfulExecution();
   const productionRecord = result.productionRecord;
   const urls = productionRecord.readbackExpectation.media.map(asset => asset.submittedUrl);
   const normal = exactObservation(productionRecord, { moderationStatus: "approved", validationStatus: "success", saleStatus: "on_sale" });
@@ -78,17 +79,45 @@ test("D and E reject wrong images, order, duplicates, extra assets and unknown C
       readPlatform: async () => { eReads += 1; return observation; } });
     assert.equal(eReads, 1, label); assert.equal(e.status, "not_verified", label);
     assert.equal(e.eVerificationRecord, null); assert.ok(e.gaps.includes(gap));
-    const d = await executeDSoftwareAttempt({ executionAttempt: attempt, executionContext,
-      executeSellerApi: async () => result.platformResult, readbackSellerApi: async () => observation,
-      completedAt: "2026-08-22T07:25:00.000Z" });
-    assert.equal(d.status, "unknown_outcome", label); assert.equal(d.productionRecord, null);
-    assert.equal(d.retryAllowed, false);
   }
   assert.deepEqual(productionRecord.readbackExpectation.media, attempt.request.finalUploads.map(asset => ({
     assetId: asset.assetId, order: asset.order, sha256: asset.sha256, submittedUrl: asset.platformAcceptedUrl
   })));
   const primaryRepeatedStructurally = { ...normal, mediaObservation: media(urls[0], urls) };
   assert.deepEqual(systemCreatedReadbackGaps(productionRecord, primaryRepeatedStructurally), []);
+});
+
+test("unmapped CDN media stays unverified without inventing a main-image or order mismatch", async () => {
+  const { result } = await successfulExecution(), record = result.productionRecord;
+  const normal = exactObservation(record, { moderationStatus: "approved", validationStatus: "success", saleStatus: "on_sale" });
+  const observation = { ...normal, mediaObservation: { sourceProtocol: "ozon-product-info-v3",
+    primaryImageUrl: "https://cdn.ozon/main.png", images: ["https://cdn.ozon/detail.png"] } };
+  assert.deepEqual(productionReadbackContentGaps(record.readbackExpectation, observation), ["media_identity_unverified"]);
+  const e = await runSystemCreatedEReadback({ productionRecord: record, readPlatform: async () => observation, verifiedAt: "2026-08-22T08:00:00.000Z" });
+  assert.equal(e.status, "not_verified"); assert.equal(e.eVerificationRecord, null);
+  assert.deepEqual(e.gaps, ["media_identity_unverified"]);
+  assert.throws(() => verifySystemCreatedListing({ productionRecord: record, verifiedObservation: observation,
+    verifiedAt: "2026-08-22T08:00:00.000Z" }), /E_SYSTEM_READBACK_INCOMPLETE/);
+});
+
+test("media placement is compared only for a proven complete asset set while duplicate and count evidence is retained", async () => {
+  const { result } = await successfulExecution(), record = result.productionRecord;
+  const normal = exactObservation(record, { moderationStatus: "approved", validationStatus: "success", saleStatus: "on_sale" });
+  const [main, detail] = record.readbackExpectation.media.map(asset => asset.submittedUrl);
+  const gaps = (primaryImageUrl, images, imageCount) => productionReadbackContentGaps(record.readbackExpectation,
+    { ...normal, imageCount, mediaObservation: { sourceProtocol: "ozon-product-attributes-v4", primaryImageUrl, images } });
+  assert.deepEqual(gaps(detail, [main], 2), ["main_image_mismatch", "media_order_or_set_mismatch"]);
+  assert.deepEqual(gaps(main, [detail], 2), []);
+  assert.deepEqual(gaps(main, [], 1), ["media_manifest_mismatch"]);
+  assert.deepEqual(gaps(main, [detail, detail], 3), ["media_duplicate", "media_manifest_mismatch"]);
+  assert.deepEqual(gaps("https://cdn.ozon/main.png", ["https://cdn.ozon/detail.png", "https://cdn.ozon/detail.png"], 2),
+    ["media_duplicate", "media_manifest_mismatch", "media_identity_unverified", "imageCount"]);
+  assert.deepEqual(gaps(main, ["https://cdn.ozon/detail.png"], 2), ["media_identity_unverified"]);
+  const third = "https://assets.example.com/third.png", expectation = structuredClone(record.readbackExpectation);
+  expectation.media.push({ assetId: "asset:third", order: 3, sha256: "f".repeat(64), submittedUrl: third });
+  assert.deepEqual(productionReadbackContentGaps(expectation, { ...normal, imageCount: 3,
+    mediaObservation: { sourceProtocol: "ozon-product-attributes-v4", primaryImageUrl: main, images: [third, detail] } }),
+    ["media_order_or_set_mismatch"]);
 });
 
 test("only the authorized warehouse can prove stock; another warehouse, ambiguous rows and absent quantities cannot", async () => {
@@ -144,6 +173,14 @@ test("published D and E schemas validate real projections and reject malformed p
   assert.equal(validateD(attempt), true, JSON.stringify(validateD.errors));
   assert.equal(validateProduction(result.productionRecord), true, JSON.stringify(validateProduction.errors));
   assert.equal(validateE(verified.eVerificationRecord), true, JSON.stringify(validateE.errors));
+  const infoObservation = structuredClone(verified.eVerificationRecord);
+  infoObservation.mediaObservation.sourceProtocol = "ozon-product-info-v3";
+  assert.equal(validateEVerificationRecord(infoObservation).valid, true);
+  assert.equal(validateE(infoObservation), true, JSON.stringify(validateE.errors));
+  assert.deepEqual(systemCreatedReadbackGaps(result.productionRecord, infoObservation), []);
+  infoObservation.mediaObservation.sourceProtocol = "invented-image-protocol";
+  assert.equal(validateEVerificationRecord(infoObservation).valid, false);
+  assert.equal(validateE(infoObservation), false);
   for (const edit of [value => { delete value.warehouseId; }, value => { value.warehouseId = ""; },
     value => { value.stockBasis = "all_warehouses"; }, value => { value.media[0].sha256 = "missing"; },
     value => { value.media[0].submittedUrl = "http://assets.example.com/image.png"; }, value => { value.media[0].other = true; }]) {

@@ -9,7 +9,8 @@ import { spawn } from "node:child_process";
 import { stopApiProcess } from "./helpers/api-process-lifecycle.mjs";
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const port = 31000 + (process.pid % 20000);
+const port = Number(process.env.SELECTION_REVIEW_TEST_PORT);
+if (!Number.isSafeInteger(port) || port < 1 || port > 65535 || [4317, 4318, 4173].includes(port)) throw new Error("TEST_REQUIRES_ISOLATED_PORT");
 const baseUrl = `http://127.0.0.1:${port}`;
 
 function candidate(id, lifecycle = false) {
@@ -181,7 +182,7 @@ test("2A模拟接口零持久化，旧C入口明确拒绝且awaiting_user_start�
     currentStep: "尝试领取旧C"
   });
   assert.equal(oldClaim.status, 409);
-  assert.match((await oldClaim.json()).message, /只保留为历史记录/);
+  assert.match((await oldClaim.json()).message, /旧派发通道已停用.*历史派发只读/);
 
   const oldEvaluation = await post("/api/candidates/LIFECYCLE-NEW/user-evaluation", {
     dataRevision: 1,
