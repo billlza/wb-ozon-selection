@@ -102,13 +102,14 @@ test('a job opens the search page visibly, waits for the owner search and return
 test('the postback carries the search conditions and the three account fields, never the rest of the page request', async () => {
   // Synthetic values throughout.
   const requestBody = { categoryIds: ['1_2_3'], sellerType: 1, page: { pageNumber: 1, pageSize: 20 }, memberId: 80012345,
-    phone: '13812345678', email: 'owner.test@qq.com', token: 'synthetic-session-token', sig: 'synthetic-signature', nonce: 'n-1', timestamp: 1760000000000 };
+    phone: '13812345678', email: 'owner.test@qq.com', token: 'synthetic-session-token', sig: 'synthetic-signature', nonce: 'n-1', timestamp: 1760000000000,
+    params: ['sid-7f3a'] };
   const { api } = fakeChrome([], [{ status: 'captured', records: [record(9)], requestBody, capturedAt: '2026-10-10T03:00:00.000Z', resultCountLabel: '共812条记录' }]);
   const result = await runSeerfarWebCapture({ chromeApi: api, payload: payload(), sleep: async () => {}, clock: () => '2026-10-10T03:00:01.000Z' });
-  assert.deepEqual(result.requestTemplate, { categoryIds: ['1_2_3'], sellerType: 1, page: { pageNumber: 1, pageSize: 20 } });
+  assert.deepEqual(result.requestTemplate, { categoryIds: ['1_2_3'], sellerType: 1, page: { pageNumber: 1, pageSize: 20 }, params: [null] });
   assert.deepEqual(result.accountIdentity, { accountId: '80012345', phone: '13812345678', email: 'owner.test@qq.com' });
   const sent = JSON.stringify(result);
-  for (const secret of ['synthetic-session-token', 'synthetic-signature', 'n-1', '1760000000000']) assert.equal(sent.includes(secret), false, secret);
+  for (const secret of ['synthetic-session-token', 'synthetic-signature', 'n-1', '1760000000000', 'sid-7f3a']) assert.equal(sent.includes(secret), false, secret);
 });
 
 test('the extension filters are the same as the server ones, case by case', () => {
@@ -120,7 +121,9 @@ test('the extension filters are the same as the server ones, case by case', () =
       label: 'a1b2c3d4e5f6a7b8c9d0e1f2a3', priceMin: 13812345678, salesMax: 120, isNew: true, 'bad key': 1, Ticket: 't', x: 'x'.repeat(200) },
     { filters: { sessionId: 'x', price: { min: 1, max: 2 }, deep: { a: { b: { c: { d: { e: 1 } } } } } }, orders: [{ field: 'revenue', direction: 'DESC' }],
       dateRange: '2026-09-01~2026-10-01', updateTime: 1760000000000, headers: { Authorization: 'Bearer abc' }, credential: 'c', birthday: '2000-01-01' },
-    { a: { b: { c: { d: { e: { phone: '13812345678' } } } } }, userId: 'eyJhbGciOiJIUzI1NiJ9.e30.sig', uid: -3, mobile: 'call me' }];
+    { a: { b: { c: { d: { e: { phone: '13812345678' } } } } }, userId: 'eyJhbGciOiJIUzI1NiJ9.e30.sig', uid: -3, mobile: 'call me' },
+    { params: ['sid-abc123', { categoryId: 17027494, user: 'u-1' }], data: 'sess-9f8e7d', query: 'dog coat', options: [true, 7],
+      filters: [['price', 'gte', 100], { priceMin: 100 }], sort: ['sales', 'desc'], categoryIds: [['1_2', '1_2_3'], '4'] }];
   for (const body of bodies) {
     assert.deepEqual(extensionTemplate(body), sanitizeSeerfarRequestTemplate(body), JSON.stringify(body));
     assert.deepEqual(extensionIdentity(body), pickSeerfarAccountIdentity(body), JSON.stringify(body));

@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-15T09:49:18.204Z",
+  "frozenAt": "2026-10-15T10:38:27.848Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 997,
-      "sha256": "0505e422627737099f738d8900c5342af78dbb01667289f0f525c1a744b83ec0",
+      "sha256": "4c6db2ba0879f050af326ac7b47f6288ec7139696cbc0447dd7b7b028ba713ac",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -76,7 +76,7 @@
       },
       {
         "path": "extension/1688-capture/seerfar-web-capture.js",
-        "sha256": "3f8eaba989941a90f18524e06b44a730ea0cddab8d565b88e41cc68b0b4d7265"
+        "sha256": "930ebab92b069998ebacefefe949404c32922da50f286986255b97b72d9529b0"
       },
       {
         "path": "extension/1688-capture/source-routing.js",
@@ -1184,7 +1184,7 @@
       },
       {
         "path": "lib/seerfar-web-round.mjs",
-        "sha256": "84d067adcf6e9d12d6901326cf507a5a633016e31c5f7762de5649c628e97f64"
+        "sha256": "f37e5df5b7034185c7f3f7f48ef731947ed69cefa4fc8864c40ef04de8d15f98"
       },
       {
         "path": "lib/sibling-batch-a-b-c1.mjs",
@@ -3784,7 +3784,7 @@
       },
       {
         "path": "tests/seerfar-web-extension.test.mjs",
-        "sha256": "9cf8d1418211c24b9dad0d23ca03be646232cb1b5745784979bdac2fdd009dfa"
+        "sha256": "061118b8a8f2987577b9eadca42517c3cf55130df3203de70dccf46f9a6ff2b0"
       },
       {
         "path": "tests/seerfar-web-round-card-ui.test.mjs",
@@ -3796,7 +3796,7 @@
       },
       {
         "path": "tests/seerfar-web-round.test.mjs",
-        "sha256": "c9de898be8c6219acccf4b421a8c5c194cca2fbaa6d5af68a6c62fde5a297783"
+        "sha256": "da74cbe10cc08cc075172bbd783a2cbc4cbd025ec435bcb88d120a5f5db454c8"
       },
       {
         "path": "tests/selection-desk-ui.test.mjs",

@@ -109,16 +109,19 @@ export function failSeerfarWebRound(record, code, at) {
 
 // 只留搜索条件：找什么（类目、卖家类型、时间、价格销量重量这类区间、配送、品牌、关键词）和怎么翻页、排序。名字像账号、
 // 身份、网址或登录凭据的字段整个丢掉；取值像邮箱、手机号、网址、赋值、授权头、令牌的只留字段名，值记成 null。
+// data、params、query 这类外壳本身不说明是什么条件：直接挂在外壳下的值，连同它底下数组里没有字段名的值，也记成 null
+// （比如 params: ["sid-…"] 里短的会话号，没有字段名可查，取值规则也认不出来）。
 // 插件 extension/1688-capture/seerfar-web-capture.js 里有一份规则相同的副本（测试逐条比对两边结果），回传前先删一遍；服务端是最后一道。
 const TEMPLATE_DROP_KEY = new RegExp(['token|auth|sign|cookie|session|passw|secret|ticket|nonce|jwt|credential|bearer|captcha|header|device',
   '|fingerprint|expir|stamp|user|member|account|customer|login|phone|mobile|email|mail|openid|unionid|nickname|realname|contact|address',
   '|birth|gender|idcard|passport|identity|url|uri|href|link|redirect|callback|^(?:uid|ip|ts|t|sig|key)$',
   '|(?:uid|sig|apikey|accesskey|appkey|secretkey|privatekey|publickey|signkey)$'].join(''));
-const TEMPLATE_KEYS = new Set(['data', 'param', 'params', 'body', 'request', 'payload', 'query', 'search', 'criteria', 'where', 'condition',
-  'conditions', 'filter', 'filters', 'options', 'page', 'pagenum', 'pagenumber', 'pageno', 'pageindex', 'pagesize', 'size', 'limit', 'offset',
-  'current', 'order', 'orders', 'orderby', 'orderfield', 'sort', 'sorts', 'sortby', 'sortfield', 'sortorder', 'sortkey', 'field', 'direction',
-  'asc', 'desc', 'min', 'max', 'minimum', 'maximum', 'from', 'to', 'gt', 'gte', 'lt', 'lte', 'start', 'end', 'begin', 'platform', 'site',
-  'market', 'country', 'currency', 'language', 'lang', 'q', 'kw', 'searchkey', 'searchword', 'searchtext']);
+const TEMPLATE_WRAPPER_KEYS = new Set(['data', 'param', 'params', 'body', 'request', 'payload', 'query', 'search', 'criteria', 'where',
+  'condition', 'conditions', 'filter', 'filters', 'options']);
+const TEMPLATE_KEYS = new Set([...TEMPLATE_WRAPPER_KEYS, 'page', 'pagenum', 'pagenumber', 'pageno', 'pageindex', 'pagesize', 'size', 'limit',
+  'offset', 'current', 'order', 'orders', 'orderby', 'orderfield', 'sort', 'sorts', 'sortby', 'sortfield', 'sortorder', 'sortkey', 'field',
+  'direction', 'asc', 'desc', 'min', 'max', 'minimum', 'maximum', 'from', 'to', 'gt', 'gte', 'lt', 'lte', 'start', 'end', 'begin', 'platform',
+  'site', 'market', 'country', 'currency', 'language', 'lang', 'q', 'kw', 'searchkey', 'searchword', 'searchtext']);
 const TEMPLATE_KEY_PATTERNS = [/categor|^cat(?:id|ids)?$/, /(?:mode|type)s?$/, /^(?:date|time)|(?:date|time|day|period|month|week|year|range)s?$/,
   /price|sales|revenue|weight|volume|margin|rating|review|question|drr|conv|cancel|return|views?$|stock|rank|variant|gmv|profit|commission|dimension|length|width|height/,
   /fulfil|deliver|logistic|shipping|^fb[os]$|^rfbs$/, /brand|keyword|^(?:label|tag)s?$/, /^(?:is|has|only|filter|exclude|include)[a-z]/];
@@ -133,16 +136,17 @@ function templateValue(value) {
   return value;
 }
 
-function templateNode(value, depth) {
+// named: the nearest field name above this value names a search condition, not a wrapper; a list keeps its field's name.
+function templateNode(value, depth, named) {
   if (depth > 4) return null;
-  if (Array.isArray(value)) return value.slice(0, 20).map(item => templateNode(item, depth + 1));
-  if (value === null || typeof value !== 'object') return templateValue(value);
+  if (Array.isArray(value)) return value.slice(0, 20).map(item => templateNode(item, depth + 1, named));
+  if (value === null || typeof value !== 'object') return named ? templateValue(value) : null;
   const out = {};
   for (const [key, item] of Object.entries(value).slice(0, 60)) {
     if (!/^[A-Za-z0-9_.-]{1,60}$/.test(key)) continue;
     const name = key.toLowerCase().replace(/[^a-z0-9]/g, '');
     if (!name || TEMPLATE_DROP_KEY.test(name) || !(TEMPLATE_KEYS.has(name) || TEMPLATE_KEY_PATTERNS.some(pattern => pattern.test(name)))) continue;
-    out[key] = templateNode(item, depth + 1);
+    out[key] = templateNode(item, depth + 1, !TEMPLATE_WRAPPER_KEYS.has(name));
   }
   return out;
 }
@@ -153,7 +157,7 @@ function templateNode(value, depth) {
  */
 export function sanitizeSeerfarRequestTemplate(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  const template = templateNode(value, 0);
+  const template = templateNode(value, 0, false);
   return Object.keys(template).length > 0 ? template : null;
 }
 

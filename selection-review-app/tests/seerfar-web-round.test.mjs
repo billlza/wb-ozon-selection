@@ -158,6 +158,14 @@ test('request templates keep only the search conditions; account, identity and c
   assert.deepEqual(sanitizeSeerfarRequestTemplate({ keyword: 'owner@qq.com', brandName: ['https://a.example/x', 'token=abc', 'Bearer abcdef', 'Nike'],
     tag: '13812345678', sort: 'eyJhbGciOiJIUzI1NiJ9.e30', label: 'a1b2c3d4e5f6a7b8c9d0e1f2a3', priceMin: 13812345678, salesMax: 120, isNew: true }),
     { keyword: null, brandName: [null, null, null, 'Nike'], tag: null, sort: null, label: null, priceMin: null, salesMax: 120, isNew: true });
+  // A wrapper names no condition: a value right under it, or in a list under it without a field name, is not kept (a short session id
+  // in params passes every value check); a list under a search field keeps its values, nested lists included.
+  const wrapped = sanitizeSeerfarRequestTemplate({ params: ['sid-abc123', { categoryId: 17027494 }], data: 'sess-9f8e7d', query: 'dog coat',
+    options: [true, 7], filters: [['price', 'gte', 100], { priceMin: 100 }], sort: ['sales', 'desc'], categoryIds: [['1_2', '1_2_3'], '4'] });
+  assert.deepEqual(wrapped, { params: [null, { categoryId: 17027494 }], data: null, query: null, options: [null, null],
+    filters: [[null, null, null], { priceMin: 100 }], sort: ['sales', 'desc'], categoryIds: [['1_2', '1_2_3'], '4'] });
+  for (const secret of ['sid-abc123', 'sess-9f8e7d']) assert.equal(JSON.stringify(wrapped).includes(secret), false, secret);
+  assert.deepEqual(sanitizeSeerfarRequestTemplate(wrapped), wrapped);
   assert.equal(sanitizeSeerfarRequestTemplate(['pageNum', 1]), null);
   assert.equal(sanitizeSeerfarRequestTemplate('pageNum=1'), null);
 });
