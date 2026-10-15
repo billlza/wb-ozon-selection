@@ -7,6 +7,9 @@ import { screenSeerfarProducts } from '../lib/seerfar-selection-screening.mjs';
 import { claimSeerfarWebRound, completeSeerfarWebRound, createSeerfarWebRoundRecord, failSeerfarWebRound, normalizeSeerfarWebCapture,
   sameQueryRoundToday, sanitizeSeerfarRequestTemplate, seerfarWebCandidateEvidence, seerfarWebEstimateProduct,
   seerfarWebRoundPublic } from '../lib/seerfar-web-round.mjs';
+import { seerfarAccountIdentityFailure } from '../lib/seerfar-account-identity.mjs';
+import { buildSeerfarCategoryPayload } from '../lib/seerfar-open-api-transport.mjs';
+import { assertSafeRuntimeRecord } from '../lib/runtime-identity.mjs';
 
 // Every SKU, seller, price and metric below is synthetic, shaped like the 2026-09-10 member-site search response.
 const CLOTHING = '宠物用品 > 宠物服装和靴子 > 宠物服装';
@@ -113,9 +116,11 @@ test('completing a round saves the page, the screening and one candidate per kep
   const result = normalizeSeerfarWebCapture(record, capture([raw('1001', { price: 1500, sales: 80 }), raw('1002', { price: 1100, sales: 60 }), raw('1003')]));
   const estimates = new Map(result.products.map(product => [product.productId, estimate(product)]));
   const evidences = [];
+  const accountIdentity = seerfarAccountIdentityFailure({ accountId: '80012345', phone: '13812345678', email: null }, 'write_failed');
   const completed = completeSeerfarWebRound({ document, record, result, profile, knownProductIds: new Set(), estimates, at: AT,
-    requestTemplate: { pageNum: 1, pageSize: 20, categoryIds: ['1_2_3'], sellerType: 1, token: 'should-go', userId: 9, filters: { salesMin: 10, authSign: 'x' } },
-    createCandidate: (product, entry) => {
+    requestTemplate: { pageNum: 1, pageSize: 20, categoryIds: ['1_2_3'], sellerType: 1, token: 'should-go', userId: 9, filters: { salesMin: 10, authSign: 'x' },
+      memberId: 80012345, phone: '13812345678', email: 'owner.test@qq.com' },
+    accountIdentity, createCandidate: (product, entry) => {
       evidences.push(seerfarWebCandidateEvidence({ record, product, entry, candidateRevision: 1 }));
       return `candidate:${product.productId}`;
     } });
@@ -130,9 +135,62 @@ test('completing a round saves the page, the screening and one candidate per kep
   const view = seerfarWebRoundPublic(completed);
   assert.equal(view.requestTemplateCaptured, true);
   assert.equal(JSON.stringify(view).includes('readPermit'), false);
+  // Only masks reach the round and the page; the full values never enter the data document.
+  assert.deepEqual(view.accountIdentity, accountIdentity);
+  assert.deepEqual(document.runtime.seerfarWebRounds[record.roundId].accountIdentity.masked, { accountId: '80****45', phone: '138****5678', email: null });
+  for (const full of ['80012345', '13812345678', 'owner.test@qq.com']) assert.equal(JSON.stringify(document).includes(full), false, full);
+  assert.throws(() => completeSeerfarWebRound({ document: { runtime: { seerfarWebRounds: {} }, candidates: [] }, record, result, profile,
+    knownProductIds: new Set(), estimates, at: AT, accountIdentity: { ...accountIdentity, masked: { accountId: '80012345', phone: null, email: null } },
+    createCandidate: () => 'candidate:x' }), /ACCOUNT_IDENTITY_INVALID/);
 });
 
-test('request templates keep field names and short values only', () => {
-  assert.deepEqual(sanitizeSeerfarRequestTemplate({ a: 'x'.repeat(200), 'bad key': 1, nested: { sessionId: 'x', ok: [1, 'y'] }, Ticket: 't' }),
-    { a: null, nested: { ok: [1, 'y'] } });
+test('request templates keep only the search conditions; account, identity and credential fields go whole', () => {
+  assert.deepEqual(sanitizeSeerfarRequestTemplate({ keyword: 'x'.repeat(200), 'bad key': 1, filters: { sessionId: 'x', price: { min: 800, max: null } },
+    Ticket: 't', nested: { ok: [1, 'y'] } }), { keyword: null, filters: { price: { min: 800, max: null } } });
+  // The fields named in review item P1-22, and their usual cousins.
+  const identity = { memberId: 1, shopId: 2, nonce: 'n', sig: 'abc', jwt: 'x', accountId: 3, phone: '13812345678', email: 'a@b.cn', userId: 4,
+    uid: 5, customerId: 6, loginName: 'owner', mobile: '13812345678', timestamp: 1760000000000, t: 1, ts: 2, deviceId: 'd', openid: 'o',
+    returnUrl: 'https://www.seerfar.cn/x', apiKey: 'k', appKey: 'k', signKey: 'k', expiresAt: 'x', headers: {}, cookie: 'c', authorization: 'Bearer x',
+    credential: 'c', bearer: 'b', basic: 'b', password: 'p', ip: '127.0.0.1', birthday: '2000-01-01', nickname: 'n' };
+  assert.equal(sanitizeSeerfarRequestTemplate(identity), null);
+  assert.deepEqual(sanitizeSeerfarRequestTemplate({ categoryIds: ['1_2_3'], ...identity, filters: identity }), { categoryIds: ['1_2_3'], filters: {} });
+  // A search key keeps its name but not a value that is an address, an assignment, a mail, a phone or a token.
+  assert.deepEqual(sanitizeSeerfarRequestTemplate({ keyword: 'owner@qq.com', brandName: ['https://a.example/x', 'token=abc', 'Bearer abcdef', 'Nike'],
+    tag: '13812345678', sort: 'eyJhbGciOiJIUzI1NiJ9.e30', label: 'a1b2c3d4e5f6a7b8c9d0e1f2a3', priceMin: 13812345678, salesMax: 120, isNew: true }),
+    { keyword: null, brandName: [null, null, null, 'Nike'], tag: null, sort: null, label: null, priceMin: null, salesMax: 120, isNew: true });
+  // A wrapper names no condition: a value right under it, or in a list under it without a field name, is not kept (a short session id
+  // in params passes every value check); a list under a search field keeps its values, nested lists included.
+  const wrapped = sanitizeSeerfarRequestTemplate({ params: ['sid-abc123', { categoryId: 17027494 }], data: 'sess-9f8e7d', query: 'dog coat',
+    options: [true, 7], filters: [['price', 'gte', 100], { priceMin: 100 }], sort: ['sales', 'desc'], categoryIds: [['1_2', '1_2_3'], '4'] });
+  assert.deepEqual(wrapped, { params: [null, { categoryId: 17027494 }], data: null, query: null, options: [null, null],
+    filters: [[null, null, null], { priceMin: 100 }], sort: ['sales', 'desc'], categoryIds: [['1_2', '1_2_3'], '4'] });
+  for (const secret of ['sid-abc123', 'sess-9f8e7d']) assert.equal(JSON.stringify(wrapped).includes(secret), false, secret);
+  assert.deepEqual(sanitizeSeerfarRequestTemplate(wrapped), wrapped);
+  assert.equal(sanitizeSeerfarRequestTemplate(['pageNum', 1]), null);
+  assert.equal(sanitizeSeerfarRequestTemplate('pageNum=1'), null);
+});
+
+test('the open API category request shape survives the allowlist, so the same query can be built again', () => {
+  const body = buildSeerfarCategoryPayload({ platform: 'ozon', categoryId: '17027494_17028712_93366', fulfillment: 'CROSS_BORDER',
+    filters: { priceRub: { min: 800, max: null }, weightGrams: { min: null, max: 1000 } } });
+  const template = sanitizeSeerfarRequestTemplate({ ...body, sellerType: 1, dateRange: 30, memberId: 80012345, phone: '13812345678' });
+  const { skus: _skus, sellerName: _sellerName, ...searchConditions } = body;
+  assert.deepEqual(template, { ...searchConditions, sellerType: 1, dateRange: 30 });
+  // Cleaning twice changes nothing, which is what lets old rounds be cleaned on restart.
+  assert.deepEqual(sanitizeSeerfarRequestTemplate(template), template);
+});
+
+test('a request whose keys or values the record check refuses no longer leaves the round stuck in capturing', () => {
+  const record = claimSeerfarWebRound(round(), AT);
+  const document = { runtime: { seerfarWebRounds: { [record.roundId]: record } }, candidates: [] };
+  const result = normalizeSeerfarWebCapture(record, capture([raw('1001', { price: 1500, sales: 80 })]));
+  const estimates = new Map(result.products.map(product => [product.productId, estimate(product)]));
+  const completed = completeSeerfarWebRound({ document, record, result, profile, knownProductIds: new Set(), estimates, at: AT,
+    requestTemplate: { credential: 'x', bearer: 'y', basic: 'z', headers: { Authorization: 'Bearer abc' }, categoryIds: ['1_2_3'],
+      filters: { keyword: 'Basic dXNlcjpwYXNz', sort: 'sales' } },
+    createCandidate: product => `candidate:${product.productId}` });
+  assert.equal(completed.status, 'completed');
+  assert.deepEqual(completed.requestTemplate, { categoryIds: ['1_2_3'], filters: { keyword: null, sort: 'sales' } });
+  assert.equal(completed.accountIdentity, null);
+  assert.doesNotThrow(() => assertSafeRuntimeRecord(completed));
 });

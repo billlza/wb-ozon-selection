@@ -128,6 +128,99 @@ test("the fake store serves synthetic entries and records names only", async () 
   assert.throws(() => createFakeCredentialStore([{ ...entry, failure: "nope" }]), /FAKE_ENTRIES_INVALID/);
 });
 
+test("a write hands the value over stdin on every backend and counts only once it reads back", async () => {
+  const value = "c3ludGhldGljLXZhbHVl";
+  const writeEntry = { service: "synthetic.credential.service", account: "synthetic-account" };
+  const recordWrites = () => {
+    const calls = [];
+    let stored = "";
+    return { calls, execFileImpl: async (file, args, options) => {
+      calls.push([file, args, options]);
+      if (options.input !== undefined) { stored = options.input; return { stdout: "", stderr: "" }; }
+      return { stdout: stored.includes(value) ? `${value}\n` : "", stderr: "" };
+    } };
+  };
+
+  const mac = recordWrites();
+  await createOsCredentialStore({ platform: "darwin", execFileImpl: mac.execFileImpl }).writeSecret(writeEntry, value, { timeout: 5000 });
+  assert.deepEqual(mac.calls[0].slice(0, 2), ["/usr/bin/security", ["-i"]]);
+  assert.equal(mac.calls[0][2].input, `add-generic-password -U -s ${writeEntry.service} -a ${writeEntry.account} -w ${value}\n`);
+  assert.equal(mac.calls[0][1].some(arg => arg.includes(value)), false, "the value never reaches the command line");
+  assert.deepEqual(mac.calls[1][1], ["find-generic-password", "-w", "-s", writeEntry.service, "-a", writeEntry.account]);
+  assert.equal(mac.calls[1][2].input, undefined);
+
+  const linux = recordWrites();
+  await createOsCredentialStore({ platform: "linux", execFileImpl: linux.execFileImpl }).writeSecret(writeEntry, value);
+  assert.deepEqual(linux.calls[0].slice(0, 2), ["secret-tool", ["store", `--label=${writeEntry.service} ${writeEntry.account}`, "service",
+    writeEntry.service, "account", writeEntry.account]]);
+  assert.equal(linux.calls[0][2].input, value);
+
+  const windows = recordWrites();
+  await createOsCredentialStore({ platform: "win32", execFileImpl: windows.execFileImpl, env: { SystemRoot: "D:\\Win" } }).writeSecret(writeEntry, value);
+  const [file, args, options] = windows.calls[0];
+  assert.equal(file, "D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  assert.match(args[6], /CredWriteW/);
+  assert.equal(args.some(arg => arg.includes(value) || arg.includes(writeEntry.account)), false);
+  assert.equal(options.input, value);
+  assert.equal(options.env.WB_OZON_CREDENTIAL_TARGET, "synthetic.credential.service/synthetic-account");
+  assert.equal(options.env.WB_OZON_CREDENTIAL_ACCOUNT, writeEntry.account);
+  assert.equal(options.env.WB_OZON_CREDENTIAL_MODE, "write");
+  assert.equal(windows.calls[1][2].env.WB_OZON_CREDENTIAL_MODE, "read");
+});
+
+test("a write that does not read back, or fails, carries only a code and names and values are checked before any process", async () => {
+  const value = "c3ludGhldGljLXZhbHVl";
+  // `security -i` can exit 0 after a failed command: the read-back is what tells.
+  const silent = recorder({ stdout: "", stderr: "" });
+  await assert.rejects(createOsCredentialStore({ platform: "darwin", execFileImpl: silent.execFileImpl }).writeSecret(entry, value),
+    error => error instanceof CredentialStoreError && error.code === "credential_write_failed");
+  for (const [code, expected] of [[51, "credential_access_denied"], [128, "credential_access_denied"], [44, "credential_write_failed"],
+    [1, "credential_write_failed"], ["ENOENT", "credential_store_unavailable"]]) {
+    const failing = recorder(processFailure(code));
+    await assert.rejects(createOsCredentialStore({ platform: "darwin", execFileImpl: failing.execFileImpl }).writeSecret(entry, value),
+      error => error.code === expected && error.backend === "macos_keychain" && !leaks(error));
+    assert.equal(failing.calls.length, 1, "a failed write is not retried or read back");
+  }
+  const linuxDbus = recorder(processFailure(1, ""));
+  await assert.rejects(createOsCredentialStore({ platform: "linux", execFileImpl: linuxDbus.execFileImpl }).writeSecret(entry, value),
+    error => error.code === "credential_write_failed", "a silent exit 1 is missing on a read, never on a write");
+  let readBack = 0;
+  const deniedReadBack = async (_file, _args, options) => {
+    if (options.input !== undefined) return { stdout: "", stderr: "" };
+    readBack += 1;
+    throw processFailure(51);
+  };
+  await assert.rejects(createOsCredentialStore({ platform: "darwin", execFileImpl: deniedReadBack }).writeSecret(entry, value),
+    error => error.code === "credential_access_denied" && !leaks(error));
+  assert.equal(readBack, 1);
+  const controller = new AbortController(); controller.abort();
+  const idle = recorder();
+  await assert.rejects(createOsCredentialStore({ platform: "darwin", execFileImpl: idle.execFileImpl }).writeSecret(entry, value, { signal: controller.signal }),
+    error => error.code === "credential_write_cancelled");
+  await assert.rejects(createOsCredentialStore({ platform: "aix", execFileImpl: idle.execFileImpl }).writeSecret(entry, value),
+    error => error.code === "credential_store_unavailable");
+  const store = createOsCredentialStore({ platform: "darwin", execFileImpl: idle.execFileImpl });
+  for (const bad of [{ service: "has space", account: "a" }, { service: "x", account: "-a" }, { service: "x", account: "quote\"d" }]) {
+    await assert.rejects(store.writeSecret(bad, value), /CREDENTIAL_STORE_ENTRY_INVALID/);
+  }
+  for (const bad of ["", "two words", "line\nbreak", "quote\"", "x".repeat(1025), 42]) {
+    await assert.rejects(store.writeSecret(entry, bad), /CREDENTIAL_STORE_VALUE_INVALID/);
+  }
+  assert.equal(idle.calls.length, 0);
+});
+
+test("the fake store writes like the OS store and still records names only", async () => {
+  const fake = createFakeCredentialStore([{ service: entry.service, account: "denied", failure: "credential_access_denied" }]);
+  await fake.writeSecret(entry, "c3ludGhldGljLXZhbHVl");
+  assert.equal(await fake.readSecret(entry), "c3ludGhldGljLXZhbHVl");
+  await fake.writeSecret(entry, "bmV3ZXI=");
+  assert.equal(await fake.readSecret(entry), "bmV3ZXI=");
+  await assert.rejects(fake.writeSecret({ ...entry, account: "denied" }, "eA=="), error => error.code === "credential_access_denied");
+  await assert.rejects(fake.writeSecret(entry, "two words"), /CREDENTIAL_STORE_VALUE_INVALID/);
+  assert.deepEqual(fake.calls[0], { mode: "write", ...entry });
+  assert.equal(JSON.stringify(fake.calls).includes("c3ludGhldGljLXZhbHVl"), false);
+});
+
 test("historical service and account names are unchanged", () => {
   assert.equal(SEERFAR_KEYCHAIN_SERVICE, "egg-ozon-operations-center");
   assert.equal(SEERFAR_KEYCHAIN_ACCOUNT, "seerfar-open-api");

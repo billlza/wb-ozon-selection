@@ -66,6 +66,20 @@ function StoreSales({ store, sales, onRead }) {
   </div>;
 }
 
+const accountPlaces = { macos_keychain: '这台 Mac 的钥匙串', windows_credential_manager: '这台电脑的 Windows 凭据管理器',
+  linux_secret_service: '这台电脑的系统密钥环' };
+
+/** Seerfar 账号 ID、手机号、邮箱（P1-22）：完整的只在本机系统钥匙串里，这里只显示打码的样子。 */
+function AccountLine({ identity }) {
+  if (!identity) return null;
+  if (identity.status === 'not_in_request') return <p className="seerfar-muted">这次的搜索请求里没有 Seerfar 账号信息，没存。</p>;
+  const shown = [identity.masked.accountId && `账号 ${identity.masked.accountId}`, identity.masked.phone && `手机 ${identity.masked.phone}`,
+    identity.masked.email && `邮箱 ${identity.masked.email}`].filter(Boolean).join(' · ');
+  if (identity.status === 'not_saved') return <p role="status">Seerfar {shown} 没存上：{identity.failure.reason}。这一轮的商品照常收了，没有重试。</p>;
+  return <p className="seerfar-muted">Seerfar {shown}，完整的存在{accountPlaces[identity.location] ?? '这台电脑的系统钥匙串'}里。
+    {identity.sameAsPrevious === false ? <strong>和上一次存的不是同一个账号，已换成这个。</strong> : null}</p>;
+}
+
 function RoundCard({ round, onOpenCandidate }) {
   const [showDropped, setShowDropped] = useState(false);
   const imported = round.importedCandidateIds;
@@ -86,6 +100,7 @@ function RoundCard({ round, onOpenCandidate }) {
       </> : null}
       <p className="seerfar-muted">收进来的只是待核验商品：还没有货源、没有确认供货，也没有正式利润。下一步在商品页用 Ozon 主图去 1688 找同款。</p>
     </> : null}
+    <AccountLine identity={round.accountIdentity} />
   </li>;
 }
 

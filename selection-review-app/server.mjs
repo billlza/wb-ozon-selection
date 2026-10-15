@@ -15,6 +15,7 @@ import { createLinkfoxDiscoverySecretReader, createSeerfarDiscoverySecretReader 
 import { createADiscoveryCandidateImportUseCase } from './lib/a-discovery-candidate-import.mjs';
 import { loadSeerfarSelectionConfig } from './lib/seerfar-selection-config.mjs';
 import { createSeerfarWebRoundService } from './lib/seerfar-web-round-service.mjs';
+import { createSeerfarAccountVault } from './lib/seerfar-account-identity.mjs';
 import { createStoreSalesSeedService } from './lib/store-sales-seed-service.mjs';
 import { seerfarTodos } from './lib/seerfar-todos.mjs';
 import { StoreProfileError, storeProfileView, updateStoreProfile } from './lib/store-profile.mjs';
@@ -574,7 +575,7 @@ const supplierDraftEstimateInputs = createADiscoveryEstimateInputs({
   rules:DEFAULT_RULES,readers:aEstimateReaders,configuration:aEstimateConfiguration
 });
 /** The extension version every plugin job requires; declared before the Seerfar round service, which reads it at startup. */
-const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.4.1";
+const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.4.2";
 /**
  * Seerfar 自动选品方案 B（主人 2026-10-10 定）：会员前台「热销榜单选品」一页结果 → 固定规则筛 → 前几个收成待核验候选。
  * 档案和季节日历是 data/seerfar-selection/ 里的版本化配置；读不出来时不启动任何一轮，页面照实显示原因。
@@ -586,6 +587,8 @@ const seerfarWebRounds = createSeerfarWebRoundService({
   now: () => now(), businessDate: () => businessDate(), estimateInputs: supplierDraftEstimateInputs, storeBindings: runtimeConfiguration.storeBindings,
   config: seerfarSelectionConfig.config, configError: seerfarSelectionConfig.error, requiredExtensionVersion: REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION,
   isCaptureControlBusy: () => captureControlSnapshot().status === "busy",
+  // P1-22（主人 2026-10-15）：Seerfar 账号 ID、手机号、邮箱存本机系统钥匙串；只在本地开发方式下读写，建好时不碰钥匙串。
+  accountVault: createSeerfarAccountVault({ runtimeMode: runtimeConfiguration.deploymentMode }),
   log: (message, error) => console.error(message, error)
 });
 // 本店爆款从销量数据里挑（主人 2026-10-10）：本机只读 Seller API，复用账户读取已声明的店铺与钥匙串绑定。

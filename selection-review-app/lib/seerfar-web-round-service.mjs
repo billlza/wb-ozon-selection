@@ -5,19 +5,22 @@
  *
  * 和其他插件作业同一套规矩：一次性令牌、插件明确领取、领取后只回传一次、超时收口、重启对账、不自动重试。
  * 作业会话只活在建立它的进程里；中央持久化的是轮次记录（document.runtime.seerfarWebRounds），会话丢了轮次会被收口。
+ * 回传里的 Seerfar 账号 ID、手机号、邮箱交给注入的 accountVault 存进本机系统钥匙串，轮次记录只留打码的样子；
+ * 存不上只记原因，这一轮照常收商品。
  */
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { estimateDiscoveredProduct } from './a-discovery-estimate.mjs';
 import { knownMarketProductIds } from './a-discovery-candidate-import.mjs';
 import { createInitialCandidate } from './candidate-initialization.mjs';
 import { assertSafeBusinessMutationCandidate } from './runtime-identity.mjs';
+import { pickSeerfarAccountIdentity, seerfarAccountIdentityFailure } from './seerfar-account-identity.mjs';
 import { planSeerfarQueries } from './seerfar-selection-plan.mjs';
 import { storeSeedsForPlan } from './store-sales-seed-service.mjs';
 import { readStoreProfile, readStoreProfiles } from './store-profile.mjs';
 import { SEERFAR_WEB_SEARCH_ENDPOINT, SEERFAR_WEB_SEARCH_PAGE, SEERFAR_WEB_PAGE_SIZE } from './seerfar-web-discovery-contract.mjs';
 import { SEERFAR_WEB_CAPTURE_WAIT_MS, SEERFAR_WEB_ROUND_MODE, SeerfarWebRoundError, claimSeerfarWebRound, completeSeerfarWebRound,
-  createSeerfarWebRoundRecord, failSeerfarWebRound, normalizeSeerfarWebCapture, sameQueryRoundToday, seerfarWebCandidateEvidence,
-  seerfarWebEstimateProduct, seerfarWebRoundPublic, seerfarWebRounds } from './seerfar-web-round.mjs';
+  createSeerfarWebRoundRecord, failSeerfarWebRound, normalizeSeerfarWebCapture, sameQueryRoundToday, sanitizeSeerfarRequestTemplate,
+  seerfarWebCandidateEvidence, seerfarWebEstimateProduct, seerfarWebRoundPublic, seerfarWebRounds } from './seerfar-web-round.mjs';
 
 export const SEERFAR_WEB_CAPTURE_KIND = 'seerfar_web_discovery';
 const httpFail = (status, code, message) => Object.assign(new SeerfarWebRoundError(code, message), { status, publicMessage: message });
@@ -29,9 +32,10 @@ function sameToken(expected, provided) {
 
 export function createSeerfarWebRoundService({ readData, mutateData, mutateDataWhenChanged, now, businessDate, estimateInputs, storeBindings,
   config, configError = null, requiredExtensionVersion, queueTtlMs = 2 * 60 * 1000, executionTtlMs = SEERFAR_WEB_CAPTURE_WAIT_MS + 60 * 1000,
-  isCaptureControlBusy = () => false, log = () => {} }) {
+  isCaptureControlBusy = () => false, accountVault = null, log = () => {} }) {
   if ([readData, mutateData, mutateDataWhenChanged, now, businessDate, isCaptureControlBusy].some(fn => typeof fn !== 'function') ||
-      !Array.isArray(storeBindings) || typeof requiredExtensionVersion !== 'string') throw new TypeError('SEERFAR_WEB_ROUND_SERVICE_DEPENDENCY_INVALID');
+      !Array.isArray(storeBindings) || typeof requiredExtensionVersion !== 'string' ||
+      accountVault !== null && typeof accountVault?.save !== 'function') throw new TypeError('SEERFAR_WEB_ROUND_SERVICE_DEPENDENCY_INVALID');
   const sessions = new Map();
   const timers = new Map();
 
@@ -169,6 +173,21 @@ export function createSeerfarWebRoundService({ readData, mutateData, mutateDataW
     return estimates;
   }
 
+  /**
+   * The current extension sends the account fields apart from the search conditions; an older build sends the page's whole
+   * request body as requestTemplate. Either way only the three fields reach the vault, and only its status reaches the round.
+   */
+  async function saveAccountIdentity(input, at) {
+    const identity = pickSeerfarAccountIdentity({ accountIdentity: input.accountIdentity, requestBody: input.requestTemplate });
+    if (!accountVault) return seerfarAccountIdentityFailure(identity, 'store_unavailable');
+    try {
+      return await accountVault.save(identity, { at });
+    } catch (error) {
+      log('Seerfar 账号信息没存上（程序出错，这一轮照常收商品）', error?.name || 'Error');
+      return seerfarAccountIdentityFailure(identity);
+    }
+  }
+
   async function acceptResult({ roundId, input, origin }) {
     const session = sessions.get(String(input?.captureId || ''));
     if (!session || session.roundId !== roundId) throw httpFail(409, 'SESSION_INVALID', 'Seerfar 作业会话不存在或已失效。');
@@ -198,12 +217,13 @@ export function createSeerfarWebRoundService({ readData, mutateData, mutateDataW
     }
     const at = now();
     const estimates = await estimatesFor(snapshot, savedRecord, result.products, at);
+    const accountIdentity = await saveAccountIdentity(input, at);
     const completed = await mutateData(document => {
       const record = seerfarWebRounds(document)[roundId];
       if (!record || record.status !== 'capturing' || record.captureId !== session.captureId) throw httpFail(409, 'STATE_CONFLICT', '这一轮不再等这次结果。');
       const { source: _source, editedBy: _editedBy, editedAt: _editedAt, ...profile } = readStoreProfile(document, record.targetStore, { config });
       return completeSeerfarWebRound({ document, record, result, profile, knownProductIds: knownMarketProductIds(document.candidates), estimates, at,
-        requestTemplate: input.requestTemplate, createCandidate: (product, entry) => {
+        requestTemplate: input.requestTemplate, accountIdentity, createCandidate: (product, entry) => {
           const id = `candidate:${randomUUID()}`;
           const candidate = createInitialCandidate({ input: { targetStore: record.targetStore, productName: product.title, productUrl: product.productUrl,
             // The provider's main image is display-only evidence for the 1688 image search; it is not a listing asset.
@@ -221,19 +241,30 @@ export function createSeerfarWebRoundService({ readData, mutateData, mutateDataW
     return seerfarWebRoundPublic(completed);
   }
 
-  /** Sessions die with the process; any round still waiting on one can never get a result. */
+  /**
+   * Sessions die with the process; any round still waiting on one can never get a result. Request templates saved before
+   * the search-field allowlist (P1-22) are cut down to it here, so account fields do not stay in the data file.
+   */
   async function reconcileRoundsAfterRestart() {
     return mutateDataWhenChanged(document => {
       const rounds = seerfarWebRounds(document);
       const closed = [];
+      let cleaned = 0;
       for (const [roundId, record] of Object.entries(rounds)) {
+        if (record.requestTemplate !== null && record.requestTemplate !== undefined) {
+          const template = sanitizeSeerfarRequestTemplate(record.requestTemplate);
+          if (JSON.stringify(template) !== JSON.stringify(record.requestTemplate)) {
+            rounds[roundId] = { ...record, requestTemplate: template };
+            cleaned += 1;
+          }
+        }
         if (sessions.has(record.captureId)) continue;
-        const failed = failSeerfarWebRound(record, 'capture_job_lost', now());
+        const failed = failSeerfarWebRound(rounds[roundId], 'capture_job_lost', now());
         if (!failed) continue;
         rounds[roundId] = failed;
         closed.push(roundId);
       }
-      return { changed: closed.length > 0, result: closed };
+      return { changed: closed.length > 0 || cleaned > 0, result: closed };
     });
   }
 
