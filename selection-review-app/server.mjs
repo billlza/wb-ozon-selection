@@ -575,7 +575,7 @@ const supplierDraftEstimateInputs = createADiscoveryEstimateInputs({
   rules:DEFAULT_RULES,readers:aEstimateReaders,configuration:aEstimateConfiguration
 });
 /** The extension version every plugin job requires; declared before the Seerfar round service, which reads it at startup. */
-const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.4.1";
+const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.4.2";
 /**
  * Seerfar 自动选品方案 B（主人 2026-10-10 定）：会员前台「热销榜单选品」一页结果 → 固定规则筛 → 前几个收成待核验候选。
  * 档案和季节日历是 data/seerfar-selection/ 里的版本化配置；读不出来时不启动任何一轮，页面照实显示原因。
