@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { persistJsonThroughRealTarget } from "./atomic-json-persistence.mjs";
+import { createPostgresBusinessStateStore, isPostgresConnectionString } from "./postgres-business-state-store.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { serialize } from "node:v8";
 import { normalizeProductionEntities, createProductionEntityResolver, PRODUCTION_ENTITY_REFERENCE_VERSION } from "./production-entity-storage.mjs";
@@ -182,7 +183,11 @@ export function initialBusinessStateDocument({ now = new Date().toISOString(), t
   };
 }
 
-function createRepository({ adapter, concurrencyScope, read, replace, snapshotReader = null }) {
+// `transaction` wraps one read → mutator → replace. The file and memory adapters run it as is; the Postgres adapter
+// runs it inside one database transaction that holds the row lock, so other service processes wait instead of
+// overwriting each other.
+function createRepository({ adapter, concurrencyScope, read, replace, snapshotReader = null,
+  transaction = work => work({ read, replace }) }) {
   let queue = Promise.resolve();
   const repository = {
     boundaryType: "business_state_repository",
@@ -198,15 +203,15 @@ function createRepository({ adapter, concurrencyScope, read, replace, snapshotRe
     },
     transact(mutator) {
       if (typeof mutator !== "function") throw new Error("BUSINESS_STATE_REPOSITORY_MUTATOR_REQUIRED");
-      const operation = queue.then(async () => {
-        const stored = await read();
+      const operation = queue.then(() => transaction(async (locked) => {
+        const stored = await locked.read();
         if (!validDocument(stored)) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID");
         const current = readProductionDocument(stored);
         const baseline = productionSlotBaseline(current, stored);
         const outcome = validateTransactionResult(await mutator(current));
-        if (outcome.changed) await replace(writeProductionDocument(outcome.document, stored, baseline));
+        if (outcome.changed) await locked.replace(writeProductionDocument(outcome.document, stored, baseline));
         return outcome.result;
-      });
+      }));
       // `operation`仍原样返回给调用者并保留失败；这里只重置串行队列尾部，
       // 让一次失败不会永久阻断后续独立事务。
       queue = operation.then(() => undefined, () => undefined);
@@ -310,13 +315,67 @@ export function createMemoryBusinessStateRepository(initialDocument) {
   });
 }
 
-export function createConfiguredBusinessStateRepository(configuration) {
+/**
+ * The stored document lives in one Postgres row (`store` is lib/postgres-business-state-store.mjs). Every transaction
+ * locks that row, so several service processes see one order of writes. Reads re-check the row's revision each time
+ * and only re-parse the document when it changed.
+ */
+export function createPostgresBusinessStateRepository({ store, initializeIfMissing = false,
+  initialDocument = () => initialBusinessStateDocument() } = {}) {
+  if (!store || typeof store.readDocument !== "function" || typeof store.runLocked !== "function") {
+    throw new Error("BUSINESS_STATE_REPOSITORY_STORE_REQUIRED");
+  }
+  function startingDocument() {
+    const document = typeof initialDocument === "function" ? initialDocument() : initialDocument;
+    if (!validDocument(document)) throw new Error("BUSINESS_STATE_REPOSITORY_INITIAL_DOCUMENT_INVALID");
+    return clone(document);
+  }
+  let snapshotCache = null;
+  return createRepository({
+    adapter: "postgres",
+    concurrencyScope: "database_transaction",
+    snapshotReader: async () => {
+      const row = await store.readDocument({ knownRevision: snapshotCache?.revision ?? null });
+      if (row === null) {
+        snapshotCache = null;
+        if (!initializeIfMissing) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_MISSING");
+        return readProductionDocument(startingDocument());
+      }
+      if (!Object.hasOwn(row, "document")) {
+        if (snapshotCache?.revision !== row.revision) throw new Error("BUSINESS_STATE_REPOSITORY_SNAPSHOT_REVISION_INVALID");
+        return clone(snapshotCache.document);
+      }
+      snapshotCache = null;
+      if (!validDocument(row.document)) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID");
+      const document = readProductionDocument(row.document);
+      if (serialize(document).byteLength <= SNAPSHOT_CACHE_MAX_PAYLOAD_BYTES) {
+        snapshotCache = { revision: row.revision, document };
+        return clone(document);
+      }
+      return document;
+    },
+    transaction: work => store.runLocked({ initialDocument: initializeIfMissing ? startingDocument : null },
+      locked => work({ read: async () => locked.document, replace: async document => { locked.replace(document); } }))
+  });
+}
+
+/** Postgres needs `SELECTION_REVIEW_DATABASE_URL`; it is read here and never copied into the runtime configuration. */
+export function createConfiguredBusinessStateRepository(configuration, { env = process.env, createStore = createPostgresBusinessStateStore } = {}) {
   if (!configuration || configuration.schemaVersion !== "selection-review-runtime-configuration-v1") {
     throw new Error("BUSINESS_STATE_REPOSITORY_CONFIGURATION_INVALID");
   }
   if (configuration.stateAdapter === "json") {
     return createJsonBusinessStateRepository({
       filePath: configuration.dataFile,
+      initializeIfMissing: configuration.initializeDataFile === true,
+      initialDocument: () => initialBusinessStateDocument()
+    });
+  }
+  if (configuration.stateAdapter === "postgres") {
+    const connectionString = String(env?.SELECTION_REVIEW_DATABASE_URL ?? "").trim();
+    if (!isPostgresConnectionString(connectionString)) throw new Error("BUSINESS_STATE_REPOSITORY_DATABASE_URL_REQUIRED");
+    return createPostgresBusinessStateRepository({
+      store: createStore({ connectionString }),
       initializeIfMissing: configuration.initializeDataFile === true,
       initialDocument: () => initialBusinessStateDocument()
     });

@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-15T10:44:35.804Z",
+  "frozenAt": "2026-10-15T23:51:36.156Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 997,
-      "sha256": "fa677a167aca2970e07d7b2a9b1645a5468696e08b80a6581dafe021448b9caf",
+      "artifactCount": 1004,
+      "sha256": "d977731b874f1f74148864dd13b9ae751fcb4fa7f58d4e75a29a858c9eb07dd6",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -187,8 +187,12 @@
         "sha256": "3ae26f6d0b69d7af41f94ae718a9c1db7c6068190a96e349d114b9682f8b4c4f"
       },
       {
+        "path": "lib/business-state-import.mjs",
+        "sha256": "c556c016373b440d273ce4b338dec8a3db8c466c0786580a2f5ff7c2243900c1"
+      },
+      {
         "path": "lib/business-state-repository.mjs",
-        "sha256": "446775e200c830e3eff4bef98d0a5720dd73c8f8e29b60990ca3e6988c3b72a8"
+        "sha256": "14698d72ee7294df2842116449328fc58e0a2a2fe6007b5dcf4759a97d2341f6"
       },
       {
         "path": "lib/c1-ai-draft-contract.mjs",
@@ -440,7 +444,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "52a18237d844ed9861848ff0fe124d53132c56f9a8aed57df06c2d5fcad24999"
+        "sha256": "7a36e9ada87ec12caf4ad1c374a66bc8fc749b6882125c4fa31816d8df7ccaba"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -1011,6 +1015,10 @@
         "sha256": "e6c0af593f640e2c80d33058ed1d29dbe4aed0b759ab1ec81243ca9796761b70"
       },
       {
+        "path": "lib/postgres-business-state-store.mjs",
+        "sha256": "ab51c1fbde40a458c51ede13519d1f1463b4fa36c378132dd5d62da2c4177119"
+      },
+      {
         "path": "lib/product-core-family.mjs",
         "sha256": "11757c837a2f5d24cc88fb0cbe0ffe38352417333fd553abaa00eca21e44378b"
       },
@@ -1124,7 +1132,7 @@
       },
       {
         "path": "lib/runtime-health.mjs",
-        "sha256": "3d2aaedaf68936324e4d6ed5ef5510994293084112b05e089d2e574f57431d8d"
+        "sha256": "6bc425a5648157e09bd042507017bd2ae51dd57afb6115cfa21ac901735bd628"
       },
       {
         "path": "lib/runtime-identity-provider.mjs",
@@ -1324,11 +1332,11 @@
       },
       {
         "path": "package.json",
-        "sha256": "ba50618231c33013aca33f13c5d46ede016cb519b6117e69eb11c58bb2adf73c"
+        "sha256": "67a1bca5a46e0e3b6507980a086f4dda2e8e33213c5a7d30303a061168c95684"
       },
       {
         "path": "pnpm-lock.yaml",
-        "sha256": "f256d08b242a40df43f457c388e28f5aa135516af5a1a12cf6fb43d92920c406"
+        "sha256": "c2946cd76dcc5ef356aed3578c6cc6d2586aaf22cdac777bfafe5c03a69cf514"
       },
       {
         "path": "pnpm-workspace.yaml",
@@ -1628,11 +1636,11 @@
       },
       {
         "path": "scripts/ci-test-policy.mjs",
-        "sha256": "09857172e001f76f82b5e668856ef5dcbdb57a51e2fa564a4feffc7ffcf89a37"
+        "sha256": "4639128ee05581065b56511568d47f015cbc5035fc30c82b73a43eede39bdff3"
       },
       {
         "path": "scripts/ci-test-suites.mjs",
-        "sha256": "cebab961595b1e679b1d447fb9e2bab32d4652deabdd931db09d8f8f5ea0a845"
+        "sha256": "c1406bb1a7ffa315085b943f6879c881337e36464462667a431ee9ffc5e9b8ab"
       },
       {
         "path": "scripts/deploy-local-runtime.sh",
@@ -1655,6 +1663,10 @@
         "sha256": "5a88fc6883d1ed626ea0460d30b769fb5decbcbb945ad2965642749fe603cf3c"
       },
       {
+        "path": "scripts/import-business-state-to-postgres.mjs",
+        "sha256": "9260483e622887164f87b5de3395b9a71a451e5348ca9f412bf9c4dcf0ad321e"
+      },
+      {
         "path": "scripts/launch-server.sh",
         "sha256": "f530d18ed6945db8b668d8a19891b4ef805c0a3020d1338ebfa3994062828dd5"
       },
@@ -1675,8 +1687,12 @@
         "sha256": "a9c1454947b8feea83e57461abd06e005114817dce9ddb200398542a7b76f8e4"
       },
       {
+        "path": "scripts/run-ci-database-tests.mjs",
+        "sha256": "4513a564cb618ede167b9928e0aa9dfddcda33ffb1f3c62ef9a5e7b8380c48a9"
+      },
+      {
         "path": "scripts/run-ci-tests.mjs",
-        "sha256": "9b79828b932cd6f8b9f8c66a2181c86b6416475c6d50cce2c6129672ffee8f7d"
+        "sha256": "0aa8d7d642c77c8613882c7dbd7d4a22ef8e003e16dc588669426b789ac990fd"
       },
       {
         "path": "scripts/run-local-api-tests.mjs",
@@ -1692,7 +1708,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "7225cba2a186659a3c9039c5977cde48688593789978a66b85c79e58a17253eb"
+        "sha256": "4278315d4587747891bb0c34b7a317b72305cf88bca26709301731c89e8855ed"
       },
       {
         "path": "src/App.jsx",
@@ -2236,7 +2252,7 @@
       },
       {
         "path": "tests/business-state-repository.test.mjs",
-        "sha256": "3babf5663df9ab810814df3e0d0a295601a8bebd059ecfe659227557a3d93747"
+        "sha256": "a6758fe98764eac50b7a27ceccf2b565403402223a663459a03fa2308c1af52b"
       },
       {
         "path": "tests/c1-ai-contract-unification.test.mjs",
@@ -3207,6 +3223,10 @@
         "sha256": "aa126d6f87ae5b896c5693de94624641024495646b78a5a07bdc334a70be9845"
       },
       {
+        "path": "tests/helpers/fake-postgres-business-state-store.mjs",
+        "sha256": "ce8162922ba58181c37f316e2f5ee3a68a1f3ba8272f547c00dc5479088f1706"
+      },
+      {
         "path": "tests/helpers/legacy-candidate-fixture.mjs",
         "sha256": "02ab1d54f83140ec0f3a242cd2485533425ae1f9c8f76fca4e2e0822f8bdd7ef"
       },
@@ -3601,6 +3621,14 @@
       {
         "path": "tests/post-launch-observation.test.mjs",
         "sha256": "68b33899c9a239e25f7b53aa08713d4e762b65dd74856ed0a6f00dd778de9995"
+      },
+      {
+        "path": "tests/postgres-business-state-db.test.mjs",
+        "sha256": "52aeeaa65d1d0e9a2b1725badff501e9e2fd3e08e6092c8cf878630d276f8b4d"
+      },
+      {
+        "path": "tests/postgres-business-state-store.test.mjs",
+        "sha256": "84b7c3fa130e7b4e9b0ffa3d6fda9a50a6840fb185ff9c1b1466d97c2ad91ffe"
       },
       {
         "path": "tests/product-core-family.test.mjs",
@@ -4035,7 +4063,15 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/business-state-import.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/business-state-repository.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "lib/postgres-business-state-store.mjs",
           "status": "present_in_integration_source"
         },
         {
@@ -4048,6 +4084,14 @@
         },
         {
           "path": "lib/runtime-health.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "scripts/import-business-state-to-postgres.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "scripts/run-ci-database-tests.mjs",
           "status": "present_in_integration_source"
         },
         {
@@ -4064,6 +4108,18 @@
         },
         {
           "path": "tests/fixtures/runtime-readiness-history-fixture.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/helpers/fake-postgres-business-state-store.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/postgres-business-state-db.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/postgres-business-state-store.test.mjs",
           "status": "present_in_integration_source"
         },
         {

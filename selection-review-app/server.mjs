@@ -315,7 +315,7 @@ import { createDUnknownOutcomeReobservationUseCase, DUnknownOutcomeReobservation
 import { createDPlatformStateReconciliationUseCase, DPlatformStateReconciliationError } from "./lib/d-platform-state-reconciliation-use-case.mjs";
 import { C1KeywordContinuationRevisionConflictError, createKeywordEvidenceRuntimeServices } from "./lib/keyword-evidence-runtime-services.mjs";
 
-import { createRuntimeHealth } from './lib/runtime-health.mjs';
+import { createRepositoryRuntimeHealth, createRuntimeHealth } from './lib/runtime-health.mjs';
 import { INTAKE_MAX_LINKS_PER_PASTE, intakeBlocker, intakeDuplicateOf, intakeLogin1688State, intakePause, intakeProgress, intakeQueue,
   intakeAttachPlan, intakeResumePlan, intakeRetryPlan, intakeStageUpdate, newIntakeRecord, nextIntakeWork, parseIntakeLinks } from "./lib/intake-pipeline.mjs";
 import { buildIntakeRoughProfit, intakeRoughProfitPlan } from "./lib/intake-rough-profit.mjs";
@@ -325,7 +325,10 @@ import { buildIntakeOzonWordsRequest, completedIntakeOzonWords, createIntakeOzon
 const appDir = path.dirname(fileURLToPath(import.meta.url));
 const runtimeConfiguration = createSelectionReviewRuntimeConfiguration({ env: process.env, appDir, argv: process.argv });
 const dataFile = runtimeConfiguration.dataFile;
-const runtimeHealth = createRuntimeHealth({ filePath: dataFile, storageAdapter: runtimeConfiguration.stateAdapter });
+// The JSON file is checked by its own bounded worker; Postgres is checked by one fresh repository read.
+const runtimeHealth = runtimeConfiguration.stateAdapter === "postgres"
+  ? createRepositoryRuntimeHealth({ readSnapshot: () => businessStateRepository.readSnapshot() })
+  : createRuntimeHealth({ filePath: dataFile, storageAdapter: runtimeConfiguration.stateAdapter });
 const workflowMapFile = runtimeConfiguration.workflowMapFile;
 const imagesDir = path.join(appDir, "product-images");
 const c2FinalUploadsDir = runtimeConfiguration.c2FinalUploadsDir;

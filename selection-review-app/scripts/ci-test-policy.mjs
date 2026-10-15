@@ -72,6 +72,7 @@ const forbiddenPatterns = [
   ["child process", /node:child_process/u],
   ["network server", /\bcreateServer\s*\(|\.listen\s*\(/u],
   ["network client", /\bfetch\s*\(|\bWebSocket\s*\(|\bXMLHttpRequest\b|node:https?/u],
+  ["database client", /\bfrom\s*["']pg["']|\bimport\s*\(\s*["']pg["']\s*\)/u],
   ["live candidate fixture", /candidates\.json/u],
   ["isolated API fixture", sharedApiFixtureImport],
 ];

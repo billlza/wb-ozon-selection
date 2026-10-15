@@ -138,3 +138,56 @@ jobs:
             CI_API_TESTS=isolated-container NODE_OPTIONS=--throw-deprecation \
             SELECTION_REVIEW_AUTO_DELIVER=off SELECTION_REVIEW_CODEX_DISPATCH=off \
             node scripts/run-ci-api-tests.mjs
+
+  database:
+    name: Postgres storage tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          # Disposable database for this job only; it has no data and no password.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: selection-review-app
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        env:
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: init.defaultBranch
+          GIT_CONFIG_VALUE_0: main
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          version: 11.19.0
+          working-directory: selection-review-app
+          install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: selection-review-app/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --strict-peer-dependencies
+
+      - name: Run Postgres storage tests
+        env:
+          NODE_OPTIONS: "--throw-deprecation"
+          SELECTION_REVIEW_TEST_DATABASE_URL: postgres://postgres@127.0.0.1:5432/postgres
+        run: pnpm test:ci:database

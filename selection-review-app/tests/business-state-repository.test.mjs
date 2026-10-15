@@ -12,8 +12,10 @@ import {
   createConfiguredBusinessStateRepository,
   createJsonBusinessStateRepository,
   createMemoryBusinessStateRepository,
+  createPostgresBusinessStateRepository,
   initialBusinessStateDocument
 } from "../lib/business-state-repository.mjs";
+import { createFakePostgresBusinessStateStore } from "./helpers/fake-postgres-business-state-store.mjs";
 import { createActorContext } from "../lib/runtime-identity.mjs";
 import { commitSingleOwnerProductionAuthorization } from "../lib/production-authorization.mjs";
 
@@ -201,6 +203,46 @@ test("JSON与内存适配器遵守相同Repository契约，但不冒充中央多
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("Postgres适配器遵守同一Repository契约，并且是中央多人存储边界", async () => {
+  const store = createFakePostgresBusinessStateStore({ document: { candidates: [{ id: "C-1", dataRevision: 1 }] } });
+  const repository = createPostgresBusinessStateRepository({ store });
+  await repositoryContract(repository);
+  assert.equal(JSON.parse(store.storedText()).candidates[0].dataRevision, 2);
+  assert.equal(store.calls.writes, 1);
+  assert.deepEqual(assertCentralPersistenceBoundary(repository), {
+    status: "central_persistence_boundary_present",
+    adapter: "postgres",
+    concurrencyScope: "database_transaction",
+    multiUserReady: true
+  });
+});
+
+test("Postgres适配器经过整行文本往返后，主人确认的授权、幂等重放和冲突与内存适配器一致", async () => {
+  const fixture = authorizationFixture();
+  const document = { candidates: [fixture.candidate], evidencePacks: fixture.evidencePacks, currentCommissionCatalogs: fixture.currentCommissionCatalogs, runtime: { operationAudit: [], idempotencyRecords: [] }, dispatches: [] };
+  const store = createFakePostgresBusinessStateStore({ document });
+  const repository = createPostgresBusinessStateRepository({ store });
+  const memory = createMemoryBusinessStateRepository(structuredClone(document));
+  const first = await commitSingleOwnerProductionAuthorization(authorizationArgs(fixture, repository));
+  const expected = await commitSingleOwnerProductionAuthorization(authorizationArgs(fixture, memory));
+  assert.equal(first.status, "committed");
+  // Everything but the repository boundary it reports matches the in-memory adapter.
+  const { repository: boundary, ...committed } = first;
+  const { repository: memoryBoundary, ...expectedCommitted } = expected;
+  assert.deepEqual(committed, expectedCommitted);
+  assert.deepEqual([boundary.adapter, boundary.multiUserReady, memoryBoundary.adapter], ["postgres", true, "memory"]);
+  const stored = await repository.readSnapshot();
+  assert.deepEqual(stored, await memory.readSnapshot());
+  // The row keeps the production entity store, not the restored snapshots.
+  assert.ok(Array.isArray(JSON.parse(store.storedText()).productionEntityRecords));
+  const replay = await commitSingleOwnerProductionAuthorization({ ...authorizationArgs(fixture, repository), serverClock: () => "2026-08-22T07:05:00.000Z" });
+  assert.equal(replay.status, "idempotent_replay");
+  const revision = store.revision;
+  await assert.rejects(commitSingleOwnerProductionAuthorization({ ...authorizationArgs(fixture, repository), input: { ...fixture.input, merchantSku: "OTHER-SKU" } }), /IDEMPOTENCY_CONFLICT/);
+  assert.equal(store.revision, revision);
+  assert.deepEqual(await repository.readSnapshot(), stored);
 });
 
 test("JSON适配器只在显式允许时初始化缺失文件，坏JSON必须失败", async () => {

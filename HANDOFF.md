@@ -1,4 +1,4 @@
-## 当前接班入口（2026-10-13：流程改造整合分支收口，10-14 已合进 main；10-15 修了 P1-22）
+## 当前接班入口（2026-10-13：流程改造整合分支收口，10-14 已合进 main；10-15 修了 P1-22，开始做多人中央服务）
 
 **状态**：流程改造的全部改动在 `integration/flow-rework`。主人 2026-10-13 决定先按原样合进 main，审查清单里还没修的 P0-11、P0-12 记成已知问题（见「还开着的」）；10-14 主人把 PR #9 合进了 main（合并提交 `ab46fed`），PR #3 已关。10-15 修了 P1-22，见下面「P1-22」一节。本批没有部署、没有读凭据、没有向任何平台发请求；主人 Mac 上装的是按提交号装的整合分支版本，合不合 main 都不影响它。真实首件 A→E 仍未跑完。下方 2026-09-10 及更早的入口全部是历史，冲突处以本节和当前 AGENTS 为准。
 
@@ -85,6 +85,17 @@
 - 页面（`src/components/SeerfarWebRoundCard.jsx`）每一轮多一行：打码的账号、存在哪、换没换账号，或者没存上的原因。界面开发者备忘里记了。
 
 还没验证、要在主人 Mac 上看的：Seerfar 会员页的搜索请求里到底带不带这三项（仓库里没有真实请求样本，审查时是按代码推的），没带的话这一行会写「这次的搜索请求里没有 Seerfar 账号信息」；钥匙串真实写入（这里只有模拟测试）；Windows 写入脚本没在真机跑过。插件版本号随 PR #12 升到 1.4.2：服务端只认新插件，旧插件（1.4.1 会整包回传请求体）领不到任何插件作业，页面顶部提示「插件代码已更新 · 请重新加载（当前v1.4.1，需要v1.4.2）」，到 `chrome://extensions` 里重新加载就好。
+
+### 多人中央服务第 1 步：Postgres 存储（2026-10-15）
+
+主人 10-15 定：工作台要放到网上给几个人一起用（两位老板加一个测试，五六台电脑装插件，人在国内，公司有合法的科学上网）。计划在项目共享文件 `wb-ozon/多人中央服务计划-2026-10-15.md`，分六步，每步一个 PR；本机 JSON 用法每一步都保留，默认不变。这一步只做存储：
+
+- `SELECTION_REVIEW_STATE_ADAPTER=postgres` 加 `SELECTION_REVIEW_DATABASE_URL` 就用 Postgres（`lib/postgres-business-state-store.mjs`）。整份业务状态照旧当一份存，放在表 `selection_review_business_state` 的一行里；`json` 列原样保留文本和键的顺序。每次事务先 `SELECT … FOR UPDATE` 锁住这一行，几个服务进程同时写也不会互相覆盖；读的时候每次都查一下这一行的 revision，没变就用上一次解析好的。数据库地址只从环境变量读，不进运行配置，也不打印。
+- `SELECTION_REVIEW_INITIALIZE_DATA_FILE` 对 Postgres 也一样：没有这一行时，读到的是初始文档但不写；只有真改了东西才落一行。
+- 就绪检查（`/api/ready`）在 Postgres 下改成一次新的仓库读取（`createRepositoryRuntimeHealth`），JSON 照旧用原来的工作线程。
+- 导入：`SELECTION_REVIEW_DATABASE_URL=… node scripts/import-business-state-to-postgres.mjs --from /绝对路径/candidates.json` 只演练：校验文件、看一眼目标库，什么都不建、不写。加 `--write` 才写，而且只写空库；写完在同一个事务里读回来和文件逐项比对，不一致就整笔撤回；目标已经有数据就拒绝（退出码 2），不覆盖。
+- 测试：`tests/postgres-business-state-store.test.mjs`（纯测试，假连接池）；`tests/postgres-business-state-db.test.mjs` 要真的 Postgres，归在 `DATABASE_TESTS`，只由 `pnpm test:ci:database` 跑，没配 `SELECTION_REVIEW_TEST_DATABASE_URL` 就直接失败、不跳过。CI 新加一组「Postgres storage tests」，起一个一次性的 Postgres 16 容器。
+- 中央模式（`central_test`/`central_production`）仍然起不来：正式登录（第 2 步）和插件连中央服务（第 3 步）还没做。
 
 ### 本轮验证
 

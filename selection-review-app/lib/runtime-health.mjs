@@ -77,3 +77,51 @@ export function createRuntimeHealth({ filePath, storageAdapter = 'json', timeout
     async close() { phase = 'closed';active?.cancel?.('closed');if (active) await active.done; }
   });
 }
+
+// Database adapters: readiness is one fresh repository read (the row's revision is re-queried each time) under the same
+// deadline and admission rules; no worker thread, because the database already parses and bounds the read.
+export function createRepositoryRuntimeHealth({ readSnapshot, timeoutMs = RUNTIME_READINESS_TIMEOUT_MS, clock = () => performance.now() } = {}) {
+  if (typeof readSnapshot !== 'function' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 ||
+      timeoutMs > RUNTIME_READINESS_TIMEOUT_MS) throw failure('configuration_invalid');
+  let phase = 'starting', active = null;
+  async function ready({ signal } = {}) {
+    if (phase !== 'ready') throw failure(phase === 'closed' ? 'closed' : 'starting');
+    if (signal?.aborted) throw failure('cancelled');
+    if (active) throw failure('busy');
+    let complete;
+    const operation = { cancel: null, done: new Promise(resolve => { complete = resolve; }) }; active = operation;
+    const started = clock(); let timer, abort;
+    try {
+      const dataVersion = await new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (error, value) => {
+          if (settled) return;
+          settled = true; error ? reject(error) : resolve(value);
+        };
+        operation.cancel = code => finish(failure(code));
+        abort = () => operation.cancel('cancelled');
+        signal?.addEventListener('abort', abort, { once: true });
+        timer = setTimeout(() => operation.cancel('timeout'), timeoutMs);
+        Promise.resolve().then(readSnapshot).then(document => {
+          if (document?.meta?.version !== 2 || !Array.isArray(document.candidates)) throw failure('data_invalid');
+          finish(null, document.meta.version);
+        }, error => finish(failure(error?.message === 'BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID' ? 'data_invalid' : 'data_unavailable')))
+          .catch(error => finish(error.code ? error : failure('data_invalid')));
+        if (signal?.aborted) abort();
+      });
+      if (phase !== 'ready') throw failure('closed');
+      if (clock() - started > timeoutMs) throw failure('timeout');
+      return { dataVersion, fresh: true, durationMs: clock() - started };
+    } finally {
+      clearTimeout(timer); signal?.removeEventListener('abort', abort);
+      if (active === operation) active = null;
+      complete();
+    }
+  }
+  return Object.freeze({
+    markListening() { if (phase !== 'starting') throw failure('lifecycle_invalid'); phase = 'ready'; },
+    get live() { return phase === 'ready'; },
+    ready,
+    async close() { phase = 'closed'; active?.cancel?.('closed'); if (active) await active.done; }
+  });
+}

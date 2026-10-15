@@ -3,13 +3,14 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertSelfContainedTestSource,assertIsolatedApiTestSource } from "./ci-test-policy.mjs";
-import { API_PROCESS_TESTS, SOURCE_CONTRACT_TESTS, SUBPROCESS_TESTS, ISOLATED_TESTS } from "./ci-test-suites.mjs";
+import { API_PROCESS_TESTS, SOURCE_CONTRACT_TESTS, SUBPROCESS_TESTS, ISOLATED_TESTS, DATABASE_TESTS } from "./ci-test-suites.mjs";
 
 const appDirectory = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const testsDirectory = path.join(appDirectory, "tests");
 
 const apiProcessTests = new Set(API_PROCESS_TESTS);
 const isolatedTests = new Set(ISOLATED_TESTS);
+const databaseTests = new Set(DATABASE_TESTS);
 const concurrency = Number(process.env.SELECTION_REVIEW_TEST_CONCURRENCY ?? '2');
 if(!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 4) throw new Error('CI_TEST_CONCURRENCY_INVALID');
 
@@ -52,9 +53,13 @@ const knownTests = new Set(testFiles);
 
 assert(isolatedTests.size === ISOLATED_TESTS.length, "CI_TEST_CLASSIFICATION_OVERLAP");
 assertDisjoint(isolatedTests, temporaryCandidateFixtureTests, "CI_TEST_CLASSIFICATION_OVERLAP");
+assert(databaseTests.size === DATABASE_TESTS.length, "CI_TEST_CLASSIFICATION_OVERLAP");
+assertDisjoint(databaseTests, isolatedTests, "CI_TEST_CLASSIFICATION_OVERLAP");
+assertDisjoint(databaseTests, temporaryCandidateFixtureTests, "CI_TEST_CLASSIFICATION_OVERLAP");
 
 for (const file of [
   ...isolatedTests,
+  ...databaseTests,
   ...temporaryCandidateFixtureTests,
 ]) {
   assert(knownTests.has(file), `CI_TEST_CLASSIFICATION_FILE_MISSING:${file}`);
@@ -84,7 +89,7 @@ for (const file of temporaryCandidateFixtureTests) {
 
 const selectedTests = [];
 for (const file of testFiles) {
-  if (isolatedTests.has(file)) {
+  if (isolatedTests.has(file) || databaseTests.has(file)) {
     continue;
   }
 
@@ -102,7 +107,7 @@ assert(selectedTests.length > 0, "CI_SELF_CONTAINED_TESTS_EMPTY");
 
 console.log(
   `Running ${selectedTests.length} self-contained test files; `
-    + `excluding ${isolatedTests.size} files executed by the isolated runner.`,
+    + `excluding ${isolatedTests.size} files executed by the isolated runner and ${databaseTests.size} by the database runner.`,
 );
 
 const result = spawnSync(process.execPath, ["--test", `--test-concurrency=${concurrency}`, ...selectedTests], {
