@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-13T10:15:33.333Z",
+  "frozenAt": "2026-10-15T09:49:18.204Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 994,
-      "sha256": "d14010b8cffc0c6357b7c24aedd444236d5c57230c6d92516612756c22d0636a",
+      "artifactCount": 997,
+      "sha256": "0505e422627737099f738d8900c5342af78dbb01667289f0f525c1a744b83ec0",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -76,7 +76,7 @@
       },
       {
         "path": "extension/1688-capture/seerfar-web-capture.js",
-        "sha256": "3f9ab4ee9f2894f929fff707bfc983dd016f9a2c8474229d338d6c113580da8e"
+        "sha256": "3f8eaba989941a90f18524e06b44a730ea0cddab8d565b88e41cc68b0b4d7265"
       },
       {
         "path": "extension/1688-capture/source-routing.js",
@@ -440,7 +440,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "f70fc8a7bff3188f74b861ca80248c2b92f20a1625ce0abc00fd020dd38f571a"
+        "sha256": "b50d1d258f104b12d5f75433619eb4fd013c2240cfb4028795500d82cec6fd79"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -476,7 +476,7 @@
       },
       {
         "path": "lib/credential-store.mjs",
-        "sha256": "d7a126361c6ab9e40d289da64ba6e1909c84845b0cbe2d4170c560d7a4a548dc"
+        "sha256": "11cf8754b27a1b3c78c8f9fbd08fb2ca79d4c8dacf12ed9af749e6c234649448"
       },
       {
         "path": "lib/d-asset-transport-software-use-case.mjs",
@@ -1139,6 +1139,10 @@
         "sha256": "e220e8acfa16cc090ebe144e0bcaa1cee306aed776c13cf2a280c7b6f51c6c6b"
       },
       {
+        "path": "lib/seerfar-account-identity.mjs",
+        "sha256": "32de4af324c34c8116f8a6b72ce4968648f1f87501d27d9adb090f4a181df2c9"
+      },
+      {
         "path": "lib/seerfar-discovery-contract.mjs",
         "sha256": "7379ad60ac3238694cffcabcb90d8a4332cf86e0692904e4cb8a6cbcb59b49db"
       },
@@ -1176,11 +1180,11 @@
       },
       {
         "path": "lib/seerfar-web-round-service.mjs",
-        "sha256": "5c3d4d78862305accec44df23c00c6c80a9d77307e33d09e25212ffdce8aee26"
+        "sha256": "26785126a6359654463eca9b18016e11d2849b508785960821aa9b5e0b69d501"
       },
       {
         "path": "lib/seerfar-web-round.mjs",
-        "sha256": "e528b3d99a1e529adf39ed3df6474f4a7a086a62801cc102f42d7ec0628b5a87"
+        "sha256": "84d067adcf6e9d12d6901326cf507a5a633016e31c5f7762de5649c628e97f64"
       },
       {
         "path": "lib/sibling-batch-a-b-c1.mjs",
@@ -1688,7 +1692,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "bb97e46e9dc5e561167600eff125452d8d5d9a51ce0c7e018b21963ae3581184"
+        "sha256": "3f535faa1374aec272d0f298879d2ee4cbd4ea408a7e2a751616498a880d681f"
       },
       {
         "path": "src/App.jsx",
@@ -1920,7 +1924,7 @@
       },
       {
         "path": "src/components/SeerfarWebRoundCard.jsx",
-        "sha256": "7950f0dd2f4f30daad3cb2f8408c81a14a9231f000f8caad4ff0d93a0e5ef70f"
+        "sha256": "19013de5c520d6971365cbe1d240510d5a245aff607da13489cd93f4433201f5"
       },
       {
         "path": "src/components/SelectionDesk.jsx",
@@ -2656,7 +2660,7 @@
       },
       {
         "path": "tests/credential-store.test.mjs",
-        "sha256": "1b60b5266f50773f984fb33ee290466869750e026d7602c1a4abf02e349005e5"
+        "sha256": "975eeef38c14c7fbf52e170c23a34f98423ef335568ea7400416c62f0c889996"
       },
       {
         "path": "tests/cross-stage-contract-schema.test.mjs",
@@ -3743,6 +3747,10 @@
         "sha256": "2a3d84a2a788043ef14cb0570e432d0583156768fc52dbfcb45aa7107a5924ec"
       },
       {
+        "path": "tests/seerfar-account-identity.test.mjs",
+        "sha256": "e05a9a803d8f71fb6e4ff4c88ae4a135d48f1b359c3d51cfcf9e4bc7b7b91fbd"
+      },
+      {
         "path": "tests/seerfar-discovery-contract.test.mjs",
         "sha256": "a55fb5853e61f7dcb3a3847f654649dd74b9a0f7bf592519c28bbf310d55fe4c"
       },
@@ -3776,15 +3784,19 @@
       },
       {
         "path": "tests/seerfar-web-extension.test.mjs",
-        "sha256": "8515bb7a575e5aafbd55ffd95aa463f5a7b050233a225468435c744de20195bf"
+        "sha256": "9cf8d1418211c24b9dad0d23ca03be646232cb1b5745784979bdac2fdd009dfa"
+      },
+      {
+        "path": "tests/seerfar-web-round-card-ui.test.mjs",
+        "sha256": "19c4b6eeee685cf10e117e971872beb41f344f720fa5231c43f04381eedb34bc"
       },
       {
         "path": "tests/seerfar-web-round-service.test.mjs",
-        "sha256": "e552764be4f3cb966408fc30e138f69efcc1a7d7b3891cc54fc34e6deea0b42e"
+        "sha256": "14afbf2b8fb4993815916a0474a2e953ef33a04c262b58f52ee5b4fbc64786e4"
       },
       {
         "path": "tests/seerfar-web-round.test.mjs",
-        "sha256": "cd385e01c27ffe57b01f9597ca9d7b49025140ffe15af66dd6c83b75d3664bb7"
+        "sha256": "c9de898be8c6219acccf4b421a8c5c194cca2fbaa6d5af68a6c62fde5a297783"
       },
       {
         "path": "tests/selection-desk-ui.test.mjs",
@@ -6617,6 +6629,7 @@
         "lib/store-profile.mjs",
         "lib/seerfar-web-round.mjs",
         "lib/seerfar-web-round-service.mjs",
+        "lib/seerfar-account-identity.mjs",
         "src/components/SeerfarWebRoundCard.jsx",
         "lib/a-discovery-estimate.mjs",
         "lib/a-discovery-estimate-store.mjs",
@@ -6666,6 +6679,8 @@
         "tests/seerfar-selection-plan.test.mjs",
         "tests/seerfar-web-round.test.mjs",
         "tests/seerfar-web-round-service.test.mjs",
+        "tests/seerfar-account-identity.test.mjs",
+        "tests/seerfar-web-round-card-ui.test.mjs",
         "tests/store-sales-seeds.test.mjs",
         "tests/store-profile.test.mjs",
         "tests/seerfar-web-extension.test.mjs",

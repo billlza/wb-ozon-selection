@@ -3,7 +3,8 @@
  *
  * 只做一件事：在主人自己已登录的 Chrome 里打开热销榜单选品页，等主人按工作台建议的类目搜一次，收下页面自己收到的
  * 那一页搜索结果（最多 20 条），回传给本机工作台。插件不替主人点搜索、不翻页、不发自己的请求、不读 Cookie 或
- * 登录信息；页面请求里只把字段名和短取值带回去（服务端再删一遍像身份或凭据的字段），给下一步"按计划自动查"用。
+ * 登录凭据。页面请求里只把搜索条件带回去，给下一步"按计划自动查"用；请求里的 Seerfar 账号 ID、手机号、邮箱单独
+ * 带回（主人 2026-10-15 定要存，工作台存进本机系统钥匙串）；令牌、签名这类登录凭据一律不带。
  *
  * 收结果靠在页面主世界里包一层 fetch / XMLHttpRequest：只记下发往搜索接口的那几次响应。下面两个 *InPage 函数
  * 由 chrome.scripting 注入页面执行，必须自给自足，不能引用本文件里的任何变量。
@@ -43,6 +44,108 @@ export function validateSeerfarWebRequest({ payload, manifestVersion = "" } = {}
     return { ok: false, code: "request_payload_missing" };
   }
   return { ok: true };
+}
+
+/*
+ * 回传前先过一遍页面的请求体（审查清单 P1-22）。下面两组函数和服务端 lib/seerfar-web-round.mjs 的
+ * sanitizeSeerfarRequestTemplate、lib/seerfar-account-identity.mjs 的 pickSeerfarAccountIdentity 规则相同
+ * （测试逐条比对两边结果）；服务端收到后还会再过一遍。
+ */
+const TEMPLATE_DROP_KEY = new RegExp(["token|auth|sign|cookie|session|passw|secret|ticket|nonce|jwt|credential|bearer|captcha|header|device",
+  "|fingerprint|expir|stamp|user|member|account|customer|login|phone|mobile|email|mail|openid|unionid|nickname|realname|contact|address",
+  "|birth|gender|idcard|passport|identity|url|uri|href|link|redirect|callback|^(?:uid|ip|ts|t|sig|key)$",
+  "|(?:uid|sig|apikey|accesskey|appkey|secretkey|privatekey|publickey|signkey)$"].join(""));
+const TEMPLATE_KEYS = new Set(["data", "param", "params", "body", "request", "payload", "query", "search", "criteria", "where", "condition",
+  "conditions", "filter", "filters", "options", "page", "pagenum", "pagenumber", "pageno", "pageindex", "pagesize", "size", "limit", "offset",
+  "current", "order", "orders", "orderby", "orderfield", "sort", "sorts", "sortby", "sortfield", "sortorder", "sortkey", "field", "direction",
+  "asc", "desc", "min", "max", "minimum", "maximum", "from", "to", "gt", "gte", "lt", "lte", "start", "end", "begin", "platform", "site",
+  "market", "country", "currency", "language", "lang", "q", "kw", "searchkey", "searchword", "searchtext"]);
+const TEMPLATE_KEY_PATTERNS = [/categor|^cat(?:id|ids)?$/, /(?:mode|type)s?$/, /^(?:date|time)|(?:date|time|day|period|month|week|year|range)s?$/,
+  /price|sales|revenue|weight|volume|margin|rating|review|question|drr|conv|cancel|return|views?$|stock|rank|variant|gmv|profit|commission|dimension|length|width|height/,
+  /fulfil|deliver|logistic|shipping|^fb[os]$|^rfbs$/, /brand|keyword|^(?:label|tag)s?$/, /^(?:is|has|only|filter|exclude|include)[a-z]/];
+const templatePhoneLike = (text) => /^(?:\+?86[\s-]?)?1[3-9]\d{9}$/.test(text) || /^\+\d[\d\s()-]{6,}$/.test(text);
+
+function templateValue(value) {
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) && !templatePhoneLike(String(value)) ? value : null;
+  if (typeof value !== "string" || value.length > 120 || /\p{Cc}/u.test(value)) return null;
+  if (/:\/\/|[=@&?#\\]|^\s*(?:bearer|basic)\b/i.test(value) || /^eyJ[\w-]*\./.test(value) || templatePhoneLike(value) ||
+      /^[A-Za-z0-9_+/-]{24,}={0,2}$/.test(value) && /[A-Za-z]/.test(value) && /\d/.test(value)) return null;
+  return value;
+}
+
+function templateNode(value, depth) {
+  if (depth > 4) return null;
+  if (Array.isArray(value)) return value.slice(0, 20).map((item) => templateNode(item, depth + 1));
+  if (value === null || typeof value !== "object") return templateValue(value);
+  const out = {};
+  for (const [key, item] of Object.entries(value).slice(0, 60)) {
+    if (!/^[A-Za-z0-9_.-]{1,60}$/.test(key)) continue;
+    const name = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!name || TEMPLATE_DROP_KEY.test(name) || !(TEMPLATE_KEYS.has(name) || TEMPLATE_KEY_PATTERNS.some((pattern) => pattern.test(name)))) continue;
+    out[key] = templateNode(item, depth + 1);
+  }
+  return out;
+}
+
+/** The page's search request cut down to its search conditions; null when none is left. */
+export function sanitizeSeerfarRequestTemplate(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const template = templateNode(value, 0);
+  return Object.keys(template).length > 0 ? template : null;
+}
+
+const normalizeKey = (key) => String(key).toLowerCase().replace(/[^a-z0-9]/g, "");
+const CREDENTIAL_KEY = /token|auth|sign|cookie|session|passw|secret|ticket|nonce|jwt|credential|bearer|captcha|header/;
+const ACCOUNT_KEYS = Object.freeze(["accountid", "memberid", "userid", "customerid", "uid", "loginid", "loginname", "username", "accountname",
+  "account", "member", "user"]);
+const isPhoneKey = (key) => /phone|mobile/.test(key) || key === "tel" || key === "telephone";
+const isEmailKey = (key) => key.includes("email") || key === "mail" || key === "mailaddress";
+
+function accountValue(value) {
+  if (Number.isSafeInteger(value) && value >= 0) return String(value);
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  return /^[\p{L}\p{N}_.@+-]{1,64}$/u.test(text) && !/^eyJ[\w-]*\./.test(text) ? text : null;
+}
+function phoneValue(value) {
+  const text = Number.isSafeInteger(value) && value > 0 ? String(value) : typeof value === "string" ? value.trim() : "";
+  if (!/^\+?[\d\s()*-]{6,24}$/.test(text)) return null;
+  const digits = text.replace(/\D/g, "").length;
+  return digits >= 6 && digits <= 15 ? `${text.startsWith("+") ? "+" : ""}${text.replace(/[^\d*]/g, "")}` : null;
+}
+function emailValue(value) {
+  if (typeof value !== "string") return null;
+  const text = value.trim().toLowerCase();
+  return text.length <= 128 && /^[^\s@"'<>()[\]\\,;:]{1,64}@[\p{L}\p{N}.-]{1,100}\.\p{L}{2,24}$/u.test(text) ? text : null;
+}
+
+/** The Seerfar account ID, phone and email the page's request carries; anything under a credential-like key is not read. */
+export function pickSeerfarAccountIdentity(value) {
+  const found = { accountId: null, phone: null, email: null };
+  let accountRank = ACCOUNT_KEYS.length;
+  const queue = [[value, 0]];
+  while (queue.length > 0) {
+    const [node, depth] = queue.shift();
+    if (depth > 4 || node === null || typeof node !== "object") continue;
+    const entries = Array.isArray(node) ? node.slice(0, 20).map((item) => [null, item]) : Object.entries(node).slice(0, 60);
+    for (const [rawKey, item] of entries) {
+      const key = rawKey === null ? null : normalizeKey(rawKey);
+      if (key !== null && CREDENTIAL_KEY.test(key)) continue;
+      if (item !== null && typeof item === "object") {
+        queue.push([item, depth + 1]);
+        continue;
+      }
+      if (key === null) continue;
+      const rank = ACCOUNT_KEYS.indexOf(key);
+      if (rank !== -1) {
+        const account = rank < accountRank ? accountValue(item) : null;
+        if (account !== null) { found.accountId = account; accountRank = rank; }
+      } else if (isPhoneKey(key) && found.phone === null) found.phone = phoneValue(item);
+      else if (isEmailKey(key) && found.email === null) found.email = emailValue(item);
+    }
+  }
+  return found;
 }
 
 /** Where the tab is now: the search page, a login page, or anywhere else (which ends the job). */
@@ -170,7 +273,10 @@ export async function runSeerfarWebCapture({ chromeApi, payload, signal, clock =
         // Re-read the browser's own address after extraction, not the page's idea of where it is.
         const after = await chromeApi.tabs.get(tab.id);
         if (classifySeerfarAddress(after.url) !== "search_page") throw failure("navigation_rejected");
-        return { status: "captured", observedAt: clock(), requestTemplate: found.requestBody ?? null,
+        // The page's whole request body stays here: only its search conditions and the three account fields go back.
+        const requestBody = found.requestBody ?? null;
+        return { status: "captured", observedAt: clock(), requestTemplate: sanitizeSeerfarRequestTemplate(requestBody),
+          accountIdentity: pickSeerfarAccountIdentity(requestBody),
           capture: { pageUrl: payload.pageUrl, endpoint: payload.endpoint, httpStatus: 200, capturedAt: found.capturedAt,
             resultCountLabel: String(found.resultCountLabel).slice(0, 64), records: Array.isArray(found.records) ? found.records : [] } };
       }

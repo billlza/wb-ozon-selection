@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
+import { createFakeCredentialStore } from '../lib/credential-store.mjs';
+import { SEERFAR_ACCOUNT_KEYCHAIN_ACCOUNT, SEERFAR_ACCOUNT_KEYCHAIN_SERVICE, createSeerfarAccountVault } from '../lib/seerfar-account-identity.mjs';
 import { SEERFAR_WEB_SEARCH_ENDPOINT, SEERFAR_WEB_SEARCH_PAGE } from '../lib/seerfar-web-discovery-contract.mjs';
 import { createSeerfarWebRoundService } from '../lib/seerfar-web-round-service.mjs';
 
@@ -133,4 +135,94 @@ test('the newest completed store-sales snapshot adds one find-similar query per 
   assert.deepEqual(similar[0].priceRub, { min: 700, max: 1300 });
   assert.deepEqual(similar[0].categoryPaths, [CLOTHING]);
   assert.equal(typeof service.markHotItem, 'undefined');
+});
+
+// Synthetic account values; the fake store stands in for the OS keychain.
+const ACCOUNT = { accountId: '80012345', phone: '13812345678', email: 'owner.test@qq.com' };
+const KEYCHAIN_ENTRY = { service: SEERFAR_ACCOUNT_KEYCHAIN_SERVICE, account: SEERFAR_ACCOUNT_KEYCHAIN_ACCOUNT };
+async function capturedRound(service, read, input) {
+  const queryId = service.view(read()).plans.miska.queries[0].queryId;
+  const started = await service.startRound({ actor: owner, targetStore: 'miska', queryId });
+  const { captureJob } = await service.claim(started.captureJob.jobId, '1.4.1', ORIGIN);
+  return service.acceptResult({ roundId: captureJob.roundId, origin: ORIGIN, input: { captureId: captureJob.captureId, token: captureJob.token,
+    status: 'captured', capture: capture([raw('1001', { sales: 80 })]), ...input } });
+}
+const keychainValue = async store => JSON.parse(Buffer.from(await store.readSecret(KEYCHAIN_ENTRY), 'base64').toString('utf8'));
+
+test('the account fields go to the keychain and the data file keeps only their masks, from the current extension or an older one', async () => {
+  const store = createFakeCredentialStore();
+  const { service, read } = harness({ options: { accountVault: createSeerfarAccountVault({ credentialStore: store }) } });
+  // The current extension: search conditions and the three account fields arrive apart.
+  let round = await capturedRound(service, read, { requestTemplate: { categoryIds: ['1_2_3'], pageNum: 1 }, accountIdentity: ACCOUNT });
+  assert.equal(round.status, 'completed');
+  assert.deepEqual(round.accountIdentity, { schemaVersion: 'seerfar-web-account-identity-v1', status: 'saved', fields: ['accountId', 'phone', 'email'],
+    masked: { accountId: '80****45', phone: '138****5678', email: 'o***@qq.com' }, sameAsPrevious: null, location: 'fake_credential_store', failure: null });
+  assert.deepEqual(await keychainValue(store), { schemaVersion: 'seerfar-web-account-v1', ...ACCOUNT, savedAt: AT });
+  for (const full of Object.values(ACCOUNT)) assert.equal(JSON.stringify(read()).includes(full), false, full);
+
+  // An older extension build posts the page's whole request body; the server does the same split itself.
+  const older = harness({ options: { accountVault: createSeerfarAccountVault({ credentialStore: store }) } });
+  round = await capturedRound(older.service, older.read, { requestTemplate: { categoryIds: ['1_2_3'], pageNum: 1, memberId: 80012345,
+    phone: '138-1234-5678', token: 'synthetic-session-token', sig: 'synthetic-signature', nonce: 'n-1' } });
+  assert.equal(round.accountIdentity.sameAsPrevious, true);
+  assert.deepEqual(round.accountIdentity.fields, ['accountId', 'phone']);
+  const saved = Object.values(older.read().runtime.seerfarWebRounds)[0];
+  assert.deepEqual(saved.requestTemplate, { categoryIds: ['1_2_3'], pageNum: 1 });
+  for (const leaked of ['80012345', '13812345678', '138-1234-5678', 'synthetic-session-token', 'synthetic-signature']) {
+    assert.equal(JSON.stringify(older.read()).includes(leaked), false, leaked);
+  }
+});
+
+test('a keychain that cannot be used, or a vault that breaks, still lets the round collect its products', async () => {
+  // No vault (a runtime without one): the round says the fields were not saved.
+  let { service, read } = harness();
+  let round = await capturedRound(service, read, { requestTemplate: { pageNum: 1 }, accountIdentity: ACCOUNT });
+  assert.equal(round.status, 'completed');
+  assert.equal(round.importedCandidateIds.length, 1);
+  assert.deepEqual([round.accountIdentity.status, round.accountIdentity.failure.code], ['not_saved', 'store_unavailable']);
+
+  const denied = createFakeCredentialStore([{ ...KEYCHAIN_ENTRY, failure: 'credential_access_denied' }]);
+  ({ service, read } = harness({ options: { accountVault: createSeerfarAccountVault({ credentialStore: denied }) } }));
+  round = await capturedRound(service, read, { accountIdentity: ACCOUNT });
+  assert.deepEqual([round.status, round.accountIdentity.failure.code], ['completed', 'access_denied']);
+  assert.equal(denied.calls.length, 1, 'one read, no retry');
+
+  const logs = [];
+  ({ service, read } = harness({ options: { log: (...args) => logs.push(args),
+    accountVault: { save: async () => { throw new TypeError(`synthetic defect ${ACCOUNT.phone}`); } } } }));
+  round = await capturedRound(service, read, { accountIdentity: ACCOUNT });
+  assert.deepEqual([round.status, round.accountIdentity.failure.code], ['completed', 'system_error']);
+  assert.equal(JSON.stringify(logs).includes(ACCOUNT.phone), false, 'the log names the failure, never the values');
+
+  // Nothing to save: no store is asked at all.
+  const untouched = createFakeCredentialStore();
+  ({ service, read } = harness({ options: { accountVault: createSeerfarAccountVault({ credentialStore: untouched }) } }));
+  round = await capturedRound(service, read, { requestTemplate: { pageNum: 1 } });
+  assert.equal(round.accountIdentity.status, 'not_in_request');
+  assert.equal(untouched.calls.length, 0);
+  assert.throws(() => harness({ options: { accountVault: {} } }), /SEERFAR_WEB_ROUND_SERVICE_DEPENDENCY_INVALID/);
+});
+
+test('a restart cuts request templates saved before the allowlist down to their search conditions', async () => {
+  const { service: seed, read: seedRead } = harness();
+  const queryId = seed.view(seedRead()).plans.miska.queries[0].queryId;
+  const started = await seed.startRound({ actor: owner, targetStore: 'miska', queryId });
+  const base = seedRead().runtime.seerfarWebRounds[started.round.roundId];
+  const oldTemplate = { pageNum: 1, categoryIds: ['1_2_3'], memberId: 80012345, phone: '13812345678', email: 'owner.test@qq.com', nonce: 'n' };
+  const leftover = harness({ document: { runtime: { seerfarWebRounds: {
+    'seerfar-web-round:done': { ...base, roundId: 'seerfar-web-round:done', status: 'completed', completedAt: AT, requestTemplate: oldTemplate },
+    'seerfar-web-round:clean': { ...base, roundId: 'seerfar-web-round:clean', status: 'completed', completedAt: AT, requestTemplate: { pageNum: 1 } },
+    'seerfar-web-round:empty': { ...base, roundId: 'seerfar-web-round:empty', status: 'completed', completedAt: AT, requestTemplate: { memberId: 1 } }
+  } } } });
+  assert.deepEqual(await leftover.service.reconcileRoundsAfterRestart(), []);
+  const rounds = leftover.read().runtime.seerfarWebRounds;
+  assert.deepEqual(rounds['seerfar-web-round:done'].requestTemplate, { pageNum: 1, categoryIds: ['1_2_3'] });
+  assert.deepEqual(rounds['seerfar-web-round:clean'].requestTemplate, { pageNum: 1 });
+  assert.equal(rounds['seerfar-web-round:empty'].requestTemplate, null);
+  assert.equal(rounds['seerfar-web-round:done'].status, 'completed');
+  for (const full of Object.values(ACCOUNT)) assert.equal(JSON.stringify(leftover.read()).includes(full), false, full);
+  // Already clean: the second restart writes nothing.
+  const before = leftover.read();
+  await leftover.service.reconcileRoundsAfterRestart();
+  assert.equal(leftover.read(), before);
 });
