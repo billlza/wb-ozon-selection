@@ -245,6 +245,7 @@ import { createConfiguredWorkstationAccess } from "./lib/workstation-access.mjs"
 import { ANY_COMPUTER, captureControlView, captureHolder, claimantFor, computersReadyForSoftwareJob, pageWorkstationId, teamCaptureControl,
   teamCaptureRefusal, teamClaimRefusal } from "./lib/capture-assignment.mjs";
 import { assertRuntimeBoundaries } from "./lib/multi-user-central-runtime.mjs";
+import { createStandbyGate, holdLeaseOrStandBy, listenOnce } from "./lib/process-handoff.mjs";
 import { commitSingleOwnerProductionAuthorization, PRODUCTION_AUTHORIZATION_VERSION } from "./lib/production-authorization.mjs";
 import { commitBatchOwnerProductionAuthorization } from './lib/d-batch-production-authorization.mjs';
 import { saveSiblingBatchCommercialDrafts } from './lib/sibling-batch-commercial-drafts.mjs';
@@ -359,14 +360,23 @@ const trustedServiceOrigins = new Set([
 const allowedExtensionOrigins = new Set(runtimeConfiguration.allowedExtensionOrigins);
 const internalApiRequestToken = randomBytes(32).toString("base64url");
 const businessStateRepository = createConfiguredBusinessStateRepository(runtimeConfiguration);
-// Postgres: one service process per stored document until jobs carry their own leases (central plan step 3). The restart
-// reconcilers below close every job this process does not hold, so a second process would fail the first one's live
-// jobs. A second process therefore refuses to start; a process that loses its lease has its writes refused at once (the
-// store checks the lease under the row lock) and then shuts down.
-await businessStateRepository.holdProcessLease?.({ onLost: () => {
-  console.error("BUSINESS_STATE_PROCESS_LEASE_LOST: 和数据库的连接断了，没法再确认只有这一个服务进程，服务停止。");
-  process.kill(process.pid, "SIGTERM");
-} });
+// Postgres: one service process per stored document. The restart reconcilers below close every job this process does not
+// hold, so two processes must never work at once. A process started while another holds the lease (a zero-downtime
+// deploy) stands by on its port until that one stops, answering only /api/live and holding every other request until it
+// works (lib/process-handoff.mjs). A process that loses its lease has its writes refused at once (the store checks the
+// lease under the row lock) and then shuts down.
+const requestGate = createStandbyGate();
+const server = http.createServer((req, res) => requestGate.handle(req, res));
+if (businessStateRepository.holdProcessLease) {
+  await holdLeaseOrStandBy({
+    hold: () => businessStateRepository.holdProcessLease({ onLost: () => {
+      console.error("BUSINESS_STATE_PROCESS_LEASE_LOST: 和数据库的连接断了，没法再确认只有这一个服务进程，服务停止。");
+      process.kill(process.pid, "SIGTERM");
+    } }),
+    listen: () => listenOnce(server, { port, host }),
+    log: (message) => console.error(message)
+  });
+}
 const c1FinalPlanRevisionUseCase = createC1FinalPlanRevisionUseCase({ repository: businessStateRepository,
   runtimeMode: runtimeConfiguration.deploymentMode, serverClock: now });
 const c1SiblingColorRevisionUseCase = createC1SiblingColorRevisionUseCase({ repository: businessStateRepository,
@@ -11367,7 +11377,7 @@ async function serveFile(res, filePath) {
   res.end(content);
 }
 
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req, res) {
   try {
     const { pathname } = parseHttpRequestTarget(req.url, req.headers.host, {
       fallbackHost: `${host}:${port}`
@@ -11409,7 +11419,7 @@ const server = http.createServer(async (req, res) => {
     }
     return respondWithError(req, res, error);
   }
-});
+}
 
 // Explicit consumers handle only persisted jobs. No configuration grants an external action.
 await softwareJobStore.reconcileAfterRestart({jobTypes:['a_product_discovery','a_product_detail_read',
@@ -11447,7 +11457,10 @@ try {
 } catch (error) {
   console.error(`GATE1_AUTOPILOT_STARTUP_SKIPPED: ${gate1AutopilotErrorCode(error)}`);
 }
-server.listen(port, host, () => {
+// Only now does any request reach the service, including the ones held while this process stood by for the lease.
+requestGate.open(handleRequest);
+if (server.listening) startServing(); else server.listen(port, host, startServing);
+function startServing() {
   if (runtimeConfiguration.dPlatformObservation.pumpIntervalMs !== null ||
       (runtimeConfiguration.eReadbackPumpIntervalMs !== null && runtimeConfiguration.deServiceBindings.length > 0)) deRuntimeServices.start();
   if (runtimeConfiguration.keywordEvidenceServiceBindings.length > 0) keywordEvidenceRuntimeServices.start();
@@ -11455,7 +11468,7 @@ server.listen(port, host, () => {
   if (runtimeConfiguration.aProductDetailServiceBindings.length > 0) aProductDetailRuntime.start();
   runtimeHealth.markListening();
   console.log(`全店经营工作台${apiOnly ? " API" : ""}：http://${host}:${port}`);
-});
+}
 
 function closeServer() {
   codexDispatcher?.close();

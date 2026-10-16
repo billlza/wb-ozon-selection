@@ -92,7 +92,7 @@
 
 - `SELECTION_REVIEW_STATE_ADAPTER=postgres` 加 `SELECTION_REVIEW_DATABASE_URL` 就用 Postgres（`lib/postgres-business-state-store.mjs`）。业务状态按商品拆开存（10-16 改的，见下一节「按商品拆开存」）；`json` 列原样保留文本和键的顺序。几个服务进程同时写也不会互相覆盖；读的时候每次都查一下各行的 revision，没变的行用上一次解析好的。数据库地址只从环境变量读，不进运行配置，也不打印。
 - 每条语句都有时限（`POSTGRES_BUSINESS_STATE_TIMEOUTS`）：等行锁 15 秒、单条语句 30 秒、客户端等回应 40 秒、事务闲着 2 分钟，卡住的写不会把写队列永远堵住。COMMIT 发出去却没收到回应时，再读一次这一行来定：是我们写的就当成功，还是原来的 revision 就当失败，分不清就报 `BUSINESS_STATE_REPOSITORY_COMMIT_OUTCOME_UNKNOWN`，不让用户以为没存上又点一次。导入脚本的写入也一样核对。
-- 同一份数据只允许一个服务进程：用 Postgres 时服务一启动就拿一把会话级咨询锁（`holdProcessLease`），第二个进程拿不到就起不来（`BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_HELD`）；拿锁的那条数据库连接断了，这个进程的写立刻全部拒掉（每次写都在行锁下让数据库确认锁还在本进程手里），然后服务自己停下。原因是启动时那些「重启收口」会把不在本进程里的作业都当成丢了，第二个进程会把第一个进程正在跑的作业记成失败。等第 3 步作业带上自己的租约再放开。Render 默认的不停机部署会让新旧两个进程重叠，第 5 步上线前要处理。
+- 同一份数据只允许一个服务进程：用 Postgres 时服务一启动就拿一把会话级咨询锁（`holdProcessLease`），第二个进程拿不到就不干活（等久了报 `BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_HELD`）；拿锁的那条数据库连接断了，这个进程的写立刻全部拒掉（每次写都在行锁下让数据库确认锁还在本进程手里），然后服务自己停下。原因是启动时那些「重启收口」会把不在本进程里的作业都当成丢了，第二个进程会把第一个进程正在跑的作业记成失败。新旧两个进程重叠（Render 默认的不停机部署）时，新进程先等着，见下面「第 3 步之三（下）」。
 - 借出连接池的连接都挂了错误监听：写到一半连接断了，只让这一次写失败，不会把整个服务带崩。
 - 一开始整份存一行，改一个商品也要整份重写、几个人同时写会排队。10-16 发卡片问主人现在拆还是以后拆，主人选了「现在就拆」，见下一节。
 - `SELECTION_REVIEW_INITIALIZE_DATA_FILE` 对 Postgres 也一样：没有这一行时，读到的是初始文档但不写；只有真改了东西才落一行。
@@ -199,6 +199,16 @@
 - Seerfar：一轮还是全服务同一时间一轮（Seerfar 自己的规矩），同时占着点它的那台电脑。Seerfar 路由里服务端自己的拒绝原样带着原因返回，不再都变成「Seerfar 榜单作业没有继续」。
 - 插件不用改（还是 1.6.0）。
 - 测试：`tests/capture-assignment.test.mjs`（给哪台、哪台忙、领取、页面和顶栏怎么说、软件作业交给哪台）；`tests/workstations-db.test.mjs` 加了两台电脑同时各做一件、同一件商品和同一台电脑各只一个作业、别的电脑领不了；`tests/workstation-access.test.mjs` 加了在线和名字；`tests/workstation-ui.test.mjs` 加了页面带上电脑的请求头。
+
+### 多人中央服务第 3 步之三（下）：新旧进程交接（2026-10-16）
+
+用 Postgres 时同一份数据同一时间只有一个服务进程干活（启动时的「重启收口」会把不在本进程里的作业当成丢了）。以前第二个进程拿不到锁就起不来，Render 的不停机部署（先起新的、新的能用了再停旧的）会因此失败。现在新进程先等着：
+
+- `lib/process-handoff.mjs`：拿不到锁时先把端口打开（`listenOnce`），只回答 `/api/live`（200，带 `standby: true`），别的请求先挂着，每秒再要一次锁。旧进程停了、锁放了，新进程拿到锁、做完重启收口，再把挂着的请求交给正式的处理（`requestGate.open(handleRequest)`）。挂了 20 秒还没接手的回 503 `service_switching`（「服务正在换新版本，过几秒刷新再试；刚才这一下没有做任何事」，带 `Retry-After: 5`），那一下什么都没做。等了 5 分钟还拿不到锁就照旧报 `BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_HELD` 退出，不会一直假装能用。连不上数据库这类别的错照旧马上退出。
+- `server.mjs`：服务器一开始就建好，请求都先经过这道门；门在重启收口做完之后才开，所以收口之前任何请求都进不了服务（`tests/multi-user-central-runtime.test.mjs` 核对这个顺序）。不用 Postgres（主人 Mac 上的 JSON）时没有锁，什么都不变。
+- 上 Render 时健康检查路径要填 `/api/live`，填 `/api/ready` 的话新进程等着时一直不健康，部署会卡到 5 分钟后失败（旧进程照常跑，不丢数据）。
+- 部署那一刻正在跑的插件作业照旧随旧进程一起没了，新进程开门前把它们记成失败（`capture_job_lost`），要重新点一次；最好在没人采集时部署。
+- 测试：`tests/process-handoff.test.mjs`（等着时只回 `/api/live`、挂着的请求接手后照常处理、超时回 503、走掉的不再处理、等太久报原来的错、别的错马上停）；`tests/process-handoff-db.test.mjs` 在真 Postgres 上起两个服务进程：第二个等着、`/api/live` 说在等、挂着的请求不动，第一个停下后第二个接手并答上挂着的请求。数据库测试的跑法多分配了一个端口（`SELECTION_REVIEW_TEST_SECOND_PORT`）。
 
 ### 本轮验证
 

@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-16T18:30:22.655Z",
+  "frozenAt": "2026-10-16T18:30:29.953Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 1028,
-      "sha256": "3d12fe6ca600bf91da98bd98c69fb86dd348b5726095ce29a1315c3eeeb9a1d6",
+      "artifactCount": 1031,
+      "sha256": "73c1e74d7fac09119bdef0efbb29069f6ada23a69e02e6c56c08ef2dc4a834e0",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -456,7 +456,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "daa5ed508f66673584d139e97f1ce33c9ed7b503e5e93b7c456857e19905456a"
+        "sha256": "75dbc6b44d061ac72d2a78c8aeea339ab9c766152a958088393d5c44a75c9c6b"
       },
       {
         "path": "lib/capture-assignment.mjs",
@@ -1033,6 +1033,10 @@
       {
         "path": "lib/postgres-business-state-store.mjs",
         "sha256": "9a37b0a485411f454002b523968bddf647f13e26dcca20b9a3945294cfb58266"
+      },
+      {
+        "path": "lib/process-handoff.mjs",
+        "sha256": "ab622e9dbf0f012750b9e28cb46d928321f913b8dee2eddcd8999675df71cb35"
       },
       {
         "path": "lib/product-core-family.mjs",
@@ -1680,7 +1684,7 @@
       },
       {
         "path": "scripts/ci-test-suites.mjs",
-        "sha256": "83ff348b9c402c07d79d0287bc8cb392795076669bee848a7662178087d8322c"
+        "sha256": "5d0e83222a697738157ee3a67ca9a3524d8bac35c2e42479dde8ac45e0320e28"
       },
       {
         "path": "scripts/deploy-local-runtime.sh",
@@ -1732,7 +1736,7 @@
       },
       {
         "path": "scripts/run-ci-database-tests.mjs",
-        "sha256": "528793708b3023ce9127c6adabbf43fe4d24f6651a735548bee306a622b08862"
+        "sha256": "1de8fccb8f0173736634971032e649b804454cf57d16227189e0e50052fd91ec"
       },
       {
         "path": "scripts/run-ci-tests.mjs",
@@ -1752,7 +1756,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "30a53845319acc66f4cf3bad195bedfc86ebc5b89afbdbeeb50941022e55d3b5"
+        "sha256": "ed04a6bf08f4a11f4d3bb4fb8da322e5ebb252d8cc404d4bb952e87cf59ff88c"
       },
       {
         "path": "src/App.jsx",
@@ -3492,7 +3496,7 @@
       },
       {
         "path": "tests/multi-user-central-runtime.test.mjs",
-        "sha256": "79cac4c60a4c9c0ab9d29f00fddb771f589498e149f37bb9fbd8dfc2aea95bc8"
+        "sha256": "1a775dc18330870a4ad702518f044c6bf7cfec7331fa6958856debadbf77f1c1"
       },
       {
         "path": "tests/official-commission-formal-b.test.mjs",
@@ -3697,6 +3701,14 @@
       {
         "path": "tests/postgres-business-state-store.test.mjs",
         "sha256": "4d0d830ca9dbc7c3fd8706ae66d203851423b46033d5bb37661b64aa81f32534"
+      },
+      {
+        "path": "tests/process-handoff-db.test.mjs",
+        "sha256": "97c67a1c2be900829e2e87e4f0ad2f03dac47cbd0a2a6cdf1235506c6b05770f"
+      },
+      {
+        "path": "tests/process-handoff.test.mjs",
+        "sha256": "689f1a91f70f6d46b52ee708eed71dd7383925ab78e30b78a02fa772a9bc159f"
       },
       {
         "path": "tests/product-core-family.test.mjs",
@@ -4175,6 +4187,10 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/process-handoff.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/production-entity-storage.mjs",
           "status": "present_in_integration_source"
         },
@@ -4224,6 +4240,14 @@
         },
         {
           "path": "tests/postgres-business-state-store.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/process-handoff-db.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/process-handoff.test.mjs",
           "status": "present_in_integration_source"
         },
         {

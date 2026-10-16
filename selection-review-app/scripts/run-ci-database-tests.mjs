@@ -27,10 +27,14 @@ async function reserveLoopbackPort() {
   return [4317, 4318, 4173, 4319].includes(port) ? reserveLoopbackPort() : port;
 }
 const apiPort = await reserveLoopbackPort();
+// A second service process on the same data (the handoff test) needs its own port.
+let secondPort = await reserveLoopbackPort();
+while (secondPort === apiPort) secondPort = await reserveLoopbackPort();
 
 console.log(`Running ${DATABASE_TESTS.length} database test files against the disposable Postgres.`);
 const result = spawnSync(process.execPath, ["--test", "--test-concurrency=1", "--test-timeout=60000",
   ...DATABASE_TESTS.map(file => path.join("tests", file))], { cwd: appDirectory, stdio: "inherit",
-  env: { ...process.env, SELECTION_REVIEW_TEST_PORT: String(apiPort), SELECTION_REVIEW_PUBLIC_PORT: String(apiPort) } });
+  env: { ...process.env, SELECTION_REVIEW_TEST_PORT: String(apiPort), SELECTION_REVIEW_TEST_SECOND_PORT: String(secondPort),
+    SELECTION_REVIEW_PUBLIC_PORT: String(apiPort) } });
 if (result.error) throw result.error;
 process.exitCode = result.status ?? 1;

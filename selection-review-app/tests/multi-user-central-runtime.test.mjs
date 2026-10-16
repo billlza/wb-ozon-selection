@@ -243,6 +243,11 @@ test("服务先初始化身份和闭集新A中断对账，仅显式配置可启�
   const reconciliationIndex=serverSource.indexOf(reconciliation);
   assert.ok(reconciliationIndex>identityIndex&&reconciliationIndex<listenIndex);
   assert.equal([...serverSource.matchAll(/(?:softwareJobStore\.)?reconcileAfterRestart\s*\(/g)].length,1);
+  // A process standing by for the lease already has its port open, but no request reaches the service before this point.
+  const gateIndex = serverSource.indexOf("requestGate.open(handleRequest);");
+  assert.ok(gateIndex > reconciliationIndex && gateIndex < listenIndex, "对账做完之前，任何请求都进不了服务");
+  assert.equal([...serverSource.matchAll(/requestGate\.open\(/g)].length, 1);
+  assert.ok(serverSource.includes("const server = http.createServer((req, res) => requestGate.handle(req, res));"));
   const shutdownIndex = serverSource.indexOf("function closeServer()", listenIndex);
   assert.ok(shutdownIndex > listenIndex);
   const startup = serverSource.slice(listenIndex, shutdownIndex);
