@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-16T18:30:29.953Z",
+  "frozenAt": "2026-10-16T18:37:23.383Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 1031,
-      "sha256": "73c1e74d7fac09119bdef0efbb29069f6ada23a69e02e6c56c08ef2dc4a834e0",
+      "sha256": "c7001fa094a4fee5a73158e6e8886663d845ffac96b53acedf744a9f56d9e1bd",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -532,7 +532,7 @@
       },
       {
         "path": "lib/d-e-runtime-services.mjs",
-        "sha256": "69d4b43648492702cf6b1ea198ec310181b893745ef29d7d2902c5ff28ec08d9"
+        "sha256": "6e62694c5ed58ddae4b7246dcb426051c32a889c57538d025849de8f2fb3c0a3"
       },
       {
         "path": "lib/d-e-runtime-view.mjs",
@@ -1356,7 +1356,7 @@
       },
       {
         "path": "lib/worker-registry.mjs",
-        "sha256": "7dfb1f6d9641ee46ff3983f7706f10376a029ffa2265826fde4333c0097d74e1"
+        "sha256": "90749a91052d80904cec178d2d395acc50f39c09f3f39d3a74e10e30678dbcb0"
       },
       {
         "path": "lib/workflow-map.mjs",
@@ -1756,7 +1756,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "ed04a6bf08f4a11f4d3bb4fb8da322e5ebb252d8cc404d4bb952e87cf59ff88c"
+        "sha256": "323c82b6dd25d92dc41cfafc693e55c3156b589e18ccbb12c1a371af2a31c40a"
       },
       {
         "path": "src/App.jsx",
@@ -4124,7 +4124,7 @@
       },
       {
         "path": "tests/worker-registry.test.mjs",
-        "sha256": "4a75e8b687eba490fc5f1479a31b9d06e3cc16a689584962d74c41e78740dfda"
+        "sha256": "6393933cb172c264b394129bef8da9d4255c418e3f261b62e97bc8186959952c"
       },
       {
         "path": "tests/workflow-map.test.mjs",

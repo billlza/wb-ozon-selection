@@ -240,7 +240,7 @@ import {
 import { createConfiguredIdentityProvider, OwnerIdentityError } from "./lib/runtime-identity-provider.mjs";
 import { assertSafeBusinessMutationCandidate, createActorContext } from "./lib/runtime-identity.mjs";
 import { createRepositoryBackedSoftwareJobStore } from "./lib/software-job-repository.mjs";
-import { createLocalDevelopmentWorkerRegistry } from "./lib/worker-registry.mjs";
+import { createLocalDevelopmentWorkerRegistry, createSingleActiveProcessWorkerRegistry } from "./lib/worker-registry.mjs";
 import { createConfiguredWorkstationAccess } from "./lib/workstation-access.mjs";
 import { ANY_COMPUTER, captureControlView, captureHolder, claimantFor, computersReadyForSoftwareJob, pageWorkstationId, teamCaptureControl,
   teamCaptureRefusal, teamClaimRefusal } from "./lib/capture-assignment.mjs";
@@ -367,15 +367,16 @@ const businessStateRepository = createConfiguredBusinessStateRepository(runtimeC
 // lease under the row lock) and then shuts down.
 const requestGate = createStandbyGate();
 const server = http.createServer((req, res) => requestGate.handle(req, res));
+let processLease = null;
 if (businessStateRepository.holdProcessLease) {
-  await holdLeaseOrStandBy({
+  ({ lease: processLease } = await holdLeaseOrStandBy({
     hold: () => businessStateRepository.holdProcessLease({ onLost: () => {
       console.error("BUSINESS_STATE_PROCESS_LEASE_LOST: 和数据库的连接断了，没法再确认只有这一个服务进程，服务停止。");
       process.kill(process.pid, "SIGTERM");
     } }),
     listen: () => listenOnce(server, { port, host }),
     log: (message) => console.error(message)
-  });
+  }));
 }
 const c1FinalPlanRevisionUseCase = createC1FinalPlanRevisionUseCase({ repository: businessStateRepository,
   runtimeMode: runtimeConfiguration.deploymentMode, serverClock: now });
@@ -398,7 +399,11 @@ await runtimeIdentityProvider.initialize();
 // With team accounts each computer's plugin carries its own key (central plan step 3); without them nothing here changes.
 const workstationAccess = createConfiguredWorkstationAccess({ configuration: runtimeConfiguration });
 await workstationAccess?.initialize();
-const workerRegistry = createLocalDevelopmentWorkerRegistry({ clock: () => new Date().toISOString() });
+// The service's workers run inside it. Holding the process lease, this is the only process working on the data, so its
+// registry is the whole service's; without the lease (the owner's JSON file) it is the local one, as before.
+const workerRegistry = processLease
+  ? createSingleActiveProcessWorkerRegistry({ processLease, clock: () => new Date().toISOString() })
+  : createLocalDevelopmentWorkerRegistry({ clock: () => new Date().toISOString() });
 const softwareJobStore = createRepositoryBackedSoftwareJobStore({
   businessStateRepository,
   serverClock: () => new Date().toISOString(),

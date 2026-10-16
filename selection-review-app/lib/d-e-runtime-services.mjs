@@ -7,7 +7,7 @@ import { decodeAttempt } from './d-execution-request-codec.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { normalizeDEServiceBindings } from './runtime-configuration.mjs';
 import { assertBusinessStateRepositoryBoundary } from './business-state-repository.mjs';
-import { assertWorkerRegistryBoundary } from './worker-registry.mjs';
+import { assertWorkerRegistryBoundary, workerRegistryHoldsInProcessWorkers } from './worker-registry.mjs';
 import { createActorContext } from './runtime-identity.mjs';
 import { createRepositoryBackedSoftwareJobStore } from './software-job-repository.mjs';
 import { findSoftwareJobInDocument, softwareJobsInDocument, bindSoftwareJobAdmissionDecision, markSoftwareJobExternalRequestStarted,
@@ -94,7 +94,7 @@ export function createDEProductionRuntimeServices({ repository, runtimeMode, ser
           scopeBinding:{productionBinding:{bindingId:productionBinding.bindingId,
             configurationVersion:productionBinding.configurationVersion}}}}) ?? null,
       requestJson }) : null;
-  const localWorkerHeartbeatIntervalMs=workerRegistry.persistenceClass==='local_development_ephemeral'
+  const localWorkerHeartbeatIntervalMs=workerRegistryHoldsInProcessWorkers(workerRegistry)
     ? Math.floor(workerRegistry.heartbeatTtlMs/3) : null;
   if(batchImportService!==null && observationPumpIntervalMs!==null &&
     localWorkerHeartbeatIntervalMs!==null &&
@@ -486,7 +486,7 @@ export function createDEProductionRuntimeServices({ repository, runtimeMode, ser
         batchObservationPumpStarted=true;scheduleBatchObservation();
       }
       if(batchImportService!==null && observationPumpIntervalMs!==null &&
-        workerRegistry.persistenceClass==='local_development_ephemeral' && !localWorkerHeartbeatStarted){
+        workerRegistryHoldsInProcessWorkers(workerRegistry) && !localWorkerHeartbeatStarted){
         localWorkerHeartbeatStarted=true;scheduleLocalWorkerHeartbeat();
       }
       if(eReadbackPumpIntervalMs!==null&&!ePumpStarted){ePumpStarted=true;scheduleEReadback();}

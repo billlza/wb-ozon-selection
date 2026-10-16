@@ -83,6 +83,22 @@ export function createLocalDevelopmentWorkerRegistry({ clock = () => new Date().
   });
 }
 
+/**
+ * The same registry for a service that holds the Postgres process lease (server.mjs, lib/process-handoff.mjs): only one
+ * service process works on the data at a time, and the workers it registers run inside it, so what this registry knows
+ * is what the whole service knows. Without the lease there is no such promise, and it refuses to be made.
+ */
+export function createSingleActiveProcessWorkerRegistry({ processLease, clock, heartbeatTtlMs } = {}) {
+  if (!processLease || typeof processLease.release !== "function") throw new Error("WORKER_REGISTRY_PROCESS_LEASE_REQUIRED");
+  const registry = createLocalDevelopmentWorkerRegistry({ clock, heartbeatTtlMs });
+  return Object.freeze({ ...registry, persistenceClass: "single_active_process", multiUserReady: true });
+}
+
+/** Whether this service's own workers live in this process and so need this process to send their heartbeats. */
+export function workerRegistryHoldsInProcessWorkers(registry) {
+  return ["local_development_ephemeral", "single_active_process"].includes(registry?.persistenceClass);
+}
+
 export function assertWorkerRegistryBoundary(registry) {
   if (!registry || registry.boundaryType !== "worker_registry" || typeof registry.findEligible !== "function") {
     throw new Error("WORKER_REGISTRY_BOUNDARY_REQUIRED");
