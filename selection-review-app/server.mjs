@@ -353,6 +353,13 @@ const trustedServiceOrigins = new Set([
 const allowedExtensionOrigins = new Set(runtimeConfiguration.allowedExtensionOrigins);
 const internalApiRequestToken = randomBytes(32).toString("base64url");
 const businessStateRepository = createConfiguredBusinessStateRepository(runtimeConfiguration);
+// Postgres: one service process per stored document until jobs carry their own leases (central plan step 3). The restart
+// reconcilers below close every job this process does not hold, so a second process would fail the first one's live
+// jobs. A second process therefore refuses to start, and a process that loses its lease stops.
+await businessStateRepository.holdProcessLease?.({ onLost: () => {
+  console.error("BUSINESS_STATE_PROCESS_LEASE_LOST: 和数据库的连接断了，没法再确认只有这一个服务进程，服务停止。");
+  process.kill(process.pid, "SIGTERM");
+} });
 const c1FinalPlanRevisionUseCase = createC1FinalPlanRevisionUseCase({ repository: businessStateRepository,
   runtimeMode: runtimeConfiguration.deploymentMode, serverClock: now });
 const c1SiblingColorRevisionUseCase = createC1SiblingColorRevisionUseCase({ repository: businessStateRepository,

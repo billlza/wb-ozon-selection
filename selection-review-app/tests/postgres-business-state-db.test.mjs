@@ -60,7 +60,11 @@ async function isolatedSchema(t) {
     await client.query(`SELECT 1 FROM ${schema}.${BUSINESS_STATE_TABLE} FOR UPDATE`);
     return { release: () => client.query("COMMIT") };
   };
-  return { store, storedText, tableExists, connectionString, storeLosingCommitAnswer, holdRow };
+  // Ends the connection holding this schema's process lease, as a database restart or a network cut would.
+  const endLeaseConnection = async () => (await admin.query(
+    `SELECT pg_terminate_backend(pid) AS ended FROM pg_locks WHERE locktype = 'advisory' AND classid = $1::oid
+     AND objid = (hashtext($2)::bigint & 4294967295)::oid`, [1_397_904_945, `${schema}:business-state`])).rows.length;
+  return { store, storedText, tableExists, connectionString, storeLosingCommitAnswer, holdRow, endLeaseConnection };
 }
 
 const seed = () => ({ meta: { version: 2, title: "db test" }, candidates: [{ id: "C-1", dataRevision: 1 }], runtime: { operationAudit: [], idempotencyRecords: [] } });
@@ -216,6 +220,55 @@ test("waiting for a row another process holds has a deadline, and later writes s
     await holder.release();
     assert.equal(await repository.transact(bump(8)), 8);
     assert.equal((await database.storedText()).revision, "2");
+  } finally {
+    await store.close();
+  }
+});
+
+test("one service process per stored document: a second process is refused until the first lets go", async t => {
+  const database = await isolatedSchema(t);
+  await database.store().insertDocument(seed());
+  const first = createPostgresBusinessStateRepository({ store: database.store() });
+  const second = createPostgresBusinessStateRepository({ store: database.store() });
+  const lease = await first.holdProcessLease({ onLost: () => assert.fail("not lost") });
+  await assert.rejects(second.holdProcessLease({ onLost: () => {} }), /BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_HELD/);
+  // Holding the lease does not stop the holder's own writes.
+  assert.equal(await first.transact(bump(3)), 3);
+  await lease.release();
+  const next = await second.holdProcessLease({ onLost: () => assert.fail("not lost") });
+  await next.release();
+});
+
+test("a process whose lease connection ends is told, and another process can take over", async t => {
+  const database = await isolatedSchema(t);
+  await database.store().insertDocument(seed());
+  const holder = createPostgresBusinessStateRepository({ store: database.store() });
+  let lost;
+  const told = new Promise(resolve => { lost = resolve; });
+  await holder.holdProcessLease({ onLost: lost });
+  assert.equal(await database.endLeaseConnection(), 1);
+  await told;
+  const next = await createPostgresBusinessStateRepository({ store: database.store() }).holdProcessLease({ onLost: () => {} });
+  await next.release();
+  // The holder's pool replaced the dropped connection: its writes still go through.
+  assert.equal(await holder.transact(bump(4)), 4);
+});
+
+test("a connection dropped in the middle of a write fails that write, not the process", async t => {
+  const database = await isolatedSchema(t);
+  await database.store().insertDocument(seed());
+  const before = await database.storedText();
+  // The database ends a transaction left idle longer than this while the change is still being worked out.
+  const store = createPostgresBusinessStateStore({ connectionString: database.connectionString(), maxConnections: 2,
+    timeouts: { lockMs: 100, statementMs: 1_000, queryMs: 2_000, idleInTransactionMs: 200 } });
+  try {
+    const repository = createPostgresBusinessStateRepository({ store });
+    await assert.rejects(repository.transact(async document => {
+      await new Promise(resolve => setTimeout(resolve, 600));
+      return bump(7)(document);
+    }), /not queryable|terminat/u);
+    assert.deepEqual(await database.storedText(), before);
+    assert.equal(await repository.transact(bump(8)), 8);
   } finally {
     await store.close();
   }

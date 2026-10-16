@@ -187,7 +187,7 @@ export function initialBusinessStateDocument({ now = new Date().toISOString(), t
 // runs it inside one database transaction that holds the row lock, so other service processes wait instead of
 // overwriting each other.
 function createRepository({ adapter, concurrencyScope, read, replace, snapshotReader = null,
-  transaction = work => work({ read, replace }) }) {
+  transaction = work => work({ read, replace }), holdProcessLease = null }) {
   let queue = Promise.resolve();
   const repository = {
     boundaryType: "business_state_repository",
@@ -218,6 +218,7 @@ function createRepository({ adapter, concurrencyScope, read, replace, snapshotRe
       return operation;
     }
   };
+  if (holdProcessLease) repository.holdProcessLease = holdProcessLease;
   return Object.freeze(repository);
 }
 
@@ -357,7 +358,14 @@ export function createPostgresBusinessStateRepository({ store, initializeIfMissi
       return document;
     },
     transaction: work => store.runLocked({ initialDocument: initializeIfMissing ? startingDocument : null },
-      locked => work({ read: async () => locked.document, replace: async document => { locked.replace(document); } }))
+      locked => work({ read: async () => locked.document, replace: async document => { locked.replace(document); } })),
+    // One service process per stored document until jobs carry their own leases: see server.mjs.
+    holdProcessLease: async ({ onLost } = {}) => {
+      if (typeof store.acquireProcessLease !== "function") throw new Error("BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_UNSUPPORTED");
+      const lease = await store.acquireProcessLease({ onLost });
+      if (lease === null) throw new Error("BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_HELD");
+      return lease;
+    }
   });
 }
 

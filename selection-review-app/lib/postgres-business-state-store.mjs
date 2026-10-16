@@ -21,6 +21,12 @@ export const POSTGRES_BUSINESS_STATE_TIMEOUTS = Object.freeze({ lockMs: 15_000, 
 // pg's message when the client deadline passes; the statement may still be running, so the connection is closed instead of
 // queueing a ROLLBACK behind it.
 const CLIENT_DEADLINE_MESSAGE = "Query read timeout";
+// Advisory lock class for the one-service-process lease; the key within it is the schema and document id.
+const PROCESS_LEASE_LOCK_CLASS = 1_397_904_945;
+const PROCESS_LEASE_KEY = "hashtext(current_schema() || ':' || $2)";
+// pg-pool listens for errors only while a connection is idle in the pool. A checked-out connection that drops between
+// statements emits 'error' by itself, which would end the process without a listener; the next statement fails instead.
+const ignoreCheckedOutError = () => {};
 
 export function isPostgresConnectionString(value) {
   return typeof value === "string" && /^postgres(?:ql)?:\/\/\S+$/u.test(value);
@@ -77,6 +83,18 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
         throw error;
       });
     return schemaReady;
+  }
+
+  async function checkOut() {
+    const client = await (await connectedPool()).connect();
+    client.on?.("error", ignoreCheckedOutError);
+    return {
+      client,
+      release(error) {
+        client.removeListener?.("error", ignoreCheckedOutError);
+        client.release(error);
+      }
+    };
   }
 
   async function selectForUpdate(client) {
@@ -139,7 +157,8 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
     async runLocked({ initialDocument = null } = {}, work) {
       if (typeof work !== "function") throw new Error("POSTGRES_BUSINESS_STATE_WORK_REQUIRED");
       await ensureSchema();
-      const client = await (await connectedPool()).connect();
+      const connection = await checkOut();
+      const { client } = connection;
       let releaseError, result, pendingCommit = null, commitFailure;
       try {
         await client.query("BEGIN");
@@ -175,7 +194,7 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
         commitFailure = error;
       } finally {
         // A connection whose rollback failed or timed out is closed instead of going back to the pool mid-transaction.
-        client.release(releaseError);
+        connection.release(releaseError);
       }
       return settleLostCommit(pendingCommit, commitFailure, result);
     },
@@ -197,7 +216,8 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
         throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID");
       }
       await ensureSchema();
-      const client = await (await connectedPool()).connect();
+      const connection = await checkOut();
+      const { client } = connection;
       let releaseError;
       try {
         await client.query("BEGIN");
@@ -216,8 +236,67 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
         releaseError = await abandon(client, error);
         throw error;
       } finally {
-        client.release(releaseError);
+        connection.release(releaseError);
       }
+    },
+    /**
+     * Holds the document for one service process: a session advisory lock on a connection kept for the life of the
+     * process. Returns null while another process holds it. The lock lives only as long as that connection, so `onLost`
+     * is called if the connection ends before `release()`.
+     */
+    async acquireProcessLease({ onLost } = {}) {
+      if (typeof onLost !== "function") throw new Error("POSTGRES_BUSINESS_STATE_LEASE_LOST_HANDLER_REQUIRED");
+      const client = await (await connectedPool()).connect();
+      let state = "acquiring";
+      const detach = () => {
+        client.removeListener("error", ended);
+        client.removeListener("end", ended);
+      };
+      function ended() {
+        if (state === "ended") return;
+        const wasHeld = state === "held";
+        state = "ended";
+        detach();
+        client.release(new Error("POSTGRES_PROCESS_LEASE_CONNECTION_ENDED"));
+        if (wasHeld) onLost();
+      }
+      client.on("error", ended);
+      client.on("end", ended);
+      let acquired;
+      try {
+        ({ rows: [{ acquired }] } = await client.query(
+          `SELECT pg_try_advisory_lock($1, ${PROCESS_LEASE_KEY}) AS acquired`, [PROCESS_LEASE_LOCK_CLASS, documentId]));
+      } catch (error) {
+        if (state !== "ended") {
+          state = "ended";
+          detach();
+          client.release(error);
+        }
+        throw error;
+      }
+      if (state === "ended") throw new Error("POSTGRES_PROCESS_LEASE_CONNECTION_ENDED");
+      if (!acquired) {
+        state = "ended";
+        detach();
+        client.release();
+        return null;
+      }
+      state = "held";
+      return Object.freeze({
+        async release() {
+          if (state !== "held") return;
+          state = "ended";
+          detach();
+          let unlockError;
+          try {
+            await client.query(`SELECT pg_advisory_unlock($1, ${PROCESS_LEASE_KEY})`, [PROCESS_LEASE_LOCK_CLASS, documentId]);
+          } catch (error) {
+            unlockError = error;
+          }
+          // A failed unlock closes the connection, which drops the lock all the same.
+          client.release(unlockError);
+        }
+      });
     },
     async close() {
       if (poolReady === null) return;

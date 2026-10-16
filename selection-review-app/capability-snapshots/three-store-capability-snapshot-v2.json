@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-16T00:30:39.648Z",
+  "frozenAt": "2026-10-16T01:00:20.703Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 1004,
-      "sha256": "ef8ea4e373981063750979c0969e020bd15fe0d4a227b2afa92a40e98974fc9c",
+      "sha256": "d807914a26c6a858c444d6086830c497815746c0b9d87d69227b7a6c246ef500",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -192,7 +192,7 @@
       },
       {
         "path": "lib/business-state-repository.mjs",
-        "sha256": "ed9d9b6115e1e469d79850c5b7194a551070f868a9994ab742fce50e6ddca6da"
+        "sha256": "8e2030a56293576f34cd9cee7e897c535e564689655ebbf03b9a041f75e94ce5"
       },
       {
         "path": "lib/c1-ai-draft-contract.mjs",
@@ -1016,7 +1016,7 @@
       },
       {
         "path": "lib/postgres-business-state-store.mjs",
-        "sha256": "27733652bad02cea8fb0a025ac8c61671d5a94d29b775666f48fd5057b44550a"
+        "sha256": "1d75f137b82baec639fdd1fad05e58dfc6889164e94931126624d7372787bdd0"
       },
       {
         "path": "lib/product-core-family.mjs",
@@ -1708,7 +1708,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "4278315d4587747891bb0c34b7a317b72305cf88bca26709301731c89e8855ed"
+        "sha256": "8d535e500f792a43527b0bea4c5e77a3af7473c8065a2caca09b65519242324e"
       },
       {
         "path": "src/App.jsx",
@@ -3624,11 +3624,11 @@
       },
       {
         "path": "tests/postgres-business-state-db.test.mjs",
-        "sha256": "d861af7c74943c65210106c11f32cab2ae4921c53ec65c0de1d94d2ce72582ac"
+        "sha256": "ab181dd1533ba235ffb66c8ded966c1a7592eba6ab3df9ce7d5de26cc29ecfeb"
       },
       {
         "path": "tests/postgres-business-state-store.test.mjs",
-        "sha256": "3ff64673a49ff7f84c03a21097b8ac16b021e7be908b1db7e819b12f75bc2e7a"
+        "sha256": "cf179208fb38de0c9743af71c98be6786affffaf592106b21535b37f22acbfb2"
       },
       {
         "path": "tests/product-core-family.test.mjs",

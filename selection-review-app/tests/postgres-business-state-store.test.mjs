@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   createConfiguredBusinessStateRepository,
+  createMemoryBusinessStateRepository,
   createPostgresBusinessStateRepository,
   initialBusinessStateDocument
 } from "../lib/business-state-repository.mjs";
@@ -260,6 +261,26 @@ test("a read that finishes after a newer read answers from the snapshot it asked
   assert.equal((await faster).candidates[0].dataRevision, 2);
   slowerQuery.resolve({ revision: "1" });
   assert.equal((await slower).candidates[0].dataRevision, 1);
+});
+
+test("the Postgres repository holds one service-process lease or refuses to start a second", async () => {
+  let holder = null;
+  const base = createFakePostgresBusinessStateStore({ document: { meta: { version: 2 }, candidates: [] } });
+  const store = { ...base, async acquireProcessLease({ onLost }) {
+    if (holder) return null;
+    holder = { onLost, async release() { holder = null; } };
+    return holder;
+  } };
+  const onLost = () => {};
+  const lease = await createPostgresBusinessStateRepository({ store }).holdProcessLease({ onLost });
+  assert.equal(lease.onLost, onLost);
+  await assert.rejects(createPostgresBusinessStateRepository({ store }).holdProcessLease({ onLost }), /BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_HELD/);
+  await lease.release();
+  await (await createPostgresBusinessStateRepository({ store }).holdProcessLease({ onLost })).release();
+  await assert.rejects(createPostgresBusinessStateRepository({ store: base }).holdProcessLease({ onLost }), /PROCESS_LEASE_UNSUPPORTED/);
+  await assert.rejects(createPostgresBusinessStateStore({ pool: fakePool().pool }).acquireProcessLease({}), /LEASE_LOST_HANDLER_REQUIRED/);
+  // The single-process JSON and memory adapters have no lease; the server skips it for them.
+  assert.equal("holdProcessLease" in createMemoryBusinessStateRepository({ meta: { version: 2 }, candidates: [] }), false);
 });
 
 test("a missing Postgres document is an error unless initialization is allowed, and reading never creates it", async () => {
