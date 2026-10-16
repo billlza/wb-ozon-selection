@@ -135,7 +135,7 @@ export function createDiscoveryTitleTranslator({
     fail('INPUT_INVALID', '翻译服务依赖配置无效');
   }
   let baseUrl;
-  try { baseUrl = normalizeServiceOrigin(gatewayUrl, { deploymentMode: gatewayDeploymentMode, label: 'aiGatewayUrl' }); }
+  try { baseUrl = normalizeServiceOrigin(gatewayUrl, { deploymentMode: gatewayDeploymentMode, label: 'aiGatewayUrl', privateNetwork: true }); }
   catch (error) { fail('INPUT_INVALID', `AI网关地址无效：${String(error?.message || error)}`); }
 
   const clockMs = () => {

@@ -12,7 +12,7 @@ export class C1KeywordContinuationRevisionConflictError extends Error {
 export function createKeywordEvidenceRuntimeServices({repository,softwareJobStore,runtimeMode,serverClock,workerRegistry,
   serviceBindings=[],createTransport,onEvidenceReady,onError}={}) {
   const bindings=normalizeKeywordEvidenceServiceBindings(serviceBindings);
-  if(runtimeMode!=='local_development' || typeof repository?.readSnapshot!=='function' || typeof serverClock!=='function' ||
+  if(!['local_development','central_test','central_production'].includes(runtimeMode) || typeof repository?.readSnapshot!=='function' || typeof serverClock!=='function' ||
     ['register','heartbeat'].some(method=>typeof workerRegistry?.[method]!=='function') ||
     ['get','listAssignableWithDiagnostics','listC1KeywordContinuationJobs'].some(method=>typeof softwareJobStore?.[method]!=='function') ||
     typeof createTransport!=='function' || typeof onEvidenceReady!=='function' || typeof onError!=='function')throw new Error('KEYWORD_SERVICE_DEPENDENCY_INVALID');

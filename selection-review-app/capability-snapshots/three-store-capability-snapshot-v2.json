@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-16T18:47:55.451Z",
+  "frozenAt": "2026-10-16T22:55:33.263Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 1033,
-      "sha256": "13cd0e7fa53bd12db291295fd815d8ae13e6a23c1f6e9d714e93642f76f2fdb7",
+      "artifactCount": 1036,
+      "sha256": "2d5171688e4afb46d06ff40e0eb1c7412975c9326bfa494be1f5fcc0af81e67f",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -148,7 +148,7 @@
       },
       {
         "path": "lib/a-stage-terra-gateway.mjs",
-        "sha256": "dbb7a1f17148dd764aa87e007621d22e3288ac5018f6faf29c57ffba2c6afa8d"
+        "sha256": "841bbbd929a142b1f42a01e6e981735d4f4811244b4582b10ee6d5fee686888c"
       },
       {
         "path": "lib/a-supplier-image-search-contract.mjs",
@@ -216,7 +216,7 @@
       },
       {
         "path": "lib/c1-ai-gateway.mjs",
-        "sha256": "f8541eef6950bc06614df4fadd23bad9435b284482df404305dcf7e57357d46f"
+        "sha256": "45b7d7323a5a7e51c1997dc3e49d894d39cfe64e9b76b6176ff16b9958d2df71"
       },
       {
         "path": "lib/c1-color-dictionary-read-use-case.mjs",
@@ -356,7 +356,7 @@
       },
       {
         "path": "lib/c1-ozon-attribute-proposal.mjs",
-        "sha256": "37a8fd2297ea49465d059a9c2c1c7c89b0842e3d04184e6d9132bbe2d695c8d7"
+        "sha256": "6148731130a5f844b98ae1802876bbbafa7c17c324da8f235d05b00c49598ea4"
       },
       {
         "path": "lib/c1-pricing-result-reuse.mjs",
@@ -456,7 +456,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "175b4bdd511c5e8e1dcfa1b00149ed8eba70eb7612feba0fb6df6e1c86affac6"
+        "sha256": "0160cdcf75247a2c4eadfd25f1e52412498e94d5b2eb29038caff6126fe52543"
       },
       {
         "path": "lib/capture-assignment.mjs",
@@ -616,7 +616,7 @@
       },
       {
         "path": "lib/discovery-title-translation.mjs",
-        "sha256": "7807d8947fad811ad32ea7b6aa01320d0d0c34e9f3cc39fd1f89780ac3463cb4"
+        "sha256": "5d78e6df48904b48cab4c7919bb0dd96f1a66c4642391f95719c8aae4a2a6c7b"
       },
       {
         "path": "lib/draft-production-execution.mjs",
@@ -712,7 +712,7 @@
       },
       {
         "path": "lib/intake-ozon-words.mjs",
-        "sha256": "52818d87de8e20b99bd272c1faeab98334a6c0cb37961a0ebdba10a78b440bcb"
+        "sha256": "9eea34fc151a650b4fd66e646b1c3de6d6671692380a69248ebdb9e864bc00c7"
       },
       {
         "path": "lib/intake-pipeline.mjs",
@@ -736,7 +736,7 @@
       },
       {
         "path": "lib/keyword-evidence-runtime-services.mjs",
-        "sha256": "da1283b30adb8dd468f68d81a1a542f9bb84f32aba3e956eb58fe75d1df5a356"
+        "sha256": "215bf2497ffab9d3d37c0df9533fe0e4d0a4f9263031d01e8f6673d6ee434e79"
       },
       {
         "path": "lib/keyword-evidence-scoring.mjs",
@@ -780,7 +780,7 @@
       },
       {
         "path": "lib/lifecycle-b-real-evidence-readers.mjs",
-        "sha256": "75d4f6600ae2518efaec0fad1383264f40c8b9655665b810ace8ac5b07ae5a3d"
+        "sha256": "be963fdd0f186c32864c6141185ab4868b0205b3cb00a88f76796630d9cbbc69"
       },
       {
         "path": "lib/lifecycle-c-stage.mjs",
@@ -804,7 +804,7 @@
       },
       {
         "path": "lib/linkfox-discovery-credentials.mjs",
-        "sha256": "6d3a45a3f1da237b52cc6370e07d5324c74ec3b30b1aada2d87a69f3cfff247d"
+        "sha256": "dba63dc02ac449efa744c85a474c48918520574e3338312fa8589de67d9cd5ae"
       },
       {
         "path": "lib/linkfox-gateway-transport.mjs",
@@ -900,7 +900,7 @@
       },
       {
         "path": "lib/ozon-de-http-transport.mjs",
-        "sha256": "67707865c15f330533e5c6e5fc66248dd2c204dd84405382dadd2bd92dc8d03a"
+        "sha256": "3849e9d3749fbf19d0e00a4b0aa22e6cfe20cb43a5b16eca14715b7a59595f0a"
       },
       {
         "path": "lib/ozon-de-preflight-evidence-reader.mjs",
@@ -920,7 +920,7 @@
       },
       {
         "path": "lib/ozon-dictionary-value-reader.mjs",
-        "sha256": "9f120d756b7c612d7ac006935fa0e2cf2ae62aaa735eb61812a3271fe9b03eab"
+        "sha256": "de048a367a4021cca92a0f6967e51c33e72bf423c8d001a98d599feb452fa316"
       },
       {
         "path": "lib/ozon-final-product-preview.mjs",
@@ -1148,7 +1148,7 @@
       },
       {
         "path": "lib/runtime-configuration.mjs",
-        "sha256": "9309a9a44995936336e8e0a8f07f1438efa1f8de8f92df8a69d600239eb5e7fe"
+        "sha256": "98ea0677d9e4f635b9102585ac5e642cbab6829e0249a8d7c53fac20df2323e0"
       },
       {
         "path": "lib/runtime-health-worker.mjs",
@@ -1221,6 +1221,10 @@
       {
         "path": "lib/seerfar-web-round.mjs",
         "sha256": "f37e5df5b7034185c7f3f7f48ef731947ed69cefa4fc8864c40ef04de8d15f98"
+      },
+      {
+        "path": "lib/server-secret-store.mjs",
+        "sha256": "254d02c9ad81ad3f81d649ee4d1723a8b2ee5b5e2a76415b5351068a81d1e800"
       },
       {
         "path": "lib/sibling-batch-a-b-c1.mjs",
@@ -1688,7 +1692,7 @@
       },
       {
         "path": "scripts/ci-test-suites.mjs",
-        "sha256": "5d0e83222a697738157ee3a67ca9a3524d8bac35c2e42479dde8ac45e0320e28"
+        "sha256": "c5af2cd87d9b607d3f6fb988b6bb0fed1d74421b31d14d9d25d339052e339ec6"
       },
       {
         "path": "scripts/deploy-local-runtime.sh",
@@ -1760,7 +1764,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "ce405a0bcef34eeba7e0a8e3218abf62f4ca49badd4c250374ed310f61a8614d"
+        "sha256": "9ea4d3fa841245a7b78321d8528492f69b22b9dc38ed3642351f6ad11661430f"
       },
       {
         "path": "src/App.jsx",
@@ -2723,6 +2727,10 @@
         "sha256": "6861e9f6e1ba90bf5b11f710216a90f789f444902745c26f6987f1d895f585bf"
       },
       {
+        "path": "tests/central-runtime-boot-db.test.mjs",
+        "sha256": "9a8586ad59d05ec2a797396e98babbbc467962a3d0e511cd24b3dc468a651de2"
+      },
+      {
         "path": "tests/ci-api-boundary.test.mjs",
         "sha256": "0debeb639d145ecd53aea9650dfa68f159f284624d9eb49b6222ceac3f1ea93a"
       },
@@ -3372,7 +3380,7 @@
       },
       {
         "path": "tests/keyword-evidence-runtime-services.test.mjs",
-        "sha256": "ec04021c7f2d006ab9fb7381b54cbe80933a9628552aa92e8c766b84557fe8bf"
+        "sha256": "de62419419d9086841c39ca5ce9422edd02dc68e90f854e474aa6387eea647d1"
       },
       {
         "path": "tests/keyword-evidence-scoring.test.mjs",
@@ -3500,7 +3508,7 @@
       },
       {
         "path": "tests/multi-user-central-runtime.test.mjs",
-        "sha256": "fcd474256acee997e66109ae6b4294471edf7fc781f3e069c2dae08dbf700251"
+        "sha256": "a782c6a5ca08b62848b74de8f16aa06f7e6ef1687526ed5abaa0900c8ac834bb"
       },
       {
         "path": "tests/official-commission-formal-b.test.mjs",
@@ -3592,7 +3600,7 @@
       },
       {
         "path": "tests/ozon-dictionary-value-reader.test.mjs",
-        "sha256": "52d25d356c5307ed490bf80a4cd1469bcde27b42cdfbfc6fd58a5ecf07522bc5"
+        "sha256": "b39018024198f9486e2576c5bd8d5b7f038d8dc41955b7ca2c6aacc7c4b4cc1d"
       },
       {
         "path": "tests/ozon-extension-collector.test.mjs",
@@ -3832,7 +3840,7 @@
       },
       {
         "path": "tests/runtime-configuration.test.mjs",
-        "sha256": "0622251ae3d492e3995527e9fbce2fd42b402a7571a377124eff74434757153f"
+        "sha256": "7d3360bc4326019f9b8fe3ba0da105a3fe33fd06b8798e5f6e5205992ff367ac"
       },
       {
         "path": "tests/runtime-health-api.test.mjs",
@@ -3921,6 +3929,10 @@
       {
         "path": "tests/selection-desk-view.test.mjs",
         "sha256": "538660bac46ee323473128f995bd9a9b73df1bef04122df37c195a1c906f9049"
+      },
+      {
+        "path": "tests/server-secret-store.test.mjs",
+        "sha256": "789e9c36447ed55ff0e3cddb541a3439d80a1e0fa3576eeb5e5ade5ca2f5e4dc"
       },
       {
         "path": "tests/service-address-extension.test.mjs",
@@ -6257,7 +6269,15 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/server-secret-store.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "src/components/HeaderStatus.jsx",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/central-runtime-boot-db.test.mjs",
           "status": "present_in_integration_source"
         },
         {
@@ -6266,6 +6286,10 @@
         },
         {
           "path": "tests/multi-user-central-runtime.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/server-secret-store.test.mjs",
           "status": "present_in_integration_source"
         }
       ],

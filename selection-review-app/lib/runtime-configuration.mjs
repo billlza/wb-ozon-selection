@@ -195,7 +195,7 @@ export function normalizeC1DraftServiceBindings(bindings, deploymentMode) {
         !["credentialAlias", "workerId", "workerVersion", "configurationVersion"].every(field => isConfiguredProductionReference(binding[field])) ||
         !Number.isInteger(binding.leaseDurationMs) || binding.leaseDurationMs < 90_000 || binding.leaseDurationMs > 1_800_000 ||
         providers.has(binding.provider) || workers.has(binding.workerId)) throw invalid();
-    const gatewayOrigin = normalizeServiceOrigin(binding.gatewayOrigin, { deploymentMode, label: "c1DraftGatewayOrigin" });
+    const gatewayOrigin = normalizeServiceOrigin(binding.gatewayOrigin, { deploymentMode, label: "c1DraftGatewayOrigin", privateNetwork: true });
     if (binding.gatewayOrigin !== gatewayOrigin && binding.gatewayOrigin !== `${gatewayOrigin}/`) throw invalid();
     providers.add(binding.provider); workers.add(binding.workerId);
     return Object.freeze({ ...binding, gatewayOrigin });
@@ -375,7 +375,28 @@ function isLoopback(hostname) {
   return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(String(hostname).toLowerCase());
 }
 
-export function normalizeServiceOrigin(value, { deploymentMode, label = "serviceOrigin" } = {}) {
+/**
+ * A neighbour on the host's private network: a one-label name with a port, over HTTP (a Render private service is
+ * `http://ai-gateway:10000`). Such a name resolves only inside that network, so it never crosses the internet.
+ */
+export function isPrivateNetworkServiceUrl(parsed) {
+  return parsed.protocol === "http:" && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(parsed.hostname) &&
+    !isLoopback(parsed.hostname) && parsed.port !== "";
+}
+
+/**
+ * The Ozon evidence service holds the stores' keys and answers whoever reaches it, so it is this computer's (local
+ * development) or a neighbour on the private network (central), never an internet address. Null for anything else.
+ */
+export function ozonEvidenceServiceOrigin(value) {
+  let parsed;
+  try { parsed = new URL(value); } catch { return null; }
+  if (parsed.username || parsed.password || parsed.protocol !== "http:") return null;
+  return isLoopback(parsed.hostname) || isPrivateNetworkServiceUrl(parsed) ? parsed.origin : null;
+}
+
+/** `privateNetwork`: a service this server calls (the AI gateway, the Ozon evidence service), never a page's address. */
+export function normalizeServiceOrigin(value, { deploymentMode, label = "serviceOrigin", privateNetwork = false } = {}) {
   const parsed = url(value, label);
   const mode = nonEmpty(deploymentMode, "deploymentMode");
   if (!RUNTIME_MODES.includes(mode)) throw new Error("RUNTIME_CONFIGURATION_INVALID: deploymentMode无效");
@@ -383,8 +404,12 @@ export function normalizeServiceOrigin(value, { deploymentMode, label = "service
     if (!(parsed.protocol === "http:" && isLoopback(parsed.hostname)) && parsed.protocol !== "https:") {
       throw new Error(`RUNTIME_CONFIGURATION_INVALID: ${label}在本地模式只能使用回环HTTP或显式HTTPS`);
     }
+  } else if (privateNetwork && isPrivateNetworkServiceUrl(parsed)) {
+    // A neighbour on the private network; see isPrivateNetworkServiceUrl.
   } else if (parsed.protocol !== "https:" || isLoopback(parsed.hostname)) {
-    throw new Error(`RUNTIME_CONFIGURATION_INVALID: ${label}在中央模式必须使用非本机HTTPS`);
+    throw new Error(privateNetwork
+      ? `RUNTIME_CONFIGURATION_INVALID: ${label}在中央模式必须使用非本机HTTPS，或同一私有网络里的服务（一段名字加端口）`
+      : `RUNTIME_CONFIGURATION_INVALID: ${label}在中央模式必须使用非本机HTTPS`);
   }
   parsed.pathname = "";
   parsed.search = "";
@@ -551,8 +576,10 @@ export function createSelectionReviewRuntimeConfiguration({ env = process.env, a
   if (deploymentMode === "local_development" && !isLoopback(bindHost)) {
     throw new Error("RUNTIME_CONFIGURATION_INVALID: 本地开发模式只能绑定回环地址");
   }
+  // A host such as Render says in PORT which port to listen on; a central mode takes it unless one is set here.
+  const hostPort = deploymentMode === "local_development" ? undefined : env.PORT;
   const listenPort = port(
-    apiOnly ? env.SELECTION_REVIEW_API_PORT || 4319 : env.SELECTION_REVIEW_PORT || 4317,
+    apiOnly ? env.SELECTION_REVIEW_API_PORT || hostPort || 4319 : env.SELECTION_REVIEW_PORT || hostPort || 4317,
     "port"
   );
   const stateAdapter = String(env.SELECTION_REVIEW_STATE_ADAPTER || "json").trim();
@@ -582,12 +609,17 @@ export function createSelectionReviewRuntimeConfiguration({ env = process.env, a
   });
   const aiGatewayUrl = normalizeServiceOrigin(env.SELECTION_REVIEW_AI_GATEWAY_URL || "http://127.0.0.1:4318", {
     deploymentMode,
-    label: "aiGatewayUrl"
+    label: "aiGatewayUrl",
+    privateNetwork: true
   });
   const ozonEvidenceServiceUrl = normalizeServiceOrigin(env.SELECTION_REVIEW_OZON_EVIDENCE_SERVICE_URL || "http://127.0.0.1:4173", {
     deploymentMode,
-    label: "ozonEvidenceServiceUrl"
+    label: "ozonEvidenceServiceUrl",
+    privateNetwork: true
   });
+  if (deploymentMode !== "local_development" && !ozonEvidenceServiceOrigin(ozonEvidenceServiceUrl)) {
+    throw new Error("RUNTIME_CONFIGURATION_INVALID: ozonEvidenceServiceUrl在中央模式必须是同一私有网络里的服务（一段名字加端口）；证据服务拿着店铺密钥又不认来人，不能开在公网上");
+  }
   const legacyFireTrainAssetRoot = String(env.SELECTION_REVIEW_LEGACY_FIRE_TRAIN_ASSET_ROOT || "").trim();
   if (deploymentMode !== "local_development" && legacyFireTrainAssetRoot) {
     throw new Error("RUNTIME_CONFIGURATION_INVALID: 中央模式不得启用本机火车历史素材目录");

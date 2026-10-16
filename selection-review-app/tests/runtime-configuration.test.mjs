@@ -5,7 +5,8 @@ import {
   createSelectionReviewRuntimeConfiguration,
   normalizeKeywordEvidenceServiceBindings,
   normalizeOzonCommissionReferenceConfiguration,
-  normalizeServiceOrigin
+  normalizeServiceOrigin,
+  ozonEvidenceServiceOrigin
 } from "../lib/runtime-configuration.mjs";
 
 const APP_DIR = "/tmp/selection-review-runtime-test";
@@ -173,7 +174,7 @@ test("中央模式拒绝回环地址、单进程JSON和开发默认身份", () =
     SELECTION_REVIEW_BIND_HOST: "0.0.0.0",
     SELECTION_REVIEW_PUBLIC_ORIGIN: "https://review.internal.example",
     SELECTION_REVIEW_AI_GATEWAY_URL: "https://ai.internal.example",
-    SELECTION_REVIEW_OZON_EVIDENCE_SERVICE_URL: "https://ozon-evidence.internal.example",
+    SELECTION_REVIEW_OZON_EVIDENCE_SERVICE_URL: "http://ozon-evidence:10000",
     SELECTION_REVIEW_IDENTITY_PROVIDER: "company_sso",
     SELECTION_REVIEW_DEFAULT_USER_ID: "team-user",
     SELECTION_REVIEW_STATE_ADAPTER: "postgres"
@@ -192,6 +193,51 @@ test("中央模式拒绝回环地址、单进程JSON和开发默认身份", () =
   assert.throws(() => createSelectionReviewRuntimeConfiguration({
     env: { ...base, SELECTION_REVIEW_IDENTITY_PROVIDER: "development_default" }, appDir: APP_DIR, argv: []
   }), /正式身份提供器/);
+});
+
+test("中央模式听主机给的 PORT，本机照旧不认它", () => {
+  const central = {
+    SELECTION_REVIEW_RUNTIME_MODE: "central_test", SELECTION_REVIEW_BIND_HOST: "0.0.0.0",
+    SELECTION_REVIEW_PUBLIC_ORIGIN: "https://review.internal.example", SELECTION_REVIEW_AI_GATEWAY_URL: "https://ai.internal.example",
+    SELECTION_REVIEW_OZON_EVIDENCE_SERVICE_URL: "http://ozon-evidence:10000", SELECTION_REVIEW_IDENTITY_PROVIDER: "team_accounts",
+    SELECTION_REVIEW_DEFAULT_USER_ID: "team-user", SELECTION_REVIEW_STATE_ADAPTER: "postgres", PORT: "10000"
+  };
+  const create = (env, argv = []) => createSelectionReviewRuntimeConfiguration({ env, appDir: APP_DIR, argv });
+  assert.equal(create(central).port, 10000);
+  assert.equal(create(central, ["node", "server.mjs", "--api-only"]).port, 10000);
+  assert.equal(create({ ...central, SELECTION_REVIEW_PORT: "4400" }).port, 4400);
+  assert.equal(create({ PORT: "10000" }).port, 4317);
+  assert.equal(create({ PORT: "10000" }, ["node", "server.mjs", "--api-only"]).port, 4319);
+  assert.throws(() => create({ ...central, PORT: "0" }), /port无效/);
+});
+
+test("中央模式里 AI 网关和证据服务可以是同一私有网络里的邻居；证据服务只能是它，页面地址不行", () => {
+  const central = { deploymentMode: "central_production", privateNetwork: true };
+  assert.equal(normalizeServiceOrigin("http://ai-gateway:10000/v1", { ...central, label: "aiGatewayUrl" }), "http://ai-gateway:10000");
+  assert.equal(normalizeServiceOrigin("https://ai.internal.example", { ...central, label: "aiGatewayUrl" }), "https://ai.internal.example");
+  for (const value of ["http://ai-gateway", "http://ai.internal.example:10000", "http://localhost:4318", "http://127.0.0.1:4318", "http://-gateway:10000"]) {
+    assert.throws(() => normalizeServiceOrigin(value, { ...central, label: "aiGatewayUrl" }), /私有网络/u, value);
+  }
+  assert.throws(() => normalizeServiceOrigin("http://review:10000", { deploymentMode: "central_production", label: "publicOrigin" }),
+    /中央模式必须使用非本机HTTPS$/u);
+
+  assert.equal(ozonEvidenceServiceOrigin("http://ozon-evidence:10000/x"), "http://ozon-evidence:10000");
+  assert.equal(ozonEvidenceServiceOrigin("http://127.0.0.1:4173"), "http://127.0.0.1:4173");
+  for (const value of ["https://ozon-evidence.internal.example", "http://evidence.example.com:4173", "http://user:pw@127.0.0.1:4173",
+    "http://ozon-evidence", "not a url"]) {
+    assert.equal(ozonEvidenceServiceOrigin(value), null, value);
+  }
+  const env = {
+    SELECTION_REVIEW_RUNTIME_MODE: "central_test", SELECTION_REVIEW_BIND_HOST: "0.0.0.0",
+    SELECTION_REVIEW_PUBLIC_ORIGIN: "https://review.internal.example", SELECTION_REVIEW_AI_GATEWAY_URL: "http://ai-gateway:10000",
+    SELECTION_REVIEW_OZON_EVIDENCE_SERVICE_URL: "http://ozon-evidence:10000", SELECTION_REVIEW_IDENTITY_PROVIDER: "team_accounts",
+    SELECTION_REVIEW_DEFAULT_USER_ID: "team-user", SELECTION_REVIEW_STATE_ADAPTER: "postgres"
+  };
+  const config = createSelectionReviewRuntimeConfiguration({ env, appDir: APP_DIR, argv: [] });
+  assert.equal(config.aiGatewayUrl, "http://ai-gateway:10000");
+  assert.equal(config.ozonEvidenceServiceUrl, "http://ozon-evidence:10000");
+  assert.throws(() => createSelectionReviewRuntimeConfiguration({ env: { ...env,
+    SELECTION_REVIEW_OZON_EVIDENCE_SERVICE_URL: "https://ozon-evidence.internal.example" }, appDir: APP_DIR, argv: [] }), /不能开在公网上/u);
 });
 
 test("AI网关远程地址只能由运行配置显式提供，中央模式必须HTTPS且URL不得带凭据", () => {

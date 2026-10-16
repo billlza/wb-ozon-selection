@@ -1,16 +1,16 @@
+import { ozonEvidenceServiceOrigin } from "./runtime-configuration.mjs";
+
 export const OZON_DICTIONARY_VALUE_KIND = "schema_dictionary_value";
 export const OZON_DICTIONARY_VALUES_KIND = "schema_dictionary_values";
 
 function isObject(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function nonEmpty(value) { return typeof value === "string" && value.trim().length > 0; }
 
-/** 凭证只许留在本机的 Ozon 证据服务里。和 lifecycle-b-real-evidence-readers.mjs 同一条边界。 */
+/** 凭证只许留在 Ozon 证据服务里：本机的，或中央服务同一私有网络里的。和 lifecycle-b-real-evidence-readers.mjs 同一条边界。 */
 function assertLocalOzonService(value) {
-  const url = new URL(value);
-  if (url.username || url.password || url.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(url.hostname)) {
-    throw new Error("OZON_DICTIONARY_SERVICE_NOT_LOCAL: Ozon凭证服务只允许本机地址");
-  }
-  return url.origin;
+  const origin = ozonEvidenceServiceOrigin(value);
+  if (!origin) throw new Error("OZON_DICTIONARY_SERVICE_NOT_LOCAL: Ozon凭证服务只允许本机或同一私有网络里的地址");
+  return origin;
 }
 
 /**

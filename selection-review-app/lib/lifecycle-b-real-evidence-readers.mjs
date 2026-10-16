@@ -6,6 +6,7 @@ import { readCurrentGuooTariff } from "./guoo-tariff-reader.mjs";
 import { createLifecycleBEvidenceProviderRegistry } from "./lifecycle-b-evidence-providers.mjs";
 import { readCurrentCbrExchangeRate } from "./official-fx-reader.mjs";
 import { OZON_EVIDENCE_COMMISSION_UNAVAILABLE, remoteEvidenceReasonCode } from "./commission-estimate-authorization.mjs";
+import { ozonEvidenceServiceOrigin } from "./runtime-configuration.mjs";
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -104,11 +105,9 @@ function officialReferenceQuery(request, scope, reference) {
 }
 
 function assertLocalOzonService(value) {
-  const url = new URL(value);
-  if (url.username || url.password || url.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(url.hostname)) {
-    throw new Error("B_EVIDENCE_OZON_SERVICE_NOT_LOCAL: Ozon凭证服务只允许本机地址");
-  }
-  return url.origin;
+  const origin = ozonEvidenceServiceOrigin(value);
+  if (!origin) throw new Error("B_EVIDENCE_OZON_SERVICE_NOT_LOCAL: Ozon凭证服务只允许本机或同一私有网络里的地址");
+  return origin;
 }
 
 /**

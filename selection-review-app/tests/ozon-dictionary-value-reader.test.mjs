@@ -77,11 +77,12 @@ test("服务失败或返回非JSON都照实报错", async () => {
   await assert.rejects(broken(QUERY), /OZON_DICTIONARY_INVALID_JSON/);
 });
 
-test("凭证服务只允许本机地址", () => {
-  for (const url of ["https://example.com", "http://evil.example.com:4173", "http://user:pw@127.0.0.1:4173"]) {
+test("凭证服务只允许本机地址，或中央服务同一私有网络里的邻居", () => {
+  for (const url of ["https://example.com", "http://evil.example.com:4173", "http://user:pw@127.0.0.1:4173", "http://ozon-evidence"]) {
     assert.throws(() => createOzonDictionaryValueReader({ ozonServiceUrl: url }), /OZON_DICTIONARY_SERVICE_NOT_LOCAL/);
   }
   assert.doesNotThrow(() => createOzonDictionaryValueReader({ ozonServiceUrl: "http://localhost:4173" }));
+  assert.doesNotThrow(() => createOzonDictionaryValueReader({ ozonServiceUrl: "http://ozon-evidence:10000" }));
 });
 
 test("查询四项缺一不可，缺了就不发请求", async () => {

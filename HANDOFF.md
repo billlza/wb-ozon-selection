@@ -224,6 +224,19 @@
 - 测试：`tests/worker-registry.test.mjs`、`tests/paid-answer-reuse.test.mjs`、`tests/discovery-title-translation.test.mjs`（同时点两次只翻一次；前一次失败不挡后一次）、`tests/collaboration-api.test.mjs`（证据包重发和旧证据）、`tests/c1-attribute-routes-source-contract.test.mjs`；`tests/multi-user-central-runtime.test.mjs` 第一次真正走到中央模式放行和 `MULTI_USER_CENTRAL_RUNTIME_NOT_READY`，并要求 `server.mjs` 只有在上面三处防护都在时才说 `false`。
 - 中央模式还起不来，卡在第 4 步：关键词服务不在本机模式就拒绝、Ozon DE 只会从 Keychain 读密钥、D 批量导入要中央 worker、几个证据读取只认本机地址（和中央模式要求的 https 冲突）、AI 网关地址中央模式要 https、Render 给的 `PORT` 还没读（服务读的是 `SELECTION_REVIEW_PORT`）。
 
+### 多人中央服务第 4 步之一：中央模式能起来（2026-10-16）
+
+第 3 步留下的几处卡点改完，整个服务在真 Postgres、团队账号、`central_test` 下能起来、能登录（`tests/central-runtime-boot-db.test.mjs`）。还没在服务器上开，不算多人就绪（AGENTS 28）。
+
+- **密钥从服务器自己的密钥设置读**（`lib/server-secret-store.mjs`）。中央模式不碰任何电脑的钥匙串，每条密钥是一个环境变量，名字由钥匙串里原来的服务名和账号名拼成：`SELECTION_REVIEW_SECRET__<服务名>__<账号名>`（大写，非字母数字换成 `_`），例如 Seerfar 开放接口密钥是 `SELECTION_REVIEW_SECRET__EGG_OZON_OPERATIONS_CENTER__SEERFAR_OPEN_API`。启动时按当前配置列出要用的几条（Ozon 店铺接口、找新品和商品详情的数据源、Seerfar 关键词、OSS），没填的在日志里点一次名（只有名字和用途，没有值），用到的功能会报密钥不可用，别的照常。两条会落到同一个名字时拒绝启动。只读：页面写不了服务器密钥。
+- 读密钥的几处（Ozon DE 和店铺销量 `readOzonDEKeychainSecret`、找新品和详情 `createLinkfoxDiscoverySecretReader`、关键词的 Seerfar 传输、OSS）在中央模式只认这个服务器密钥设置（`credentialStoreUsableIn`），别的存储一律拒绝；本机照旧读 Mac 钥匙串。
+- **关键词服务**不再只许本机模式（它只认运行方式是不是三种之一）；C1 付费关键词排队那里原来写死了 `local_development`，改成用配置里的运行方式。
+- **端口**：中央模式没设 `SELECTION_REVIEW_PORT`（或 `--api-only` 的 `SELECTION_REVIEW_API_PORT`）时听主机给的 `PORT`（Render 就是这样给端口的）；本机照旧不认 `PORT`。
+- **健康检查**：`GET /api/live` 放在 Host 检查前面回答。主机查活时用的地址不一定是团队用的那个（Render 可能用服务自己的 onrender.com 名字，别的主机用内网地址），原来会被 403，部署会一直判不健康；它只说「这个进程在跑」，和等着交接时（`lib/process-handoff.mjs`）一样。`/api/health`、`/api/ready` 照旧只认服务自己的地址。
+- **AI 网关和 Ozon 证据服务的地址**：中央模式除了非本机 https，还可以是同一私有网络里的邻居，形如 `http://ai-gateway:10000`（一段名字加端口，Render 的 private service 就是这个样子，这种名字只在内网里解析）。页面地址（`SELECTION_REVIEW_PUBLIC_ORIGIN`、`ALLOWED_ORIGINS`）照旧必须 https。Ozon 证据服务更严：拿着店铺密钥、来人不用凭据，所以中央模式只能是内网邻居，填公网 https 拒绝启动；两个证据读取（类目和佣金、字典）也只认本机或内网邻居。
+- D 批量导入要的中央 worker，3c 的进程租约登记已经满足，这次不用改。Seerfar 网页账号信息（P1-22）在中央模式照旧不存（`not_local`），那一轮照常收商品。
+- 还没做（第 4 步剩下的）：AI 网关（Mac 上 `~/Documents/电商能力实验室/ecommerce-ai-gateway`）和 Ozon 证据服务（4173）的代码不在 GitHub 上，要先在 Mac 上看到代码才能搬；它们现在都不认来人，搬上 Render 时做成 private service。上传的图片放 OSS、图片文字识别也还没做。
+
 ### 本轮验证
 
 - 这次只改了文档（`CURRENT.md`、`HANDOFF.md`，以及 `PROJECT_STATE.md` 的更新日期说明和 §2.3 的 A 行，A 行对齐了代码 `lib/codex-independence.mjs` 里的 `not_complete`），代码和 `663f6e2` 一模一样。`663f6e2` 在 GitHub 上两组检查（纯测试、隔离接口测试）都通过了：[CI 第 39 次运行](https://github.com/billlza/wb-ozon-selection/actions/runs/38386114208)。

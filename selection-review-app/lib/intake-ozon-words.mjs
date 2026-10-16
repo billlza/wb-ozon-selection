@@ -187,7 +187,7 @@ export function createIntakeOzonWordsTranslator({
     fail("INPUT_INVALID", "configuration", "翻译依赖配置无效");
   }
   let baseUrl;
-  try { baseUrl = normalizeServiceOrigin(gatewayUrl, { deploymentMode: gatewayDeploymentMode, label: "aiGatewayUrl" }); }
+  try { baseUrl = normalizeServiceOrigin(gatewayUrl, { deploymentMode: gatewayDeploymentMode, label: "aiGatewayUrl", privateNetwork: true }); }
   catch (error) { fail("INPUT_INVALID", "configuration", `AI 网关地址无效：${String(error?.message || error)}`); }
   const clockMs = () => {
     const at = now();

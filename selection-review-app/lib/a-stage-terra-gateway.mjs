@@ -42,7 +42,8 @@ function safeGatewayUrl(value, deploymentMode) {
   try {
     return normalizeServiceOrigin(value, {
       deploymentMode,
-      label: "aStageAiGatewayUrl"
+      label: "aStageAiGatewayUrl",
+      privateNetwork: true
     });
   } catch (error) {
     throw new Error(`A_TERRA_GATEWAY_SCOPE_REJECTED: ${error.message}`);

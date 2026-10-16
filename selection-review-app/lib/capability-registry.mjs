@@ -446,7 +446,7 @@ export const CAPABILITY_NODES = Object.freeze([
     baselineHealth: { state: "unverified", reason: "本地 Repository 与评审台已接线；本轮尚无匹配当前源码的验证回执。" },
     stopConditions: "读取或保存失败时必须显示技术错误，不能变成空候选或假成功。",
     breakpoint: "本机默认仍是单进程 JSON 适配器；Postgres 适配器（共用设置一行、每件商品一行，单件商品的动作只锁、只读、只写自己那行）已可用。同一份数据同一时间只有一个服务进程干活，新进程碰上旧进程还在时先开着门等，旧的停了就接手；中央模式还没开，不是多人上线。",
-    nextStep: "开中央模式（多人中央服务计划第 3、4 步）。",
+    nextStep: "开中央模式（多人中央服务计划第 4、5 步）。",
     position: { x: 60, y: 180 },
     codeRefs: [capabilityRef("lib/business-state-repository.mjs", "createConfiguredBusinessStateRepository", "业务状态 Repository"),
       capabilityRef("lib/production-entity-storage.mjs", "normalizeProductionEntities", "冻结生产资料集中保存"),
@@ -514,8 +514,8 @@ export const CAPABILITY_NODES = Object.freeze([
     integrationStatus: "partial", runtimeScope: "local_development",
     baselineHealth: { state: "risk", reason: "本地身份和 Worker 注册表存在，但没有中央身份、租约和多机验收。" },
     stopConditions: "身份、角色、能力或心跳不满足时不得领取或执行。",
-    breakpoint: "本地主人认证已接入可替换提供器；团队账号登录（老板和测试各自的登录名和密码，账号存在 Postgres）已接入，测试能做除确认供货、确认利润、许可上架以外的操作，找新品批次、详情准备和账户准备团队共用；团队账号下每台装插件的电脑各有一把钥匙，插件每次回传都带着，哪台领的作业只能由哪台交回。点插件图标打开设置页，能填团队服务的 https 网址，插件就替那个服务干活。团队账号下每台电脑各管各的采集：人点的作业只给点的那台电脑做，软件自己排的给闲着的那台，一件商品同一时间只有一个作业。用 Postgres 时同一时间只有一个服务进程干活，服务自己的后台工作登记就算整个服务的。中央模式还没开：还差第 4 步（密钥和图片）。",
-    nextStep: "密钥和图片（多人中央服务计划第 4 步），再开中央模式。",
+    breakpoint: "本地主人认证已接入可替换提供器；团队账号登录（老板和测试各自的登录名和密码，账号存在 Postgres）已接入，测试能做除确认供货、确认利润、许可上架以外的操作，找新品批次、详情准备和账户准备团队共用；团队账号下每台装插件的电脑各有一把钥匙，插件每次回传都带着，哪台领的作业只能由哪台交回。点插件图标打开设置页，能填团队服务的 https 网址，插件就替那个服务干活。团队账号下每台电脑各管各的采集：人点的作业只给点的那台电脑做，软件自己排的给闲着的那台，一件商品同一时间只有一个作业。用 Postgres 时同一时间只有一个服务进程干活，服务自己的后台工作登记就算整个服务的。中央模式能在测试库上起来了，还没在服务器上开。",
+    nextStep: "第 4 步剩下的（AI 网关和证据服务搬上服务器、图片放 OSS），再在 Render 开测试环境。",
     position: { x: 960, y: 180 },
     codeRefs: [
       capabilityRef("lib/runtime-identity.mjs", "createActorContext", "运行身份"),
@@ -1524,24 +1524,27 @@ export const CAPABILITY_NODES = Object.freeze([
   capability({
     id: "8.6", capabilityId: "runtime.central-multi-user", areaId: "8",
     title: "让中央服务和多 Worker 接管运行", technicalName: "Multi-user central runtime",
-    plainDescription: "未来由中央服务保存唯一状态，本机 Worker 只领取分配给自己的作业；当前尚未实现。",
+    plainDescription: "由中央服务保存唯一状态，本机 Worker 只领取分配给自己的作业；中央模式能起来了，还没在服务器上跑通和验收。",
     serves: "未来 3—5 人内部协作",
     inputs: ["中央数据库、身份、队列、租约和店铺隔离"],
     outputs: ["可多机续作的中央状态和受控作业"],
     registrationState: "unknown", integrationStatus: "not_implemented", runtimeScope: "not_available",
     mainlineQualification: "owner_decision", normalPathAllowed: false,
-    baselineHealth: { state: "unverified", reason: "只有边界、迁移阶段和本地适配器，没有中央运行闭环。" },
+    baselineHealth: { state: "unverified", reason: "中央模式能在测试库上起来；还没在服务器上跑通，也没有两人试用验收。" },
     ownerAction: "当前只能按本地开发使用，不能宣称多人就绪。",
     stopConditions: "中央状态、身份、租约和迁移未验收前保持未实现。",
-    breakpoint: "缺少中央数据库、正式身份、持久队列和多 Worker 验收。",
-    nextStep: "按单机多身份、中央测试、两人试用、迁移、多 Worker 顺序推进。",
+    breakpoint: "中央模式（Postgres、团队账号）已能在测试库上起来：密钥从服务器自己的密钥设置读（每条一个设置名，缺哪条启动时说一次），听主机给的端口，主机的健康检查 /api/live 从内网也问得到；Ozon 证据服务只许连本机或服务器内网的邻居，不开在公网上。还差：AI 网关和证据服务搬上服务器、上传的图片放 OSS、图片文字识别、服务器上实测和两人试用。",
+    nextStep: "第 4 步剩下的：网关和证据服务搬上去、图片放 OSS；然后第 5 步在 Render 开测试环境。",
     position: { x: 780, y: 500 },
     aliases: ["旧 8.2"],
     codeRefs: [capabilityRef("lib/multi-user-central-runtime.mjs", "MULTI_USER_MIGRATION_STAGES", "多人迁移阶段"),
-      capabilityRef("lib/credential-store.mjs", "createOsCredentialStore", "按操作系统选择的本机凭据层")],
+      capabilityRef("lib/credential-store.mjs", "createOsCredentialStore", "按操作系统选择的本机凭据层"),
+      capabilityRef("lib/server-secret-store.mjs", "createServerSecretStore", "中央模式从服务器自己的密钥设置读密钥")],
     uiRefs: [capabilityRef("src/components/HeaderStatus.jsx", "HeaderStatus", "顶栏运行方式提示")],
     testRefs: [capabilityRef("tests/multi-user-central-runtime.test.mjs", "test(", "中央运行边界测试"),
-      capabilityRef("tests/credential-store.test.mjs", "test(", "本机凭据层测试")]
+      capabilityRef("tests/credential-store.test.mjs", "test(", "本机凭据层测试"),
+      capabilityRef("tests/server-secret-store.test.mjs", "test(", "服务器密钥设置：设置名、缺哪条、中央模式只认它"),
+      capabilityRef("tests/central-runtime-boot-db.test.mjs", "test(", "真 Postgres 上整个服务按中央模式起来、登录、回答健康检查")]
   })
 ]);
 

@@ -54,7 +54,8 @@ function normalizeC1GatewayUrl(value, deploymentMode) {
   try {
     return normalizeServiceOrigin(value, {
       deploymentMode,
-      label: "c1AiGatewayUrl"
+      label: "c1AiGatewayUrl",
+      privateNetwork: true
     });
   } catch (error) {
     throw new Error(`C1_AI_GATEWAY_SCOPE_REJECTED: ${error.message}`);

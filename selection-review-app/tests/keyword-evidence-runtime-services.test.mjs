@@ -40,6 +40,12 @@ test('empty configuration and idle queue never construct a credential-bearing tr
   const service=f.create();assert.equal((await service.runDue()).status,'idle');
   service.start();service.start();await service.stop();assert.deepEqual(f.counts(),{factories:0,calls:0});
 });
+test('a central service runs the same keyword service; an unknown mode is refused',async()=>{
+  const f=await fixture();
+  for(const runtimeMode of ['central_test','central_production'])assert.equal((await f.create({runtimeMode}).runDue()).status,'idle');
+  assert.throws(()=>f.create({runtimeMode:'local'}),/KEYWORD_SERVICE_DEPENDENCY_INVALID/);
+  assert.deepEqual(f.counts(),{factories:0,calls:0});
+});
 test('one paid job executes once and an unknown continuation failure persists and blocks restart',async()=>{
   const f=await fixture();await f.enqueue();const error=new Error('synthetic callback interrupted');
   let completedJob;

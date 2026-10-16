@@ -1,4 +1,5 @@
 import { CredentialStoreError, createOsCredentialStore, isCredentialStorePlatformSupported } from './credential-store.mjs';
+import { credentialStoreUsableIn } from './server-secret-store.mjs';
 import { isCanonicalFrozenRef } from './production-contract-primitives.mjs';
 import { ADiscoveryError } from './a-discovery-contract.mjs';
 import { LinkfoxDiscoveryError } from './linkfox-discovery-api.mjs';
@@ -35,7 +36,7 @@ function createLocalDiscoverySecretReader({ bindings, runtimeMode, execFileImpl,
       credentialStore !== undefined && typeof credentialStore?.readSecret !== 'function') throw new TypeError('A_DISCOVERY_CREDENTIAL_READER_INVALID');
   const store = credentialStore ?? createOsCredentialStore({ platform, ...(execFileImpl ? { execFileImpl } : {}) });
   return async function readSecret({ credentialAlias, provider, signal }) {
-    if (runtimeMode !== 'local_development' || credentialStore === undefined && !isCredentialStorePlatformSupported(platform)) {
+    if (!credentialStoreUsableIn(runtimeMode, credentialStore) || credentialStore === undefined && !isCredentialStorePlatformSupported(platform)) {
       throw new ErrorType('CREDENTIAL_UNAVAILABLE');
     }
     if (provider !== expectedProvider || !isCanonicalFrozenRef(credentialAlias) || signal !== undefined && !(signal instanceof AbortSignal)) {

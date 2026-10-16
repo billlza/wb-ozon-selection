@@ -12,6 +12,7 @@ import { supplierImageSearchAvailability, readSupplierImageSearchPreparation, re
   SupplierImageSearchPreparationError } from './lib/a-supplier-image-search-runtime-services.mjs';
 import { ADiscoveryError } from './lib/a-discovery-contract.mjs';
 import { createLinkfoxDiscoverySecretReader, createSeerfarDiscoverySecretReader } from './lib/linkfox-discovery-credentials.mjs';
+import { configuredServerSecrets, createServerSecretStore } from './lib/server-secret-store.mjs';
 import { createADiscoveryCandidateImportUseCase } from './lib/a-discovery-candidate-import.mjs';
 import { loadSeerfarSelectionConfig } from './lib/seerfar-selection-config.mjs';
 import { createSeerfarWebRoundService } from './lib/seerfar-web-round-service.mjs';
@@ -208,7 +209,7 @@ import {
 import { runC1KeywordPlanningEvidenceProduction } from "./lib/c1-keyword-planning-software-use-case.mjs";
 import { produceC1LocalPreparation } from "./lib/c1-keyword-planning-local-material.mjs";
 import { persistC1KeywordPlanningLocalMaterial } from "./lib/c1-keyword-planning-local-material-persistence.mjs";
-import { createSeerfarRuntimeTransport, SEERFAR_RUNTIME_CONNECTOR_VERSION } from "./lib/seerfar-runtime-connector.mjs";
+import { createSeerfarRuntimeTransport, readSeerfarKeychainSecret, SEERFAR_RUNTIME_CONNECTOR_VERSION } from "./lib/seerfar-runtime-connector.mjs";
 import {
   confirmC2SoftwareFinalUploads,
   createC2SoftwareContainer,
@@ -306,7 +307,8 @@ import {
   settleAliyunOssAssetIntent
 } from "./lib/aliyun-oss-d-asset-integration.mjs";
 import { createAliyunOssRuntimeProvider } from "./lib/aliyun-oss-runtime-provider.mjs";
-import { createOzonDEHttpTransport } from "./lib/ozon-de-http-transport.mjs";
+import { readAliyunOssKeychainSecret } from "./lib/aliyun-oss-asset-transport.mjs";
+import { createOzonDEHttpTransport, readOzonDEKeychainSecret } from "./lib/ozon-de-http-transport.mjs";
 import { createOzonDEPreflightProvider } from "./lib/ozon-de-preflight-provider.mjs";
 import { createRepositoryBackedOzonDEPreflightEvidenceReader } from "./lib/ozon-de-preflight-evidence-reader.mjs";
 import { createOzonAccountReadBindingResolver } from "./lib/ozon-account-read-preparation.mjs";
@@ -360,6 +362,17 @@ const trustedServiceOrigins = new Set([
 ]);
 const allowedExtensionOrigins = new Set(runtimeConfiguration.allowedExtensionOrigins);
 const internalApiRequestToken = randomBytes(32).toString("base64url");
+// Where secrets come from: this computer's OS store in local development; in a central mode only the server's own secret
+// settings (lib/server-secret-store.mjs). A setting still empty is named once here; the features that need it say so.
+const serverCredentialStore = runtimeConfiguration.deploymentMode === "local_development" ? undefined
+  : createServerSecretStore({ env: process.env });
+if (serverCredentialStore) {
+  const missing = [];
+  for (const secret of configuredServerSecrets(runtimeConfiguration)) {
+    if (!await serverCredentialStore.hasSecret(secret)) missing.push(`  ${secret.variable}：${secret.purpose}`);
+  }
+  if (missing.length) console.error(`SERVER_SECRETS_MISSING: 服务器密钥设置里还没填这几项，用到它们的功能会报密钥不可用，别的照常：\n${missing.join("\n")}`);
+}
 const businessStateRepository = createConfiguredBusinessStateRepository(runtimeConfiguration);
 // Postgres: one service process per stored document. The restart reconcilers below close every job this process does not
 // hold, so two processes must never work at once. A process started while another holds the lease (a zero-downtime
@@ -547,7 +560,8 @@ const keywordEvidenceRuntimeServices = createKeywordEvidenceRuntimeServices({
   repository: businessStateRepository, softwareJobStore, runtimeMode: runtimeConfiguration.deploymentMode,
   serverClock: now, workerRegistry, serviceBindings: runtimeConfiguration.keywordEvidenceServiceBindings,
   createTransport: ({ binding, beforeRequestSend, signal }) => createSeerfarRuntimeTransport({
-    timeoutMs: binding.requestTimeoutMs, beforeRequestSend, signal
+    timeoutMs: binding.requestTimeoutMs, beforeRequestSend, signal,
+    secretReader: () => readSeerfarKeychainSecret({ credentialStore: serverCredentialStore })
   }),
   onEvidenceReady: (candidateId, revision) => continueC1SoftwareWhenEvidenceReady(candidateId, revision, { reportConfigurationBlock: true }),
   onError: () => { console.error("C1_KEYWORD_RUNTIME_STOPPED: 关键词服务因异常停止，请核对已保存作业。"); }
@@ -558,7 +572,8 @@ const aDiscoveryRuntime = createADiscoveryRuntimeServices({repository:businessSt
   runtimeMode:runtimeConfiguration.deploymentMode,serverClock:now,workerRegistry,
   serviceBindings:runtimeConfiguration.aDiscoveryServiceBindings,connectorBindings:runtimeConfiguration.aDiscoveryConnectorBindings,
   plans:runtimeConfiguration.aDiscoveryPlans,getEvidenceRecords:()=>runtimeConfiguration.aDiscoveryEvidenceRecords,
-  readSecret:(runtimeConfiguration.aDiscoveryConnectorBindings[0]?.provider==='seerfar' ? createSeerfarDiscoverySecretReader : createLinkfoxDiscoverySecretReader)({bindings:runtimeConfiguration.aDiscoveryCredentialBindings,runtimeMode:runtimeConfiguration.deploymentMode}),
+  readSecret:(runtimeConfiguration.aDiscoveryConnectorBindings[0]?.provider==='seerfar' ? createSeerfarDiscoverySecretReader : createLinkfoxDiscoverySecretReader)({bindings:runtimeConfiguration.aDiscoveryCredentialBindings,runtimeMode:runtimeConfiguration.deploymentMode,
+    credentialStore:serverCredentialStore}),
   fetchImpl:fetch,onBatchReady:input=>aDiscoveryCandidateImport.importBatch(input),onSelectProduct:input=>aDiscoveryCandidateImport.importSelectedProduct(input),
   onError:()=>{console.error('A_DISCOVERY_RUNTIME_STOPPED: 商品发现服务因异常停止，请核对已保存的批次和作业。');}
 });
@@ -635,6 +650,8 @@ const storeSalesSeeds = createStoreSalesSeedService({
   readData: () => readData(), mutateData: mutator => mutateData(mutator), mutateDataWhenChanged: mutator => mutateDataWhenChanged(mutator),
   now: () => now(), businessDate: () => businessDate(), estimateInputs: supplierDraftEstimateInputs, config: seerfarSelectionConfig.config,
   reader: createOzonStoreSalesReader({ runtimeMode: runtimeConfiguration.deploymentMode, fetchImpl: fetch,
+    ...(serverCredentialStore ? { readSecret: (credential, options) =>
+      readOzonDEKeychainSecret(credential, { ...options, credentialStore: serverCredentialStore }) } : {}),
     routes: storeSalesRoutes({ discoveryBindings: runtimeConfiguration.ozonAccountDiscoveryBindings,
       credentialBindings: runtimeConfiguration.ozonDECredentialBindings, productionBindings: runtimeConfiguration.productionBindings }) }),
   log: (message, detail) => console.error(message, detail)
@@ -922,7 +939,8 @@ const aProductDetailApplication = createAProductDetailApplicationUseCase({reposi
 const aProductDetailRuntime = createAProductDetailRuntimeServices({repository:businessStateRepository,softwareJobStore,
   runtimeMode:runtimeConfiguration.deploymentMode,serverClock:now,workerRegistry,
   serviceBindings:runtimeConfiguration.aProductDetailServiceBindings,connectorBindings:runtimeConfiguration.aProductDetailConnectorBindings,
-  readSecret:createLinkfoxDiscoverySecretReader({bindings:runtimeConfiguration.aProductDetailCredentialBindings,runtimeMode:runtimeConfiguration.deploymentMode}),
+  readSecret:createLinkfoxDiscoverySecretReader({bindings:runtimeConfiguration.aProductDetailCredentialBindings,runtimeMode:runtimeConfiguration.deploymentMode,
+    credentialStore:serverCredentialStore}),
   fetchImpl:fetch,onDetailsReady:input=>aProductDetailApplication.applyDetails(input),
   onError:()=>{console.error('A_PRODUCT_DETAIL_RUNTIME_STOPPED: 商品详情服务因异常停止，请核对已保存的作业和回执。');}
 });
@@ -932,9 +950,13 @@ const eReadbackSoftwareRuntime = createSystemEReadbackSoftwareRuntime({
 });
 const ozonDETransport = createOzonDEHttpTransport({ productionBindings: runtimeConfiguration.productionBindings,
   discoveryBindings: runtimeConfiguration.ozonAccountDiscoveryBindings,
-  credentialBindings: runtimeConfiguration.ozonDECredentialBindings, runtimeMode: runtimeConfiguration.deploymentMode });
+  credentialBindings: runtimeConfiguration.ozonDECredentialBindings, runtimeMode: runtimeConfiguration.deploymentMode,
+  ...(serverCredentialStore ? { readSecret: (binding, options) =>
+    readOzonDEKeychainSecret(binding, { ...options, credentialStore: serverCredentialStore }) } : {}) });
 const ossRuntimeProvider = createAliyunOssRuntimeProvider({ config: runtimeConfiguration.ossRuntimeConfiguration,
-  localAssetStore: c2LocalAssetStore, now });
+  localAssetStore: c2LocalAssetStore, now,
+  ...(serverCredentialStore ? { secretReader: (account, options) =>
+    readAliyunOssKeychainSecret(account, { ...options, credentialStore: serverCredentialStore }) } : {}) });
 const ozonAccountEvidenceSource = createOzonAccountReadEvidenceSource({ repository: businessStateRepository,
   loadCurrentReadBinding: createOzonAccountReadBindingResolver(runtimeConfiguration),
   protocolCatalog: await loadOzonDEProtocolCatalog() });
@@ -4650,7 +4672,7 @@ async function runC1KeywordEvidenceSoftwareJob(candidateId, input, request) {
   try {
     outcome = await enqueueC1PaidKeywordEvidenceJob({
       repository: businessStateRepository,
-      runtimeMode: "local_development",
+      runtimeMode: runtimeConfiguration.deploymentMode,
       actor,
       candidateId,
       expectedRevision: source.dataRevision,
@@ -5163,6 +5185,14 @@ const TEAM_OWNER_ONLY_ROUTES = Object.freeze([
 ]);
 
 async function handleApi(req, res, pathname) {
+  // A host's health check can arrive under a name that is not the team's address (Render's may use the service's own
+  // onrender.com name, others an address inside their network), so liveness is answered before the Host check, as it is
+  // while standing by (lib/process-handoff.mjs). The answer says nothing but "this process runs".
+  if (req.method === 'GET' && pathname === '/api/live') {
+    return json(res, runtimeHealth.live ? 200 : 503, {
+      ok: runtimeHealth.live, live: runtimeHealth.live, service: 'selection-review-app', version: 2, checkedAt: now()
+    });
+  }
   assertTrustedApiRequest({
     method: req.method,
     pathname,
@@ -5328,11 +5358,6 @@ async function handleApi(req, res, pathname) {
     }
     return json(res, 200, { contentType: picture.contentType, byteLength: picture.buffer.length,
       base64: picture.buffer.toString("base64") }, headers);
-  }
-  if (req.method === 'GET' && pathname === '/api/live') {
-    return json(res, runtimeHealth.live ? 200 : 503, {
-      ok: runtimeHealth.live, live: runtimeHealth.live, service: 'selection-review-app', version: 2, checkedAt: now()
-    });
   }
   if (req.method === 'GET' && ['/api/health', '/api/ready'].includes(pathname)) {
     const controller = new AbortController();

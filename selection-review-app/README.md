@@ -34,7 +34,7 @@ node scripts/prepare-local-runtime.mjs --output /absolute/new/runtime-directory
 - Windows 凭据管理器：普通凭据，目标写成`<服务名>/<账户名>`，例如`cmdkey /generic:egg-ozon-operations-center/seerfar-open-api /user:seerfar-open-api /pass`（不带值时命令行会提示输入）。
 - Linux Secret Service：`secret-tool store --label=<说明> service <服务名> account <账户名>`，值从提示输入。
 
-中央服务不走本机凭据层，改为注入自己的秘密存储；测试只用`createFakeCredentialStore`里的合成值。
+中央服务不走本机凭据层，改读服务器自己的密钥设置（`lib/server-secret-store.mjs`）：每条密钥一个环境变量，名字是`SELECTION_REVIEW_SECRET__<服务名>__<账户名>`，全部大写、非字母数字换成`_`，例如`SELECTION_REVIEW_SECRET__EGG_OZON_OPERATIONS_CENTER__SEERFAR_OPEN_API`。启动时没填的会在日志里点名（只有名字和用途）。中央模式没设`SELECTION_REVIEW_PORT`时听主机给的`PORT`；AI 网关和 Ozon 证据服务可以是同一私有网络里的邻居（如`http://ai-gateway:10000`），证据服务只能是这样。测试只用`createFakeCredentialStore`里的合成值。
 
 未配置、错店、过期或缺少证据时显示缺口。未知费用、用量、扣款和平台状态不记为0。真实秘密不得写入候选、配置声明、源码或日志。
 

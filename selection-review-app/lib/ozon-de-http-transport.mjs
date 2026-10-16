@@ -1,4 +1,5 @@
 import { CredentialStoreError, createOsCredentialStore, isCredentialStorePlatformSupported } from "./credential-store.mjs";
+import { credentialStoreUsableIn } from "./server-secret-store.mjs";
 import { sameStoreRef, isCompleteStoreRef } from "./store-binding.mjs";
 import { assertNoProductionSecrets, isCanonicalFrozenRef, fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
 import { OzonDEHttpTransportError, normalizeOzonDECredentialBindings, assertOzonDECredentialBinding,
@@ -31,11 +32,11 @@ function apiKey(value) {
   return value.trim();
 }
 
-/** Local development adapter only. Explicit injection replaces this boundary in a central runtime. */
+/** This computer's OS store in local development; a central runtime passes the server's secret settings as credentialStore. */
 export async function readOzonDEKeychainSecret(binding, { signal, runtimeMode = "local_development", execFileImpl, platform = process.platform,
   credentialStore } = {}) {
   assertOzonDECredentialBinding(binding);
-  if (runtimeMode !== "local_development" || credentialStore === undefined && !isCredentialStorePlatformSupported(platform)) {
+  if (!credentialStoreUsableIn(runtimeMode, credentialStore) || credentialStore === undefined && !isCredentialStorePlatformSupported(platform)) {
     throw transportError("OZON_DE_CREDENTIAL_READER_UNAVAILABLE", { layer: "credential" });
   }
   if (execFileImpl !== undefined && typeof execFileImpl !== "function" || signal !== undefined && !(signal instanceof AbortSignal)) throw transportError("OZON_DE_HTTP_CONFIGURATION_INVALID");
