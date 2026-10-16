@@ -246,8 +246,35 @@ test("node comments, disabled dispatch claim, and production confirmation stay i
     sourceRef: "seller-api-readonly-2"
   });
   assert.equal(packTwo.status, 201);
+  const secondPackId = (await packTwo.json()).evidencePack.id;
+  // The same pack sent again (a resend, a double click) is the saved one, and an older one cannot roll the scope back.
+  const resent = await post("/api/evidence-packs", {
+    kind: "commission",
+    scope: { platform: "ozon", store: "dandanshu", storeRef: { stableStoreId: "dandanshu", platformStoreId: "synthetic-ozon-store", mappingVersion: "synthetic-v1" }, category: "toys", salesScheme: "rfbs" },
+    summary: "同一范围更新后的佣金证据",
+    sourceType: "real",
+    checkedAt: "2026-08-11T10:00:00.000Z",
+    sourceRef: "seller-api-readonly-2"
+  });
+  assert.equal(resent.status, 200);
+  assert.deepEqual([(await resent.json()).evidencePack.id], [secondPackId]);
+  const older = await post("/api/evidence-packs", {
+    kind: "commission",
+    scope: { platform: "ozon", store: "dandanshu", storeRef: { stableStoreId: "dandanshu", platformStoreId: "synthetic-ozon-store", mappingVersion: "synthetic-v1" }, category: "toys", salesScheme: "rfbs" },
+    summary: "旧标签页里那份更早的佣金证据",
+    sourceType: "real",
+    checkedAt: "2026-08-11T09:30:00.000Z",
+    sourceRef: "seller-api-readonly-old-tab"
+  });
+  assert.equal(older.status, 409);
+  const olderBody = await older.json();
+  assert.equal(olderBody.code, "evidence_pack_not_newer");
+  assert.equal(olderBody.activeEvidencePackId, secondPackId);
   const packState = await (await fetch(`${baseUrl}/api/state`)).json();
   assert.equal(packState.evidencePacks.filter((item) => item.status === "active").length, 1);
+  assert.equal(packState.evidencePacks.find((item) => item.status === "active").id, secondPackId);
+  assert.equal(packState.evidencePacks.filter((item) => item.summary === "同一范围更新后的佣金证据").length, 1, "the resend was not saved again");
+  assert.equal(packState.evidencePacks.some((item) => item.summary === "旧标签页里那份更早的佣金证据"), false, "the older pack was not saved");
   assert.equal(packState.evidencePacks.find((item) => item.id === firstPackId).status, "superseded");
 
   const duplicate = await post("/api/candidates/QUEUE-1/dispatch", {

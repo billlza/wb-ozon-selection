@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-16T18:37:23.383Z",
+  "frozenAt": "2026-10-16T18:47:55.451Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 1031,
-      "sha256": "c7001fa094a4fee5a73158e6e8886663d845ffac96b53acedf744a9f56d9e1bd",
+      "artifactCount": 1033,
+      "sha256": "13cd0e7fa53bd12db291295fd815d8ae13e6a23c1f6e9d714e93642f76f2fdb7",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -456,7 +456,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "75dbc6b44d061ac72d2a78c8aeea339ab9c766152a958088393d5c44a75c9c6b"
+        "sha256": "175b4bdd511c5e8e1dcfa1b00149ed8eba70eb7612feba0fb6df6e1c86affac6"
       },
       {
         "path": "lib/capture-assignment.mjs",
@@ -612,7 +612,7 @@
       },
       {
         "path": "lib/discovery-title-translation-store.mjs",
-        "sha256": "3809a224cd5906dd1026ca883d5084348922a20c7bff0a291db5ecbc6637cc8d"
+        "sha256": "7443525fcaa5fa7189dc84166dc7dde9c254f860a158da04c29376ebe6c6bb31"
       },
       {
         "path": "lib/discovery-title-translation.mjs",
@@ -977,6 +977,10 @@
       {
         "path": "lib/ozon-submission-attributes.mjs",
         "sha256": "be171ffd1cd42d14f4e4d8208545297444d4f6b1667733f080ef895a65e7b42d"
+      },
+      {
+        "path": "lib/paid-answer-reuse.mjs",
+        "sha256": "f85910fb876ccffd63bbd978b5a877fb6262ae701532c7349c34935e9caef8b0"
       },
       {
         "path": "lib/phase-2a-simulation.mjs",
@@ -1756,11 +1760,11 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "323c82b6dd25d92dc41cfafc693e55c3156b589e18ccbb12c1a371af2a31c40a"
+        "sha256": "ce405a0bcef34eeba7e0a8e3218abf62f4ca49badd4c250374ed310f61a8614d"
       },
       {
         "path": "src/App.jsx",
-        "sha256": "f3dbf6156f7414fc6679805fb85f5d3dc101b4483942cbe2d5bf9fcc3c43c670"
+        "sha256": "9b17a51fd44227ccdd90d42a77cc820c43c25790463180a62ccffd41b4d930c2"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -2344,7 +2348,7 @@
       },
       {
         "path": "tests/c1-attribute-routes-source-contract.test.mjs",
-        "sha256": "4b3fc0bb2b8e546c24f86a7968de8120796a3f8e245e3e39e97c19013e9d7ecf"
+        "sha256": "1a51dfbc6ba8b30bf17c0b2098f9786e75e7bb687a543a4e3db8081c33d96a66"
       },
       {
         "path": "tests/c1-completed-editorial-adoption.test.mjs",
@@ -2736,7 +2740,7 @@
       },
       {
         "path": "tests/collaboration-api.test.mjs",
-        "sha256": "5e3c755c43756a4f0301690cec0f41a31cb550fba662f53777fea86ae8e4fdb8"
+        "sha256": "79d83fd6d7212c9abbc232bc3ab57c2bcee9f5dcd9a9d6f321d3cc2353571b10"
       },
       {
         "path": "tests/commission-estimate-authorization.test.mjs",
@@ -2896,7 +2900,7 @@
       },
       {
         "path": "tests/discovery-title-translation.test.mjs",
-        "sha256": "d94c75d641006ccb6b7cd336984ce10272b672fc4f7ccd62197f1d6683663c0e"
+        "sha256": "df3ce5b6910066b79989114cc8ff9cebaad556dbca9ebfdcf297d3fd48cb67d4"
       },
       {
         "path": "tests/dispatch-api.test.mjs",
@@ -3496,7 +3500,7 @@
       },
       {
         "path": "tests/multi-user-central-runtime.test.mjs",
-        "sha256": "1a775dc18330870a4ad702518f044c6bf7cfec7331fa6958856debadbf77f1c1"
+        "sha256": "fcd474256acee997e66109ae6b4294471edf7fc781f3e069c2dae08dbf700251"
       },
       {
         "path": "tests/official-commission-formal-b.test.mjs",
@@ -3633,6 +3637,10 @@
       {
         "path": "tests/ozon-submission-attributes.test.mjs",
         "sha256": "23304200bbc39fc9852347cbb24c41e37bcc157b1b9e5677a81bc3dd2c56d77f"
+      },
+      {
+        "path": "tests/paid-answer-reuse.test.mjs",
+        "sha256": "cede1e08f7326a577afbb43180c68178cdbf7d67db21e83df398cc6a56dcacdd"
       },
       {
         "path": "tests/phase-2a-api-guards.test.mjs",
@@ -4279,6 +4287,10 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/paid-answer-reuse.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/product-lifecycle-schema.mjs",
           "status": "present_in_integration_source"
         },
@@ -4292,6 +4304,10 @@
         },
         {
           "path": "tests/business-mutation-transaction.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/paid-answer-reuse.test.mjs",
           "status": "present_in_integration_source"
         }
       ],

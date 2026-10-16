@@ -57,6 +57,9 @@ test("路由把主人的请求原样接到用例上，SKU包身份只认服务�
   assert.match(proposal, /readDictionaryValues: createOzonDictionaryValuesReader\(/);
   // 建议这一步**不写任何数据**：它只读、只算，写入要主人另外点「全部同意并保存」。
   assert.doesNotMatch(proposal, /mutateData|executeBusinessMutation/, "生成建议不得写入任何数据");
+  // 同一版资料几分钟内只花一次钱：连点、重发、两个人同时点都共用那一次（AGENTS 0A：重复点击不得重复调用 AI）。
+  assert.match(proposal, /c1OzonAttributeProposals\.once\(`\$\{current\.id\}:\$\{current\.dataRevision\}`, \(\) => proposer\.propose\(/);
+  assert.match(proposal, /paidCalls: reused \? 0 : proposal\.jobIds\.length/);
   // 已由主人声明确认的必填属性不得再摆进建议表——否则模型会给它硬配一条假依据。
   assert.match(proposal, /settledByDeclaration/);
   assert.match(proposal, /!settledByDeclaration\.has\(String\(item\.fieldKey\)\)/);

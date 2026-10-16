@@ -1093,7 +1093,8 @@ export default function App() {
       const result = await api.proposeC1OzonAttributes(selected.id, payload);
       const p = result?.proposal;
       setNotice({ type: "success", message:
-        `已生成 ${p?.suggestedCount ?? 0} 条建议（另有 ${p?.alternativeOnlyCount ?? 0} 行只有对标备选）；俄文值全部来自 Ozon 字典，没有写入任何数据。` });
+        `已生成 ${p?.suggestedCount ?? 0} 条建议（另有 ${p?.alternativeOnlyCount ?? 0} 行只有对标备选）；俄文值全部来自 Ozon 字典，没有写入任何数据。${
+          result?.reused ? "这份建议是几分钟内对同一版资料刚生成的，这次没有再花钱。" : ""}` });
       return result;
     } catch (error) {
       setNotice({ type: "error", message: errorMessage(error) });

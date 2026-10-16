@@ -91,59 +91,72 @@ export function createADiscoveryTitleTranslationUseCase({ repository, serverCloc
   }
   const limit = Number.isSafeInteger(translator.maxTitlesPerCall) && translator.maxTitlesPerCall > 0
     ? Math.min(translator.maxTitlesPerCall, DISCOVERY_TITLE_TRANSLATION_MAX_TITLES) : DISCOVERY_TITLE_TRANSLATION_MAX_TITLES;
+  // Two clicks on one batch (a double click, or two people on the shared batch) run one after the other, so the second
+  // finds the first one's saved titles and pays for none of them. Only one service process works on the data at a time
+  // (the process lease), so this queue is the whole service's.
+  const inFlight = new Map();
+  function oneAtATime(batchId, work) {
+    const run = (inFlight.get(batchId) ?? Promise.resolve()).catch(() => {}).then(work);
+    inFlight.set(batchId, run);
+    run.catch(() => {}).finally(() => { if (inFlight.get(batchId) === run) inFlight.delete(batchId); });
+    return run;
+  }
   return Object.freeze({
     async translateBatch({ actor, input }) {
       authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
       requireValue(actor.actorType === 'human' && actor.source === 'authenticated_identity_provider', 'AUTHENTICATED_OWNER_REQUIRED');
       requireValue(closed(input, ['batchId', 'expectedRevision']) && isCanonicalFrozenRef(input.batchId) &&
         Number.isSafeInteger(input.expectedRevision) && input.expectedRevision >= 0, 'INPUT_INVALID');
-      const document = await repository.readSnapshot();
-      const batches = isObject(document?.runtime?.aDiscoveryBatches) ? document.runtime.aDiscoveryBatches : {};
-      requireValue(Object.hasOwn(batches, input.batchId), 'BATCH_REQUIRED');
-      const batch = assertADiscoveryBatch(batches[input.batchId]);
-      requireValue(sameTeamUser(batch.ownerUserId, actor.userId), 'OWNER_CONFLICT');
-      requireValue(batch.revision === input.expectedRevision, 'BATCH_CHANGED');
-      const saved = readDiscoveryTitleTranslations(document);
-      const products = readADiscoveryBatchMarketProducts({ document, batch });
-      const pending = products.filter(product => {
-        const record = saved[product.productId];
-        return !(isObject(record) && record.sourceTitle === product.title);
-      });
-      const cached = products.length - pending.length;
-      if (pending.length === 0) {
-        return { translated: 0, cached, remaining: 0, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, model: null };
-      }
-      const items = pending.slice(0, limit);
-      const remaining = pending.length - items.length;
-      const outcome = await translator.translateTitles({ items });
-      const at = serverClock();
-      requireValue(typeof at === 'string' && Number.isFinite(Date.parse(at)), 'TITLE_TRANSLATION_CLOCK_INVALID');
-      const sourceTitles = new Map(items.map(item => [item.productId, item.title]));
-      // Every record carries the whole call's token usage as its provenance; the route reports that call once, never a sum.
-      const records = outcome.translations.map(translation => {
-        requireValue(sourceTitles.has(translation.productId), 'TITLE_TRANSLATION_RESULT_CONFLICT');
-        return assertDiscoveryTitleTranslationRecord({
-          schemaVersion: DISCOVERY_TITLE_TRANSLATION_SCHEMA_VERSION,
-          productId: translation.productId,
-          sourceTitle: sourceTitles.get(translation.productId),
-          titleZh: translation.titleZh,
-          model: outcome.model,
-          jobId: outcome.jobId,
-          translatedAt: at,
-          usage: { ...outcome.usage }
-        }, { productId: translation.productId });
-      });
-      await repository.transact(currentDocument => {
-        if (!isObject(currentDocument.runtime)) currentDocument.runtime = {};
-        if (!Object.hasOwn(currentDocument.runtime, DISCOVERY_TITLE_TRANSLATION_COLLECTION)) {
-          currentDocument.runtime[DISCOVERY_TITLE_TRANSLATION_COLLECTION] = {};
-        }
-        const store = currentDocument.runtime[DISCOVERY_TITLE_TRANSLATION_COLLECTION];
-        requireValue(isObject(store), 'TITLE_TRANSLATION_REPOSITORY_INVALID');
-        for (const record of records) store[record.productId] = structuredClone(record);
-        return { changed: true, document: currentDocument, result: records.length };
-      });
-      return { translated: records.length, cached, remaining, usage: { ...outcome.usage }, model: outcome.model };
+      return oneAtATime(input.batchId, () => translateNow({ actor, input }));
     }
   });
+  async function translateNow({ actor, input }) {
+    const document = await repository.readSnapshot();
+    const batches = isObject(document?.runtime?.aDiscoveryBatches) ? document.runtime.aDiscoveryBatches : {};
+    requireValue(Object.hasOwn(batches, input.batchId), 'BATCH_REQUIRED');
+    const batch = assertADiscoveryBatch(batches[input.batchId]);
+    requireValue(sameTeamUser(batch.ownerUserId, actor.userId), 'OWNER_CONFLICT');
+    requireValue(batch.revision === input.expectedRevision, 'BATCH_CHANGED');
+    const saved = readDiscoveryTitleTranslations(document);
+    const products = readADiscoveryBatchMarketProducts({ document, batch });
+    const pending = products.filter(product => {
+      const record = saved[product.productId];
+      return !(isObject(record) && record.sourceTitle === product.title);
+    });
+    const cached = products.length - pending.length;
+    if (pending.length === 0) {
+      return { translated: 0, cached, remaining: 0, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, model: null };
+    }
+    const items = pending.slice(0, limit);
+    const remaining = pending.length - items.length;
+    const outcome = await translator.translateTitles({ items });
+    const at = serverClock();
+    requireValue(typeof at === 'string' && Number.isFinite(Date.parse(at)), 'TITLE_TRANSLATION_CLOCK_INVALID');
+    const sourceTitles = new Map(items.map(item => [item.productId, item.title]));
+    // Every record carries the whole call's token usage as its provenance; the route reports that call once, never a sum.
+    const records = outcome.translations.map(translation => {
+      requireValue(sourceTitles.has(translation.productId), 'TITLE_TRANSLATION_RESULT_CONFLICT');
+      return assertDiscoveryTitleTranslationRecord({
+        schemaVersion: DISCOVERY_TITLE_TRANSLATION_SCHEMA_VERSION,
+        productId: translation.productId,
+        sourceTitle: sourceTitles.get(translation.productId),
+        titleZh: translation.titleZh,
+        model: outcome.model,
+        jobId: outcome.jobId,
+        translatedAt: at,
+        usage: { ...outcome.usage }
+      }, { productId: translation.productId });
+    });
+    await repository.transact(currentDocument => {
+      if (!isObject(currentDocument.runtime)) currentDocument.runtime = {};
+      if (!Object.hasOwn(currentDocument.runtime, DISCOVERY_TITLE_TRANSLATION_COLLECTION)) {
+        currentDocument.runtime[DISCOVERY_TITLE_TRANSLATION_COLLECTION] = {};
+      }
+      const store = currentDocument.runtime[DISCOVERY_TITLE_TRANSLATION_COLLECTION];
+      requireValue(isObject(store), 'TITLE_TRANSLATION_REPOSITORY_INVALID');
+      for (const record of records) store[record.productId] = structuredClone(record);
+      return { changed: true, document: currentDocument, result: records.length };
+    });
+    return { translated: records.length, cached, remaining, usage: { ...outcome.usage }, model: outcome.model };
+  }
 }

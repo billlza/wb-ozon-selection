@@ -210,6 +210,20 @@
 - 部署那一刻正在跑的插件作业照旧随旧进程一起没了，新进程开门前把它们记成失败（`capture_job_lost`），要重新点一次；最好在没人采集时部署。
 - 测试：`tests/process-handoff.test.mjs`（等着时只回 `/api/live`、挂着的请求接手后照常处理、超时回 503、走掉的不再处理、等太久报原来的错、别的错马上停）；`tests/process-handoff-db.test.mjs` 在真 Postgres 上起两个服务进程：第二个等着、`/api/live` 说在等、挂着的请求不动，第一个停下后第二个接手并答上挂着的请求。数据库测试的跑法多分配了一个端口（`SELECTION_REVIEW_TEST_SECOND_PORT`）。
 
+### 多人中央服务第 3 步之三（续）：中央模式自己的两道门（2026-10-16）
+
+`assertRuntimeBoundaries`（`lib/multi-user-central-runtime.mjs`）在中央模式下还要两样东西才放行，原来 `server.mjs` 两样都给不了：
+
+- **后台干活的登记**：`lib/worker-registry.mjs` 新加 `createSingleActiveProcessWorkerRegistry`。拿着 Postgres 进程租约时（同一时间只有这一个服务进程），服务自己的后台工作都在这个进程里，它的登记就是整个服务的，算 `multiUserReady`；没有租约（主人 Mac 上的 JSON）还是原来的本机登记。D/E 照常给本进程的工作发心跳（`workerRegistryHoldsInProcessWorkers`）。
+- **旧的写入口**：`legacyBusinessMutationPathsPresent` 原来写死 `true`。这次把页面能碰到的 106 个业务写入口逐个查了（AGENTS 0A：业务写要绑当前版本，连点和重发不能重复建作业、调 AI、扣费、写平台、推进阶段）：89 个绑当前版本；14 个是新建、恢复、确认这类，靠幂等键或状态防重复。剩下的问题改了三处，然后改成 `false`：
+  - 共用证据包 `POST /api/evidence-packs` 原来谁后发谁算数，旧页面或重发能把整个范围的佣金、汇率、运费证据改回旧的。现在只能往新走：同一份再发一次就是原来那份（200，`replayed: true`）；取得时间不比现有的晚就回 409 `evidence_pack_not_newer`，原来那份照旧有效。
+  - 生成 Ozon 属性建议（会花 AI 的钱，结果不保存）原来每点一次花一次。现在同一件商品同一版资料 10 分钟内只问一次，连点、重发、两个人同时点都拿同一份，回复里 `reused: true`、`paidCalls: 0`，页面提示「这次没有再花钱」（`lib/paid-answer-reuse.mjs`）。
+  - 找新品批次的标题翻译，两个人同时点（批次是团队共用的）原来会各花一次。现在同一批次一次只翻一个，后来的等前面那个存好再看，已翻过的不再花钱。
+  - 这三处的进程内排队和缓存靠的是「同一时间只有一个服务进程」（进程租约），中央部署本来就是这样。
+- 查过但没改的，以后照这个口径看：评论（候选和工作流两种）重发会多一条评论，但评论不建作业、不花钱，只是记录；`/api/automation/claim`（Codex 自动审核用，页面不调）按 `runId` 去重；找新品批次的 `expectedRevision` 一直是 0，因为批次内容做完就不再变，那几个动作各自按商品幂等（同一件商品重复选、重复不要都只算一次），但一个人点「不要」、另一个人在旧页面上点「选」两者都会成，要互相拦属于改业务规则，没动；B 证据准备和刷新、A 估价重点会再读一次官方来源（不花钱），会多存一版。
+- 测试：`tests/worker-registry.test.mjs`、`tests/paid-answer-reuse.test.mjs`、`tests/discovery-title-translation.test.mjs`（同时点两次只翻一次；前一次失败不挡后一次）、`tests/collaboration-api.test.mjs`（证据包重发和旧证据）、`tests/c1-attribute-routes-source-contract.test.mjs`；`tests/multi-user-central-runtime.test.mjs` 第一次真正走到中央模式放行和 `MULTI_USER_CENTRAL_RUNTIME_NOT_READY`，并要求 `server.mjs` 只有在上面三处防护都在时才说 `false`。
+- 中央模式还起不来，卡在第 4 步：关键词服务不在本机模式就拒绝、Ozon DE 只会从 Keychain 读密钥、D 批量导入要中央 worker、几个证据读取只认本机地址（和中央模式要求的 https 冲突）、AI 网关地址中央模式要 https、Render 给的 `PORT` 还没读（服务读的是 `SELECTION_REVIEW_PORT`）。
+
 ### 本轮验证
 
 - 这次只改了文档（`CURRENT.md`、`HANDOFF.md`，以及 `PROJECT_STATE.md` 的更新日期说明和 §2.3 的 A 行，A 行对齐了代码 `lib/codex-independence.mjs` 里的 `not_complete`），代码和 `663f6e2` 一模一样。`663f6e2` 在 GitHub 上两组检查（纯测试、隔离接口测试）都通过了：[CI 第 39 次运行](https://github.com/billlza/wb-ozon-selection/actions/runs/38386114208)。

@@ -190,6 +190,7 @@ import { createC1SupplyAttributeBackfillUseCase, C1SupplyAttributeBackfillError 
 import { createC1OzonAttributeMappingUseCase, C1OzonAttributeMappingError } from "./lib/c1-ozon-attribute-mapping-use-case.mjs";
 import { createOzonDictionaryValueReader, createOzonDictionaryValuesReader } from "./lib/ozon-dictionary-value-reader.mjs";
 import { createC1OzonAttributeProposer, C1OzonAttributeProposalError, OZON_ATTRIBUTE_PROPOSAL_MAX_ATTRIBUTES } from "./lib/c1-ozon-attribute-proposal.mjs";
+import { createPaidAnswerReuse } from "./lib/paid-answer-reuse.mjs";
 import { resolveC1SkuRightsReviewForFacts } from "./lib/c1-sku-rights-review.mjs";
 import { verifyC1ProductFacts } from "./lib/c1-product-plan.mjs";
 import { refreshC1FrozenPlatformSchema, C1FrozenSchemaRefreshError } from "./lib/c1-frozen-schema-refresh.mjs";
@@ -561,6 +562,8 @@ const aDiscoveryRuntime = createADiscoveryRuntimeServices({repository:businessSt
   fetchImpl:fetch,onBatchReady:input=>aDiscoveryCandidateImport.importBatch(input),onSelectProduct:input=>aDiscoveryCandidateImport.importSelectedProduct(input),
   onError:()=>{console.error('A_DISCOVERY_RUNTIME_STOPPED: 商品发现服务因异常停止，请核对已保存的批次和作业。');}
 });
+/** One paid attribute proposal per product version: a repeat click or a second person within minutes pays nothing. */
+const c1OzonAttributeProposals = createPaidAnswerReuse();
 /** Display-only Chinese titles for discovered products; the gateway holds its own credentials, so none are passed here. */
 const aDiscoveryTitleTranslationUseCase = (() => {
   const gatewayUrl = typeof runtimeConfiguration.aiGatewayUrl === 'string' ? runtimeConfiguration.aiGatewayUrl.trim() : '';
@@ -993,7 +996,10 @@ const runtimeArchitecture = assertRuntimeBoundaries({
   identityProvider: runtimeIdentityProvider,
   softwareJobStore,
   workerRegistry,
-  legacyBusinessMutationPathsPresent: true
+  // Audited 2026-10-16 (HANDOFF.md, central plan step 3c): every business write a page can reach binds the current
+  // revision, or is a creation, resume or acknowledgement guarded by its idempotency key or state; a repeat click pays
+  // for no second AI call, and shared evidence only moves forward in time.
+  legacyBusinessMutationPathsPresent: false
 });
 const dispatchSkillCatalog = createDispatchSkillCatalog({
   directory: process.env.SELECTION_REVIEW_DISPATCH_SKILLS_DIR
@@ -5882,28 +5888,41 @@ async function handleApi(req, res, pathname) {
       }
       const scopeKey = evidenceScopeKey(kind, scope);
       const timestamp = now();
-      const existing = (data.evidencePacks || []).find((pack) => pack.kind === kind && evidenceScopeMatches(kind, pack.scope, scope) && pack.status === "active");
-      if (existing) existing.status = "superseded";
-      const pack = {
-        id: `EP-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        kind,
-        scope,
-        scopeKey,
+      const content = {
         summary: input.summary.trim(),
         sourceType: input.sourceType.trim(),
         sourceRef: String(input.sourceRef || "").trim(),
         checkedAt: new Date(input.checkedAt).toISOString(),
         expiresAt: input.expiresAt ? new Date(input.expiresAt).toISOString() : null,
         ruleVersion: String(input.ruleVersion || "").trim(),
-        evidenceData,
+        evidenceData
+      };
+      const existing = (data.evidencePacks || []).find((pack) => pack.kind === kind && evidenceScopeMatches(kind, pack.scope, scope) && pack.status === "active");
+      // Shared evidence only moves forward in time: the same pack sent again is the saved one, and a pack taken no later
+      // than the active one (an old tab, a resent request) is refused instead of rolling every SKU in the scope back.
+      if (existing) {
+        const sameContent = Object.entries(content).every(([key, value]) => JSON.stringify(existing[key] ?? null) === JSON.stringify(value ?? null));
+        if (sameContent) return { pack: existing, replayed: true };
+        if (Date.parse(existing.checkedAt) >= Date.parse(content.checkedAt)) {
+          throw httpError(409, `这个范围已有 ${existing.checkedAt} 取得的证据，不比这份旧；这份没有保存，原来那份照旧有效`, {
+            code: "evidence_pack_not_newer", activeEvidencePackId: existing.id });
+        }
+        existing.status = "superseded";
+      }
+      const pack = {
+        id: `EP-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        kind,
+        scope,
+        scopeKey,
+        ...content,
         status: "active",
         createdAt: timestamp,
         createdBy: String(input.createdBy || "task").trim()
       };
       data.evidencePacks.push(pack);
-      return pack;
+      return { pack, replayed: false };
     });
-    return json(res, 201, { evidencePack: result });
+    return json(res, result.replayed ? 200 : 201, { evidencePack: result.pack, replayed: result.replayed });
   }
 
   // 平台和店铺：录入页和上架关口的「平台 → 店铺」选择用。只读，只说身份配没配，不带卖家号等身份字段。
@@ -8599,7 +8618,7 @@ async function handleApi(req, res, pathname) {
       const settledByDeclaration = new Set((verifiedPlan.productAttributes?.requiredPlatformFields ?? [])
         .filter(item => item.fact?.verificationStatus === "confirmed" && item.resolvedFromOwnerAttributeMapping !== true)
         .flatMap(item => [String(item.fieldKey), ...(Array.isArray(item.sourceAttributeKeys) ? item.sourceAttributeKeys.map(String) : [])]));
-      const proposal = await proposer.propose({
+      const { value: proposal, reused } = await c1OzonAttributeProposals.once(`${current.id}:${current.dataRevision}`, () => proposer.propose({
         attributes: schema.attributes
           .filter(item => Number(item.dictionaryId) > 0 || item.required === true)
           .filter(item => !settledByDeclaration.has(String(item.fieldKey)))
@@ -8607,7 +8626,7 @@ async function handleApi(req, res, pathname) {
         facts, categoryLabel: schema.categoryName ?? category, store: schema.store, category,
         candidateId: current.id, skuPackageId: sku.skuPackageId, dataRevision: String(current.dataRevision),
         comparableAttributes, comparableListings, supplierReference
-      });
+      }));
       // 主人签字定下的值（品牌就是这样）——它不缺依据，只缺「平台给这个值的编号」。
       // 这一步**不经过模型**：拿声明里的那个值去字典里逐字搜，搜到就把编号补上，
       // 依据仍然记成那条声明。搜不到就不加这一行，照实缺着。
@@ -8657,7 +8676,7 @@ async function handleApi(req, res, pathname) {
         rows: [...declaredRows, ...proposal.rows],
         suggestedCount: proposal.suggestedCount + declaredRows.length
       };
-      return json(res, 200, { proposal: merged, platformWrites: 0, paidCalls: proposal.jobIds.length });
+      return json(res, 200, { proposal: merged, platformWrites: 0, paidCalls: reused ? 0 : proposal.jobIds.length, reused });
     } catch (error) {
       if (error instanceof C1OzonAttributeProposalError) {
         return json(res, 422, { code: error.code, message: `生成属性建议失败，没有改动任何数据：${error.detail ?? error.code}`,

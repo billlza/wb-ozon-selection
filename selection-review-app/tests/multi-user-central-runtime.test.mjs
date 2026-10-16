@@ -232,6 +232,35 @@ test("当前本地运行明确标记为不具备多人并发，中央模式缺�
   }), /Production state has no central persistence boundary/);
 });
 
+test("central mode starts only with every boundary ready and no unguarded write left; the server says so only with its guards in place", async () => {
+  const configuration = { schemaVersion: "selection-review-runtime-configuration-v1", deploymentMode: "central_test" };
+  const ready = {
+    configuration,
+    businessStateRepository: { boundaryType: "business_state_repository", authoritative: true, adapter: "postgres",
+      concurrencyScope: "database_transaction", multiUserReady: true, readSnapshot() {}, transact() {}, readCandidates() {}, transactCandidates() {} },
+    identityProvider: { boundaryType: "runtime_identity_provider", providerType: "team_accounts", multiUserReady: true, resolveActor() {} },
+    softwareJobStore: { boundaryType: "software_job_store", persistenceClass: "business_state_repository", multiUserReady: true },
+    workerRegistry: { boundaryType: "worker_registry", persistenceClass: "single_active_process", multiUserReady: true, findEligible() {} }
+  };
+  const status = assertRuntimeBoundaries({ ...ready, legacyBusinessMutationPathsPresent: false });
+  assert.deepEqual([status.status, status.multiUserReady, status.workerRegistry, status.limitations.length],
+    ["central_runtime_ready", true, "single_active_process", 0]);
+  for (const notReady of [{ legacyBusinessMutationPathsPresent: true }, {},
+    { workerRegistry: { ...ready.workerRegistry, multiUserReady: false }, legacyBusinessMutationPathsPresent: false },
+    { identityProvider: { ...ready.identityProvider, multiUserReady: false }, legacyBusinessMutationPathsPresent: false }]) {
+    assert.throws(() => assertRuntimeBoundaries({ ...ready, ...notReady }), error => error.code === "MULTI_USER_CENTRAL_RUNTIME_NOT_READY");
+  }
+
+  // The server claims no unguarded write only alongside the guards the 2026-10-16 audit added.
+  const serverSource = await readFile(path.join(appDir, "server.mjs"), "utf8");
+  assert.equal(serverSource.split("legacyBusinessMutationPathsPresent:").length - 1, 1);
+  assert.match(serverSource, /legacyBusinessMutationPathsPresent: false\n\}\);/);
+  assert.match(serverSource, /c1OzonAttributeProposals\.once\(/, "attribute proposals: a repeat click pays once");
+  assert.match(serverSource, /code: "evidence_pack_not_newer"/, "shared evidence only moves forward in time");
+  const translation = await readFile(path.join(appDir, "lib/discovery-title-translation-store.mjs"), "utf8");
+  assert.match(translation, /return oneAtATime\(input\.batchId, /, "title translation: one click at a time per batch");
+});
+
 test("服务先初始化身份和闭集新A中断对账，仅显式配置可启动消费者且不恢复旧作业", async () => {
   const serverSource = await readFile(path.join(appDir, "server.mjs"), "utf8");
   const identityIndex = serverSource.indexOf("await runtimeIdentityProvider.initialize()");

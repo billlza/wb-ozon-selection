@@ -104,3 +104,33 @@ test('a translator failure persists nothing', async () => {
   assert.equal(JSON.stringify(await f.repository.readSnapshot()), before);
   assert.deepEqual(readDiscoveryTitleTranslations(await f.repository.readSnapshot()), {});
 });
+
+test('two clicks at once on one batch pay once: the second waits and finds the saved titles', async () => {
+  const f = await completedBatch([market(2107989738, 'Корзина для белья'), market(2107989739, 'Ящик для игрушек')]);
+  let calls = 0; let release; const gate = new Promise(resolve => { release = resolve; });
+  const slow = { maxTitlesPerCall: 20, async translateTitles({ items }) { calls += 1; await gate;
+    return { translations: items.map(item => ({ productId: item.productId, titleZh: `中文 ${item.productId}` })),
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 }, model: DISCOVERY_TITLE_TRANSLATION_MODEL, jobId: 'job:synthetic-3', completedAt: f.clock() }; } };
+  const usecase = createADiscoveryTitleTranslationUseCase({ repository: f.repository, serverClock: f.clock, translator: slow });
+  const first = usecase.translateBatch({ actor: f.actor, input: f.input });
+  const second = usecase.translateBatch({ actor: f.actor, input: f.input });
+  await new Promise(resolve => setImmediate(resolve));
+  release();
+  assert.equal((await first).translated, 2);
+  assert.deepEqual(await second, { translated: 0, cached: 2, remaining: 0, usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, model: null });
+  assert.equal(calls, 1);
+});
+
+test('a click that fails does not hold up the next one on the same batch', async () => {
+  const f = await completedBatch([market(2107989740, 'Вешалка')]);
+  let calls = 0;
+  const flaky = { maxTitlesPerCall: 20, async translateTitles({ items }) { calls += 1;
+    if (calls === 1) throw new DiscoveryTitleTranslationError('GATEWAY_FAILED', 'synthetic outage');
+    return { translations: items.map(item => ({ productId: item.productId, titleZh: '衣架' })),
+      usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, model: DISCOVERY_TITLE_TRANSLATION_MODEL, jobId: 'job:synthetic-4', completedAt: f.clock() }; } };
+  const usecase = createADiscoveryTitleTranslationUseCase({ repository: f.repository, serverClock: f.clock, translator: flaky });
+  const [failed, retried] = await Promise.allSettled([usecase.translateBatch({ actor: f.actor, input: f.input }),
+    usecase.translateBatch({ actor: f.actor, input: f.input })]);
+  assert.equal(failed.reason?.code, 'GATEWAY_FAILED');
+  assert.equal(retried.value?.translated, 1);
+});
