@@ -128,6 +128,11 @@ function assertJsonContentType(headers) {
   }
 }
 
+/** A plugin's origin as Chrome writes it: chrome-extension:// and the 32-letter id. */
+export function isChromeExtensionOrigin(value) {
+  return CHROME_EXTENSION_ORIGIN_PATTERN.test(String(value || ""));
+}
+
 export function isTrustedInternalApiRequest(headers, expectedToken) {
   if (!expectedToken) return false;
   const provided = String(headers["x-selection-review-internal-token"] || "");
@@ -145,6 +150,9 @@ export function assertTrustedApiRequest({
   trustedServiceOrigins = [],
   allowedReviewOrigins = [],
   allowedExtensionOrigins = [],
+  // Under team accounts every computer loads the plugin with its own id, and the computer's key (checked after this) says
+  // which computer a call is from; any plugin origin may then knock, and only a key lets it in.
+  anyChromeExtensionOrigin = false,
   internalRequestToken = ""
 }) {
   const host = normalizeHost(headers.host);
@@ -169,7 +177,7 @@ export function assertTrustedApiRequest({
 
   if (isExtensionEndpoint(pathname)) {
     const allowed = new Set(allowedExtensionOrigins.map((entry) => normalizeChromeExtensionOrigin(entry)));
-    if (!origin || !allowed.has(origin)) {
+    if (!origin || !(allowed.has(origin) || (anyChromeExtensionOrigin === true && CHROME_EXTENSION_ORIGIN_PATTERN.test(origin)))) {
       throw boundaryError(403, "只接受已配置的本机Chrome扩展来源", "extension_origin_forbidden");
     }
     return true;

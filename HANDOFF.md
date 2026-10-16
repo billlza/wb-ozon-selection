@@ -171,8 +171,21 @@
 - 插件 1.4.2 → 1.5.0（`manifest.json`、`server.mjs` 的 `REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION`、`src/extensionStatus.js`）：存钥匙、带钥匙；服务回 401 时说「这台电脑还没加进来」（`workstation_not_added`），和 403「不认这个插件」分开；状态里告诉页面它拿着哪台电脑的钥匙，钥匙本身不回给页面。合进 main、Mac 升级后要到 chrome://extensions 重新加载插件。
 - 谁在线：心跳只记在服务进程内存里，重启后半分钟内就又齐了；只用来显示，不派也不收作业。
 - 顺手修了：Seerfar 一轮的结果从加上起就交不回来。请求边界（`lib/http-api-boundary.mjs` 的 `isExtensionEndpoint`）的插件路由单里漏了 `/api/seerfar-selection/rounds/<id>/result`，插件交结果被当成网页请求、回 403，插件那边显示「插件身份未获服务端允许」。现在补上了，`server.mjs` 也改用同一份路由单，不再各写一份。
-- 还没做：插件还只连 `http://127.0.0.1:4317`（下一步 3b 让插件能填服务地址）；作业租约、中央模式能起来是 3c。开着的工作台页面仍会把排着的录入作业递给自己那台的插件，哪台先领到就是哪台的。
+- 还没做：插件还只连 `http://127.0.0.1:4317`（3b 让插件能填服务地址，见下一节）；作业租约、中央模式能起来是 3c。开着的工作台页面仍会把排着的录入作业递给自己那台的插件，哪台先领到就是哪台的。
 - 测试：`tests/workstation-access.test.mjs`（发钥匙、核对、移除、在线、上限）；`tests/workstation-extension.test.mjs`（插件存钥匙、每次带上、401 和 403 分开、桥接不回传钥匙）；`tests/workstation-ui.test.mjs`（页面交钥匙、电脑名单的样子）；`tests/workstations-db.test.mjs` 要真数据库，起一个团队账号的服务：没钥匙不收，A 台领的作业 B 台交不了、A 台能交，移除后 A 的钥匙失效，归在 `DATABASE_TESTS`。
+
+### 多人中央服务第 3 步之二：插件里填团队服务的网址（2026-10-16）
+
+团队的五六台电脑要连同一个中央服务，插件不能再只认 `http://127.0.0.1:4317`。主人自己的 Mac 什么都不用改：不填就和以前一样连这台电脑上的工作台。
+
+- 设置页（`extension/1688-capture/options.html`、`options.js`）：点浏览器右上角的插件图标就打开（也能在 chrome://extensions 里点「扩展程序选项」）。填团队服务的网址，点「连上这个网址」，Chrome 会问能不能让插件访问这个网址，选「允许」；「改回这台电脑上的工作台」回到本机。只收 `http://127.0.0.1:4317` 或 https 网址（只填域名也行，按 https 算），带路径、问号、密码的、http 的都不收（`capture-request.js` 的 `normalizeServiceAddress`）。
+- 插件 1.6.0：清单多了 `optional_host_permissions: ["https://*/*"]`（装的时候不要，填网址时只问那一个网址）和 `options_ui`。填好的地址存在插件自己的存储里（`selectionReviewService`）；心跳、领作业、交结果、取图都发往这个地址（`background.js` 的 `postToService`）。页面桥（`bridge.js`）在本机由清单挂上，在团队服务的页面上由插件后台登记一个只对那个网址的内容脚本（`syncServiceBridge`，每次后台起来都核对一遍）；页面消息只认挂着的那个网址自己发的。只有插件自己的设置页能改地址（核对发送者是 `options.html`），有作业在做时不让改。换走时把旧网址的访问许可还回去。钥匙跟着发它的那个服务走：改回本机时本机看不到团队的钥匙，再改回去钥匙还在。
+- Chrome 刚唤醒插件后台时，它先读一下存储里的地址再回答页面（`handleMessage` 里 `settingsLoaded`）；读不出来就按本机的工作台算。
+- 服务端：团队账号下插件回传不再要求把每台电脑的插件 id 配进 `SELECTION_REVIEW_ALLOWED_EXTENSION_ORIGINS`（每台电脑装的插件 id 都不一样），任何 `chrome-extension://` 加 32 个字母的来源都能敲门，进门靠这台电脑的钥匙（`lib/http-api-boundary.mjs` 的 `anyChromeExtensionOrigin`，`server.mjs` 的 `chromeExtensionCors`）。网页来源和不像插件的来源照旧不收；不开团队账号时照旧只认配置的插件 id。
+- 页面：插件连的不是这个网址时，顶上显示「插件连的是别的服务地址 · 点浏览器右上角的插件图标，改成这个网址」（`other_service`），「干活的电脑」里也这样说；没找到插件时提示去插件图标里看连的是哪个网址。开始采集被拒的两句话（`src/captureStart.js`）也改成先看插件连的网址。
+- 合进 main、Mac 升级后要到 chrome://extensions 重新加载插件（1.6.0）。
+- 还没做（3c）：中央模式能起来、作业租约（作业派给具体哪台，那台掉线能收回）、新旧进程交接。
+- 测试：`tests/service-address-extension.test.mjs`（网址怎么算、只有设置页能改、要许可、桥和回传跟着地址、钥匙只给发它的服务、作业中不让改、后台刚醒先读地址、设置页先问许可再告诉后台）；`tests/http-api-boundary.test.mjs` 加了团队账号下任何插件来源都能敲门；`tests/workstations-db.test.mjs` 改成两台电脑各用自己的插件 id、服务端不配插件 id。
 
 ### 本轮验证
 

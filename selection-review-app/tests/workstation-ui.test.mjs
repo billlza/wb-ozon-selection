@@ -98,16 +98,19 @@ test("the computers panel shows this computer, who is online, and adds or remove
   const chunk = result.output.find(item => item.type === "chunk" && item.isEntry);
   const { render } = await import(`data:text/javascript;base64,${Buffer.from(chunk.code).toString("base64")}`);
   const online = { workstationId: WORKSTATION_ID, name: "老板甲的 MacBook", addedAt: "2026-10-16T18:00:00.000Z", online: true,
-    lastSeenAt: "2026-10-16T18:00:00.000Z", extensionVersion: "1.5.0" };
+    lastSeenAt: "2026-10-16T18:00:00.000Z", extensionVersion: "1.6.0" };
   const offline = { workstationId: "workstation:00000000-0000-4000-8000-000000000012", name: "测试丙的电脑", addedAt: "2026-10-16T18:00:00.000Z",
     online: false, lastSeenAt: null, extensionVersion: null };
   const loaded = workstations => ({ status: "loaded", workstations, error: "" });
 
   const noPlugin = render({ thisComputer: { answered: false, workstation: null }, list: loaded([online]) });
   assert.match(noPlugin, /干活的电脑/u); assert.match(noPlugin, /没有找到插件/u); assert.doesNotMatch(noPlugin, /把这台电脑加进来/u);
+  // The plugin here works for another address: it would not take this service's key, so the page says where to change it.
+  const elsewhere = render({ thisComputer: { answered: true, otherService: true, workstation: null }, list: loaded([online]) });
+  assert.match(elsewhere, /插件连的是别的服务地址.*插件图标，改成这个网址/u); assert.doesNotMatch(elsewhere, /把这台电脑加进来/u);
   const notYet = render({ thisComputer: { answered: true, workstation: null }, list: loaded([online, offline]) });
   assert.match(notYet, /把这台电脑加进来/u); assert.match(notYet, /maxLength="40"/u);
-  assert.match(notYet, /老板甲的 MacBook.*在线 · 插件 v1\.5\.0/u); assert.match(notYet, /测试丙的电脑.*不在线/u);
+  assert.match(notYet, /老板甲的 MacBook.*在线 · 插件 v1\.6\.0/u); assert.match(notYet, /测试丙的电脑.*不在线/u);
   assert.equal((notYet.match(/>移除</gu) || []).length, 2);
   const here = render({ thisComputer: { answered: true, workstation: { workstationId: WORKSTATION_ID, name: "老板甲的 MacBook" } }, list: loaded([online, offline]) });
   assert.match(here, /这台电脑是「老板甲的 MacBook」，已经加进来了/u); assert.match(here, /老板甲的 MacBook（这台）/u);

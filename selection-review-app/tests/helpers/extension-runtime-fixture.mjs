@@ -8,10 +8,12 @@ export const OZON_URL = "https://www.ozon.ru/product/123456789/";
 export const PING = "SELECTION_REVIEW_EXTENSION_BACKGROUND_PING";
 export const START = "SELECTION_REVIEW_1688_CAPTURE_REQUEST";
 export const SENDER = { url: "http://127.0.0.1:4317/" };
+export const EXTENSION_ID = "abcdefghijklmnopabcdefghijklmnop";
+export const SETTINGS_SENDER = { id: EXTENSION_ID, url: `chrome-extension://${EXTENSION_ID}/options.html` };
 export const supplierJob = (extra = {}) => ({
   captureId: "job-1", candidateId: "candidate-1", token: "synthetic-fixture-token", dataRevision: 2,
   mode: "a_supplier_capture", sourceUrl: SUPPLIER_URL, expectedOfferId: "876240928352",
-  requiredExtensionVersion: "1.5.0", attempt: 1, ...extra
+  requiredExtensionVersion: "1.6.0", attempt: 1, ...extra
 });
 export const ozonJob = (extra = {}) => ({
   captureId: "ozon-1", candidateId: "candidate-2", token: "synthetic-fixture-token", dataRevision: 4,
@@ -23,16 +25,29 @@ export function event() {
     emit: (...args) => { for (const fn of [...listeners]) fn(...args); }, listeners };
 }
 export function harness(options = {}) {
-  const calls = { requests: [], created: [], removed: [], executions: [], alarmCreates: [], stored: [] };
-  // The plugin's own storage: holds at most the key a team's central service gave this computer.
-  const stored = options.workstation ? { selectionReviewWorkstation: options.workstation } : {};
+  const calls = { requests: [], created: [], removed: [], executions: [], alarmCreates: [], stored: [], permissionRemovals: [], optionsOpened: 0 };
+  // The plugin's own storage: the service it works for (unless it is this computer's workbench) and that service's key.
+  const stored = { ...(options.workstation ? { selectionReviewWorkstation: options.workstation } : {}),
+    ...(options.service ? { selectionReviewService: options.service } : {}) };
+  // Addresses the person let the plugin onto, and the page bridge registered for a team's service.
+  const granted = new Set(options.granted || []);
+  const bridges = new Map();
   let tab = null;
   let alarm = options.alarm || null;
   const chromeApi = {
-    runtime: { getManifest: () => ({ version: "1.5.0" }), onMessage: event(), onInstalled: event(), onStartup: event() },
+    runtime: { id: EXTENSION_ID, getManifest: () => ({ version: "1.6.0" }), getURL: (file) => `chrome-extension://${EXTENSION_ID}/${file}`,
+      openOptionsPage: async () => { calls.optionsOpened += 1; }, onMessage: event(), onInstalled: event(), onStartup: event() },
+    action: { onClicked: event() },
+    permissions: {
+      contains: async ({ origins }) => origins.every((origin) => granted.has(origin)),
+      remove: async ({ origins }) => { calls.permissionRemovals.push(...origins); for (const origin of origins) granted.delete(origin); return true; }
+    },
     alarms: { onAlarm: event(), get: async () => alarm, create: async (name, config) => { calls.alarmCreates.push({ name, config }); alarm = { name, ...config }; } },
     storage: { local: {
-      get: async (key) => (Object.hasOwn(stored, key) ? { [key]: structuredClone(stored[key]) } : {}),
+      get: async (keys) => {
+        if (options.storageReadFails) throw new Error("synthetic storage read failure");
+        return Object.fromEntries([keys].flat().filter((key) => Object.hasOwn(stored, key)).map((key) => [key, structuredClone(stored[key])]));
+      },
       set: async (values) => {
         if (options.storageFails) throw new Error("synthetic storage failure");
         calls.stored.push(structuredClone(values));
@@ -49,15 +64,26 @@ export function harness(options = {}) {
       get: async () => tab,
       remove: async (id) => { calls.removed.push(id); if (options.removeFails) throw new Error("private query secret"); }
     },
-    scripting: { executeScript: async (input) => {
-      calls.executions.push(input);
-      if (options.execute) return options.execute({ tab, input });
-      const isOzon = input.args[0] === "123456789";
-      return [{ result: { status: "captured", evidence: isOzon
-        ? { productId: "123456789", productUrl: OZON_URL }
-        : { offerId: "876240928352", sourceUrl: SUPPLIER_URL } } }];
-    } }
+    scripting: {
+      getRegisteredContentScripts: async ({ ids }) => ids.filter((id) => bridges.has(id)).map((id) => structuredClone(bridges.get(id))),
+      registerContentScripts: async (scripts) => {
+        if (options.bridgeFails) throw new Error("synthetic registration failure");
+        for (const script of scripts) { if (bridges.has(script.id)) throw new Error("duplicate script id"); bridges.set(script.id, structuredClone(script)); }
+      },
+      unregisterContentScripts: async ({ ids }) => { for (const id of ids) bridges.delete(id); },
+      executeScript: async (input) => {
+        calls.executions.push(input);
+        if (options.execute) return options.execute({ tab, input });
+        const isOzon = input.args[0] === "123456789";
+        return [{ result: { status: "captured", evidence: isOzon
+          ? { productId: "123456789", productUrl: OZON_URL }
+          : { offerId: "876240928352", sourceUrl: SUPPLIER_URL } } }];
+      }
+    }
   };
+  calls.granted = granted;
+  calls.bridges = bridges;
+  calls.storedNow = stored;
   const fetchImpl = async (url, input) => {
     calls.requests.push({ url, body: JSON.parse(input.body), headers: input.headers });
     if (url.endsWith("/heartbeat")) {

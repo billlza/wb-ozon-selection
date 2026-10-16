@@ -82,7 +82,7 @@ const emptyAppState = () => ({
   captureControl: { status: "idle", label: "商品采集控制空闲" }
 });
 
-const NO_PLUGIN_ANSWER = Object.freeze({ answered: false, workstation: null });
+const NO_PLUGIN_ANSWER = Object.freeze({ answered: false, otherService: false, workstation: null });
 
 export default function App() {
   const [preparationSaveState] = useState(createPreparationSaveState);
@@ -398,7 +398,8 @@ export default function App() {
   const [thisComputer, setThisComputer] = useState(NO_PLUGIN_ANSWER);
   const effectiveExtensionStatus = useMemo(() => {
     // The page bridge answered for this exact tab, so its verdict wins; only an unanswered ping falls back to the heartbeat.
-    if (["connected", "background_unavailable", "tab_left_open", "tab_unconfirmed", "reload_required", "workstation_not_added"].includes(extensionStatus.code)) {
+    if (["connected", "background_unavailable", "tab_left_open", "tab_unconfirmed", "reload_required", "workstation_not_added", "other_service"]
+      .includes(extensionStatus.code)) {
       return extensionStatus;
     }
     return extensionConnectionStatus({
@@ -432,10 +433,11 @@ export default function App() {
         liveVersion,
         backgroundReady: event.data.backgroundReady === true,
         heldBy: typeof event.data.heldBy === "string" ? event.data.heldBy : "",
-        workstationNotAdded: event.data.workstationNotAdded === true
+        workstationNotAdded: event.data.workstationNotAdded === true,
+        otherService: event.data.otherService === true
       }));
       const workstation = event.data.workstation;
-      setThisComputer({ answered: true, workstation: typeof workstation?.workstationId === "string" && typeof workstation.name === "string"
+      setThisComputer({ answered: true, otherService: event.data.otherService === true, workstation: typeof workstation?.workstationId === "string" && typeof workstation.name === "string"
         ? { workstationId: workstation.workstationId, name: workstation.name } : null });
     }
     window.addEventListener("message", onMessage);

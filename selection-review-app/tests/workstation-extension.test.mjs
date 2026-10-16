@@ -62,6 +62,7 @@ test("the review page hands a key over once; the plugin keeps it, says which com
 
 test("a key comes only from the review page, in exactly its shape, and a plugin that cannot keep it says so", async () => {
   const h = harness();
+  await h.runtime.ready();
   for (const input of [keyMessage({ key: "srw_short" }), keyMessage({ workstationId: "workstation:x" }), keyMessage({ name: "" }),
     keyMessage({ name: "x".repeat(41) }), keyMessage({ extra: true }), { type: WORKSTATION_KEY_MESSAGE_TYPE, key: KEY }]) {
     assert.equal(validateWorkstationKeyMessage(input), false);

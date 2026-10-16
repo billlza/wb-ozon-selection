@@ -25,7 +25,9 @@ if (!/^postgres(?:ql)?:\/\//u.test(DATABASE_URL ?? "")) {
   throw new Error("TEST_REQUIRES_DATABASE: set SELECTION_REVIEW_TEST_DATABASE_URL to a disposable Postgres");
 }
 const appDir = fileURLToPath(new URL("..", import.meta.url));
+// Each computer loads the plugin with its own id, so their origins differ.
 const EXTENSION_ORIGIN = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const OTHER_EXTENSION_ORIGIN = "chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 async function isolatedSchema(t) {
   const schema = `workstation_test_${randomUUID().replaceAll("-", "")}`;
@@ -116,8 +118,8 @@ test("with team accounts a plugin call needs its computer's key, and a job claim
   const child = spawn(process.execPath, [path.join(appDir, "server.mjs"), "--api-only"], {
     cwd: appDir, env: { ...process.env, SELECTION_REVIEW_API_PORT: String(port), SELECTION_REVIEW_DATA_FILE: path.join(directory, "unused.json"),
       SELECTION_REVIEW_STATE_ADAPTER: "postgres", SELECTION_REVIEW_DATABASE_URL: connectionString, SELECTION_REVIEW_INITIALIZE_DATA_FILE: "1",
+      // No plugin id is configured: under team accounts the computer's key says which computer a plugin call is from.
       SELECTION_REVIEW_IDENTITY_PROVIDER: "team_accounts", SELECTION_REVIEW_PUBLIC_ORIGIN: base, SELECTION_REVIEW_ALLOWED_ORIGINS: base,
-      SELECTION_REVIEW_ALLOWED_EXTENSION_ORIGINS: EXTENSION_ORIGIN,
       SELECTION_REVIEW_STORE_BINDINGS_JSON: JSON.stringify([{ targetStore: "dandanshu", platform: "ozon", storeRef: SYNTHETIC_STORE_REF }]),
       SELECTION_REVIEW_CODEX_DISPATCH: "off", SELECTION_REVIEW_AUTO_DELIVER: "off" },
     stdio: ["ignore", "pipe", "pipe"]
@@ -151,9 +153,11 @@ test("with team accounts a plugin call needs its computer's key, and a job claim
     assert.equal(result.status, 200, JSON.stringify(result.body));
     return result.headers.get("set-cookie").split(";", 1)[0];
   };
-  // A plugin call from one computer: the plugin's origin, and that computer's key when it has one.
-  const plugin = (route, body, key = null) => call(route, { body, headers: { Origin: EXTENSION_ORIGIN, ...(key ? { Authorization: `Bearer ${key}` } : {}) } });
-  const heartbeat = key => plugin("/api/extension/heartbeat", { version: "1.5.0", backgroundReady: true, observedAt: new Date().toISOString() }, key);
+  // A plugin call from one computer: that computer's plugin origin, and its key when it has one.
+  const plugin = (route, body, key = null, origin = EXTENSION_ORIGIN) => call(route, { body,
+    headers: { Origin: origin, ...(key ? { Authorization: `Bearer ${key}` } : {}) } });
+  const heartbeat = (key, origin) => plugin("/api/extension/heartbeat", { version: "1.6.0", backgroundReady: true, observedAt: new Date().toISOString() },
+    key, origin);
 
   // Nobody signed in sees or adds a computer.
   assert.equal((await call("/api/workstations")).status, 401);
@@ -192,9 +196,14 @@ test("with team accounts a plugin call needs its computer's key, and a job claim
     assert.equal(refused.headers.get("access-control-allow-origin"), EXTENSION_ORIGIN, "the plugin can read why it was refused");
   }
   assert.equal((await heartbeat(keyA)).status, 200);
+  // A key is no use from anything but a plugin: not from the page's own origin, nor from an origin Chrome would not write.
+  for (const origin of [base, "chrome-extension://not-an-id", "https://evil.example"]) {
+    const refused = await heartbeat(keyA, origin);
+    assert.equal(refused.status, 403, origin);
+  }
   listed = await call("/api/workstations", { cookie: boss });
   assert.deepEqual(listed.body.workstations.map(workstation => [workstation.name, workstation.online, workstation.extensionVersion]),
-    [["老板甲的 MacBook", true, "1.5.0"], ["测试丙的电脑", false, null]]);
+    [["老板甲的 MacBook", true, "1.6.0"], ["测试丙的电脑", false, null]]);
 
   // The boss confirms the product's supply: one 1688 read is queued. Computer A claims it; only A can hand it back.
   const queued = await call("/api/candidates/WS-1/lifecycle/a-confirm", { cookie: boss, body: { dataRevision: 1, sourceCandidateId: "WS-1",
@@ -202,13 +211,13 @@ test("with team accounts a plugin call needs its computer's key, and a job claim
     supplierConfirmation: { productUrl: "https://qr.1688.com/s/7OnLCakq", ownerSupplyConfirmed: false } } });
   assert.equal(queued.status, 202, JSON.stringify(queued.body));
   const jobId = queued.body.captureJob.jobId;
-  assert.equal((await plugin(`/api/extension/capture-jobs/${jobId}/claim`, { version: "1.5.0" })).status, 401, "no key, no claim");
-  const claimed = await plugin(`/api/extension/capture-jobs/${jobId}/claim`, { version: "1.5.0" }, keyA);
+  assert.equal((await plugin(`/api/extension/capture-jobs/${jobId}/claim`, { version: "1.6.0" })).status, 401, "no key, no claim");
+  const claimed = await plugin(`/api/extension/capture-jobs/${jobId}/claim`, { version: "1.6.0" }, keyA);
   assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
   const job = claimed.body.captureJob;
   const failedRead = { captureId: job.captureId, token: job.token, dataRevision: job.dataRevision, status: "failed",
     failureCode: "site_login_required", observedAt: new Date().toISOString() };
-  const fromB = await plugin("/api/candidates/WS-1/source-capture/result", failedRead, keyB);
+  const fromB = await plugin("/api/candidates/WS-1/source-capture/result", failedRead, keyB, OTHER_EXTENSION_ORIGIN);
   assert.deepEqual([fromB.status, fromB.body.code], [409, "capture_extension_origin_mismatch"], JSON.stringify(fromB.body));
   assert.equal((await call("/api/state", { cookie: boss })).body.candidates.find(item => item.id === "WS-1").sourceCapture.status, "capturing",
     "the other computer's answer changed nothing");
@@ -220,7 +229,7 @@ test("with team accounts a plugin call needs its computer's key, and a job claim
   const removed = await call("/api/workstations/remove", { cookie: tester, body: { workstationId: computerA } });
   assert.deepEqual([removed.status, removed.body.workstation.name], [200, "老板甲的 MacBook"]);
   assert.deepEqual([(await heartbeat(keyA)).status, (await heartbeat(keyA)).body.code], [401, "WORKSTATION_KEY_REJECTED"]);
-  assert.equal((await heartbeat(keyB)).status, 200);
+  assert.equal((await heartbeat(keyB, OTHER_EXTENSION_ORIGIN)).status, 200);
   assert.equal((await call("/api/workstations/remove", { cookie: boss, body: { workstationId: computerA } })).status, 404);
   assert.deepEqual((await call("/api/workstations", { cookie: boss })).body.workstations.map(workstation => workstation.workstationId), [computerB]);
   assert.equal(stderr.join("").includes(connectionString), false);

@@ -18,7 +18,7 @@ function presence(workstation) {
 /**
  * 干活的电脑（只有团队账号才有）：装了插件、替大家读 1688、拼多多、Ozon 和 Seerfar 页面的那几台。每台有自己的一把钥匙，
  * 插件领作业、交结果都带着；哪台领的作业只能由哪台交回。登录的人坐在哪台电脑前，就在那台上把它加进来；谁都能移除一台，
- * 移除后它的钥匙马上作废。`thisComputer` 是本页插件说的：有没有回话、它拿着哪台电脑的钥匙。
+ * 移除后它的钥匙马上作废。`thisComputer` 是本页插件说的：有没有回话、连的是不是这个网址、它拿着哪台电脑的钥匙。
  */
 export function WorkstationView({ thisComputer, list, name, saving, message, confirmingId, addedHere = "",
   onNameChange, onAdd, onConfirmRemove, onCancelRemove, onRemove }) {
@@ -27,7 +27,8 @@ export function WorkstationView({ thisComputer, list, name, saving, message, con
   return <section className="local-owner-access workstation-panel">
     <div><b>干活的电脑</b><p>装了插件、替大家读 1688、拼多多、Ozon 和 Seerfar 页面的电脑。每台有自己的一把钥匙，插件领作业、交结果都带着；哪台领的作业只能由哪台交回。</p></div>
     {mine ? <p>这台电脑是「{mine.name}」，已经加进来了。</p>
-      : !thisComputer.answered ? <p>这个页面里没有找到插件：这台电脑要先装好插件并启用，刷新页面后才能加进来。</p>
+      : !thisComputer.answered ? <p>这个页面里没有找到插件：这台电脑要先装好插件并启用，再点浏览器右上角的插件图标，填上这个网址，刷新页面后才能加进来。</p>
+      : thisComputer.otherService ? <p>这台电脑的插件连的是别的服务地址：点浏览器右上角的插件图标，改成这个网址，刷新页面后再加。</p>
       : list.status !== "loaded" ? null
       : <form onSubmit={onAdd}>
         <label>给这台电脑起个名字<input required type="text" maxLength={40} placeholder="比如：老板甲的 MacBook" value={name} disabled={saving}

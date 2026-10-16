@@ -19,7 +19,7 @@ test("extension handshake exposes bridge and background state separately", () =>
   assert.equal(extensionConnectionStatus({ cachedVersion: EXPECTED_EXTENSION_VERSION }).code, "page_refresh_required");
   assert.deepEqual(extensionConnectionStatus({ liveVersion: "1.2.6", backgroundReady: true }), {
     code: "reload_required",
-    label: "插件代码已更新 · 请重新加载（当前v1.2.6，需要v1.5.0）"
+    label: "插件代码已更新 · 请重新加载（当前v1.2.6，需要v1.6.0）"
   });
   assert.deepEqual(extensionConnectionStatus({
     serverHeartbeat: {
@@ -56,6 +56,16 @@ test("a plugin that answers but holds new jobs for a page it opened says which, 
     "background_unavailable");
   assert.equal(extensionConnectionStatus({ heldBy: "tab_cleanup_failed",
     serverHeartbeat: { fresh: true, version: EXPECTED_EXTENSION_VERSION, backgroundReady: false } }).code, "background_unavailable");
+});
+
+test("a plugin that works for another address says so, and one that does not answer says where to look", () => {
+  assert.deepEqual(extensionConnectionStatus({ liveVersion: EXPECTED_EXTENSION_VERSION, backgroundReady: false, otherService: true }),
+    { code: "other_service", label: "插件连的是别的服务地址 · 点浏览器右上角的插件图标，改成这个网址" });
+  // A plugin of the wrong version hears first that it must be reloaded; the heartbeat alone cannot say which address the plugin is on.
+  assert.equal(extensionConnectionStatus({ liveVersion: "1.5.0", backgroundReady: false, otherService: true }).code, "reload_required");
+  assert.equal(extensionConnectionStatus({ otherService: true,
+    serverHeartbeat: { fresh: true, version: EXPECTED_EXTENSION_VERSION, backgroundReady: true } }).code, "connected");
+  assert.match(extensionConnectionStatus({}).label, /点浏览器右上角的插件图标，看连的是不是这个网址/u);
 });
 
 test("historical sales capture failure is separated from the current extension status", () => {

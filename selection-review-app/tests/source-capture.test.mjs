@@ -512,14 +512,17 @@ test("1688 collector accepts a real top-level SKU ID on a single-specification o
   }
 });
 
-test("extension manifest stays limited to the 1688 short-link/detail allowlist, the 1688 image-search pages, Pinduoduo goods pages, Ozon product, search and image-search pages, the Seerfar member site and the local review app", async () => {
+test("extension manifest stays limited to the 1688 short-link/detail allowlist, the 1688 image-search pages, Pinduoduo goods pages, Ozon product, search and image-search pages, the Seerfar member site and the local review app; a team's service only on request", async () => {
   const manifest = JSON.parse(await readFile(path.join(appDir, "extension", "1688-capture", "manifest.json"), "utf8"));
-  assert.equal(manifest.version, "1.5.0");
+  assert.equal(manifest.version, "1.6.0");
   assert.equal(manifest.name, "全店经营工作台 · 商品只读采集器");
-  assert.equal(manifest.action.default_title, "全店经营工作台 · 商品只读采集器");
-  assert.match(manifest.description, /本机全店经营工作台/);
+  assert.equal(manifest.action.default_title, "全店经营工作台 · 商品只读采集器（点开设置连哪个服务）");
+  assert.match(manifest.description, /全店经营工作台.*本机的工作台，或在插件设置里填的团队服务网址/u);
   // storage keeps the one key a team's central service gave this computer (central plan step 3).
   assert.deepEqual(manifest.permissions.sort(), ["alarms", "scripting", "storage"]);
+  // A team's central service is reached only after the person lets the plugin onto that one https address on its settings page.
+  assert.deepEqual(manifest.optional_host_permissions, ["https://*/*"]);
+  assert.deepEqual(manifest.options_ui, { page: "options.html", open_in_tab: true });
   assert.equal(manifest.minimum_chrome_version, "120");
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:4317/*",
@@ -558,6 +561,8 @@ test("extension background resolves an A-stage short link once and never auto-se
 
 test("page bridge and extension background preserve precise capture rejection codes", async () => {
   const h = harness({ heartbeat: async () => ({ ok: false, status: 403 }) });
+  // A worker answers at once once it knows which service it works for (read from storage when Chrome wakes it).
+  await h.runtime.ready();
   assert.equal(message(h.runtime, { type: START, payload: supplierJob() }).response.code, "start_signal_invalid");
   assert.equal(message(h.runtime, { type: START, captureId: "job-1" }, { url: "https://evil.test/" }).response.code, "request_origin_invalid");
   assert.equal(h.calls.requests.length, 0);
@@ -569,6 +574,7 @@ test("page bridge and extension background preserve precise capture rejection co
 
 test("extension status handshake verifies the background worker instead of only the page bridge", async () => {
   const h = harness();
+  await h.runtime.ready();
   assert.equal(message(h.runtime, { type: PING }).response.accepted, false);
   assert.equal(h.calls.requests.length, 0);
   await h.runtime.heartbeat();
@@ -596,7 +602,7 @@ test("explicit capture claims only the requested ID and rejects mismatched or re
   assert.equal((await startCapture(mismatch.runtime, "job-1")).code, "capture_job_invalid");
   assert.equal(mismatch.calls.created.length, 0);
   assert.match(mismatch.calls.requests[0].url, /capture-jobs\/job-1\/claim$/);
-  assert.deepEqual(mismatch.calls.requests[0].body, { version: "1.5.0" });
+  assert.deepEqual(mismatch.calls.requests[0].body, { version: "1.6.0" });
   assert.equal((await startCapture(mismatch.runtime, "job-1")).code, "capture_replay_rejected");
   assert.equal(mismatch.calls.requests.length, 1);
 
@@ -644,7 +650,7 @@ test("a page the owner already closed counts as closed: the next job is taken, n
   const seerfarJob = { captureId: "SWR-00000000-0000-4000-8000-000000000001", jobId: "SWR-00000000-0000-4000-8000-000000000001",
     roundId: "seerfar-web-round:00000000-0000-4000-8000-000000000002", mode: SEERFAR_WEB_MODE, pageUrl: SEERFAR_WEB_SEARCH_PAGE,
     endpoint: SEERFAR_WEB_SEARCH_ENDPOINT, categoryPaths: ["宠物用品 > 宠物服装和靴子 > 宠物服装"], sellerType: "cross_border",
-    maxRecords: 20, waitMs: 5000, requiredExtensionVersion: "1.5.0", attempt: 1, token: "synthetic-token" };
+    maxRecords: 20, waitMs: 5000, requiredExtensionVersion: "1.6.0", attempt: 1, token: "synthetic-token" };
   let seerfar;
   let tabGone = false;
   seerfar = harness({ job: seerfarJob, execute: () => { tabGone = true; throw noSuchTab(7); } });

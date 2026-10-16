@@ -1,4 +1,4 @@
-export const EXPECTED_EXTENSION_VERSION = "1.5.0";
+export const EXPECTED_EXTENSION_VERSION = "1.6.0";
 export const EXTENSION_STATUS_PING = "SELECTION_REVIEW_EXTENSION_STATUS_PING";
 export const EXTENSION_STATUS_RESPONSE = "SELECTION_REVIEW_EXTENSION_STATUS_RESPONSE";
 export const EXTENSION_LAST_SEEN_KEY = "selection-review-extension-last-seen";
@@ -12,7 +12,7 @@ const TAB_HOLD_STATUS = Object.freeze({
 });
 
 export function extensionConnectionStatus({ liveVersion = "", cachedVersion = "", backgroundReady = false, heldBy = "", workstationNotAdded = false,
-  serverHeartbeat = null } = {}) {
+  otherService = false, serverHeartbeat = null } = {}) {
   const live = String(liveVersion || "").trim();
   const heartbeatVersion = serverHeartbeat?.fresh === true
     ? String(serverHeartbeat.version || "").trim()
@@ -25,6 +25,10 @@ export function extensionConnectionStatus({ liveVersion = "", cachedVersion = ""
   if (activeVersion) {
     if (activeVersion !== EXPECTED_EXTENSION_VERSION) {
       return { code: "reload_required", label: `插件代码已更新 · 请重新加载（当前v${activeVersion}，需要v${EXPECTED_EXTENSION_VERSION}）` };
+    }
+    // The plugin works for another address than this page (this computer's workbench, or a team's central service).
+    if (live && otherService === true) {
+      return { code: "other_service", label: "插件连的是别的服务地址 · 点浏览器右上角的插件图标，改成这个网址" };
     }
     // The team's service turned this computer's plugin away for want of its key (none yet, or the computer was removed).
     if (live && workstationNotAdded === true) {
@@ -43,7 +47,7 @@ export function extensionConnectionStatus({ liveVersion = "", cachedVersion = ""
   if (cached) {
     return { code: "reload_required", label: `插件代码已更新 · 请重新加载（当前v${cached}，需要v${EXPECTED_EXTENSION_VERSION}）` };
   }
-  return { code: "disconnected", label: "插件未安装或未连接" };
+  return { code: "disconnected", label: "插件未安装或未连接 · 装好后点浏览器右上角的插件图标，看连的是不是这个网址" };
 }
 
 export function salesCaptureFailurePresentation(capture = {}, currentExtensionStatus = {}) {

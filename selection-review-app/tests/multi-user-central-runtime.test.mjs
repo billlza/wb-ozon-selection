@@ -151,8 +151,8 @@ test("生产源码新增本机假设必须进入明确审计文件，不能静�
   const files = [path.join(appDir, "server.mjs")];
   for (const root of roots) files.push(...await sourceFiles(root));
   const reviewedAdapters = new Map([
-    ["extension/1688-capture/background.js", ["worker_adapter", { loopback_address: 1 }]],
-    ["extension/1688-capture/bridge.js", ["worker_adapter", { loopback_address: 1 }]],
+    // The plugin's one default address (this computer's workbench) lives in capture-request.js; the worker and the page bridge
+    // follow the service set on the plugin's settings page (central plan step 3b).
     ["extension/1688-capture/capture-request.js", ["worker_adapter", { loopback_address: 1 }]],
     ["lib/c1-seo-draft.mjs", ["local_adapter", { personal_home_path: 2 }]],
     ["lib/codex-dispatcher.mjs", ["local_adapter", { loopback_address: 1, dynamic_home_dependency: 1 }]],

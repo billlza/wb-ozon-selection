@@ -77,13 +77,13 @@ export function requestSupplierCaptureStart(captureId, page = window, channel = 
  * technical conclusion the page did not observe, and none of them promises a retry — the software never retries by itself.
  */
 export const CAPTURE_START_REJECTION_MESSAGES = Object.freeze({
-  no_bridge: "这个标签页里没有采集插件：请用 http://127.0.0.1:4317 打开页面（不是 localhost），按 Cmd+Shift+R 强制刷新后再试；仍然不行就到 chrome://extensions 确认插件已启用",
+  no_bridge: "这个标签页里没有采集插件，或者插件连的不是这个网址：点浏览器右上角的插件图标看看连的是哪个（这台电脑上的工作台要用 http://127.0.0.1:4317 打开，不是 localhost），改好后按 Cmd+Shift+R 强制刷新再试；仍然不行就到 chrome://extensions 确认插件已启用",
   capture_busy: "插件正在采另一件商品，等它结束再试",
   extension_identity_rejected: "服务端没有允许这个插件（白名单里没有它的 ID），需要改配置后重启",
   workstation_not_added: "这台电脑还没加进来（或者已经被移除），插件领不了作业；到「维护」里点「把这台电脑加进来」再试，软件不会自动重试",
   background_unavailable: "插件后台没有响应，请在 chrome://extensions 重新加载插件",
   heartbeat_unavailable: "插件后台还没有和评审台连上，这次没有领取；请确认评审台正在运行，然后重新申请一次采集，软件不会自动重试",
-  request_origin_invalid: "插件认为这条开始提示不是来自本机评审台页面，因此拒绝领取；请用 http://127.0.0.1:4317 打开页面后重新申请一次采集，软件不会自动重试",
+  request_origin_invalid: "插件连的不是这个网址，因此拒绝领取：点浏览器右上角的插件图标，改成这个网址（这台电脑上的工作台是 http://127.0.0.1:4317）后重新申请一次采集，软件不会自动重试",
   start_signal_invalid: "插件认为这条开始提示的格式不对，因此拒绝领取；请按 Cmd+Shift+R 强制刷新页面后重新申请一次采集，软件不会自动重试",
   capture_job_invalid: "插件去服务端领取时，服务端判定这个采集作业已经不能领取，这次没有开始；请重新申请一次采集，软件不会自动重试",
   capture_job_not_claimed: "插件收到了开始提示，但没有完成领取，这次采集没有开始；请重新申请一次采集，软件不会自动重试",

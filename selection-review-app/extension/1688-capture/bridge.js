@@ -33,12 +33,15 @@ async function readBackgroundStatus() {
       // Which computer this is for the team's service, and whether that service wants this computer added first.
       workstation: workstationView(response?.workstation),
       workstationNotAdded: response?.code === "workstation_not_added",
+      // The plugin works for another service (this computer's workbench, or a team's central one) than this page.
+      otherService: response?.code === "request_origin_invalid",
       backgroundError: response?.accepted === true ? "" : response?.code === "extension_identity_rejected" ? "插件身份未获服务端允许，禁止领取作业"
-        : response?.code === "workstation_not_added" ? "这台电脑还没加进来，插件领不了作业" : "插件后台或评审台连接尚未确认"
+        : response?.code === "workstation_not_added" ? "这台电脑还没加进来，插件领不了作业"
+        : response?.code === "request_origin_invalid" ? "插件连的不是这个网址，点浏览器右上角的插件图标看看连的是哪个" : "插件后台或评审台连接尚未确认"
     };
   } catch {
     return { backgroundReady: false, serviceConnected: false, lastCaptureCode: "", captureActive: false, heldBy: "", workstation: null,
-      workstationNotAdded: false, backgroundError: "插件后台没有响应" };
+      workstationNotAdded: false, otherService: false, backgroundError: "插件后台没有响应" };
   }
 }
 
@@ -52,7 +55,8 @@ const statusInterval = window.setInterval(() => void publishStatus(), 10000);
 window.addEventListener("pagehide", () => window.clearInterval(statusInterval), { once: true });
 
 window.addEventListener("message", async (event) => {
-  if (event.source !== window || event.origin !== "http://127.0.0.1:4317") return;
+  // The bridge runs only on the pages of the service the plugin was set up for (the manifest, or the plugin's settings page).
+  if (event.source !== window || event.origin !== window.location.origin) return;
   const message = event.data;
   if (message?.type === STATUS_PING) {
     await publishStatus(typeof message.nonce === "string" ? message.nonce.slice(0, 128) : "");

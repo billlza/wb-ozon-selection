@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-16T17:38:51.080Z",
+  "frozenAt": "2026-10-16T17:50:49.965Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 1022,
-      "sha256": "2d050f8c0f4974f124233ff1175260748476e10e2142f199f5c4d6860f329025",
+      "artifactCount": 1025,
+      "sha256": "e81c87212fb5d9932a98ecb37c6ad65203aaf489212ac61270bb3f45af64a695",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -40,15 +40,15 @@
       },
       {
         "path": "extension/1688-capture/background.js",
-        "sha256": "fe32d2bfa7601e24105ef23dab17149bf6ee2e5041c8156df9669d2d24d6b377"
+        "sha256": "87a5ca5fc23167a6d11fae46f0e7da9da93b3c2f4518fd24cfccba436a627127"
       },
       {
         "path": "extension/1688-capture/bridge.js",
-        "sha256": "d884b19958569ecbab30c77bddfb6fcfa3120650fae5dc7675f2eb4c89f2bc57"
+        "sha256": "5ce80a6fcd7a66247973796dcee58e5167e90fe96497b2d973a2a7e970e92c90"
       },
       {
         "path": "extension/1688-capture/capture-request.js",
-        "sha256": "00951463b5f2a1e46fc89692adcfaedce47297949ed5f14d813f1d3dd4e9a6fa"
+        "sha256": "bf294f7c640bb447c2579b2708b240b4fc58a8cae735c9bcc3d210ff9fb9b989"
       },
       {
         "path": "extension/1688-capture/collector-1688-image-search.js",
@@ -72,7 +72,15 @@
       },
       {
         "path": "extension/1688-capture/manifest.json",
-        "sha256": "c91bbbf0c4128a4c736e2826fcc058bd39d1800b4d78d021660c01b99b763082"
+        "sha256": "bcb1865e869d576e65b638503c77d2bc177e879735718d546565e21caa88c528"
+      },
+      {
+        "path": "extension/1688-capture/options.html",
+        "sha256": "14800f654dec2f5d208b559e9ec0b39b284ff1ed03538b4e938e50c82acfa5b9"
+      },
+      {
+        "path": "extension/1688-capture/options.js",
+        "sha256": "ffd7aed97128f38aea48b78fca0cbdb03197978982efb175a188a47c6c8249e7"
       },
       {
         "path": "extension/1688-capture/seerfar-web-capture.js",
@@ -448,7 +456,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "4bd70c38012cf0c4c520b2c4f92c3fe1a6f19a9fb1b36da03c20d96d81e2c0fc"
+        "sha256": "5578df28f24fc59ac01bb45c3ccb2656ecd302cb0960a477517ba5679fe4a3fe"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -688,7 +696,7 @@
       },
       {
         "path": "lib/http-api-boundary.mjs",
-        "sha256": "99454c633becf7961d0a6acae28e11902a8cbdaf8fece65d67f6d3f75a64d655"
+        "sha256": "4864d320193ce4ff66279865e741c9a0eb5e56a1d560b053b3a4c84fc4e07e36"
       },
       {
         "path": "lib/image-fingerprint.mjs",
@@ -1740,11 +1748,11 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "6acf202e0ebcf63da47671953aa19a8d2b90daed72eb404f21636ddf4aa04098"
+        "sha256": "26e403d7eaac0c7caaf34bda4996eb838e28fb23f8a05c5634c4987c4eacf1cc"
       },
       {
         "path": "src/App.jsx",
-        "sha256": "1114e9a722ebddbc67f27bd11e52850d1d895130eaffc06ca6cf7f0ccb0dbae9"
+        "sha256": "83984911388b25208d0fdbfc6d8dee7da35f1ea86cc161145e0ac5808cc51604"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1784,7 +1792,7 @@
       },
       {
         "path": "src/captureStart.js",
-        "sha256": "965f185eb05810a4183a8acaae31e1287de0b4d62a92325314e2f27cfcd76f00"
+        "sha256": "fd2e4d27455a98ed8125a70a7ffd5ea21e070391a040609f1b0afbf4b6210473"
       },
       {
         "path": "src/commentInput.js",
@@ -1908,7 +1916,7 @@
       },
       {
         "path": "src/components/LocalOwnerAccessPanel.jsx",
-        "sha256": "52139929b9dbf41430cf67064c1f6a1548a766b40a29382b4b500d1b9ddbc040"
+        "sha256": "e4c8f604ea5e669a196769b3883f109fcab184692fa8c8c35f51e2cf384eef2b"
       },
       {
         "path": "src/components/MaintenanceReadOnly.jsx",
@@ -2020,7 +2028,7 @@
       },
       {
         "path": "src/components/WorkstationPanel.jsx",
-        "sha256": "e3c4c80cde5a7760f9022ced69c24d48a4bc9578eafa7e9d4c66613ce30548af"
+        "sha256": "089e2248292c644faa658d9389cfc7a17828f245d30095de7c469220d14ace26"
       },
       {
         "path": "src/components/useDialogFocus.js",
@@ -2040,7 +2048,7 @@
       },
       {
         "path": "src/extensionStatus.js",
-        "sha256": "c59f5ef866d589e3e8212adf513991eb4668d79a6c06e47d403d3e29556bf83b"
+        "sha256": "27c885ad0d08e372c038e42a05f175b26aab20c4c59c550becf196a80bdcddf9"
       },
       {
         "path": "src/finalPricingReviewInput.js",
@@ -2908,7 +2916,7 @@
       },
       {
         "path": "tests/extension-capture-request.test.mjs",
-        "sha256": "34cf288c257a19022249a6ddc1a6e24bb3ec9677e529481916a7437e59affaa9"
+        "sha256": "ef161fdc5b6443dc9a22c9b9c2050915649b4a602352d5859537a99e25ccdca1"
       },
       {
         "path": "tests/extension-heartbeat-api.test.mjs",
@@ -2916,7 +2924,7 @@
       },
       {
         "path": "tests/extension-status.test.mjs",
-        "sha256": "f594ae86ecbd6433e0076e76fa9ab944c2d63e9b894ab2608a12366674425488"
+        "sha256": "dfa017957c260a871340fc208f15c803eff3f453d9e1a4af342bd41f17cdf9cd"
       },
       {
         "path": "tests/extra-handling-fees.test.mjs",
@@ -3268,7 +3276,7 @@
       },
       {
         "path": "tests/helpers/extension-runtime-fixture.mjs",
-        "sha256": "a64f88977f94e37e9ff49312dcfbb47a4c76c6dfc65c44d30f0832892f6706f9"
+        "sha256": "144d297b025a0bc0b07789c540ad654450be271adc0e6acbb7ecd5f73ef55cf6"
       },
       {
         "path": "tests/helpers/fake-postgres-business-state-store.mjs",
@@ -3292,7 +3300,7 @@
       },
       {
         "path": "tests/http-api-boundary.test.mjs",
-        "sha256": "14ec45891989b1cee524a99b7543a9abfe58e09f6098e03042a68bc5680c8ac2"
+        "sha256": "3739fb2ead8a0b4d7380cefa5c8f5104a3db88033dc4f406b0bb8a0704327e5c"
       },
       {
         "path": "tests/image-fingerprint.test.mjs",
@@ -3472,7 +3480,7 @@
       },
       {
         "path": "tests/multi-user-central-runtime.test.mjs",
-        "sha256": "c03946a4209740e6e22c1523ab70b371959067fee9798660d0a938eb52904daf"
+        "sha256": "79cac4c60a4c9c0ab9d29f00fddb771f589498e149f37bb9fbd8dfc2aea95bc8"
       },
       {
         "path": "tests/official-commission-formal-b.test.mjs",
@@ -3576,7 +3584,7 @@
       },
       {
         "path": "tests/ozon-page-capture-job.test.mjs",
-        "sha256": "9bbbe2144bf27d9e7342be45b13f70cad6eed034b957c6f03e76da4bb6689f83"
+        "sha256": "87b9a54f8102a218f61a09b277b1b47b1480d398b4178f105a747d4ac3b1fdb5"
       },
       {
         "path": "tests/ozon-product-import-batch-limit.test.mjs",
@@ -3588,15 +3596,15 @@
       },
       {
         "path": "tests/ozon-sales-capture-api.test.mjs",
-        "sha256": "f10358fbcf7ddb565a82f5806a7c6bfbb644cc3488f19e53398f88f9b7634fcd"
+        "sha256": "6460f74d0f3d1643359ec7e71568039a7a1a4c044a73bdeb32088007f7fe50c8"
       },
       {
         "path": "tests/ozon-same-product-match.test.mjs",
-        "sha256": "2863a1c60da0ccd28b4ac769d36ad27b083219d83103a71055cb942d2637060b"
+        "sha256": "b40a4d0074ec69872be56c0873bb486b61dc7491bcc2bf45a8b42c0b64ef1337"
       },
       {
         "path": "tests/ozon-search-extension.test.mjs",
-        "sha256": "15392415ecae27801ca58230003254be65a8b41668480120382b4aef8254cc9e"
+        "sha256": "1bb9ac86154788036f8c91d9e1b4835529882b86590099b8867539779e625745"
       },
       {
         "path": "tests/ozon-seller-api-de-adapter.test.mjs",
@@ -3656,7 +3664,7 @@
       },
       {
         "path": "tests/pinduoduo-capture.test.mjs",
-        "sha256": "307ef382b0e8cf9a333eddcc15369f3eb548a31e1123598c80f162e003db2dd5"
+        "sha256": "53bb5778f4e898e37fafb795bc818ebea0c432809d0a2c7a347c26bfb6f2343a"
       },
       {
         "path": "tests/platform-write-bindings.test.mjs",
@@ -3812,7 +3820,7 @@
       },
       {
         "path": "tests/runtime-package-api.test.mjs",
-        "sha256": "d09a00b82f352e8047f9248d8a9aa7d532d69d17504088233d0188bb89535c2f"
+        "sha256": "10ce63d9a51e1d151249fd97f975492daf8864e1474675d1d1f995400a77801a"
       },
       {
         "path": "tests/runtime-preflight-api.test.mjs",
@@ -3860,7 +3868,7 @@
       },
       {
         "path": "tests/seerfar-web-extension.test.mjs",
-        "sha256": "2d5ff05195050128571118b9aa152f9279394b96531a4148a3b02b794ac71f1c"
+        "sha256": "15f3d0ff6478955743343bd375774589e39baedd2916d6eaef86a25db21d7e52"
       },
       {
         "path": "tests/seerfar-web-round-card-ui.test.mjs",
@@ -3868,7 +3876,7 @@
       },
       {
         "path": "tests/seerfar-web-round-service.test.mjs",
-        "sha256": "4d61576c27e1402384833774d9d110ba32f72a841fc1a93b611b2833cbb0bb1d"
+        "sha256": "d968acb5c1a31815c15ceb984eeec60039243186610402501ab175281f177598"
       },
       {
         "path": "tests/seerfar-web-round.test.mjs",
@@ -3881,6 +3889,10 @@
       {
         "path": "tests/selection-desk-view.test.mjs",
         "sha256": "538660bac46ee323473128f995bd9a9b73df1bef04122df37c195a1c906f9049"
+      },
+      {
+        "path": "tests/service-address-extension.test.mjs",
+        "sha256": "4ad545e65dafe96c992efc622f9644ff83ae368276b1234d51f41f95ce026554"
       },
       {
         "path": "tests/sibling-batch-a-b-c1.test.mjs",
@@ -3972,23 +3984,23 @@
       },
       {
         "path": "tests/source-capture-job-api.test.mjs",
-        "sha256": "171ad03247359c495cd76b6b96d312896e96e3f2dd36a46181125a546007d590"
+        "sha256": "af1d984b4761ff1dd0fb29545fdee3cd160ff3737950da1c4bda45863e4f51fc"
       },
       {
         "path": "tests/source-capture-recapture-api.test.mjs",
-        "sha256": "2f0fcfb13a81df122f28ec5bd1fef2407916903463f39191b51c119a552a2196"
+        "sha256": "9adcfe0fef9a75cbddb3f301039c2eff861e62953d6b7810005bee263c193c7e"
       },
       {
         "path": "tests/source-capture-restart-reconciliation.test.mjs",
-        "sha256": "a8ee25f2be508d802ecac4ad0671922d23f520a69f68cf80a8afc8656becb743"
+        "sha256": "96f3b74fa898e5fe919d91d547e5d38ecf1131a7a31894d9b1d821a41ae3660a"
       },
       {
         "path": "tests/source-capture-review-api.test.mjs",
-        "sha256": "59a4c7206cbedea90502a9822a391fdb36ccfaa91acb5c17aee933415d09941a"
+        "sha256": "3cb2e2b74991eb744cee8c7c70fc6f8fccad2e5dd5e923ad6a8115f99306f172"
       },
       {
         "path": "tests/source-capture.test.mjs",
-        "sha256": "e01ae21dfd182388f651bff9c05747e381174739a1ff6c393530dfc73bd1c990"
+        "sha256": "73a4b834c3bb343c6a0b3d87db943cdb2eff95e21876dadd3378604f14e6436a"
       },
       {
         "path": "tests/store-binding-api.test.mjs",
@@ -4028,11 +4040,11 @@
       },
       {
         "path": "tests/supplier-image-match-api.test.mjs",
-        "sha256": "2d545487f3d5f7e6ea60250bc3b5f709c58037e1654871695e6dc828b3ff5a75"
+        "sha256": "244e38052c8c9bce677b387abddd21864645573e46f7050c9d500ed4af0bcd1b"
       },
       {
         "path": "tests/supplier-image-match-extension.test.mjs",
-        "sha256": "619aef1c3268685275729e9364d45033dce00a6fd19c6b49cfae89d78302def8"
+        "sha256": "2219180655f54b84c28355b7dfce10bf23cdbe9805f120e24be2390c5cf41d17"
       },
       {
         "path": "tests/supplier-image-match-ui.test.mjs",
@@ -4040,7 +4052,7 @@
       },
       {
         "path": "tests/supplier-image-match.test.mjs",
-        "sha256": "cbe65659eeb3a27483710b4c243ae9108823e3d6dc3ec1d2581f8546deebc912"
+        "sha256": "525f78b9a0ee5a8ee14dbac1a787eab962a68b5b897ecc38057f67821cbebe55"
       },
       {
         "path": "tests/supplier-option.test.mjs",
@@ -4100,19 +4112,19 @@
       },
       {
         "path": "tests/workstation-access.test.mjs",
-        "sha256": "ae4d01635ab4586fcfb9a6cf842d752840df01dfa8f326e0232baf83e95bb834"
+        "sha256": "8d005c682327363992aeb439e1e73b7bf21e08f9506651da0b84210ffd736800"
       },
       {
         "path": "tests/workstation-extension.test.mjs",
-        "sha256": "37d0853705bfe4fb1b7d6ef3faf85e47694b554b9dc717fff0d9e901a3628306"
+        "sha256": "c3a5cc0ea2dfa403bdf3dd84ddbca18ca64b78639fad605bd69f751bdf7bee58"
       },
       {
         "path": "tests/workstation-ui.test.mjs",
-        "sha256": "5c9ba8de5bfb210dd3b979899427ee4125bf9d72479b8f22f1b748e76fbef3d7"
+        "sha256": "e1f254b75aad3cfebcc12f39c3e45892d7adcdf1f663e5727b066eeaf0fa9bbd"
       },
       {
         "path": "tests/workstations-db.test.mjs",
-        "sha256": "dded3f9b2097b7194480d202a9efce1f5853846e0c330baa109adeaf270a8d2d"
+        "sha256": "baf3a4d8425d788bfe722cb1366aaecafd4394183f35b67c77543f9671550b0c"
       },
       {
         "path": "vite.config.js",
@@ -4291,6 +4303,18 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "extension/1688-capture/capture-request.js",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "extension/1688-capture/options.html",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "extension/1688-capture/options.js",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/local-owner-identity.mjs",
           "status": "present_in_integration_source"
         },
@@ -4372,6 +4396,10 @@
         },
         {
           "path": "tests/runtime-identity-software-job.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/service-address-extension.test.mjs",
           "status": "present_in_integration_source"
         },
         {

@@ -219,6 +219,7 @@ import { sameSharedState, withPartitionedRecords } from "./lib/business-state-pa
 import { createSelectionReviewRuntimeConfiguration, createDPlatformObservationPolicyResolver } from "./lib/runtime-configuration.mjs";
 import {
   assertTrustedApiRequest,
+  isChromeExtensionOrigin,
   isExtensionEndpoint,
   isTrustedInternalApiRequest,
   normalizeHttpErrorResponse,
@@ -592,7 +593,7 @@ const supplierDraftEstimateInputs = createADiscoveryEstimateInputs({
   rules:DEFAULT_RULES,readers:aEstimateReaders,configuration:aEstimateConfiguration
 });
 /** The extension version every plugin job requires; declared before the Seerfar round service, which reads it at startup. */
-const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.5.0";
+const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.6.0";
 /**
  * Seerfar 自动选品方案 B（主人 2026-10-10 定）：会员前台「热销榜单选品」一页结果 → 固定规则筛 → 前几个收成待核验候选。
  * 档案和季节日历是 data/seerfar-selection/ 里的版本化配置；读不出来时不启动任何一轮，页面照实显示原因。
@@ -1280,7 +1281,8 @@ function localHttpOrigin(bindHost, listenPort) {
 
 function chromeExtensionCors(req) {
   const origin = String(req.headers.origin || "").trim();
-  if (!allowedExtensionOrigins.has(origin)) return {};
+  // Under team accounts any plugin may ask; its computer's key, checked before any route, decides.
+  if (!allowedExtensionOrigins.has(origin) && !(workstationAccess && isChromeExtensionOrigin(origin))) return {};
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -5090,6 +5092,7 @@ async function handleApi(req, res, pathname) {
     trustedServiceOrigins: [...trustedServiceOrigins],
     allowedReviewOrigins: [...allowedReviewOrigins],
     allowedExtensionOrigins: [...allowedExtensionOrigins],
+    anyChromeExtensionOrigin: Boolean(workstationAccess),
     internalRequestToken: internalApiRequestToken
   });
   const teamAccounts = runtimeIdentityProvider.providerType === "team_accounts";

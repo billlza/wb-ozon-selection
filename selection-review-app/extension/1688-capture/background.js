@@ -27,7 +27,12 @@ import {
   isOzonCaptureJob,
   isOzonImageMatchJob,
   isOzonImageSearchJob,
+  LOCAL_SERVICE_ORIGIN,
+  normalizeServiceAddress,
   OZON_IMAGE_MATCH_REQUEST_TYPE,
+  SERVICE_ADDRESS_MESSAGE_TYPE,
+  SERVICE_STATUS_MESSAGE_TYPE,
+  servicePagePattern,
   validateCaptureStartSignal,
   validateImageMatchRequest,
   validateOzonImageMatchRequest,
@@ -39,9 +44,11 @@ import {
 import { SEERFAR_WEB_REQUEST_TYPE, isSeerfarWebJob, runSeerfarWebCapture, validateSeerfarWebRequest } from "./seerfar-web-capture.js";
 
 export const HEARTBEAT_ALARM = "selection-review-extension-heartbeat";
-const API_ORIGIN = "http://127.0.0.1:4317"; // Explicit local-development adapter, not central identity.
 const BACKGROUND_PING = "SELECTION_REVIEW_EXTENSION_BACKGROUND_PING";
 const WORKSTATION_STORAGE_KEY = "selectionReviewWorkstation";
+const SERVICE_STORAGE_KEY = "selectionReviewService";
+export const SERVICE_BRIDGE_SCRIPT_ID = "selection-review-service-bridge";
+export const SETTINGS_PAGE = "options.html";
 const START_TYPES = new Set(["SELECTION_REVIEW_1688_CAPTURE_REQUEST", "SELECTION_REVIEW_OZON_CAPTURE_REQUEST", IMAGE_MATCH_REQUEST_TYPE,
   OZON_IMAGE_MATCH_REQUEST_TYPE, SEERFAR_WEB_REQUEST_TYPE]);
 const FAILURE_CODES = new Set([
@@ -56,7 +63,9 @@ const failure = (code) => Object.assign(new Error(code), { code });
 // 401: the team's service wants this computer's key (none, wrong or removed); 403: it does not accept this plugin at all.
 const refusal = (status, otherwise) => failure(status === 401 ? "workstation_not_added" : status === 403 ? "extension_identity_rejected" : otherwise);
 const SERVICE_REFUSALS = ["workstation_not_added", "extension_identity_rejected"];
-const validWorkstation = (value) => value !== null && typeof value === "object" && value.serviceOrigin === API_ORIGIN &&
+// A key is kept together with the service that made it, and goes only to that service.
+const validWorkstation = (value) => value !== null && typeof value === "object" &&
+  normalizeServiceAddress(value.serviceOrigin) === value.serviceOrigin &&
   validateWorkstationKeyMessage({ type: WORKSTATION_KEY_MESSAGE_TYPE, workstationId: value.workstationId, name: value.name, key: value.key });
 
 // A 1688 image search passes through its s.1688.com entry address to the air.1688.com result page and is read there only.
@@ -236,21 +245,32 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
   let strayTab = null;
   let lastHeartbeat = { ok: false, code: "heartbeat_not_observed", observedAt: null };
   let lastCaptureCode = "";
-  // This computer's key from a team's central service, kept in the plugin's own storage and sent with every call to that
-  // service. Without one (the owner's own Mac) calls go out as before.
+  // Which service this plugin works for: the workbench on this computer, unless a team's central service was filled in on
+  // the plugin's settings page. And this computer's key from a team's service, sent with every call to that service only.
+  // Both are kept in the plugin's own storage; without them (the owner's own Mac) calls go out as before.
+  let serviceOrigin = LOCAL_SERVICE_ORIGIN;
   let workstation = null;
-  let workstationLoad = null;
+  let settingsLoad = null;
+  let settingsLoaded = false;
+  // While the settings page moves the plugin to another service, no job starts: its result would go to the wrong one.
+  let switchingService = false;
   const version = chromeApi.runtime.getManifest().version;
-  function loadWorkstation() {
-    workstationLoad ??= Promise.resolve().then(() => chromeApi.storage.local.get(WORKSTATION_STORAGE_KEY)).then((stored) => {
+  function loadSettings() {
+    // A storage that cannot be read leaves the plugin on this computer's workbench; the next start of the worker reads again.
+    settingsLoad ??= Promise.resolve().then(() => chromeApi.storage.local.get([SERVICE_STORAGE_KEY, WORKSTATION_STORAGE_KEY])).then((stored) => {
+      serviceOrigin = normalizeServiceAddress(stored?.[SERVICE_STORAGE_KEY]?.origin) ?? LOCAL_SERVICE_ORIGIN;
       const value = stored?.[WORKSTATION_STORAGE_KEY];
       workstation = validWorkstation(value) ? value : null;
-    }, () => { workstation = null; });
-    return workstationLoad;
+    }, () => { serviceOrigin = LOCAL_SERVICE_ORIGIN; workstation = null; }).finally(() => { settingsLoaded = true; });
+    return settingsLoad;
   }
-  async function serviceHeaders() {
-    await loadWorkstation();
-    return { "Content-Type": "application/json", ...(workstation ? { Authorization: `Bearer ${workstation.key}` } : {}) };
+  const serviceKey = () => workstation?.serviceOrigin === serviceOrigin ? workstation : null;
+  // Every call to the service goes to the address this plugin works for, with this computer's key when that service gave one.
+  async function postToService(path, body, timeoutMs = 10000) {
+    await loadSettings();
+    const key = serviceKey();
+    return fetchImpl(`${serviceOrigin}${path}`, { method: "POST", signal: AbortSignal.timeout(timeoutMs),
+      headers: { "Content-Type": "application/json", ...(key ? { Authorization: `Bearer ${key.key}` } : {}) }, body: JSON.stringify(body) });
   }
   const status = () => {
     // Transport health TTL matches the existing local heartbeat contract, not product evidence age.
@@ -263,7 +283,8 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       observedAt: lastHeartbeat.observedAt,
       captureActive: Boolean(activeCapture),
       lastCaptureCode,
-      workstation: workstation ? { workstationId: workstation.workstationId, name: workstation.name } : null,
+      workstation: serviceKey() ? { workstationId: workstation.workstationId, name: workstation.name } : null,
+      serviceOrigin,
       version
     };
   };
@@ -304,21 +325,15 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
 
   async function sendResult(payload, result) {
     if (isSeerfarWebJob(payload)) {
-      const response = await fetchImpl(`${API_ORIGIN}/api/seerfar-selection/rounds/${encodeURIComponent(payload.roundId)}/result`, {
-        method: "POST", signal: AbortSignal.timeout(10000), headers: await serviceHeaders(),
-        body: JSON.stringify({ captureId: payload.captureId, token: payload.token, ...result })
-      });
+      const response = await postToService(`/api/seerfar-selection/rounds/${encodeURIComponent(payload.roundId)}/result`,
+        { captureId: payload.captureId, token: payload.token, ...result });
       if (!response.ok) throw refusal(response.status, "result_rejected");
       return;
     }
     const route = isImageMatchJob(payload) ? "image-match" : isOzonImageMatchJob(payload) ? "ozon-match"
       : isOzonCaptureJob(payload) ? "sales-capture" : "source-capture";
-    const response = await fetchImpl(`${API_ORIGIN}/api/candidates/${encodeURIComponent(payload.candidateId)}/${route}/result`, {
-      method: "POST",
-      signal: AbortSignal.timeout(10000),
-      headers: await serviceHeaders(),
-      body: JSON.stringify({ captureId: payload.captureId, token: payload.token, dataRevision: payload.dataRevision, ...result })
-    });
+    const response = await postToService(`/api/candidates/${encodeURIComponent(payload.candidateId)}/${route}/result`,
+      { captureId: payload.captureId, token: payload.token, dataRevision: payload.dataRevision, ...result });
     if (!response.ok) throw refusal(response.status, "result_rejected");
   }
 
@@ -326,12 +341,8 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
   async function fetchSearchImage(payload) {
     let response;
     try {
-      response = await fetchImpl(`${API_ORIGIN}/api/extension/capture-jobs/${encodeURIComponent(payload.captureId)}/search-image`, {
-        method: "POST",
-        signal: AbortSignal.timeout(15000),
-        headers: await serviceHeaders(),
-        body: JSON.stringify({ token: payload.token, dataRevision: payload.dataRevision })
-      });
+      response = await postToService(`/api/extension/capture-jobs/${encodeURIComponent(payload.captureId)}/search-image`,
+        { token: payload.token, dataRevision: payload.dataRevision }, 15000);
     } catch { throw failure("search_image_unavailable"); }
     if (!response?.ok) throw failure("search_image_unavailable");
     const body = await response.json().catch(() => null);
@@ -475,10 +486,7 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
     heartbeatPending = (async () => {
       try {
         await settleStrayTab();
-        const response = await fetchImpl(`${API_ORIGIN}/api/extension/heartbeat`, {
-          method: "POST", headers: await serviceHeaders(), signal: AbortSignal.timeout(10000),
-          body: JSON.stringify({ version, backgroundReady: !strayTab, observedAt: clock() })
-        });
+        const response = await postToService("/api/extension/heartbeat", { version, backgroundReady: !strayTab, observedAt: clock() });
         if (!response.ok) throw refusal(response.status, "heartbeat_unavailable");
         const body = await response.json();
         if (body?.accepted !== true) throw failure("heartbeat_rejected");
@@ -499,10 +507,7 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
     seenCaptureIds.add(message.captureId);
     activeCapture = message.captureId;
     try {
-      const response = await fetchImpl(`${API_ORIGIN}/api/extension/capture-jobs/${encodeURIComponent(message.captureId)}/claim`, {
-        method: "POST", headers: await serviceHeaders(), signal: AbortSignal.timeout(10000),
-        body: JSON.stringify({ version })
-      });
+      const response = await postToService(`/api/extension/capture-jobs/${encodeURIComponent(message.captureId)}/claim`, { version });
       if (!response.ok) throw refusal(response.status, "capture_job_not_claimed");
       const body = await response.json();
       const payload = body?.captureJob;
@@ -534,7 +539,7 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
     const record = { serviceOrigin: new URL(senderUrl).origin, workstationId: message.workstationId, name: message.name, key: message.key };
     if (!validWorkstation(record)) return { accepted: false, code: "workstation_key_invalid" };
     try {
-      await loadWorkstation();
+      await loadSettings();
       await chromeApi.storage.local.set({ [WORKSTATION_STORAGE_KEY]: record });
     } catch {
       return { accepted: false, code: "workstation_storage_unavailable" };
@@ -544,6 +549,76 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
     if (heartbeatPending) await heartbeatPending;
     const current = await heartbeat();
     return { accepted: true, workstation: current.workstation, serviceConnected: current.serviceConnected };
+  }
+
+  // The page bridge runs on the service's own pages. On this computer's workbench the manifest puts it there; for a team's
+  // central service it is registered here, for that address only, and taken off again when the plugin goes back.
+  async function syncServiceBridge() {
+    const wanted = serviceOrigin === LOCAL_SERVICE_ORIGIN ? null : servicePagePattern(serviceOrigin);
+    const [registered] = await chromeApi.scripting.getRegisteredContentScripts({ ids: [SERVICE_BRIDGE_SCRIPT_ID] });
+    if (registered && wanted && registered.matches?.length === 1 && registered.matches[0] === wanted) return;
+    if (registered) await chromeApi.scripting.unregisterContentScripts({ ids: [SERVICE_BRIDGE_SCRIPT_ID] });
+    if (wanted) {
+      await chromeApi.scripting.registerContentScripts([{ id: SERVICE_BRIDGE_SCRIPT_ID, matches: [wanted], js: ["bridge.js"],
+        runAt: "document_start", persistAcrossSessions: true }]);
+    }
+  }
+
+  // The settings page moves the plugin to another service. Not while a job runs: its result belongs to the service that
+  // handed it out. A team's service needs the plugin let onto its pages first (the settings page asks the person).
+  async function switchService(origin) {
+    await loadSettings();
+    if (activeCapture || switchingService) return { saved: false, code: "capture_busy" };
+    switchingService = true;
+    try {
+      if (origin !== LOCAL_SERVICE_ORIGIN) {
+        const granted = await Promise.resolve().then(() => chromeApi.permissions.contains({ origins: [servicePagePattern(origin)] }))
+          .catch(() => false);
+        if (granted !== true) return { saved: false, code: "service_access_missing" };
+      }
+      try {
+        await chromeApi.storage.local.set({ [SERVICE_STORAGE_KEY]: { origin } });
+      } catch {
+        return { saved: false, code: "settings_storage_unavailable" };
+      }
+      while (heartbeatPending) await heartbeatPending;
+      const previous = serviceOrigin;
+      serviceOrigin = origin;
+      if (previous !== origin) lastHeartbeat = { ok: false, code: "heartbeat_not_observed", observedAt: null };
+      let bridgeReady = true;
+      try { await syncServiceBridge(); } catch { bridgeReady = false; }
+      // The address left behind no longer needs this plugin on its pages.
+      if (previous !== origin && previous !== LOCAL_SERVICE_ORIGIN) {
+        await Promise.resolve().then(() => chromeApi.permissions.remove({ origins: [servicePagePattern(previous)] })).catch(() => {});
+      }
+      await heartbeat();
+      return { saved: true, bridgeReady, status: status() };
+    } finally {
+      switchingService = false;
+    }
+  }
+
+  // Only the plugin's own settings page may ask which service it works for, or move it to another one.
+  function fromSettingsPage(sender) {
+    return sender?.id === chromeApi.runtime.id && typeof sender?.url === "string" &&
+      sender.url.split(/[?#]/u, 1)[0] === chromeApi.runtime.getURL(SETTINGS_PAGE);
+  }
+
+  function handleSettingsMessage(message, sender, sendResponse) {
+    if (!fromSettingsPage(sender)) {
+      sendResponse({ saved: false, code: "request_origin_invalid" });
+      return false;
+    }
+    if (message.type === SERVICE_STATUS_MESSAGE_TYPE) {
+      void loadSettings().then(() => sendResponse({ status: status() }));
+      return true;
+    }
+    if (Object.keys(message).sort().join() !== "serviceOrigin,type" || normalizeServiceAddress(message.serviceOrigin) !== message.serviceOrigin) {
+      sendResponse({ saved: false, code: "service_address_invalid" });
+      return false;
+    }
+    void switchService(message.serviceOrigin).then(sendResponse);
+    return true;
   }
 
   function ensureHeartbeatAlarm() {
@@ -558,8 +633,16 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
   }
 
   function handleMessage(message, sender, sendResponse) {
+    if (message?.type === SERVICE_STATUS_MESSAGE_TYPE || message?.type === SERVICE_ADDRESS_MESSAGE_TYPE) {
+      return handleSettingsMessage(message, sender, sendResponse);
+    }
     if (message?.type !== BACKGROUND_PING && message?.type !== WORKSTATION_KEY_MESSAGE_TYPE && !START_TYPES.has(message?.type)) return false;
-    if (!isReviewSender(sender?.url)) {
+    // A worker Chrome has just woken does not know yet which service it works for: it reads that first, then answers.
+    if (!settingsLoaded) {
+      void loadSettings().then(() => { handleMessage(message, sender, sendResponse); });
+      return true;
+    }
+    if (!isReviewSender(sender?.url, serviceOrigin)) {
       sendResponse({ accepted: false, code: "request_origin_invalid" });
       return false;
     }
@@ -582,14 +665,14 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       sendResponse({ accepted: false, code: "start_signal_invalid" });
       return false;
     }
-    if (activeCapture) {
+    if (activeCapture || switchingService) {
       sendResponse({ accepted: false, code: "capture_busy" });
       return false;
     }
     if (strayTab) {
       // The owner may have closed that tab a moment ago: look once, and turn the job away with the real reason, not "busy".
       void settleStrayTab().then(() => {
-        if (activeCapture) return { accepted: false, code: "capture_busy" };
+        if (activeCapture || switchingService) return { accepted: false, code: "capture_busy" };
         if (strayTab) return { accepted: false, code: strayTab.code };
         return claimCapture(message);
       }).then(sendResponse);
@@ -606,7 +689,9 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       });
     };
     chromeApi.runtime.onMessage.addListener(handleMessage);
-    void loadWorkstation();
+    // The settings page opens from the plugin's icon; the page bridge is put back on the team's service pages if Chrome lost it.
+    chromeApi.action.onClicked.addListener(() => { void Promise.resolve().then(() => chromeApi.runtime.openOptionsPage()).catch(() => {}); });
+    void loadSettings().then(syncServiceBridge).catch(() => {});
     chromeApi.alarms.onAlarm.addListener((alarm) => { if (alarm.name === HEARTBEAT_ALARM) void heartbeat(); });
     chromeApi.runtime.onInstalled.addListener(start);
     chromeApi.runtime.onStartup.addListener(start);
@@ -615,7 +700,7 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       lastHeartbeat = { ok: false, code: "alarm_unavailable", observedAt: clock() };
     });
   }
-  return { status, heartbeat, handleMessage, ensureHeartbeatAlarm, install };
+  return { status, heartbeat, handleMessage, ensureHeartbeatAlarm, install, ready: loadSettings };
 }
 
 if (globalThis.chrome?.runtime?.id) {

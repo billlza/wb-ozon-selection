@@ -55,7 +55,7 @@ function harness(overrides = {}) {
       if (outcome?.changed) document = draft;
       return outcome?.result;
     },
-    now: () => AT, businessDate: () => '2026-10-10', estimateInputs, storeBindings: [], config, requiredExtensionVersion: '1.5.0', ...overrides.options
+    now: () => AT, businessDate: () => '2026-10-10', estimateInputs, storeBindings: [], config, requiredExtensionVersion: '1.6.0', ...overrides.options
   });
   return { service, read: () => document };
 }
@@ -68,10 +68,10 @@ test('one round end to end: start, claim, result, two candidates in the shared i
   assert.equal(started.round.status, 'waiting_extension');
   assert.equal(JSON.stringify(started).includes('token'), false);
   await assert.rejects(service.claim(started.captureJob.jobId, '1.3.0', ORIGIN), error => error.code === 'EXTENSION_VERSION_MISMATCH');
-  const { captureJob } = await service.claim(started.captureJob.jobId, '1.5.0', ORIGIN);
+  const { captureJob } = await service.claim(started.captureJob.jobId, '1.6.0', ORIGIN);
   assert.deepEqual(captureJob.categoryPaths, [CLOTHING]);
   assert.equal(captureJob.pageUrl, SEERFAR_WEB_SEARCH_PAGE);
-  await assert.rejects(service.claim(started.captureJob.jobId, '1.5.0', ORIGIN), error => error.code === 'NOT_CLAIMABLE');
+  await assert.rejects(service.claim(started.captureJob.jobId, '1.6.0', ORIGIN), error => error.code === 'NOT_CLAIMABLE');
   await assert.rejects(service.acceptResult({ roundId: captureJob.roundId, claimant: ORIGIN,
     input: { captureId: captureJob.captureId, token: 'wrong', status: 'captured', capture: capture([]) } }), error => error.code === 'TOKEN_INVALID');
   const round = await service.acceptResult({ roundId: captureJob.roundId, claimant: ORIGIN, input: { captureId: captureJob.captureId, token: captureJob.token,
@@ -95,13 +95,13 @@ test('a failed or off-scope page closes the round with its reason and creates no
   const { service, read } = harness();
   const queryId = service.view(read()).plans.miska.queries[0].queryId;
   let started = await service.startRound({ actor: owner, targetStore: 'miska', queryId });
-  let { captureJob } = await service.claim(started.captureJob.jobId, '1.5.0', ORIGIN);
+  let { captureJob } = await service.claim(started.captureJob.jobId, '1.6.0', ORIGIN);
   let round = await service.acceptResult({ roundId: captureJob.roundId, claimant: ORIGIN,
     input: { captureId: captureJob.captureId, token: captureJob.token, status: 'failed', failureCode: 'site_login_required' } });
   assert.equal(round.failure.reason, 'Seerfar 没登录，插件停在了登录页');
   // A failed round does not count as run today.
   started = await service.startRound({ actor: owner, targetStore: 'miska', queryId });
-  ({ captureJob } = await service.claim(started.captureJob.jobId, '1.5.0', ORIGIN));
+  ({ captureJob } = await service.claim(started.captureJob.jobId, '1.6.0', ORIGIN));
   round = await service.acceptResult({ roundId: captureJob.roundId, claimant: ORIGIN, input: { captureId: captureJob.captureId, token: captureJob.token,
     status: 'captured', capture: capture([raw('1001', { categoryInfo: { ...raw('1').categoryInfo, cnTitlePath: '宠物用品 > 别的' } })]) } });
   assert.equal(round.failure.code, 'scope_mismatch');
@@ -143,7 +143,7 @@ const KEYCHAIN_ENTRY = { service: SEERFAR_ACCOUNT_KEYCHAIN_SERVICE, account: SEE
 async function capturedRound(service, read, input) {
   const queryId = service.view(read()).plans.miska.queries[0].queryId;
   const started = await service.startRound({ actor: owner, targetStore: 'miska', queryId });
-  const { captureJob } = await service.claim(started.captureJob.jobId, '1.5.0', ORIGIN);
+  const { captureJob } = await service.claim(started.captureJob.jobId, '1.6.0', ORIGIN);
   return service.acceptResult({ roundId: captureJob.roundId, claimant: ORIGIN, input: { captureId: captureJob.captureId, token: captureJob.token,
     status: 'captured', capture: capture([raw('1001', { sales: 80 })]), ...input } });
 }

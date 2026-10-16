@@ -63,13 +63,13 @@ test("a plugin call counts only with an active computer's key; a removed compute
 test("the list shows who is online from heartbeats kept in this process; they lapse after the heartbeat time", async () => {
   const { access, advance } = fixture();
   const added = await access.add({ actor: BOSS, name: "老板甲的 MacBook" });
-  access.recordHeartbeat(added.workstation.workstationId, { version: "1.5.0" });
+  access.recordHeartbeat(added.workstation.workstationId, { version: "1.6.0" });
   let [shown] = await access.list();
-  assert.deepEqual([shown.online, shown.lastSeenAt, shown.extensionVersion], [true, "2026-10-16T18:00:00.000Z", "1.5.0"]);
+  assert.deepEqual([shown.online, shown.lastSeenAt, shown.extensionVersion], [true, "2026-10-16T18:00:00.000Z", "1.6.0"]);
   advance(75_001);
   [shown] = await access.list();
   assert.deepEqual([shown.online, shown.lastSeenAt], [false, "2026-10-16T18:00:00.000Z"]);
-  assert.throws(() => access.recordHeartbeat("workstation:not-an-id", { version: "1.5.0" }), /WORKSTATION_INPUT_INVALID/);
+  assert.throws(() => access.recordHeartbeat("workstation:not-an-id", { version: "1.6.0" }), /WORKSTATION_INPUT_INVALID/);
 });
 
 test("a computer needs a name of 1 to 40 characters, and at most the set number of computers are in use", async () => {

@@ -19,11 +19,37 @@ export function isOzonCaptureJob(payload) {
   return typeof payload?.productUrl === "string" && typeof payload?.expectedProductId === "string";
 }
 
-export function isReviewSender(value) {
+// The workbench on this computer, where the plugin goes unless a team's central service has been filled in.
+export const LOCAL_SERVICE_ORIGIN = "http://127.0.0.1:4317";
+export const SERVICE_ADDRESS_MESSAGE_TYPE = "SELECTION_REVIEW_SERVICE_ADDRESS";
+export const SERVICE_STATUS_MESSAGE_TYPE = "SELECTION_REVIEW_SERVICE_STATUS";
+
+/**
+ * The address of the service this plugin works for, as a person types it into the plugin's settings page: the workbench on
+ * this computer, or a team's central service over https (a bare name such as ozon.example.com is taken as https). Only the
+ * origin counts; anything with a path, a query, a password or plain http elsewhere is not an address the plugin takes.
+ */
+export function normalizeServiceAddress(value) {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text || text.length > 200 || /[\s\u0000-\u001f\u007f]/.test(text)) return null;
+  let url;
+  try { url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`); } catch { return null; }
+  if (url.username || url.password || url.search || url.hash || !["", "/"].includes(url.pathname)) return null;
+  if (url.origin === LOCAL_SERVICE_ORIGIN) return LOCAL_SERVICE_ORIGIN;
+  if (url.protocol !== "https:" || !url.hostname || /^[\d.]+$/.test(url.hostname) || url.hostname.startsWith("[")) return null;
+  return url.origin;
+}
+
+/** The host permission and content-script pattern for one service: its own pages, nothing wider. */
+export const servicePagePattern = (origin) => `${origin}/*`;
+
+/** A message from the review page counts only when that page is the service this plugin works for. */
+export function isReviewSender(value, serviceOrigin = LOCAL_SERVICE_ORIGIN) {
   if (typeof value !== "string") return false;
   try {
     const url = new URL(value);
-    return url.origin === "http://127.0.0.1:4317" && !url.username && !url.password;
+    return url.origin === serviceOrigin && !url.username && !url.password;
   } catch { return false; }
 }
 

@@ -6,7 +6,7 @@ import TeamAccountPanel from "./TeamAccountPanel.jsx";
 import WorkstationPanel from "./WorkstationPanel.jsx";
 
 // What this page's plugin said last: whether it answered, and which team computer's key it holds.
-const NO_PLUGIN_ANSWER = Object.freeze({ answered: false, workstation: null });
+const NO_PLUGIN_ANSWER = Object.freeze({ answered: false, otherService: false, workstation: null });
 
 /**
  * 已登录是常态，不必每一页头上都声明一遍：showAuthenticated 为假时这一条整条不显示（「退出登录」在「维护」里）。
