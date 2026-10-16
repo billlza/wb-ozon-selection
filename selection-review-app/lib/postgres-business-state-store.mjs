@@ -12,6 +12,15 @@ const CREATE_TABLE = `CREATE TABLE IF NOT EXISTS ${BUSINESS_STATE_TABLE} (
 )`;
 // Two processes creating the table at the same moment: the loser sees a duplicate type or table, and the table exists.
 const SCHEMA_RACE_CODES = new Set(["23505", "42P07"]);
+// Every statement has a deadline, so one stuck write cannot hold the write queue forever: the server cancels a lock wait
+// or a statement that runs too long, ends a transaction left idle, and the client gives up on a connection that stops
+// answering (a dropped network never answers at all). The client deadline is the longest so the server normally answers
+// first and the connection stays usable.
+export const POSTGRES_BUSINESS_STATE_TIMEOUTS = Object.freeze({ lockMs: 15_000, statementMs: 30_000, queryMs: 40_000,
+  idleInTransactionMs: 120_000 });
+// pg's message when the client deadline passes; the statement may still be running, so the connection is closed instead of
+// queueing a ROLLBACK behind it.
+const CLIENT_DEADLINE_MESSAGE = "Query read timeout";
 
 export function isPostgresConnectionString(value) {
   return typeof value === "string" && /^postgres(?:ql)?:\/\/\S+$/u.test(value);
@@ -21,12 +30,19 @@ function validDocumentId(value) {
   return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/u.test(value);
 }
 
+function validTimeouts(value) {
+  const keys = ["lockMs", "statementMs", "queryMs", "idleInTransactionMs"];
+  return value !== null && typeof value === "object" && Object.keys(value).length === keys.length &&
+    keys.every(key => Number.isSafeInteger(value[key]) && value[key] >= 1 && value[key] <= 600_000) &&
+    value.lockMs < value.statementMs && value.statementMs < value.queryMs;
+}
+
 /**
  * `pool` is a pg.Pool (or anything with the same query/connect/end). Without one, `connectionString` creates a pool on
  * first use; pg is only loaded then, so the local JSON runtime never loads the driver.
  */
 export function createPostgresBusinessStateStore({ pool = null, connectionString = null, documentId = BUSINESS_STATE_DOCUMENT_ID,
-  maxConnections = 5 } = {}) {
+  maxConnections = 5, timeouts = POSTGRES_BUSINESS_STATE_TIMEOUTS } = {}) {
   if (pool === null && !isPostgresConnectionString(connectionString)) throw new Error("POSTGRES_BUSINESS_STATE_CONNECTION_REQUIRED");
   if (pool !== null && (typeof pool.query !== "function" || typeof pool.connect !== "function")) {
     throw new Error("POSTGRES_BUSINESS_STATE_POOL_INVALID");
@@ -35,12 +51,15 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
   if (!Number.isSafeInteger(maxConnections) || maxConnections < 1 || maxConnections > 50) {
     throw new Error("POSTGRES_BUSINESS_STATE_POOL_SIZE_INVALID");
   }
+  if (!validTimeouts(timeouts)) throw new Error("POSTGRES_BUSINESS_STATE_TIMEOUTS_INVALID");
   let poolReady = pool === null ? null : Promise.resolve(pool);
   let schemaReady = null;
 
   function connectedPool() {
     poolReady ??= import("pg").then(({ default: pg }) => {
-      const created = new pg.Pool({ connectionString, max: maxConnections, connectionTimeoutMillis: 10_000 });
+      const created = new pg.Pool({ connectionString, max: maxConnections, connectionTimeoutMillis: 10_000,
+        lock_timeout: timeouts.lockMs, statement_timeout: timeouts.statementMs, query_timeout: timeouts.queryMs,
+        idle_in_transaction_session_timeout: timeouts.idleInTransactionMs });
       // An idle connection dropped by the server (restart, failover) must not crash the service; the next query
       // simply opens a new one. Only the error code is logged: messages can carry the database host.
       created.on("error", error => console.error(`POSTGRES_IDLE_CONNECTION_FAILED:${error?.code ?? "unknown"}`));
@@ -67,6 +86,37 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
     return rows[0] ?? null;
   }
 
+  // Ends a failed transaction: ROLLBACK while the connection still answers; otherwise the connection is closed, which
+  // aborts the transaction on the server. Returns the error to release the connection with.
+  async function abandon(client, error) {
+    if (error?.message === CLIENT_DEADLINE_MESSAGE) return error;
+    try {
+      await client.query("ROLLBACK");
+      return undefined;
+    } catch (rollbackError) {
+      return rollbackError;
+    }
+  }
+
+  // The COMMIT was sent but its answer never came, so the write may have landed. Reporting a saved write as failed would
+  // invite the user to repeat it, so the row decides: ours (the next revision with exactly our text) means saved, the
+  // revision we locked means not saved, anything else cannot be told apart and is reported as unknown.
+  async function settleLostCommit({ before, after, text }, failure, result) {
+    let row;
+    try {
+      // FOR SHARE waits for a transaction still holding the row, so a COMMIT still in flight is seen as landed or not.
+      const { rows } = await (await connectedPool()).query(
+        `SELECT revision::text AS revision, document::text AS text FROM ${BUSINESS_STATE_TABLE} WHERE document_id = $1 FOR SHARE`,
+        [documentId]);
+      row = rows[0] ?? null;
+    } catch {
+      row = undefined;
+    }
+    if (row && row.revision === after && row.text === text) return result;
+    if (row !== undefined && (row === null ? before === null : row.revision === before)) throw failure;
+    throw new Error("BUSINESS_STATE_REPOSITORY_COMMIT_OUTCOME_UNKNOWN", { cause: failure });
+  }
+
   return Object.freeze({
     documentId,
     /** One unlocked read. When `knownRevision` is still current the document is not sent again. */
@@ -82,14 +132,15 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
     },
     /**
      * Runs `work` inside one transaction holding the row lock. `work` gets the stored document and `replace(document)`;
-     * a replaced document is written once, at the end, and committed with the lock released. Any error rolls back.
-     * With `initialDocument`, a missing row starts from it; nothing is kept if `work` does not replace it.
+     * a replaced document is written once, at the end, and committed with the lock released. Any error rolls back; when
+     * only the COMMIT's answer is lost, the row says whether the write landed. With `initialDocument`, a missing row starts
+     * from it; nothing is kept if `work` does not replace it.
      */
     async runLocked({ initialDocument = null } = {}, work) {
       if (typeof work !== "function") throw new Error("POSTGRES_BUSINESS_STATE_WORK_REQUIRED");
       await ensureSchema();
       const client = await (await connectedPool()).connect();
-      let releaseError;
+      let releaseError, result, pendingCommit = null, commitFailure;
       try {
         await client.query("BEGIN");
         let row = await selectForUpdate(client);
@@ -105,23 +156,28 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
           if (row === null) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_MISSING");
         }
         let replacement = null;
-        const result = await work({ document: row.document, replace(document) { replacement = document; } });
-        if (replacement !== null) {
-          await client.query(
-            `UPDATE ${BUSINESS_STATE_TABLE} SET document = $2::json, revision = revision + 1, updated_at = now()
-             WHERE document_id = $1`,
-            [documentId, JSON.stringify(replacement)]);
+        result = await work({ document: row.document, replace(document) { replacement = document; } });
+        if (replacement === null) {
+          await client.query(inserted ? "ROLLBACK" : "COMMIT");
+          return result;
         }
-        await client.query(replacement === null && inserted ? "ROLLBACK" : "COMMIT");
+        const text = JSON.stringify(replacement);
+        await client.query(
+          `UPDATE ${BUSINESS_STATE_TABLE} SET document = $2::json, revision = revision + 1, updated_at = now()
+           WHERE document_id = $1`,
+          [documentId, text]);
+        pendingCommit = { before: inserted ? null : row.revision, after: String(BigInt(row.revision) + 1n), text };
+        await client.query("COMMIT");
         return result;
       } catch (error) {
-        try { await client.query("ROLLBACK"); }
-        catch (rollbackError) { releaseError = rollbackError; }
-        throw error;
+        releaseError = await abandon(client, error);
+        if (pendingCommit === null) throw error;
+        commitFailure = error;
       } finally {
-        // A connection whose rollback failed is closed instead of going back to the pool mid-transaction.
+        // A connection whose rollback failed or timed out is closed instead of going back to the pool mid-transaction.
         client.release(releaseError);
       }
+      return settleLostCommit(pendingCommit, commitFailure, result);
     },
     /** Read-only look at the target, for the import dry run: creates nothing. */
     async inspect() {
@@ -157,8 +213,7 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
         await client.query("COMMIT");
         return true;
       } catch (error) {
-        try { await client.query("ROLLBACK"); }
-        catch (rollbackError) { releaseError = rollbackError; }
+        releaseError = await abandon(client, error);
         throw error;
       } finally {
         client.release(releaseError);

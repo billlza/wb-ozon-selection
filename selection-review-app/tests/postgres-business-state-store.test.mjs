@@ -7,25 +7,35 @@ import {
   initialBusinessStateDocument
 } from "../lib/business-state-repository.mjs";
 import { importBusinessStateToPostgres } from "../lib/business-state-import.mjs";
-import { BUSINESS_STATE_TABLE, createPostgresBusinessStateStore, isPostgresConnectionString } from "../lib/postgres-business-state-store.mjs";
+import {
+  BUSINESS_STATE_TABLE,
+  POSTGRES_BUSINESS_STATE_TIMEOUTS,
+  createPostgresBusinessStateStore,
+  isPostgresConnectionString
+} from "../lib/postgres-business-state-store.mjs";
 import { createRepositoryRuntimeHealth } from "../lib/runtime-health.mjs";
 import { createFakePostgresBusinessStateStore } from "./helpers/fake-postgres-business-state-store.mjs";
 
 const CONFIGURATION = Object.freeze({ schemaVersion: "selection-review-runtime-configuration-v1", stateAdapter: "postgres", initializeDataFile: false });
 const DATABASE_URL = "postgres://review:not-a-real-password@db.internal.example:5432/review";
 
-// Answers the store's statements by kind; it does not model rollback, the tests read the statement order instead.
+// Answers the store's statements by kind and keeps one row; a ROLLBACK that goes through restores the row as it was at
+// BEGIN. Failures are injected per kind.
 function fakePool({ row = null, fail = {} } = {}) {
   const statements = [];
   const released = [];
   let current = row;
+  let atBegin = row;
   async function answer(sql, params = []) {
     const text = sql.replace(/\s+/gu, " ").trim();
     const kind = text.startsWith("CREATE TABLE") ? "CREATE" : text.startsWith("SELECT document, revision") ? "SELECT_FOR_UPDATE"
-      : text.startsWith("SELECT revision") ? "SELECT" : text.split(" ")[0];
+      : text.endsWith("FOR SHARE") ? "SELECT_FOR_SHARE" : text.startsWith("SELECT revision") ? "SELECT" : text.split(" ")[0];
     statements.push({ kind, text, params });
     const failure = Array.isArray(fail[kind]) ? fail[kind].shift() : fail[kind];
     if (failure) throw typeof failure === "function" ? failure() : failure;
+    if (kind === "BEGIN") atBegin = current;
+    if (kind === "ROLLBACK") current = atBegin;
+    if (kind === "SELECT_FOR_SHARE") return { rows: current ? [{ revision: String(current.revision), text: JSON.stringify(current.document) }] : [] };
     if (kind === "SELECT_FOR_UPDATE") return { rows: current ? [{ document: JSON.parse(JSON.stringify(current.document)), revision: String(current.revision) }] : [] };
     if (kind === "SELECT") {
       if (!current) return { rows: [] };
@@ -53,6 +63,10 @@ test("Postgres store validates its inputs and never builds SQL from values", asy
   assert.throws(() => createPostgresBusinessStateStore({ pool: { query() {} } }), /POOL_INVALID/);
   assert.throws(() => createPostgresBusinessStateStore({ pool: fakePool().pool, documentId: "x'; DROP TABLE y; --" }), /DOCUMENT_ID_INVALID/);
   assert.throws(() => createPostgresBusinessStateStore({ pool: fakePool().pool, maxConnections: 0 }), /POOL_SIZE_INVALID/);
+  for (const timeouts of [{}, { ...POSTGRES_BUSINESS_STATE_TIMEOUTS, lockMs: 0 },
+    { ...POSTGRES_BUSINESS_STATE_TIMEOUTS, queryMs: POSTGRES_BUSINESS_STATE_TIMEOUTS.statementMs }]) {
+    assert.throws(() => createPostgresBusinessStateStore({ pool: fakePool().pool, timeouts }), /TIMEOUTS_INVALID/);
+  }
   assert.equal(isPostgresConnectionString("postgresql://u@h/db"), true);
   assert.equal(isPostgresConnectionString("postgres://"), false);
 
@@ -93,10 +107,54 @@ test("failed work rolls back; a failed rollback closes the connection instead of
   assert.deepEqual(fake.released, [null]);
 
   const broken = new Error("connection lost");
-  const failing = fakePool({ row: { document: { meta: { version: 2 } }, revision: 1 }, fail: { COMMIT: new Error("COMMIT_FAILED"), ROLLBACK: broken } });
+  const failing = fakePool({ row: { document: { meta: { version: 2 } }, revision: 1 }, fail: { UPDATE: new Error("UPDATE_FAILED"), ROLLBACK: broken } });
   const failingStore = createPostgresBusinessStateStore({ pool: failing.pool });
-  await assert.rejects(failingStore.runLocked({}, ({ document, replace }) => replace(document)), /COMMIT_FAILED/);
+  await assert.rejects(failingStore.runLocked({}, ({ document, replace }) => replace(document)), /UPDATE_FAILED/);
+  assert.deepEqual(failing.kinds().slice(-2), ["UPDATE", "ROLLBACK"]);
   assert.deepEqual(failing.released, [broken]);
+
+  // Past the client deadline the statement may still be running: the connection is closed, no ROLLBACK is queued behind it.
+  const deadline = new Error("Query read timeout");
+  const stalled = fakePool({ row: { document: { meta: { version: 2 } }, revision: 1 }, fail: { BEGIN: deadline } });
+  await assert.rejects(createPostgresBusinessStateStore({ pool: stalled.pool }).runLocked({}, () => "never"), /Query read timeout/);
+  assert.deepEqual(stalled.kinds(), ["CREATE", "BEGIN"]);
+  assert.deepEqual(stalled.released, [deadline]);
+});
+
+test("a lost COMMIT answer is settled from the row: saved, not saved, or reported as unknown", async () => {
+  const row = () => ({ document: { meta: { version: 2 }, counter: 1 }, revision: 4 });
+  const bump = ({ document, replace }) => { replace({ ...document, counter: 2 }); return "saved"; };
+  const lost = () => new Error("Connection terminated unexpectedly");
+
+  // The database committed but the answer never arrived (the connection is gone, so the rollback fails too).
+  const landedFailure = lost();
+  const landed = fakePool({ row: row(), fail: { COMMIT: landedFailure, ROLLBACK: new Error("Client was closed") } });
+  assert.equal(await createPostgresBusinessStateStore({ pool: landed.pool }).runLocked({}, bump), "saved");
+  assert.deepEqual(landed.kinds().slice(-4), ["UPDATE", "COMMIT", "ROLLBACK", "SELECT_FOR_SHARE"]);
+  assert.match(landed.statements.at(-1).text, /WHERE document_id = \$1 FOR SHARE$/u);
+  assert.equal(landed.released.length, 1);
+
+  // The COMMIT never took effect: the row still has the locked revision, so the original failure stands.
+  const missedFailure = lost();
+  const missed = fakePool({ row: row(), fail: { COMMIT: missedFailure } });
+  await assert.rejects(createPostgresBusinessStateStore({ pool: missed.pool }).runLocked({}, bump), error => error === missedFailure);
+
+  // A row this transaction inserted and never committed is simply absent.
+  const firstFailure = lost();
+  const first = fakePool({ fail: { COMMIT: firstFailure } });
+  await assert.rejects(createPostgresBusinessStateStore({ pool: first.pool })
+    .runLocked({ initialDocument: () => ({ meta: { version: 2 }, counter: 1 }) }, bump), error => error === firstFailure);
+
+  // The row cannot be read back: neither answer is safe, so the caller is told the outcome is unknown.
+  const unknownFailure = lost();
+  const unknown = fakePool({ row: row(), fail: { COMMIT: unknownFailure, ROLLBACK: new Error("Client was closed"), SELECT_FOR_SHARE: lost() } });
+  await assert.rejects(createPostgresBusinessStateStore({ pool: unknown.pool }).runLocked({}, bump),
+    error => error.message === "BUSINESS_STATE_REPOSITORY_COMMIT_OUTCOME_UNKNOWN" && error.cause === unknownFailure);
+
+  // A read-only transaction has nothing to settle.
+  const quiet = fakePool({ row: row(), fail: { COMMIT: lost() } });
+  await assert.rejects(createPostgresBusinessStateStore({ pool: quiet.pool }).runLocked({}, () => "looked"), /Connection terminated/);
+  assert.equal(quiet.kinds().includes("SELECT_FOR_SHARE"), false);
 });
 
 test("a missing row fails without a starting document, and a starting document is kept only when work replaces it", async () => {
