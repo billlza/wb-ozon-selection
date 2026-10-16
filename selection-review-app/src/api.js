@@ -149,8 +149,16 @@ export const api = {
   }),
   getOwnerAccess: signal => request("/api/owner-access", { signal }),
   setupOwnerAccess: ({ password }) => request("/api/owner-access/setup", { method: "POST", body: JSON.stringify({ password }) }),
-  loginOwnerAccess: ({ password }) => request("/api/owner-access/login", { method: "POST", body: JSON.stringify({ password }) }),
+  // A team account also sends its login name; the local owner only the password.
+  loginOwnerAccess: ({ password, loginName }) => request("/api/owner-access/login", { method: "POST",
+    body: JSON.stringify(typeof loginName === "string" ? { loginName, password } : { password }) }),
   logoutOwnerAccess: () => request("/api/owner-access/logout", { method: "POST", body: JSON.stringify({}) }),
+  // Team accounts: anyone changes their own password; a boss lists the accounts and sets a new password for another one.
+  changeOwnPassword: ({ currentPassword, newPassword }) => request("/api/owner-access/password", { method: "POST",
+    body: JSON.stringify({ currentPassword, newPassword }) }),
+  listTeamAccounts: signal => request("/api/team-accounts", { signal }),
+  resetTeamPassword: ({ userId, newPassword }) => request("/api/team-accounts/reset-password", { method: "POST",
+    body: JSON.stringify({ userId, newPassword }) }),
   getSeerfarRuntimeStatus: () => request("/api/integrations/seerfar/runtime-status"),
   getPhase2ASimulation: () => request("/api/simulations/phase-2a"),
   confirmPhase2ASimulation: (payload) =>

@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-16T13:25:32.255Z",
+  "frozenAt": "2026-10-16T14:43:41.151Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 1006,
-      "sha256": "ec700523172f70e5649c659b070f5f22fdf10f74dc9808ccf208dd4463e272e3",
+      "artifactCount": 1014,
+      "sha256": "e15c78c21f170285debe289e670b2dad2b8e76a984e23654747591ed8bed3a3f",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -448,7 +448,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "6b3540b86e3ae9bccf94aec8fa7bb2aa9609145704876c66aeab4030e0ee86ff"
+        "sha256": "f5491bbf15b550f04226bed6cc4d4dfc3df853b87bb8fa1c4e529d45d207b54f"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -820,7 +820,7 @@
       },
       {
         "path": "lib/local-owner-identity.mjs",
-        "sha256": "53c03e99a2466f3fc89ae7d6cc1c7db4dbe3978dd8e5a9014487607153bbc619"
+        "sha256": "10809e5ddeabcc8d31c45fa31e85799bf10d15d7df9ee6aea10d2a8c214e8d22"
       },
       {
         "path": "lib/market-sample-policy.mjs",
@@ -1128,7 +1128,7 @@
       },
       {
         "path": "lib/runtime-configuration.mjs",
-        "sha256": "48709d1744a652ee75deda6de3583061043192dded319d6068fb1e0c0f427bff"
+        "sha256": "d2daf1b554587b0a160202d9721d47622d91a998d14819a6e51c0e7c44ff8364"
       },
       {
         "path": "lib/runtime-health-worker.mjs",
@@ -1140,7 +1140,7 @@
       },
       {
         "path": "lib/runtime-identity-provider.mjs",
-        "sha256": "03cab26ea8e79ff5aed8ac2b1ba4afcd47cce84e4561aa1781e5c6980278fd94"
+        "sha256": "72b988700246a4f59466528aba2218793c987d4093ea2175c1a521a7aaeaad84"
       },
       {
         "path": "lib/runtime-identity.mjs",
@@ -1149,6 +1149,10 @@
       {
         "path": "lib/sales-snapshot.mjs",
         "sha256": "e220e8acfa16cc090ebe144e0bcaa1cee306aed776c13cf2a280c7b6f51c6c6b"
+      },
+      {
+        "path": "lib/scrypt-verifier.mjs",
+        "sha256": "2c8473a4188ef3b41a4b0971194f3347fd46642a19955b7eb83379233547605e"
       },
       {
         "path": "lib/seerfar-account-identity.mjs",
@@ -1309,6 +1313,18 @@
       {
         "path": "lib/supplier-selection-flow.mjs",
         "sha256": "aa64d81582a8528a2b7a0578d1bb71e26b58066f0d18c03a9f7cdc353496c0ff"
+      },
+      {
+        "path": "lib/team-account-admin.mjs",
+        "sha256": "67399e81fde73255bc6c2a9d733a0a1ab09248e2509b1e5de1bbdb0ecfe253ec"
+      },
+      {
+        "path": "lib/team-account-identity.mjs",
+        "sha256": "8858959f2333f0407f52c95bc7b0a911e80f316c83c17049831437d6ff8ed190"
+      },
+      {
+        "path": "lib/team-account-store.mjs",
+        "sha256": "23fcc7a8bd52a32417cbf2f8f83b2882719c64f90f44e224e56376858b80eaba"
       },
       {
         "path": "lib/three-store-map.mjs",
@@ -1644,7 +1660,7 @@
       },
       {
         "path": "scripts/ci-test-suites.mjs",
-        "sha256": "c1406bb1a7ffa315085b943f6879c881337e36464462667a431ee9ffc5e9b8ab"
+        "sha256": "6693c62fea888211fb38eced3117d9b119002bc929931305445918f0d5efff6e"
       },
       {
         "path": "scripts/deploy-local-runtime.sh",
@@ -1679,6 +1695,10 @@
         "sha256": "e38d1c9f6be8ccd1860889981c844fa195837dea0ae05472600f9cea4c98359a"
       },
       {
+        "path": "scripts/manage-team-accounts.mjs",
+        "sha256": "9605e83604b1e40f32dd53ca350a17db5a91686288831c2e9a845aed49a886df"
+      },
+      {
         "path": "scripts/open-review-in-chrome.sh",
         "sha256": "504331998ba05507d3d36b37f5d6006844bbb4d98d3359549228adbd3e692e4b"
       },
@@ -1692,7 +1712,7 @@
       },
       {
         "path": "scripts/run-ci-database-tests.mjs",
-        "sha256": "4513a564cb618ede167b9928e0aa9dfddcda33ffb1f3c62ef9a5e7b8380c48a9"
+        "sha256": "528793708b3023ce9127c6adabbf43fe4d24f6651a735548bee306a622b08862"
       },
       {
         "path": "scripts/run-ci-tests.mjs",
@@ -1712,11 +1732,11 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "5aaba0bd316911d48d5221ce49d92a01964e52e5818f0bce28bdc0d0b94c60d9"
+        "sha256": "b32fa75a4de430c789593683fa0d46bdb12e791982e801a661f4ef078a158b97"
       },
       {
         "path": "src/App.jsx",
-        "sha256": "fa6d027ea8bdab74c147f597231193fa9af4a4525eaad6cb42c5e66cd2ba3aa4"
+        "sha256": "5e322d822f13bb162c9e5e732cbbf25401e3926981820e79350c2ac47f99bd56"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1728,7 +1748,7 @@
       },
       {
         "path": "src/api.js",
-        "sha256": "fc7df7300c52fbdcfce60a28d0d6010b9e1fc89f7f29ca0d4b9d241d3cea03d9"
+        "sha256": "bff2254fc408ce99742debbace139d665bfd1306fdec94ef456e97c9e42be331"
       },
       {
         "path": "src/bExactCommissionInput.js",
@@ -1880,7 +1900,7 @@
       },
       {
         "path": "src/components/LocalOwnerAccessPanel.jsx",
-        "sha256": "0da0382c0fcf000782ee8ce294704049ccb68900f3b1f7a24ad9050879886cb2"
+        "sha256": "127aeec69f54a031ba0389d49a66f33fd095b09436cc887e71e5e20aef9a01fe"
       },
       {
         "path": "src/components/MaintenanceReadOnly.jsx",
@@ -1975,6 +1995,10 @@
         "sha256": "3ce89fc27bfefdd7957cb4ccd8e66404c2ec606c8404af710b4443b691f3e903"
       },
       {
+        "path": "src/components/TeamAccountPanel.jsx",
+        "sha256": "21cd9e5f58ed602a86428a0a0153a61718c3f8996bdd430299d3f34c8698f02e"
+      },
+      {
         "path": "src/components/ThreeStoreMap.jsx",
         "sha256": "13a6a6251ea1bfbcbe4fbae20cb9b3c7b9d435843abab78a21ebdda3d57e2c2f"
       },
@@ -2052,7 +2076,7 @@
       },
       {
         "path": "src/ownerAccess.js",
-        "sha256": "a41871aa0729252fdba2cbfb2acd5335c9cee91b341757c142985c48a756f940"
+        "sha256": "cb5dc81b0792aa74d5e01c7f989e1552f3e31dec1617caacc38346c890121b82"
       },
       {
         "path": "src/ozonImageMatchView.js",
@@ -2092,7 +2116,7 @@
       },
       {
         "path": "src/styles.css",
-        "sha256": "63820ed072e490fbf8eb47b1f91ebd85386722c4d63f81b804fb736b05b87f73"
+        "sha256": "59c8f9d7e2ccd62804b54c0ad80317bd3e5b545bd46366b3fd5946db5d5708d1"
       },
       {
         "path": "src/supplierImageMatchView.js",
@@ -3412,7 +3436,7 @@
       },
       {
         "path": "tests/local-owner-access-ui.test.mjs",
-        "sha256": "19b569b94939379ff86e8e26792708e5c115b8fd6e44c2657fb20e9ae601ca2f"
+        "sha256": "40ec13b888d8317e385d1ad4222bb93d151dab2f9b0454c2496d4b92ed259698"
       },
       {
         "path": "tests/local-owner-identity.test.mjs",
@@ -4011,6 +4035,14 @@
         "sha256": "fa4fc87d6744af54a5b14d7caa87dadac1e4b7a38f32e58499717d6ff30b3789"
       },
       {
+        "path": "tests/team-accounts-db.test.mjs",
+        "sha256": "c74c7c3f22b58bb1fcf5e46fa958134a48dbaaae90c5e46afe1fc7993c5ddb48"
+      },
+      {
+        "path": "tests/team-accounts.test.mjs",
+        "sha256": "323b2163ed9b6f2420d22301a050140514c58e74e1656acc13180db35f7ee93c"
+      },
+      {
         "path": "tests/three-store-map-api.test.mjs",
         "sha256": "5139a1f3590c18154291c18195deef3792dd387d4aa6dc89acdbbe4614cb358c"
       },
@@ -4235,7 +4267,27 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/scrypt-verifier.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "lib/team-account-admin.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "lib/team-account-identity.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "lib/team-account-store.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/worker-registry.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "scripts/manage-team-accounts.mjs",
           "status": "present_in_integration_source"
         },
         {
@@ -4244,6 +4296,10 @@
         },
         {
           "path": "src/components/LocalOwnerAccessPanel.jsx",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "src/components/TeamAccountPanel.jsx",
           "status": "present_in_integration_source"
         },
         {
@@ -4260,6 +4316,14 @@
         },
         {
           "path": "tests/runtime-identity-software-job.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/team-accounts-db.test.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/team-accounts.test.mjs",
           "status": "present_in_integration_source"
         }
       ],

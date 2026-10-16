@@ -1,16 +1,14 @@
 import fs from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
-import { randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
-import { promisify } from "node:util";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { persistJsonThroughRealTarget } from "./atomic-json-persistence.mjs";
+import { derivePasswordKey, isPasswordVerifier, PASSWORD_KDF as KDF } from "./scrypt-verifier.mjs";
 import { createActorContext } from "./runtime-identity.mjs";
 import { isOwnerCredentialPathIsolated, isRuntimeConfigurationTimestamp } from "./runtime-configuration.mjs";
 
-const derive = promisify(scrypt);
 const RECORD_VERSION = "local-owner-credential-v1";
 const COOKIE_NAME = "selection_review_owner";
-const KDF = Object.freeze({ algorithm: "scrypt", cost: 131072, blockSize: 8, parallelization: 1, keyLength: 32 });
 const SESSION_LIFETIME_MS = 8 * 60 * 60 * 1000;
 const SESSION_IDLE_MS = 30 * 60 * 1000;
 const MAX_SESSIONS = 4;
@@ -27,10 +25,7 @@ function exact(value, fields) {
 function validRecord(record) {
   return exact(record, ["schemaVersion", "ownerId", "credentialRevision", "createdAt", "verifier"]) && record.schemaVersion === RECORD_VERSION &&
     typeof record.ownerId === "string" && /^local-owner:[0-9a-f-]{36}$/.test(record.ownerId) && record.credentialRevision === 1 &&
-    isRuntimeConfigurationTimestamp(record.createdAt) && exact(record.verifier, [...Object.keys(KDF), "salt", "derivedKey"]) &&
-    Object.entries(KDF).every(([key, value]) => record.verifier[key] === value) &&
-    typeof record.verifier.salt === "string" && /^[a-f0-9]{32}$/.test(record.verifier.salt) &&
-    typeof record.verifier.derivedKey === "string" && /^[a-f0-9]{64}$/.test(record.verifier.derivedKey);
+    isRuntimeConfigurationTimestamp(record.createdAt) && isPasswordVerifier(record.verifier);
 }
 function privateStat(stat, kind) {
   return !stat.isSymbolicLink() && (kind === "directory" ? stat.isDirectory() : stat.isFile()) &&
@@ -146,8 +141,7 @@ function cookieToken(request) {
 }
 async function passwordKey(password, salt) {
   try {
-    return await derive(password, Buffer.from(salt, "hex"), KDF.keyLength,
-      { N: KDF.cost, r: KDF.blockSize, p: KDF.parallelization, maxmem: 192 * 1024 * 1024 });
+    return await derivePasswordKey(password, salt);
   } catch { throw failure("OWNER_IDENTITY_VERIFICATION_UNAVAILABLE", 503, "口令核验暂不可用"); }
 }
 

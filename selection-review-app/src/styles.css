@@ -1578,3 +1578,5 @@ label em { color: var(--red); font-style: normal; font-size: 9px; }
 /* Seerfar 自动选品页：只剩会员网页那一轮，加一句店铺档案在哪儿改。 */
 .seerfar-page { display: grid; gap: var(--space-3); }
 .seerfar-profile-link { margin: 0; color: var(--muted); font-size: var(--fs-xs); }
+.team-account-panel select { width: min(260px, 100%); }
+@media (max-width: 600px) { .team-account-panel select { width: 100%; } }

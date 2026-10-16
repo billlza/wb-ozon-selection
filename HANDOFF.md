@@ -1,4 +1,4 @@
-## 当前接班入口（2026-10-13：流程改造整合分支收口，10-14 已合进 main；10-15 修了 P1-22，开始做多人中央服务；10-16 数据库按商品拆开存）
+## 当前接班入口（2026-10-13：流程改造整合分支收口，10-14 已合进 main；10-15 修了 P1-22，开始做多人中央服务；10-16 数据库按商品拆开存，加了团队账号登录）
 
 **状态**：流程改造的全部改动在 `integration/flow-rework`。主人 2026-10-13 决定先按原样合进 main，审查清单里还没修的 P0-11、P0-12 记成已知问题（见「还开着的」）；10-14 主人把 PR #9 合进了 main（合并提交 `ab46fed`），PR #3 已关。10-15 修了 P1-22，见下面「P1-22」一节。本批没有部署、没有读凭据、没有向任何平台发请求；主人 Mac 上装的是按提交号装的整合分支版本，合不合 main 都不影响它。真实首件 A→E 仍未跑完。下方 2026-09-10 及更早的入口全部是历史，冲突处以本节和当前 AGENTS 为准。
 
@@ -114,6 +114,18 @@
 - 第 1 步那张一行表 `selection_review_business_state` 不再读。第 1 步没有部署过，没有要搬的数据；导入脚本照旧用，现在写进这三张表，写完在同一个事务里读回来逐项比对。
 - 测试：`tests/business-state-partitions.test.mjs`（切和拼、顺序、越界、唯一编号、行格式）；`tests/business-state-repository.test.mjs` 里三种存法同一套单件读写测试；`tests/postgres-business-state-store.test.mjs` 和要真数据库的 `tests/postgres-business-state-db.test.mjs` 按新存法重写，后者加了不同商品并行、整份事务等单件事务、两个进程抢同一个编号。
 - 本机验证（10-16，Node 22，`NODE_OPTIONS=--throw-deprecation`）：纯测试 3382 项、隔离接口测试 332 项、真数据库测试 17 项全过，构建没有警告，能力快照对得上。接口测试先查出一个真问题：商品没有正式实体记录时，单件写把共用部分里的空列表去掉了，被当成改了共用部分（保存权利声明报服务器错误）；现在空列表和没有这一项算一样。
+
+### 多人中央服务第 2 步（上）：团队账号登录（2026-10-16）
+
+主人 10-16 定的角色和密码规则记在 AGENTS 13.3。这一步做账号和登录；测试账号这一步只能看，它能做的操作下一个 PR 放开。
+
+- 开法：`SELECTION_REVIEW_IDENTITY_PROVIDER=team_accounts`，只能和 Postgres 一起用（账号表 `selection_review_accounts` 和业务数据在同一个库，`lib/team-account-store.mjs`）。不设就和以前一样，主人 Mac 上的本机主人密码不受影响。
+- 账号只用命令行开：`scripts/manage-team-accounts.mjs`（list、add、reset-password、disable、enable、import-owner）。数据库地址从 `SELECTION_REVIEW_DATABASE_URL` 读，不打印；密码从键盘输入时不回显，管道输入取第一行，不能写在参数里。`import-owner --from /绝对路径/owner.json` 把 Mac 上的主人密码文件导成一个老板账号，用户编号和密码都不变，以前主人做过的确认仍归这个人。新密码至少 8 个字符（服务器在公网上）；导入的主人密码保持原样。
+- 登录（`lib/team-account-identity.mjs`）：登录名不分大小写。同一个名字 15 分钟内错 5 次、所有名字合计错 20 次，就先停 15 分钟；不存在的名字也照样算一遍密码，回应时间看不出名字存不存在。会话存在服务进程的内存里（重启要重新登录），8 小时到期，30 分钟没有写操作也到期；一个账号最多 6 处同时登录，全部最多 30 个。Cookie 是 `HttpOnly`、`SameSite=Strict`，公网地址是 https 时加 `Secure`。每个请求都重读账号：停用或改了密码，别处登着的下一下就退出。
+- 权限：老板按主人（`owner`）算，测试按 `operator` 算。没登录时只能读 `/api/live`、`/api/health`、`/api/ready`、登录状态和登录接口，商品图片也要登录；测试的写请求一律 403 `team_tester_read_only`。有几块现在也只有老板能看（找新品、Seerfar、店铺画像、以图找货源、商品详情、账户准备、找货资料、属性映射、同款整批和 D 批量的详情），下一个 PR 和测试能做的操作一起放开。插件回传和服务内部请求不走这道门，第 3 步给插件配对时再管。
+- 改密码：`POST /api/owner-access/password` 改自己的，要先填现在的密码，改完别处退出、这里继续登着。老板用 `GET /api/team-accounts` 看名单（不含密码校验值），用 `POST /api/team-accounts/reset-password` 给另一位老板或测试重设（不能给自己），那个人各处退出。页面：登录框多了登录名；「维护」里写明谁登着、什么角色，下面是改密码和重设密码（`src/components/TeamAccountPanel.jsx`）。没登录时页面不读数据，登录后自己开始读；退出时把读到的数据清掉。
+- 中央模式仍然起不来（要等第 3 步），现在只能在本机开发方式加 Postgres 下试。
+- 测试：`tests/team-accounts.test.mjs`（账号、登录、限速、会话到期、改密码、重设、停用、命令行、导入主人密码、配置）；`tests/team-accounts-db.test.mjs` 要真数据库，起一个用团队账号的服务进程，从没登录一路测到老板给测试重设密码，归在 `DATABASE_TESTS`（数据库测试的跑法现在也分配一个本机端口）；`tests/local-owner-access-ui.test.mjs` 加了团队登录的页面和请求。
 
 ### 本轮验证
 

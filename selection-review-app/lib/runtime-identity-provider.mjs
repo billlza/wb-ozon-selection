@@ -1,11 +1,20 @@
 import { authorizeOperation, createLocalDevelopmentActor } from "./runtime-identity.mjs";
 import { createLocalOwnerIdentityProvider, createPrivateOwnerCredentialRepository, OwnerIdentityError } from "./local-owner-identity.mjs";
+import { createTeamAccountIdentityProvider } from "./team-account-identity.mjs";
+import { createPostgresTeamAccountStore } from "./team-account-store.mjs";
 
 export { OwnerIdentityError } from "./local-owner-identity.mjs";
 
-export function createConfiguredIdentityProvider({ configuration, clock = () => new Date().toISOString(), credentialRepository } = {}) {
+export function createConfiguredIdentityProvider({ configuration, clock = () => new Date().toISOString(), credentialRepository,
+  env = process.env, accountStore } = {}) {
   if (configuration?.identityProvider === "development_default") {
     return createDevelopmentIdentityProvider({ userId: configuration.defaultUserId, clock });
+  }
+  // Team accounts sit in the same database as the business state (their own table); the address comes only from the
+  // environment, like the repository's.
+  if (configuration?.identityProvider === "team_accounts" && configuration.stateAdapter === "postgres") {
+    return createTeamAccountIdentityProvider({ clock, secureCookies: new URL(configuration.publicOrigin).protocol === "https:",
+      accountStore: accountStore ?? createPostgresTeamAccountStore({ connectionString: String(env?.SELECTION_REVIEW_DATABASE_URL ?? "").trim() }) });
   }
   if (configuration?.identityProvider === "local_owner_password" && configuration.deploymentMode === "local_development" &&
       configuration.localOwnerIdentity?.credentialFile && Array.isArray(configuration.localOwnerIdentity.protectedPaths) &&

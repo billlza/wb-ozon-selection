@@ -561,6 +561,10 @@ export function createSelectionReviewRuntimeConfiguration({ env = process.env, a
 
   const defaultUserId = String(env.SELECTION_REVIEW_DEFAULT_USER_ID || "local-development-owner").trim();
   const identityProvider = String(env.SELECTION_REVIEW_IDENTITY_PROVIDER || "development_default").trim();
+  // Team accounts are kept in the database next to the business state.
+  if (identityProvider === "team_accounts" && stateAdapter !== "postgres") {
+    throw new Error("RUNTIME_CONFIGURATION_INVALID: 团队账号登录必须使用 Postgres 存储");
+  }
   if (deploymentMode !== "local_development") {
     if (isLoopback(bindHost)) throw new Error("RUNTIME_CONFIGURATION_INVALID: 中央模式不得隐式绑定本机回环地址");
     if (["json", "memory"].includes(stateAdapter)) throw new Error("RUNTIME_CONFIGURATION_INVALID: 中央模式必须使用并发安全的中央存储适配器");

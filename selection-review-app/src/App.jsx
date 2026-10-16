@@ -71,18 +71,20 @@ function batchNotSentReason(code) {
   return value === '' ? '发送前的核验没有通过' : `发送前的核验没有通过（${value}）`;
 }
 
+const emptyAppState = () => ({
+  candidates: [],
+  meta: null,
+  rules: null,
+  summary: null,
+  seerfarRuntime: null,
+  extensionHeartbeat: null,
+  runtimeArchitecture: null,
+  captureControl: { status: "idle", label: "商品采集控制空闲" }
+});
+
 export default function App() {
   const [preparationSaveState] = useState(createPreparationSaveState);
-  const [state, setState] = useState({
-    candidates: [],
-    meta: null,
-    rules: null,
-    summary: null,
-    seerfarRuntime: null,
-    extensionHeartbeat: null,
-    runtimeArchitecture: null,
-    captureControl: { status: "idle", label: "商品采集控制空闲" }
-  });
+  const [state, setState] = useState(emptyAppState);
   const [selectedId, setSelectedId] = useState("");
   const [queue, setQueue] = useState(INITIAL_QUEUE);
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -92,6 +94,8 @@ export default function App() {
   const [batchExecutionError, setBatchExecutionError] = useState(null);
   const batchReadEpoch = useRef(0);
   const [pollEpoch, setPollEpoch] = useState(0);
+  // 团队账号的会话在别处失效（到期、改了密码、被停用）时，轮询读到 401：让登录那一条重新读一次登录状态。
+  const [accessCheck, setAccessCheck] = useState(0);
   const readFailed = useRef(false);
   const selectionGuard = useRef(createSelectionGuard());
   // The owner lands on 选品台; the older pages keep their behaviour and stay reachable under 维护.
@@ -99,12 +103,14 @@ export default function App() {
   const [deskStore, setDeskStore] = useState("miska");
   // 录入页（piece B）：平台 + 店铺名单（GET /api/stores 没上线时用写死的两家 Ozon 店）和找货队列。
   const [stores, setStores] = useState(() => storeOptions(null));
+  // 团队账号没登录时读不到店铺名单，登录后（换了人也一样）再读一次。
+  const signedInUserId = state.runtimeArchitecture?.currentUser?.authenticated === true ? state.runtimeArchitecture.currentUser.userId : null;
   useEffect(() => {
     const controller = new AbortController();
     api.getStores(controller.signal).then(result => { if (!controller.signal.aborted) setStores(storeOptions(result)); })
       .catch(() => { /* 接口还没上线或读失败：继续用写死的名单 */ });
     return () => controller.abort();
-  }, []);
+  }, [signedInUserId]);
   const [skippedProducts, setSkippedProducts] = useState([]);
   const [threeStoreMap, setThreeStoreMap] = useState(null);
   const [accountPreparationView,setAccountPreparationView]=useState(null);
@@ -458,8 +464,11 @@ export default function App() {
     } catch (error) {
       if (signal?.aborted) return null;
       readFailed.current = true;
-      // 「刷新数据」已经收进「维护」，所以这句话必须说清楚现在去哪儿点它。
-      setNotice({ type: "error", message: `读取共享数据失败，轮询已暂停；到「维护」里点“刷新数据”恢复：${error.message}` });
+      // 团队账号没登录时什么都读不到（401）：说清楚先登录，登录成功后会自己接着读。
+      // 其余失败：「刷新数据」已经收进「维护」，所以这句话必须说清楚现在去哪儿点它。
+      setNotice(error.status === 401 ? { type: "error", loginRequired: true, message: "还没登录：先在上面登录，登录后会自动读取数据。" }
+        : { type: "error", message: `读取共享数据失败，轮询已暂停；到「维护」里点“刷新数据”恢复：${error.message}` });
+      if (error.status === 401 && !confirmOwnerPermissions) setAccessCheck(check => check + 1);
       if (!quiet) setLoading(false);
       return null;
     }
@@ -473,8 +482,15 @@ export default function App() {
   }, []);
   const refreshOwnerPermissions = useCallback(async (access, { signal } = {}) => {
     clearOwnerPermissions();
+    const team = access.providerType === "team_accounts";
+    // 团队账号没登录时服务端什么都不给读：把上一个人登着时读到的东西清掉，等登录。
+    if (team && access.status !== "authenticated") { setState(emptyAppState()); return; }
     const next = await load(true, { protect: true, confirmOwnerPermissions: true, signal });
     if (!next && !signal?.aborted) throw new Error("主人登录状态已读取，但当前业务权限回读失败；请重新读取登录状态。");
+    if (!next || !team) return;
+    // 没登录那会儿轮询读到 401 就停了：登录成功后把「还没登录」那句话收掉，轮询重新开始。
+    setNotice(current => current?.loginRequired ? null : current);
+    setPollEpoch(epoch => epoch + 1);
   }, [clearOwnerPermissions, load]);
 
   useEffect(() => () => latestRead.current.cancel(), []);
@@ -1498,7 +1514,7 @@ export default function App() {
         </div>
       </header>
       {/* 已登录是常态，不必每一页都声明；没登录、读不出来或只是预览身份时这一条必须仍然显眼。退出登录收在「维护」里。 */}
-      <LocalOwnerAccessPanel showAuthenticated={view === "maint"}
+      <LocalOwnerAccessPanel showAuthenticated={view === "maint"} accessCheck={accessCheck}
         onAccessResolved={refreshOwnerPermissions} onAccessUnknown={clearOwnerPermissions} />
       {notice ? <div role={notice.type === "error" ? "alert" : "status"} className={`global-notice ${notice.type}`}>{notice.message}</div> : null}
 

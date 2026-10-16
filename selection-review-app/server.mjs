@@ -5039,6 +5039,9 @@ async function saveProductionOwnerDecisionFor({ actor, candidateId, input }) {
   });
 }
 
+// Health checks a host polls; with team accounts every other API path needs a signed-in person.
+const TEAM_PUBLIC_API_PATHS = new Set(["/api/live", "/api/health", "/api/ready"]);
+
 async function handleApi(req, res, pathname) {
   assertTrustedApiRequest({
     method: req.method,
@@ -5049,38 +5052,68 @@ async function handleApi(req, res, pathname) {
     allowedExtensionOrigins: [...allowedExtensionOrigins],
     internalRequestToken: internalApiRequestToken
   });
+  const teamAccounts = runtimeIdentityProvider.providerType === "team_accounts";
+  // Team sign-in reads the session's account once per request, before any route asks who is acting.
+  if (teamAccounts) await runtimeIdentityProvider.authenticateRequest(req);
   if (pathname === "/api/owner-access" && req.method === "GET") {
     return json(res, 200, runtimeIdentityProvider.publicAccessState({ request: req }));
   }
-  const ownerAccessAction = pathname.match(/^\/api\/owner-access\/(setup|login|logout)$/);
+  const ownerAccessAction = pathname.match(/^\/api\/owner-access\/(setup|login|logout|password)$/);
   if (ownerAccessAction && req.method === "POST") {
     // Authentication endpoints accept the review page, never an internal-token bypass.
     assertTrustedApiRequest({ method: req.method, pathname, headers: req.headers,
       trustedServiceOrigins: [...trustedServiceOrigins], allowedReviewOrigins: [...allowedReviewOrigins] });
-    if (runtimeIdentityProvider.providerType !== "local_owner_password") {
+    if (runtimeIdentityProvider.providerType !== "local_owner_password" && !teamAccounts) {
       return json(res, 503, { code: "owner_identity_not_configured", message: "本地主人登录尚未配置。" });
     }
-    const input = await readJsonRequestBody(req, { maxBytes: 8192, requireJsonContentType: true });
     const action = ownerAccessAction[1];
-    const fields = action === "logout" ? [] : ["password"];
+    // Changing one's own password is a team account feature; the local owner keeps the password set up on this computer.
+    if (action === "password" && !teamAccounts) throw httpError(404, "这里不能改密码", { code: "owner_password_change_unavailable" });
+    const input = await readJsonRequestBody(req, { maxBytes: 8192, requireJsonContentType: true });
+    const fields = action === "logout" ? [] : action === "password" ? ["currentPassword", "newPassword"]
+      : teamAccounts && action === "login" ? ["loginName", "password"] : ["password"];
     if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length !== fields.length ||
-        fields.some(field => !Object.hasOwn(input, field)) || (action !== "logout" && typeof input.password !== "string")) {
+        fields.some(field => !Object.hasOwn(input, field) || typeof input[field] !== "string")) {
       throw httpError(400, "登录请求字段无效", { code: "owner_identity_input_invalid" });
+    }
+    if (action === "password") {
+      const changed = await runtimeIdentityProvider.changePassword({ request: req, input });
+      return json(res, 200, changed.access, { "Set-Cookie": changed.setCookie });
     }
     const result = action === "setup" ? await runtimeIdentityProvider.setup(input)
       : action === "login" ? await runtimeIdentityProvider.login(input) : runtimeIdentityProvider.logout({ request: req });
-    const access = action === "logout" ? runtimeIdentityProvider.publicAccessState({}) : {
+    const access = action === "logout" ? runtimeIdentityProvider.publicAccessState({}) : result.access ?? {
       providerType: runtimeIdentityProvider.providerType, status: "authenticated", user: { userId: result.actor.userId }
     };
     return json(res, 200, access, { "Set-Cookie": result.setCookie });
+  }
+  // A boss sees the team's accounts and sets a new password for another one; accounts are created only from the command line.
+  if (teamAccounts && pathname === "/api/team-accounts" && req.method === "GET") {
+    return json(res, 200, { accounts: await runtimeIdentityProvider.listAccounts({ request: req }) });
+  }
+  if (teamAccounts && pathname === "/api/team-accounts/reset-password" && req.method === "POST") {
+    assertTrustedApiRequest({ method: req.method, pathname, headers: req.headers,
+      trustedServiceOrigins: [...trustedServiceOrigins], allowedReviewOrigins: [...allowedReviewOrigins] });
+    const input = await readJsonRequestBody(req, { maxBytes: 8192, requireJsonContentType: true });
+    return json(res, 200, await runtimeIdentityProvider.resetPassword({ request: req, input }));
   }
   const extensionCallback = pathname === "/api/extension/heartbeat" ||
     /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/(?:claim|search-image)$/.test(pathname) ||
     /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(pathname) ||
     /^\/api\/seerfar-selection\/rounds\/[^/]+\/result$/.test(pathname);
-  if (runtimeIdentityProvider.providerType === "local_owner_password" && ["POST", "PUT", "PATCH", "DELETE"].includes(req.method) &&
-      !extensionCallback && !isTrustedInternalApiRequest(req.headers, internalApiRequestToken)) {
+  const writing = ["POST", "PUT", "PATCH", "DELETE"].includes(req.method);
+  const internalRequest = isTrustedInternalApiRequest(req.headers, internalApiRequestToken);
+  if (runtimeIdentityProvider.providerType === "local_owner_password" && writing && !extensionCallback && !internalRequest) {
     runtimeIdentityProvider.resolveActor({ request: req, touch: true });
+  }
+  // With team accounts nothing but the health checks is readable before signing in. The tester only reads for now: the
+  // owner decided (2026-10-16) the tester does everything but confirm supply, confirm profit and authorize listing, and
+  // those actions are opened in the next change.
+  if (teamAccounts && !extensionCallback && !internalRequest && !TEAM_PUBLIC_API_PATHS.has(pathname)) {
+    const actor = runtimeIdentityProvider.resolveActor({ request: req, touch: writing });
+    if (writing && !actor.roles.includes("owner")) {
+      throw httpError(403, "测试账号现在只能查看，还不能做这一步。", { code: "team_tester_read_only" });
+    }
   }
   if (req.method === "OPTIONS" && (pathname === "/api/extension/heartbeat" || /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/(?:claim|search-image)$/.test(pathname) || /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(pathname) || /^\/api\/seerfar-selection\/rounds\/[^/]+\/result$/.test(pathname))) {
     const headers = chromeExtensionCors(req);
@@ -11198,6 +11231,10 @@ const server = http.createServer(async (req, res) => {
       return handled;
     }
     if (pathname.startsWith("/product-images/")) {
+      if (runtimeIdentityProvider.providerType === "team_accounts") {
+        await runtimeIdentityProvider.authenticateRequest(req);
+        runtimeIdentityProvider.resolveActor({ request: req });
+      }
       const filename = path.basename(pathname);
       return await serveFile(res, path.join(imagesDir, filename));
     }
