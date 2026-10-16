@@ -22,7 +22,7 @@ test("C1当前持久回执由唯一事务原子合并并创建C2软件容器，�
   assert.match(application, /createC2SoftwareContainer\(\{/);
   assert.match(application, /assetRegions: \{ collected: \[\], aiDrafts: \[\], finalUploads: \[\] \}/);
   assert.match(application, /job\.resultEnvelope\.applicationDisposition = "applied"/);
-  assert.match(transaction, /repository\.transact\(async \(document\) => \{[\s\S]*applySavedC1Draft\(document, current, applicationEffect/);
+  assert.match(transaction, /const transaction = includeMerchantSkuClaims \? work => repository\.transact\(work\)\s*: work => repository\.transactCandidates\(\[targetCandidateId\], work\);\s*return transaction\(async \(document\) => \{[\s\S]*applySavedC1Draft\(document, current, applicationEffect/);
   assert.doesNotMatch(application, /createProductionAuthorization|createProductionPlan|createCandidateDispatch|fetch\(/);
   assert.doesNotMatch(server, /current\.lifecycleV11\.status = "c1_ai_draft_ready"/);
 

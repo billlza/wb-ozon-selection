@@ -2,6 +2,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { persistJsonThroughRealTarget } from "./atomic-json-persistence.mjs";
 import { createPostgresBusinessStateStore, isPostgresConnectionString } from "./postgres-business-state-store.mjs";
+import { assembleBusinessState, assertNoNewKeyConflicts, createIndexPositionAllocator, decodeCandidatePart, decodeSharedPart,
+  encodeCandidatePart, encodeSharedPart, partitionKeys, sharedPartitionKeys, splitBusinessState, splitBusinessStateResult }
+  from "./business-state-partitions.mjs";
 import { isDeepStrictEqual } from "node:util";
 import { serialize } from "node:v8";
 import { normalizeProductionEntities, createProductionEntityResolver, PRODUCTION_ENTITY_REFERENCE_VERSION } from "./production-entity-storage.mjs";
@@ -183,43 +186,141 @@ export function initialBusinessStateDocument({ now = new Date().toISOString(), t
   };
 }
 
-// `transaction` wraps one read → mutator → replace. The file and memory adapters run it as is; the Postgres adapter
-// runs it inside one database transaction that holds the row lock, so other service processes wait instead of
-// overwriting each other.
-function createRepository({ adapter, concurrencyScope, read, replace, snapshotReader = null,
-  transaction = work => work({ read, replace }), holdProcessLease = null }) {
-  let queue = Promise.resolve();
+const MAX_SCOPE_CANDIDATES = 200;
+
+// An empty scope is allowed: the transaction then sees only the shared part and can save nothing (an action asked about
+// a product that does not exist gets its own "not found").
+function candidateScope(candidateIds) {
+  if (!Array.isArray(candidateIds) || candidateIds.length > MAX_SCOPE_CANDIDATES ||
+      candidateIds.some(id => typeof id !== "string" || id === "")) {
+    throw new Error("BUSINESS_STATE_REPOSITORY_SCOPE_INVALID");
+  }
+  return [...new Set(candidateIds)].sort();
+}
+
+// Orders transactions in this process. A whole-document transaction runs alone. With `concurrent`, transactions on
+// different candidates run side by side (up to `maxActive`); without it everything runs one at a time. Either way, two
+// transactions that touch the same candidate start in the order they were asked for.
+function createScopeLock({ concurrent, maxActive }) {
+  const running = new Set();
+  const waiting = [];
+  const conflicts = (a, b) => !concurrent || a.ids === null || b.ids === null || a.ids.some(id => b.ids.includes(id));
+  function startReady() {
+    for (let index = 0; index < waiting.length;) {
+      const operation = waiting[index];
+      if (running.size >= maxActive || [...running].some(other => conflicts(other, operation)) ||
+          waiting.slice(0, index).some(other => conflicts(other, operation))) {
+        index += 1;
+        continue;
+      }
+      waiting.splice(index, 1);
+      running.add(operation);
+      operation.start();
+    }
+  }
+  return {
+    run(ids, task) {
+      return new Promise((resolve, reject) => {
+        const operation = { ids, start() {
+          Promise.resolve().then(task).then(resolve, reject).finally(() => {
+            running.delete(operation);
+            startReady();
+          });
+        } };
+        waiting.push(operation);
+        startReady();
+      });
+    }
+  };
+}
+
+async function runMutation(locked, mutator) {
+  const stored = await locked.read();
+  if (!validDocument(stored)) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID");
+  const current = readProductionDocument(stored);
+  const baseline = productionSlotBaseline(current, stored);
+  const outcome = validateTransactionResult(await mutator(current));
+  if (outcome.changed) await locked.replace(writeProductionDocument(outcome.document, stored, baseline));
+  return outcome.result;
+}
+
+// `transaction(scope, work)` wraps one read → mutator → replace: `scope` is null for the whole document, or the candidate
+// ids of a single-candidate transaction, whose `read` gives only those candidates (their own records included) and the
+// shared part, and whose `replace` refuses changes outside them. The file and memory adapters keep one document and run
+// it as is; the Postgres adapter runs it inside one database transaction that locks only what the scope needs.
+function createRepository({ adapter, concurrencyScope, transaction, readWhole, readScoped, holdProcessLease = null,
+  concurrentScopes = false, maxActiveTransactions = 1 }) {
+  const lock = createScopeLock({ concurrent: concurrentScopes, maxActive: maxActiveTransactions });
   const repository = {
     boundaryType: "business_state_repository",
     authoritative: true,
     adapter,
     concurrencyScope,
     multiUserReady: concurrencyScope === "database_transaction",
-    async readSnapshot() {
-      if (snapshotReader) return snapshotReader();
-      const document = await read();
-      if (!validDocument(document)) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID");
-      return readProductionDocument(document);
+    readSnapshot() {
+      return readWhole();
+    },
+    /** Only these candidates and the shared part, the way a single-candidate transaction sees them. */
+    async readCandidates(candidateIds) {
+      const stored = await readScoped(candidateScope(candidateIds));
+      if (!validDocument(stored)) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID");
+      return readProductionDocument(stored);
     },
     transact(mutator) {
       if (typeof mutator !== "function") throw new Error("BUSINESS_STATE_REPOSITORY_MUTATOR_REQUIRED");
-      const operation = queue.then(() => transaction(async (locked) => {
-        const stored = await locked.read();
-        if (!validDocument(stored)) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID");
-        const current = readProductionDocument(stored);
-        const baseline = productionSlotBaseline(current, stored);
-        const outcome = validateTransactionResult(await mutator(current));
-        if (outcome.changed) await locked.replace(writeProductionDocument(outcome.document, stored, baseline));
-        return outcome.result;
-      }));
-      // `operation`仍原样返回给调用者并保留失败；这里只重置串行队列尾部，
-      // 让一次失败不会永久阻断后续独立事务。
-      queue = operation.then(() => undefined, () => undefined);
-      return operation;
+      return lock.run(null, () => transaction(null, locked => runMutation(locked, mutator)));
+    },
+    /**
+     * For an action on these candidates only: the mutator gets them with their own records and the shared part (rules,
+     * settings), and may change only those candidates' records; any other change fails the whole transaction.
+     */
+    transactCandidates(candidateIds, mutator) {
+      const scope = candidateScope(candidateIds);
+      if (typeof mutator !== "function") throw new Error("BUSINESS_STATE_REPOSITORY_MUTATOR_REQUIRED");
+      return lock.run(scope, () => transaction(scope, locked => runMutation(locked, mutator)));
     }
   };
   if (holdProcessLease) repository.holdProcessLease = holdProcessLease;
   return Object.freeze(repository);
+}
+
+// File and memory adapters keep the whole document: a single-candidate transaction cuts it, works on its view and puts the
+// result back, with the same view and the same checks as the Postgres adapter.
+function wholeDocumentTransaction({ read, replace }) {
+  return async (scope, work) => {
+    let split = null, loaded = null;
+    return work({
+      async read() {
+        const stored = await read();
+        if (!validDocument(stored)) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID");
+        split = splitBusinessState(stored);
+        if (scope === null) return stored;
+        loaded = { shared: split.shared, parts: new Map(scope.filter(id => split.parts.has(id)).map(id => [id, split.parts.get(id)])) };
+        return assembleBusinessState(loaded.shared, loaded.parts.values());
+      },
+      async replace(document) {
+        if (scope === null) {
+          assertNoNewKeyConflicts(split, splitBusinessState(document));
+          return replace(document);
+        }
+        const next = await splitBusinessStateResult(document, loaded, { scope: new Set(scope), allocate: createIndexPositionAllocator(split) });
+        if (next.parts.size === 0) return undefined;
+        const parts = new Map(split.parts);
+        for (const [candidateId, part] of next.parts) {
+          if (part === null) parts.delete(candidateId);
+          else parts.set(candidateId, part);
+        }
+        assertNoNewKeyConflicts(split, { shared: split.shared, parts });
+        return replace(assembleBusinessState(split.shared, parts.values()));
+      }
+    });
+  };
+}
+
+function scopedFromWhole(stored, scope) {
+  if (!validDocument(stored)) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID");
+  const split = splitBusinessState(stored);
+  return assembleBusinessState(split.shared, scope.filter(id => split.parts.has(id)).map(id => split.parts.get(id)));
 }
 
 export function createJsonBusinessStateRepository({
@@ -263,11 +364,23 @@ export function createJsonBusinessStateRepository({
       throw error;
     }
   }
+  const read = async () => parseSource(await readSource());
   return createRepository({
     adapter: "json",
     concurrencyScope: "single_process",
-    read: async () => parseSource(await readSource()),
-    snapshotReader: async () => {
+    transaction: wholeDocumentTransaction({
+      read,
+      replace: async (document) => {
+        invalidateSnapshot();
+        if (initializeIfMissing && lastReadUsedInitialDocument) {
+          await fileSystem.mkdir(path.dirname(filePath), { recursive: true });
+        }
+        await atomicWriter(filePath, document);
+        lastReadUsedInitialDocument = false;
+      }
+    }),
+    readScoped: async scope => scopedFromWhole(await read(), scope),
+    readWhole: async () => {
       const generation = cacheGeneration;
       try {
         const source = await readSource();
@@ -293,14 +406,6 @@ export function createJsonBusinessStateRepository({
         invalidateSnapshot();
         throw error;
       }
-    },
-    replace: async (document) => {
-      invalidateSnapshot();
-      if (initializeIfMissing && lastReadUsedInitialDocument) {
-        await fileSystem.mkdir(path.dirname(filePath), { recursive: true });
-      }
-      await atomicWriter(filePath, document);
-      lastReadUsedInitialDocument = false;
     }
   });
 }
@@ -308,22 +413,34 @@ export function createJsonBusinessStateRepository({
 export function createMemoryBusinessStateRepository(initialDocument) {
   if (!validDocument(initialDocument)) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID");
   let document = clone(initialDocument);
+  const read = async () => clone(document);
   return createRepository({
     adapter: "memory",
     concurrencyScope: "single_process",
-    read: async () => clone(document),
-    replace: async (next) => { document = clone(next); }
+    transaction: wholeDocumentTransaction({ read, replace: async (next) => { document = clone(next); } }),
+    readScoped: async scope => scopedFromWhole(await read(), scope),
+    readWhole: async () => {
+      const stored = await read();
+      if (!validDocument(stored)) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID");
+      return readProductionDocument(stored);
+    }
   });
 }
 
+function keyChanges(before, after) {
+  return { added: [...after].filter(key => !before.has(key)), removed: [...before].filter(key => !after.has(key)) };
+}
+
 /**
- * The stored document lives in one Postgres row (`store` is lib/postgres-business-state-store.mjs). Every transaction
- * locks that row, so several service processes see one order of writes. Reads re-check the row's revision each time
- * and only re-parse the document when it changed.
+ * The shared part of the document is one Postgres row and every candidate is its own row, with the records that belong
+ * to it alone (`store` is lib/postgres-business-state-store.mjs). A whole-document transaction locks the shared row
+ * exclusively; a single-candidate transaction shares that lock and locks only its candidates' rows, so actions on
+ * different candidates neither wait for each other nor read, copy or write anyone else's records. Reads re-check each
+ * row's revision and only fetch rows that changed.
  */
 export function createPostgresBusinessStateRepository({ store, initializeIfMissing = false,
   initialDocument = () => initialBusinessStateDocument() } = {}) {
-  if (!store || typeof store.readDocument !== "function" || typeof store.runLocked !== "function") {
+  if (!store || typeof store.readRows !== "function" || typeof store.runLocked !== "function") {
     throw new Error("BUSINESS_STATE_REPOSITORY_STORE_REQUIRED");
   }
   function startingDocument() {
@@ -331,34 +448,126 @@ export function createPostgresBusinessStateRepository({ store, initializeIfMissi
     if (!validDocument(document)) throw new Error("BUSINESS_STATE_REPOSITORY_INITIAL_DOCUMENT_INVALID");
     return clone(document);
   }
+  // Rows already read, by revision. Every write takes its revision from one database sequence, so a revision names one
+  // stored text for good, and an entry can answer for any read that finds that revision unchanged.
+  const rows = { shared: null, parts: new Map(), bytes: 0 };
   let snapshotCache = null;
+  function asked(scope) {
+    const parts = new Map();
+    for (const candidateId of scope ?? rows.parts.keys()) {
+      const entry = rows.parts.get(candidateId);
+      if (entry) parts.set(candidateId, entry);
+    }
+    return { shared: rows.shared, parts };
+  }
+  const known = entries => ({ shared: entries.shared?.revision ?? null,
+    parts: new Map([...entries.parts].map(([candidateId, entry]) => [candidateId, entry.revision])) });
+  // Keeps a fetched row for later reads while the cached rows stay within the snapshot budget.
+  function remember(candidateId, entry) {
+    const previous = candidateId === null ? rows.shared : rows.parts.get(candidateId);
+    if (previous && BigInt(previous.revision) >= BigInt(entry.revision)) return;
+    const bytes = serialize(entry.part).byteLength;
+    if (rows.bytes - (previous?.bytes ?? 0) + bytes > SNAPSHOT_CACHE_MAX_PAYLOAD_BYTES) return;
+    rows.bytes += bytes - (previous?.bytes ?? 0);
+    const kept = { ...entry, bytes };
+    if (candidateId === null) rows.shared = kept;
+    else rows.parts.set(candidateId, kept);
+  }
+  // The store sends a row's value only when its revision differs from the one asked about; the others come from the
+  // entries this read asked with (a concurrent read may replace the cached ones meanwhile).
+  function absorb(answer, question) {
+    let shared;
+    if (Object.hasOwn(answer.shared, "value")) {
+      shared = { revision: answer.shared.revision, part: decodeSharedPart(answer.shared.value) };
+      remember(null, shared);
+    } else {
+      if (question.shared?.revision !== answer.shared.revision) throw new Error("BUSINESS_STATE_REPOSITORY_SNAPSHOT_REVISION_INVALID");
+      shared = question.shared;
+    }
+    const parts = new Map();
+    for (const row of answer.parts) {
+      let entry;
+      if (Object.hasOwn(row, "value")) {
+        entry = { revision: row.revision, part: decodeCandidatePart(row.value, row.candidateId) };
+        remember(row.candidateId, entry);
+      } else {
+        entry = question.parts.get(row.candidateId);
+        if (entry?.revision !== row.revision) throw new Error("BUSINESS_STATE_REPOSITORY_SNAPSHOT_REVISION_INVALID");
+      }
+      parts.set(row.candidateId, entry);
+    }
+    return { shared, parts };
+  }
+  const view = loaded => ({ shared: loaded.shared.part,
+    parts: new Map([...loaded.parts].map(([candidateId, entry]) => [candidateId, entry.part])) });
   return createRepository({
     adapter: "postgres",
     concurrencyScope: "database_transaction",
-    snapshotReader: async () => {
-      // Answer from the entry this read asked about: a concurrent read may replace the shared cache meanwhile.
-      const asked = snapshotCache;
-      const row = await store.readDocument({ knownRevision: asked?.revision ?? null });
-      if (row === null) {
-        snapshotCache = null;
+    concurrentScopes: true,
+    maxActiveTransactions: store.maxConcurrentTransactions ?? 1,
+    readWhole: async () => {
+      const question = asked(null);
+      const answer = await store.readRows({ known: known(question) });
+      if (answer === null) {
         if (!initializeIfMissing) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_MISSING");
         return readProductionDocument(startingDocument());
       }
-      if (!Object.hasOwn(row, "document")) {
-        if (asked?.revision !== row.revision) throw new Error("BUSINESS_STATE_REPOSITORY_SNAPSHOT_REVISION_INVALID");
-        return clone(asked.document);
+      const loaded = absorb(answer, question);
+      // A whole read lists every candidate row, so rows no longer stored leave the cache here.
+      for (const candidateId of rows.parts.keys()) {
+        if (loaded.parts.has(candidateId)) continue;
+        rows.bytes -= rows.parts.get(candidateId).bytes;
+        rows.parts.delete(candidateId);
       }
-      snapshotCache = null;
-      if (!validDocument(row.document)) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID");
-      const document = readProductionDocument(row.document);
+      const key = JSON.stringify([loaded.shared.revision, ...[...loaded.parts].map(([candidateId, entry]) => [candidateId, entry.revision])
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))]);
+      const cached = snapshotCache;
+      if (cached?.key === key) return clone(cached.document);
+      const current = view(loaded);
+      const document = readProductionDocument(assembleBusinessState(current.shared, current.parts.values()));
       if (serialize(document).byteLength <= SNAPSHOT_CACHE_MAX_PAYLOAD_BYTES) {
-        snapshotCache = { revision: row.revision, document };
+        snapshotCache = { key, document };
         return clone(document);
       }
       return document;
     },
-    transaction: work => store.runLocked({ initialDocument: initializeIfMissing ? startingDocument : null },
-      locked => work({ read: async () => locked.document, replace: async document => { locked.replace(document); } })),
+    readScoped: async scope => {
+      const question = asked(scope);
+      const answer = await store.readRows({ candidateIds: scope, known: known(question) });
+      if (answer === null) {
+        if (!initializeIfMissing) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_MISSING");
+        return scopedFromWhole(startingDocument(), scope);
+      }
+      const current = view(absorb(answer, question));
+      return assembleBusinessState(current.shared, current.parts.values());
+    },
+    transaction: (scope, work) => {
+      const question = asked(scope);
+      return store.runLocked({
+        candidateIds: scope,
+        initialShared: initializeIfMissing ? () => encodeSharedPart(splitBusinessState(startingDocument()).shared) : null,
+        known: known(question)
+      }, async locked => {
+        const loaded = view(absorb(locked, question));
+        return work({
+          read: async () => assembleBusinessState(loaded.shared, loaded.parts.values()),
+          replace: async document => {
+            const next = await splitBusinessStateResult(document, loaded, { scope: scope && new Set(scope), allocate: locked.allocate });
+            const parts = new Map();
+            for (const [candidateId, part] of next.parts) {
+              const before = loaded.parts.get(candidateId);
+              parts.set(candidateId, { value: part && encodeCandidatePart(part),
+                keys: keyChanges(before ? partitionKeys(before.collections) : new Set(), part ? partitionKeys(part.collections) : new Set()) });
+            }
+            locked.write({
+              shared: next.shared && { value: encodeSharedPart(next.shared),
+                keys: keyChanges(sharedPartitionKeys(loaded.shared), sharedPartitionKeys(next.shared)) },
+              parts
+            });
+          }
+        });
+      });
+    },
     // One service process per stored document until jobs carry their own leases: see server.mjs.
     holdProcessLease: async ({ onLost } = {}) => {
       if (typeof store.acquireProcessLease !== "function") throw new Error("BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_UNSUPPORTED");
@@ -396,7 +605,8 @@ export function createConfiguredBusinessStateRepository(configuration, { env = p
 export function assertBusinessStateRepositoryBoundary(repository) {
   if (!repository || repository.boundaryType !== "business_state_repository" ||
       repository.authoritative !== true || typeof repository.readSnapshot !== "function" ||
-      typeof repository.transact !== "function") {
+      typeof repository.transact !== "function" || typeof repository.readCandidates !== "function" ||
+      typeof repository.transactCandidates !== "function") {
     const error = new Error(CENTRAL_PERSISTENCE_ERROR);
     error.code = "CENTRAL_PERSISTENCE_BOUNDARY_REQUIRED";
     throw error;

@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-16T01:57:12.896Z",
+  "frozenAt": "2026-10-16T12:24:15.706Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 1004,
-      "sha256": "b4f841ce6a0f72a25d9158c552fc5138fdb6477fee715198ae98147636331921",
+      "artifactCount": 1006,
+      "sha256": "9902a419bcfa5e94801b2d37277f6e2b83646da61f63481cf444e24a536b3428",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -184,15 +184,19 @@
       },
       {
         "path": "lib/business-mutation-transaction.mjs",
-        "sha256": "3ae26f6d0b69d7af41f94ae718a9c1db7c6068190a96e349d114b9682f8b4c4f"
+        "sha256": "72d51ddcd917feeddb1fb20668b235b0800a8176c43ed590b6189cc68198dcf7"
       },
       {
         "path": "lib/business-state-import.mjs",
         "sha256": "c556c016373b440d273ce4b338dec8a3db8c466c0786580a2f5ff7c2243900c1"
       },
       {
+        "path": "lib/business-state-partitions.mjs",
+        "sha256": "1004663b9f3bc42bb7f7932318b0f5c127ea0caa5b0c54313560fdeb68f759d8"
+      },
+      {
         "path": "lib/business-state-repository.mjs",
-        "sha256": "8e2030a56293576f34cd9cee7e897c535e564689655ebbf03b9a041f75e94ce5"
+        "sha256": "15e0c323f78df94dea21c4d070de0ce78bcd46f6dc673a0ee8d42b0c81d89865"
       },
       {
         "path": "lib/c1-ai-draft-contract.mjs",
@@ -444,7 +448,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "7a36e9ada87ec12caf4ad1c374a66bc8fc749b6882125c4fa31816d8df7ccaba"
+        "sha256": "6b3540b86e3ae9bccf94aec8fa7bb2aa9609145704876c66aeab4030e0ee86ff"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -528,7 +532,7 @@
       },
       {
         "path": "lib/d-e-software-integration.mjs",
-        "sha256": "e845918b4e71a2c38b31b945756ee7391d932dae5a96bb34763b1044b4db8726"
+        "sha256": "10f8a2a1032e94b053c4746c2d51b8e054e0769f742f9b508dfcbeec3ed9c4aa"
       },
       {
         "path": "lib/d-e-software-job-admission.mjs",
@@ -1016,7 +1020,7 @@
       },
       {
         "path": "lib/postgres-business-state-store.mjs",
-        "sha256": "ca776fb633c2f20205166a9fbb9d08172287cf1e61a09d23997f3b8e96c1cfdd"
+        "sha256": "9a37b0a485411f454002b523968bddf647f13e26dcca20b9a3945294cfb58266"
       },
       {
         "path": "lib/product-core-family.mjs",
@@ -1708,7 +1712,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "0d2d0b8a3a60fe94725ad043292ebb4fcdab7161d1244538247107e6a05dcf68"
+        "sha256": "5aaba0bd316911d48d5221ce49d92a01964e52e5818f0bce28bdc0d0b94c60d9"
       },
       {
         "path": "src/App.jsx",
@@ -2248,11 +2252,15 @@
       },
       {
         "path": "tests/business-mutation-transaction.test.mjs",
-        "sha256": "9c29222ab3b535125468bbde3c5234b1dbaf5b126a7fe435898404200c510dbb"
+        "sha256": "71074fb7017de91a55bc5c832dd55899ee8488ee294a94882bdeec0b903b62cb"
+      },
+      {
+        "path": "tests/business-state-partitions.test.mjs",
+        "sha256": "e3369f1afa748415d11f9d2fcb72f4e33919e48efa6a2a1eb5acc5c4ac3b1a12"
       },
       {
         "path": "tests/business-state-repository.test.mjs",
-        "sha256": "a6758fe98764eac50b7a27ceccf2b565403402223a663459a03fa2308c1af52b"
+        "sha256": "c717dc8f8bc44a26c07a1b70f86fec3731b640e833bd8c88bd51efaa97de089b"
       },
       {
         "path": "tests/c1-ai-contract-unification.test.mjs",
@@ -2324,7 +2332,7 @@
       },
       {
         "path": "tests/c1-draft-runtime-services.test.mjs",
-        "sha256": "0e329a3ea63ea70b41dfd61ca3f20feb10f3e9a064b93d89189445ff0e19f3e9"
+        "sha256": "5e1227dc7064037ce18996a17d8eb6ad18189261c802fe0e0f1d5863cfb56290"
       },
       {
         "path": "tests/c1-draft-runtime-view.test.mjs",
@@ -2372,7 +2380,7 @@
       },
       {
         "path": "tests/c1-fact-keyword-server-integration.test.mjs",
-        "sha256": "a8bddca27d9bb36076082e1d1eb88cf1a2013b13d1c2d895121b6a38fc288a2c"
+        "sha256": "e9b41b5f93e7be63b6813b748ccc3d487bc4e587818cbd6f26bf49bfd92bb61b"
       },
       {
         "path": "tests/c1-facts-verification-use-case.test.mjs",
@@ -2760,7 +2768,7 @@
       },
       {
         "path": "tests/d-e-software-persistence.test.mjs",
-        "sha256": "af54379d1391be87fc5f561eebf3910f9490acefa94a9a7702d0d691da162d0c"
+        "sha256": "0a69d57720ff52f4e87592de9f5672520eb1b236714ad3a64f60a431b4593bd2"
       },
       {
         "path": "tests/d-e-software-runtime-view.test.mjs",
@@ -3224,7 +3232,7 @@
       },
       {
         "path": "tests/helpers/fake-postgres-business-state-store.mjs",
-        "sha256": "ce8162922ba58181c37f316e2f5ee3a68a1f3ba8272f547c00dc5479088f1706"
+        "sha256": "e6c082ccbfdca3fb341571dddfe37ad79a09e0dbd7bf99a5975c69f034074b86"
       },
       {
         "path": "tests/helpers/legacy-candidate-fixture.mjs",
@@ -3424,7 +3432,7 @@
       },
       {
         "path": "tests/multi-user-central-runtime.test.mjs",
-        "sha256": "92d06f2af7ba6e816c693ea5d29ce06010162c4ce6ccdeb58b5fce4c9e0da818"
+        "sha256": "c03946a4209740e6e22c1523ab70b371959067fee9798660d0a938eb52904daf"
       },
       {
         "path": "tests/official-commission-formal-b.test.mjs",
@@ -3600,7 +3608,7 @@
       },
       {
         "path": "tests/phase5-c2-software-boundary.test.mjs",
-        "sha256": "7c3736d1c5d2ad5dbf3733dabdadb3b4f903457ca89e098d30690a5fc5c84fd2"
+        "sha256": "fa32f38533bcad5047ced86b78fd018373a972111f199ba8d8d92b835c433531"
       },
       {
         "path": "tests/phase5b-c2-ui-deployment-boundary.test.mjs",
@@ -3624,11 +3632,11 @@
       },
       {
         "path": "tests/postgres-business-state-db.test.mjs",
-        "sha256": "b3a5c2884ffcbfc6296a4d8002fbc228c45aa3a5d7178d2799cc11b75f44b9b7"
+        "sha256": "ac4a3b7547d6280f7664d43beeeddd51e212d5ea0a05fc66818db99add46d26f"
       },
       {
         "path": "tests/postgres-business-state-store.test.mjs",
-        "sha256": "99ddfa6fd2859ec248ba41e45d143462cf19809d94a51b2f53dd84cb57aac1b7"
+        "sha256": "4d0d830ca9dbc7c3fd8706ae66d203851423b46033d5bb37661b64aa81f32534"
       },
       {
         "path": "tests/product-core-family.test.mjs",
@@ -4067,6 +4075,10 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/business-state-partitions.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/business-state-repository.mjs",
           "status": "present_in_integration_source"
         },
@@ -4100,6 +4112,10 @@
         },
         {
           "path": "src/App.jsx",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/business-state-partitions.test.mjs",
           "status": "present_in_integration_source"
         },
         {

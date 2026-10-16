@@ -197,7 +197,7 @@ test("当前本地运行明确标记为不具备多人并发，中央模式缺�
   const localRepository = {
     boundaryType: "business_state_repository", authoritative: true, adapter: "json",
     concurrencyScope: "single_process", multiUserReady: false,
-    readSnapshot() {}, transact() {}
+    readSnapshot() {}, transact() {}, readCandidates() {}, transactCandidates() {}
   };
   const localIdentity = {
     boundaryType: "runtime_identity_provider", providerType: "development_default", multiUserReady: false,

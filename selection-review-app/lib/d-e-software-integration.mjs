@@ -332,25 +332,30 @@ function dPersistenceBoundary(repository, stage) {
       ? "replacement_written_durability_unconfirmed" : "unknown";
     return error;
   }
+  async function guardedRead(read) {
+    try { return await read(); }
+    catch (cause) { throw persistenceFailure(cause); }
+  }
+  async function guardedTransaction(run, mutator) {
+    let domainFailure;
+    let mutatorFailed = false;
+    try {
+      return await run(async document => {
+        try { return await mutator(document); }
+        catch (error) { mutatorFailed = true; domainFailure = error; throw error; }
+      });
+    } catch (cause) {
+      if (mutatorFailed && cause === domainFailure) throw cause;
+      throw persistenceFailure(cause);
+    }
+  }
+  // Single-product reads and writes go through the same translation as whole-document ones.
   return {
     ...repository,
-    async readSnapshot() {
-      try { return await repository.readSnapshot(); }
-      catch (cause) { throw persistenceFailure(cause); }
-    },
-    async transact(mutator) {
-      let domainFailure;
-      let mutatorFailed = false;
-      try {
-        return await repository.transact(async document => {
-          try { return await mutator(document); }
-          catch (error) { mutatorFailed = true; domainFailure = error; throw error; }
-        });
-      } catch (cause) {
-        if (mutatorFailed && cause === domainFailure) throw cause;
-        throw persistenceFailure(cause);
-      }
-    }
+    readSnapshot: () => guardedRead(() => repository.readSnapshot()),
+    readCandidates: candidateIds => guardedRead(() => repository.readCandidates(candidateIds)),
+    transact: mutator => guardedTransaction(next => repository.transact(next), mutator),
+    transactCandidates: (candidateIds, mutator) => guardedTransaction(next => repository.transactCandidates(candidateIds, next), mutator)
   };
 }
 

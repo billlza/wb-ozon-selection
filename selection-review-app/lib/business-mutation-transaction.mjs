@@ -567,7 +567,11 @@ export async function executeBusinessMutation({
   if (createsDomainHandoff && (actor.actorType !== "human" || actor.source !== "authenticated_identity_provider" ||
       !actor.roles.includes("owner"))) throw new Error("BUSINESS_MUTATION_DOMAIN_HANDOFF_OWNER_REQUIRED");
 
-  return repository.transact(async (document) => {
+  // One candidate's records only (AGENTS 3.4); checking merchant SKUs against the other candidates of the store still
+  // needs the whole document.
+  const transaction = includeMerchantSkuClaims ? work => repository.transact(work)
+    : work => repository.transactCandidates([targetCandidateId], work);
+  return transaction(async (document) => {
     const observedAt = observedServerTime({ serverClock, serverTime, authoritativeRequired: effect !== null || applicationEffect !== null });
     if (!Array.isArray(document.candidates)) throw new Error("BUSINESS_MUTATION_DOCUMENT_INVALID");
     const runtime = runtimeCollections(document);
@@ -828,7 +832,7 @@ export async function executeSoftwareJobSettlementMutation({
     throw new Error("BUSINESS_MUTATION_WORKER_IDENTITY_REQUIRED");
   }
 
-  return repository.transact(async (document) => {
+  return repository.transactCandidates([targetCandidateId], async (document) => {
     const observedAt = observedServerTime({ serverClock, serverTime, authoritativeRequired: true });
     if (!Array.isArray(document.candidates)) throw new Error("BUSINESS_MUTATION_DOCUMENT_INVALID");
     const runtime = runtimeCollections(document);

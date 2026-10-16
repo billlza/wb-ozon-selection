@@ -29,12 +29,17 @@ async function fixture(t, { json = false, unknown = false, interruptApply = fals
   let reads = 0;
   const observedRepository = { ...repository,
     async readSnapshot() { reads += 1; return repository.readSnapshot(); },
-    transact(mutator) { return repository.transact(async current => {
+    transact(mutator) { return repository.transact(interrupted(mutator)); },
+    // Single-product writes (the C2 apply among them) lock only that product; the failure is injected there too.
+    transactCandidates(candidateIds, mutator) { return repository.transactCandidates(candidateIds, interrupted(mutator)); }
+  };
+  function interrupted(mutator) {
+    return async current => {
       const result = await mutator(current);
       if (interruptApply && result.document.candidates[0].lifecycleV11.skuPackage.businessPhase === 'C2') throw new Error('SYNTHETIC_APPLY_STORAGE_FAILURE');
       return result;
-    }); }
-  };
+    };
+  }
   const calls = []; let submitted;
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url, method: options.method ?? 'GET' });

@@ -53,7 +53,7 @@ test("不完整证据在共享数据写入前停止，完整结果才一次保�
   const helperEnd = server.indexOf("\nfunction responseState", helperStart);
   const helper = server.slice(helperStart, helperEnd);
   const notReady = helper.indexOf('prepared.result.status !== "ready_for_atomic_persist"');
-  const mutation = helper.indexOf("const staged = await mutateData");
+  const mutation = helper.indexOf("const staged = await mutateCandidateData(candidateId,");
   assert.ok(notReady >= 0 && mutation > notReady);
   for (const field of [
     "skuPackage",

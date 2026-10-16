@@ -1,4 +1,4 @@
-## 当前接班入口（2026-10-13：流程改造整合分支收口，10-14 已合进 main；10-15 修了 P1-22，开始做多人中央服务）
+## 当前接班入口（2026-10-13：流程改造整合分支收口，10-14 已合进 main；10-15 修了 P1-22，开始做多人中央服务；10-16 数据库按商品拆开存）
 
 **状态**：流程改造的全部改动在 `integration/flow-rework`。主人 2026-10-13 决定先按原样合进 main，审查清单里还没修的 P0-11、P0-12 记成已知问题（见「还开着的」）；10-14 主人把 PR #9 合进了 main（合并提交 `ab46fed`），PR #3 已关。10-15 修了 P1-22，见下面「P1-22」一节。本批没有部署、没有读凭据、没有向任何平台发请求；主人 Mac 上装的是按提交号装的整合分支版本，合不合 main 都不影响它。真实首件 A→E 仍未跑完。下方 2026-09-10 及更早的入口全部是历史，冲突处以本节和当前 AGENTS 为准。
 
@@ -90,16 +90,29 @@
 
 主人 10-15 定：工作台要放到网上给几个人一起用（两位老板加一个测试，五六台电脑装插件，人在国内，公司有合法的科学上网）。计划在项目共享文件 `wb-ozon/多人中央服务计划-2026-10-15.md`，分六步，每步一个 PR；本机 JSON 用法每一步都保留，默认不变。这一步只做存储：
 
-- `SELECTION_REVIEW_STATE_ADAPTER=postgres` 加 `SELECTION_REVIEW_DATABASE_URL` 就用 Postgres（`lib/postgres-business-state-store.mjs`）。整份业务状态照旧当一份存，放在表 `selection_review_business_state` 的一行里；`json` 列原样保留文本和键的顺序。每次事务先 `SELECT … FOR UPDATE` 锁住这一行，几个服务进程同时写也不会互相覆盖；读的时候每次都查一下这一行的 revision，没变就用上一次解析好的。数据库地址只从环境变量读，不进运行配置，也不打印。
+- `SELECTION_REVIEW_STATE_ADAPTER=postgres` 加 `SELECTION_REVIEW_DATABASE_URL` 就用 Postgres（`lib/postgres-business-state-store.mjs`）。业务状态按商品拆开存（10-16 改的，见下一节「按商品拆开存」）；`json` 列原样保留文本和键的顺序。几个服务进程同时写也不会互相覆盖；读的时候每次都查一下各行的 revision，没变的行用上一次解析好的。数据库地址只从环境变量读，不进运行配置，也不打印。
 - 每条语句都有时限（`POSTGRES_BUSINESS_STATE_TIMEOUTS`）：等行锁 15 秒、单条语句 30 秒、客户端等回应 40 秒、事务闲着 2 分钟，卡住的写不会把写队列永远堵住。COMMIT 发出去却没收到回应时，再读一次这一行来定：是我们写的就当成功，还是原来的 revision 就当失败，分不清就报 `BUSINESS_STATE_REPOSITORY_COMMIT_OUTCOME_UNKNOWN`，不让用户以为没存上又点一次。导入脚本的写入也一样核对。
 - 同一份数据只允许一个服务进程：用 Postgres 时服务一启动就拿一把会话级咨询锁（`holdProcessLease`），第二个进程拿不到就起不来（`BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_HELD`）；拿锁的那条数据库连接断了，这个进程的写立刻全部拒掉（每次写都在行锁下让数据库确认锁还在本进程手里），然后服务自己停下。原因是启动时那些「重启收口」会把不在本进程里的作业都当成丢了，第二个进程会把第一个进程正在跑的作业记成失败。等第 3 步作业带上自己的租约再放开。Render 默认的不停机部署会让新旧两个进程重叠，第 5 步上线前要处理。
 - 借出连接池的连接都挂了错误监听：写到一半连接断了，只让这一次写失败，不会把整个服务带崩。
-- 整份存一行意味着改一个商品也要整份重写、几个人同时写会排队（本机 JSON 本来也这样）。10-16 发卡片问主人现在拆还是以后拆，建议以后再拆。
+- 一开始整份存一行，改一个商品也要整份重写、几个人同时写会排队。10-16 发卡片问主人现在拆还是以后拆，主人选了「现在就拆」，见下一节。
 - `SELECTION_REVIEW_INITIALIZE_DATA_FILE` 对 Postgres 也一样：没有这一行时，读到的是初始文档但不写；只有真改了东西才落一行。
 - 就绪检查（`/api/ready`）在 Postgres 下改成一次新的仓库读取（`createRepositoryRuntimeHealth`），JSON 照旧用原来的工作线程。
 - 导入：`SELECTION_REVIEW_DATABASE_URL=… node scripts/import-business-state-to-postgres.mjs --from /绝对路径/candidates.json` 只演练：校验文件、看一眼目标库，什么都不建、不写。加 `--write` 才写，而且只写空库；写完在同一个事务里读回来和文件逐项比对，不一致就整笔撤回；目标已经有数据就拒绝（退出码 2），不覆盖。
 - 测试：`tests/postgres-business-state-store.test.mjs`（纯测试，假连接池）；`tests/postgres-business-state-db.test.mjs` 要真的 Postgres，归在 `DATABASE_TESTS`，只由 `pnpm test:ci:database` 跑，没配 `SELECTION_REVIEW_TEST_DATABASE_URL` 就直接失败、不跳过。CI 新加一组「Postgres storage tests」，起一个一次性的 Postgres 16 容器。
 - 中央模式（`central_test`/`central_production`）仍然起不来：正式登录（第 2 步）和插件连中央服务（第 3 步）还没做。
+
+### 多人中央服务第 1 步补：按商品拆开存（2026-10-16）
+
+主人 10-16 选了「现在就拆」：单件商品的动作只读、只锁、只写这件商品（AGENTS 3.4）。这一步也回了 PR #14 上 Codex 那条「不要整份替换候选池」的意见。
+
+- 存法（`lib/business-state-partitions.mjs` 切和拼，`lib/postgres-business-state-store.mjs` 存）：三张表。`selection_review_state_shared` 一行放共用部分：规则、设置，以及几件商品共用或不属于任何商品的记录。`selection_review_state_candidates` 每件商品一行：商品本身和只属于它的记录（派单、幂等记录、操作审计、软件作业、作业授权、凭据绑定、正式实体记录、C1 两种改版历史）。`selection_review_state_keys` 记唯一编号（幂等键、作业号、派单号等）归哪件商品，单件事务也用不了别的商品已经占着的编号。每条记录带位置，拼回整份时顺序和写进去时一样；新建的商品排最前，新记录排最后。
+- 接口：`repository.readCandidates(ids)` 和 `repository.transactCandidates(ids, mutator)`。事务里只看得见这几件商品和共用部分，也只能改这几件；改了共用部分或碰了别的商品，整笔失败，报 `BUSINESS_STATE_REPOSITORY_SCOPE_VIOLATION:<哪里>`。一次最多 200 件；空列表只读共用设置、什么都存不了（查一个不存在的商品时用，好照常回「找不到」）。`server.mjs` 里包了一层 `readCandidateData` / `mutateCandidateData` / `mutateCandidateDataWhenChanged`，在库之前再查一遍共用部分没被改。
+- 锁：整份事务把共用行 `FOR UPDATE`，等手上的单件事务都结束，也挡住新的；单件事务对共用行只 `FOR SHARE`，自己的商品行 `FOR UPDATE`。不同商品的单件事务在同一进程里并行（最多连接数减 2 个），同一件商品的按先来后到。整份读走 `REPEATABLE READ READ ONLY`，各行版本一致。COMMIT 没收到回应时，在共用行的行锁下读回来核对。
+- 改了哪些：`server.mjs` 里 57 处写、约 75 处读改成只碰目标商品（C2 关联图那条同时带上来源、目标和姊妹色的父商品）。单件写不改 `meta.updatedAt`，那个字段在共用部分里。`lib/d-e-software-integration.mjs` 的 `dPersistenceBoundary` 也包住了单件读写，出错时照旧不泄露存储细节。
+- 还是整份的（照样正确，只是要等手上的单件事务；以后按需要再拆）：新建和复制商品（编号要看全部商品）、自动化领取和恢复归类、定时扫描、入口泵、按编号派单和投递、证据包、流程评论、控制告警、姊妹色批次和 D 批量、discovery、Seerfar、店铺画像，以及 `lib/` 里 73 处 `repository.transact`（软件作业执行器、回执表、先进先出领取）。
+- 本机 JSON 和内存：同一套切法，单件事务在整份文件上切开、检查、拼回，看到的东西和拒绝的条件跟 Postgres 一样；文件格式不变，主人 Mac 上的数据不用动。
+- 第 1 步那张一行表 `selection_review_business_state` 不再读。第 1 步没有部署过，没有要搬的数据；导入脚本照旧用，现在写进这三张表，写完在同一个事务里读回来逐项比对。
+- 测试：`tests/business-state-partitions.test.mjs`（切和拼、顺序、越界、唯一编号、行格式）；`tests/business-state-repository.test.mjs` 里三种存法同一套单件读写测试；`tests/postgres-business-state-store.test.mjs` 和要真数据库的 `tests/postgres-business-state-db.test.mjs` 按新存法重写，后者加了不同商品并行、整份事务等单件事务、两个进程抢同一个编号。
 
 ### 本轮验证
 

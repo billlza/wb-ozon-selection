@@ -123,6 +123,7 @@ test("明确请求关联作业时只提供锁内当前SKU副本，普通业务�
   const related = transportJob();
   const otherInput = transportJobInput();
   otherInput.jobId = "software-job:c2-transport:other:8";
+  otherInput.idempotencyKey = "C-other:7:c2-transport";
   otherInput.candidateId = "C-other";
   otherInput.skuPackageId = "sku:C-other:S-1";
   otherInput.scopeBinding.candidateId = otherInput.candidateId;
@@ -1580,6 +1581,7 @@ test('关联作业读取允许v1/v2与真实合成Seerfar完成v3混存，仅返
   assert.equal(preparation.schemaVersion, 'software-job-v2');
   const related = transportJob(), otherInput = transportJobInput();
   otherInput.jobId = 'job:unrelated:v1'; otherInput.candidateId = 'candidate:other'; otherInput.skuPackageId = 'sku:other';
+  otherInput.idempotencyKey = 'candidate:other:7:c2-transport';
   otherInput.scopeBinding.candidateId = otherInput.candidateId; otherInput.scopeBinding.skuPackageId = otherInput.skuPackageId;
   const other = createSoftwareJobEnvelope({ ...otherInput, createdAt: NOW });
   const jobs = [seerfar, preparation, related, other], repository = setup();
@@ -1591,9 +1593,11 @@ test('关联作业读取允许v1/v2与真实合成Seerfar完成v3混存，仅返
   assert.deepEqual((await repository.readSnapshot()).runtime.softwareJobs, jobs);
 });
 
+// A job bound to another candidate is that candidate's record and is not read here (AGENTS 3.4); a corrupt job this
+// candidate's action can see (its own, or one bound to no candidate) still stops it.
 test('未知作业版本或损坏subject身份不能被跳过，事务不写入', async () => {
   for (const mutate of [job => { job.schemaVersion = 'software-job-v99'; },
-    job => { job.subject.revision += 1; }, job => { job.candidateId = 'injected:candidate'; }]) {
+    job => { job.subject.revision += 1; }, job => { job.candidateId = 'C-1'; }]) {
     const repository = setup(), job = structuredClone(preparationHistoryJob()); mutate(job);
     await repository.transact(document => { document.runtime = { softwareJobs: [job] }; return { changed: true, document, result: null }; });
     const before = await repository.readSnapshot();

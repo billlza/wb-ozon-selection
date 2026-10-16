@@ -215,6 +215,7 @@ import {
 } from "./lib/c2-software-orchestrator.mjs";
 import { createFinalProductPlanConfirmationCard } from "./lib/final-product-plan-confirmation-card.mjs";
 import { createConfiguredBusinessStateRepository } from "./lib/business-state-repository.mjs";
+import { sameSharedState, withPartitionedRecords } from "./lib/business-state-partitions.mjs";
 import { createSelectionReviewRuntimeConfiguration, createDPlatformObservationPolicyResolver } from "./lib/runtime-configuration.mjs";
 import {
   assertTrustedApiRequest,
@@ -647,7 +648,7 @@ async function gate1Route(req, res, pathname) {
     // 做这件之后页面紧接着申请采集这家货源，要的就是刚存下的找货方案和市场快照，所以连同找货视图一起回。
     let draftView = null;
     if (route[2] === "accept") {
-      const document = await readData();
+      const document = await readCandidateData(candidateId);
       const saved = document.candidates.find(item => item.id === candidateId);
       draftView = saved ? await supplierDraftView(document, saved) : null;
     }
@@ -764,7 +765,7 @@ async function runGate1AutopilotStep(candidate, next) {
 /** 软件自己的运行记录：做过哪几步、哪一步出错。不改业务状态，也不加修订号——加了会让刚整理好的材料显得过期。 */
 async function saveGate1AutopilotRecord(candidateId, { ranSteps, failure }) {
   if (!ranSteps.length && failure === null) return;
-  await mutateData(data => {
+  await mutateCandidateData(candidateId, data => {
     const current = data.candidates.find(item => item.id === candidateId);
     if (current) current.gate1AutopilotV1 = gate1AutopilotRecordAfterRun(current.gate1AutopilotV1, { ranSteps, failure, at: now() });
     return null;
@@ -782,7 +783,7 @@ async function advanceGate1Autopilot(candidateId) {
   try {
     let previous = null;
     for (let index = 0; index < GATE1_AUTOPILOT_MAX_STEPS; index += 1) {
-      const document = await readData();
+      const document = await readCandidateData(candidateId);
       const candidate = document.candidates.find(item => item.id === candidateId);
       if (!candidate || !gate1AutopilotGrantCurrent(candidate)) break;
       const plan = planGate1Autopilot({ candidate, bExactCommissionRuntimeView: gate1AutopilotRecalculationView(document, candidate),
@@ -852,7 +853,7 @@ async function gate1AutopilotContinueRoute(req, res, pathname) {
     throw httpError(400, "只接受当前数据修订号。", { code: "gate1_autopilot_input_invalid" });
   }
   const candidateId = decodeURIComponent(pathname.match(GATE1_AUTOPILOT_CONTINUE_ROUTE)[1]);
-  await mutateData(data => {
+  await mutateCandidateData(candidateId, data => {
     const current = data.candidates.find(item => item.id === candidateId);
     if (!current) throw httpError(404, "候选不存在");
     if (Number(current.dataRevision) !== input.dataRevision) {
@@ -881,7 +882,7 @@ async function gate1AutopilotContinueRoute(req, res, pathname) {
     return null;
   });
   const run = await advanceGate1Autopilot(candidateId);
-  const saved = await readData();
+  const saved = await readCandidateData(candidateId);
   const candidate = saved.candidates.find(item => item.id === candidateId);
   json(res, 200, { autopilot: { status: run.status, ranSteps: run.ranSteps.map(item => item.step), failure: run.failure ?? null },
     candidate: publicCandidate(candidate, saved.rules, {}, saved.evidencePacks || [], saved.currentCommissionCatalogs ?? []),
@@ -1403,7 +1404,7 @@ async function expireSourceCaptureJob(captureId, expectedStatus) {
   const session = sourceCaptureSessions.get(captureId);
   if (!session || session.jobStatus !== expectedStatus || session.consumedAt) return;
   const failureCode = expectedStatus === "claimed" ? "unknown_outcome" : "extension_job_unclaimed";
-  await mutateDataWhenChanged((data) => {
+  await mutateCandidateDataWhenChanged(session.candidateId, (data) => {
     const current = data.candidates.find((item) => item.id === session.candidateId);
     // The captureId is what identifies the record this job owns; a newer capture replaced it and is protected by that
     // test alone. Also demanding an unchanged dataRevision made any unrelated edit during the wait — saving 找货资料,
@@ -1536,7 +1537,7 @@ async function enqueueASupplierCaptureJob({ candidateId, requestRevision, reques
   if (existing?.mode === "a_supplier_capture" &&
     [existing.requestRevision, existing.dataRevision].includes(requestRevision) &&
     ["queued", "claimed"].includes(existing.jobStatus)) {
-    const data = await readData();
+    const data = await readCandidateData(candidateId);
     const current = data.candidates.find((item) => item.id === candidateId);
     if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
     const requestedSource = normalizeSupplierCaptureSource(requestedSourceUrl);
@@ -1574,7 +1575,7 @@ async function enqueueASupplierCaptureJob({ candidateId, requestRevision, reques
   sourceCaptureSessions.set(session.captureId, session);
   let candidate;
   try {
-    candidate = await mutateData((data) => {
+    candidate = await mutateCandidateData(candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === candidateId);
       if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
       if (Number(current.dataRevision) !== Number(requestRevision)) {
@@ -1654,7 +1655,7 @@ async function closeRejectedCaptureClaim(session, error, { recordOf, inFlight, c
   // 被拒的领取没有把作业交给插件：这一次没有执行，次数照实记 0。
   if (code !== "unknown_outcome") session.attempt = 0;
   try {
-    await mutateDataWhenChanged((data) => {
+    await mutateCandidateDataWhenChanged(session.candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === session.candidateId);
       const record = current ? recordOf(current) : null;
       if (record?.captureId !== session.captureId || !inFlight(record)) return { changed: false };
@@ -1688,7 +1689,7 @@ function claimASupplierCaptureJob(captureId, extensionVersion, extensionOrigin) 
     session.claimedExtensionOrigin = String(extensionOrigin || "");
     clearSourceCaptureJobTimer(session.captureId);
     try {
-      const claimedRevision = await mutateData((data) => {
+      const claimedRevision = await mutateCandidateData(session.candidateId, (data) => {
         if (session.expiresAt <= Date.now()) throw httpError(409, "采集作业等待期限已结束", { code: "capture_job_expired" });
         const current = data.candidates.find((item) => item.id === session.candidateId);
         if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
@@ -1792,7 +1793,7 @@ async function expireOzonPageReadJob(captureId, expectedStatus) {
   const session = salesCaptureSessions.get(captureId);
   if (!session || session.jobStatus !== expectedStatus || session.consumedAt) return;
   const failureCode = expectedStatus === "claimed" ? "unknown_outcome" : "extension_job_unclaimed";
-  await mutateDataWhenChanged((data) => {
+  await mutateCandidateDataWhenChanged(session.candidateId, (data) => {
     const current = data.candidates.find((item) => item.id === session.candidateId);
     // Only the captureId identifies the record this job owns — the same lesson the 1688 closure already paid for:
     // also demanding an unchanged dataRevision let any unrelated edit during the wait abandon the closure and leave
@@ -1894,7 +1895,7 @@ async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedP
   if (existing?.captureKind === OZON_PAGE_READ_CAPTURE_KIND &&
     [existing.requestRevision, existing.dataRevision].includes(requestRevision) &&
     ["queued", "claimed"].includes(existing.jobStatus)) {
-    const data = await readData();
+    const data = await readCandidateData(candidateId);
     const current = data.candidates.find((item) => item.id === candidateId);
     if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
     if (Number(current.dataRevision) !== existing.dataRevision ||
@@ -1904,7 +1905,7 @@ async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedP
     return { candidate: publicCandidate(current, data.rules), captureJob: ozonCapturePageJobPublic(existing), duplicate: true };
   }
   ensureCaptureControlAvailable(candidateId);
-  const snapshot = await readData();
+  const snapshot = await readCandidateData(candidateId);
   const snapshotCandidate = snapshot.candidates.find((item) => item.id === candidateId);
   if (!snapshotCandidate) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
   // 不指名时读这件商品自己的页面；自己没有、主人在「做这件」卡上认过 Ozon 同款的，读那一个（lib/ozon-category-read-step.mjs）。
@@ -1936,7 +1937,7 @@ async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedP
   salesCaptureSessions.set(session.captureId, session);
   let candidate;
   try {
-    candidate = await mutateData((data) => {
+    candidate = await mutateCandidateData(candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === candidateId);
       if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
       if (Number(current.dataRevision) !== Number(requestRevision)) {
@@ -2011,7 +2012,7 @@ function claimOzonPageReadJob(captureId, extensionVersion, extensionOrigin) {
     session.claimedExtensionOrigin = String(extensionOrigin || "");
     clearSourceCaptureJobTimer(session.captureId);
     try {
-      const claimedRevision = await mutateData((data) => {
+      const claimedRevision = await mutateCandidateData(session.candidateId, (data) => {
         if (session.expiresAt <= Date.now()) throw httpError(409, "采集作业等待期限已结束", { code: "capture_job_expired" });
         const current = data.candidates.find((item) => item.id === session.candidateId);
         if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
@@ -2152,7 +2153,7 @@ async function expireImageMatchJob(captureId, expectedStatus) {
   const kind = imageMatchKindOf(session);
   if (!session || !kind || session.jobStatus !== expectedStatus || session.consumedAt) return;
   const failureCode = expectedStatus === "claimed" ? "unknown_outcome" : "extension_job_unclaimed";
-  await mutateDataWhenChanged((data) => {
+  await mutateCandidateDataWhenChanged(session.candidateId, (data) => {
     const current = data.candidates.find((item) => item.id === session.candidateId);
     // Only the captureId identifies the record this job owns, for the same reason as the two closures above.
     if (!current || current[kind.field]?.captureId !== captureId) return { changed: false };
@@ -2205,7 +2206,7 @@ async function enqueueImageMatchJob(kind, { candidateId, requestRevision, acknow
   const existing = imageMatchSessionFor(kind, candidateId);
   if (existing && [existing.requestRevision, existing.dataRevision].includes(requestRevision) &&
     ["queued", "claimed"].includes(existing.jobStatus)) {
-    const data = await readData();
+    const data = await readCandidateData(candidateId);
     const current = data.candidates.find((item) => item.id === candidateId);
     if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
     if (current[kind.field]?.captureId !== existing.captureId) {
@@ -2214,7 +2215,7 @@ async function enqueueImageMatchJob(kind, { candidateId, requestRevision, acknow
     return { candidate: publicCandidate(current, data.rules), captureJob: kind.jobPublic(existing), duplicate: true };
   }
   ensureCaptureControlAvailable(candidateId);
-  const snapshot = await readData();
+  const snapshot = await readCandidateData(candidateId);
   const snapshotCandidate = snapshot.candidates.find((item) => item.id === candidateId);
   if (!snapshotCandidate) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
   const target = kind.target(snapshotCandidate, input);
@@ -2246,7 +2247,7 @@ async function enqueueImageMatchJob(kind, { candidateId, requestRevision, acknow
   imageMatchSessions.set(session.captureId, session);
   let candidate;
   try {
-    candidate = await mutateData((data) => {
+    candidate = await mutateCandidateData(candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === candidateId);
       if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
       if (Number(current.dataRevision) !== Number(requestRevision)) {
@@ -2477,7 +2478,7 @@ async function intakePumpStep() {
     return { ...quiet, progressed: true, active: true };
   }
   if (step === "skip_1688") {
-    await mutateDataWhenChanged((data) => {
+    await mutateCandidateDataWhenChanged(candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === candidateId);
       if (!current?.intake || intakeProgress(current, { login1688Expired: true })?.next !== "skip_1688") return { changed: false };
       const timestamp = now();
@@ -2515,7 +2516,7 @@ async function intakePumpStep() {
     return { ...quiet, active: true };
   } catch (error) {
     if (error?.extra?.captureControl || INTAKE_TRANSIENT_CODES.has(error?.extra?.code)) return { ...quiet, active: true };
-    await mutateDataWhenChanged((data) => {
+    await mutateCandidateDataWhenChanged(candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === candidateId);
       if (!current?.intake || current.intake.stage === "blocked") return { changed: false };
       const timestamp = now();
@@ -2539,7 +2540,7 @@ async function startIntakeOzonWords(candidateId) {
   intakeOzonWordsInFlight.add(candidateId);
   let planned = null;
   try {
-    planned = await mutateDataWhenChanged((data) => {
+    planned = await mutateCandidateDataWhenChanged(candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === candidateId);
       if (!current?.intake || intakeProgress(current)?.next !== "ozon_words") return { changed: false };
       const timestamp = now();
@@ -2576,7 +2577,7 @@ async function startIntakeOzonWords(candidateId) {
   }
   const settle = async (build) => {
     try {
-      await mutateDataWhenChanged((data) => {
+      await mutateCandidateDataWhenChanged(candidateId, (data) => {
         const current = data.candidates.find((item) => item.id === candidateId);
         const words = current?.intake?.ozonWords;
         if (!words || words.status !== "requested" || words.requestFingerprint !== planned.fingerprint) return { changed: false };
@@ -2610,7 +2611,7 @@ function intakeRoughProfitSummary(roughProfit) {
 
 /** 最后一步：用这件已经存下的货源、1688、Ozon 记录粗算一次，写进 candidate.roughProfit，这件就找完了。 */
 async function settleIntakeEstimate(candidateId) {
-  const snapshot = await readData();
+  const snapshot = await readCandidateData(candidateId);
   const candidate = snapshot.candidates.find((item) => item.id === candidateId);
   if (!candidate?.intake) return;
   const at = now();
@@ -2694,7 +2695,7 @@ function claimImageMatchJob(captureId, extensionVersion, extensionOrigin) {
     session.claimedExtensionOrigin = String(extensionOrigin || "");
     clearSourceCaptureJobTimer(session.captureId);
     try {
-      const claimedRevision = await mutateData((data) => {
+      const claimedRevision = await mutateCandidateData(session.candidateId, (data) => {
         if (session.expiresAt <= Date.now()) throw httpError(409, "采集作业等待期限已结束", { code: "capture_job_expired" });
         const current = data.candidates.find((item) => item.id === session.candidateId);
         if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
@@ -2755,11 +2756,11 @@ async function runImageMatchComparison(kind, candidateId, captureId) {
   if (imageMatchComparisonsInFlight.has(captureId)) return;
   imageMatchComparisonsInFlight.add(captureId);
   try {
-    const data = await readData();
+    const data = await readCandidateData(candidateId);
     const record = data.candidates.find((item) => item.id === candidateId)?.[kind.field];
     if (record?.captureId !== captureId || record.status !== "comparing") return;
     const comparison = await kind.rules.computeComparison(record, { fingerprintOf: supplierImageFingerprintOf, comparedAt: now() });
-    await mutateDataWhenChanged((latest) => {
+    await mutateCandidateDataWhenChanged(candidateId, (latest) => {
       const current = latest.candidates.find((item) => item.id === candidateId);
       const applied = current ? kind.rules.comparisonApplied(current[kind.field], comparison) : null;
       if (!applied) return { changed: false };
@@ -2801,7 +2802,7 @@ function markImageMatchComparisonInterrupted(kind, current, timestamp) {
 }
 
 async function settleInterruptedImageMatchComparison(kind, candidateId, captureId) {
-  return mutateDataWhenChanged((data) => {
+  return mutateCandidateDataWhenChanged(candidateId, (data) => {
     const current = data.candidates.find((item) => item.id === candidateId);
     if (current?.[kind.field]?.captureId !== captureId) return { changed: false };
     return { changed: markImageMatchComparisonInterrupted(kind, current, now()) };
@@ -3023,6 +3024,38 @@ function mutateDataWhenChanged(mutator) {
     data.meta.date = businessDate();
     return { changed: true, document: data, result: outcome.result };
   });
+}
+
+// A single-product action reads, locks and writes only its own products' records (AGENTS.md 3.4): the document it gets
+// holds those products and the shared settings, which it may read but not change. Changing anything shared stops the
+// action before anything is saved. `candidateIds` is one id or a list (a product and the siblings the action also uses);
+// an empty list reads only the shared settings.
+// An id that is not a non-empty string names no product; the action then finds none and answers as it always has.
+const candidateScopeOf = candidateIds => (Array.isArray(candidateIds) ? candidateIds : [candidateIds])
+  .filter(id => typeof id === "string" && id !== "");
+
+async function readCandidateData(candidateIds) {
+  return normalizeBusinessStateDocument(await businessStateRepository.readCandidates(candidateScopeOf(candidateIds)));
+}
+
+function transactCandidateData(candidateIds, mutator, whenChanged) {
+  return businessStateRepository.transactCandidates(candidateScopeOf(candidateIds), async (document) => {
+    const data = normalizeBusinessStateDocument(document);
+    const outcome = await mutator(data);
+    if (whenChanged && !outcome?.changed) return { changed: false, result: outcome?.result };
+    if (!sameSharedState(normalizeBusinessStateDocument(document), data)) {
+      throw new Error("BUSINESS_STATE_REPOSITORY_SCOPE_VIOLATION:shared");
+    }
+    return { changed: true, document: withPartitionedRecords(document, data), result: whenChanged ? outcome.result : outcome };
+  });
+}
+
+function mutateCandidateData(candidateIds, mutator) {
+  return transactCandidateData(candidateIds, mutator, false);
+}
+
+function mutateCandidateDataWhenChanged(candidateIds, mutator) {
+  return transactCandidateData(candidateIds, mutator, true);
 }
 
 function dispatchPublic(dispatch) {
@@ -4352,7 +4385,7 @@ function projectC1PaidKeywordSoftwareJob(candidate, runtime) {
 }
 
 async function continueC1SoftwareWhenEvidenceReady(candidateId, expectedRevision, { reportConfigurationBlock = false } = {}) {
-  const snapshotData = await readData();
+  const snapshotData = await readCandidateData(candidateId);
   let source = snapshotData.candidates.find((item) => item.id === candidateId);
   if (!source || Number(source.dataRevision) !== Number(expectedRevision)) {
     throw new C1KeywordContinuationRevisionConflictError();
@@ -4413,14 +4446,14 @@ async function continueC1SoftwareWhenEvidenceReady(candidateId, expectedRevision
     };
     throw error;
   }
-  const saved = await readData();
+  const saved = await readCandidateData(candidateId);
   const current = saved.candidates.find(item => item.id === candidateId);
   if (!current) throw httpError(404, "候选不存在");
   return publicCandidate(current, saved.rules, {}, saved.evidencePacks || [], saved.currentCommissionCatalogs ?? []);
 }
 
 async function prepareAndContinueC1FactKeywordEvidence(candidateId, input, { triggerReceipt = null } = {}) {
-  const snapshotData = await readData();
+  const snapshotData = await readCandidateData(candidateId);
   const source = snapshotData.candidates.find((item) => item.id === candidateId);
   if (!source) throw httpError(404, "候选不存在");
   if (Number(source.dataRevision) !== Number(input.dataRevision)) {
@@ -4452,7 +4485,7 @@ async function prepareAndContinueC1FactKeywordEvidence(candidateId, input, { tri
     throw httpError(422, `C1_FACT_KEYWORD_NOT_READY: ${reason}`);
   }
 
-  const staged = await mutateData((data) => {
+  const staged = await mutateCandidateData(candidateId, (data) => {
     const current = data.candidates.find((item) => item.id === candidateId);
     if (!current) throw httpError(404, "候选不存在");
     if (Number(current.dataRevision) !== Number(input.dataRevision)) {
@@ -4487,7 +4520,7 @@ async function prepareAndContinueC1FactKeywordEvidence(candidateId, input, { tri
 }
 
 async function continueC1FromKeywordEvidenceReadyEvent(candidateId, event) {
-  const snapshotData = await readData();
+  const snapshotData = await readCandidateData(candidateId);
   const source = snapshotData.candidates.find((item) => item.id === candidateId);
   if (!source) throw httpError(404, "候选不存在");
   let accepted;
@@ -4506,7 +4539,7 @@ async function continueC1FromKeywordEvidenceReadyEvent(candidateId, event) {
 
 async function runC1KeywordEvidenceSoftwareJob(candidateId, input, request) {
   const timestamp = now();
-  const snapshot = await readData();
+  const snapshot = await readCandidateData(candidateId);
   const source = snapshot.candidates.find((item) => item.id === candidateId);
   if (!source) throw httpError(404, "候选不存在");
   const actor = runtimeIdentityProvider.resolveActor({ request });
@@ -4537,7 +4570,7 @@ async function runC1KeywordEvidenceSoftwareJob(candidateId, input, request) {
       gaps: outcome.gaps
     });
   }
-  const data = await readData();
+  const data = await readCandidateData(candidateId);
   const current = data.candidates.find((item) => item.id === candidateId);
   if (!current) throw httpError(404, "候选不存在");
   return publicCandidate(current, data.rules, {}, data.evidencePacks || [], data.currentCommissionCatalogs ?? []);
@@ -4679,7 +4712,7 @@ async function gate2ListingRoute(req, res, pathname) {
   if (!previewMatch && !listMatch) return false;
   if (previewMatch) {
     if (req.method !== "GET") return false;
-    const data = await readData();
+    const data = await readCandidateData(previewMatch[1]);
     const candidate = data.candidates.find(item => item.id === previewMatch[1]);
     if (!candidate) throw httpError(404, "候选不存在");
     json(res, 200, { preview: gate2ListingPreviewFor(data, candidate) });
@@ -4699,7 +4732,7 @@ async function gate2ListingRoute(req, res, pathname) {
     throw httpError(400, "上架请求字段不完整或包含未经允许的字段");
   }
   const saved = { finalAssets: false, productionAuthorization: false, accountRead: false };
-  let data = await readData();
+  let data = await readCandidateData(candidateId);
   let candidate = data.candidates.find(item => item.id === candidateId);
   if (!candidate) throw httpError(404, "候选不存在");
   if (candidate.dataRevision !== input.dataRevision) {
@@ -4733,7 +4766,7 @@ async function gate2ListingRoute(req, res, pathname) {
       return true;
     }
     saved.finalAssets = true;
-    data = await readData();
+    data = await readCandidateData(candidateId);
     candidate = data.candidates.find(item => item.id === candidateId);
   }
   const current = gate2ListingPreviewFor(data, candidate);
@@ -4754,7 +4787,7 @@ async function gate2ListingRoute(req, res, pathname) {
     decision = { status: error.status, body: { code: error.extra?.code ?? null, message: error.message } };
   }
   if (decision.status !== 200) {
-    data = await readData();
+    data = await readCandidateData(candidateId);
     const latest = data.candidates.find(item => item.id === candidateId);
     const done = saved.finalAssets ? "图片已经确认、方案卡已生成；" : "";
     const result = gate2Stopped(decision.status, "production_authorization", decision.body.code ?? "gate2_authorization_failed",
@@ -4767,7 +4800,7 @@ async function gate2ListingRoute(req, res, pathname) {
   let accountRead = null;
   // 3. 写入前读一次店铺后台。只有生产任务确实在等这一次核验时才授权；已经有当前有效的核验就不再要。
   if (executionStatus === "awaiting_account_read") {
-    data = await readData();
+    data = await readCandidateData(candidateId);
     candidate = data.candidates.find(item => item.id === candidateId);
     const readInput = gate2AccountReadInput({ preparation: ozonAccountReadServices.preparation({ candidate, document: data }),
       authorization: candidate.lifecycleV11.skuPackage.productionAuthorization, observedAt: now() });
@@ -4784,7 +4817,7 @@ async function gate2ListingRoute(req, res, pathname) {
       }
     }
   }
-  data = await readData();
+  data = await readCandidateData(candidateId);
   const latest = data.candidates.find(item => item.id === candidateId);
   json(res, 200, { status: "listed_for_production", saved, executionStatus, accountRead,
     candidate: latest ? publicSavedDECandidate(latest, data) : null,
@@ -4803,7 +4836,7 @@ async function confirmC2FinalAssetsFor(candidateId, input, { ownerUserId = null 
   if (!Array.isArray(input.approvedAssetIds) || input.approvedAssetIds.length === 0) {
     throw httpError(400, "必须提供主人确认的素材ID顺序");
   }
-  const confirmationSnapshot = await readData();
+  const confirmationSnapshot = await readCandidateData(candidateId);
   const confirmationCandidate = confirmationSnapshot.candidates.find((item) => item.id === candidateId);
   if (!confirmationCandidate) throw httpError(404, "候选不存在");
   if (Number(confirmationCandidate.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后重新确认素材");
@@ -4813,7 +4846,7 @@ async function confirmC2FinalAssetsFor(candidateId, input, { ownerUserId = null 
     draftRevision: input.draftRevision,
     assets: input.finalUploadAssets
   });
-  const candidate = await mutateData((data) => {
+  const candidate = await mutateCandidateData(candidateId, (data) => {
     const current = data.candidates.find((item) => item.id === candidateId);
     if (!current) throw httpError(404, "候选不存在");
     if (Number(current.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后重新确认素材");
@@ -5324,7 +5357,7 @@ async function handleApi(req, res, pathname) {
     }
     try {
       const candidateId = decodeURIComponent(imageSearchRoute[1]);
-      const document = await readData();
+      const document = await readCandidateData(candidateId);
       const input = req.method === 'POST'
         ? await readJsonRequestBody(req, { maxBytes: 8192, requireJsonContentType: true })
         : { candidateId, expectedRevision: new URL(req.url, runtimeConfiguration.publicOrigin).searchParams.get('revision') };
@@ -5362,7 +5395,7 @@ async function handleApi(req, res, pathname) {
         const method=aProductDetailRoute[2]==='authorize'?'authorizeAndRun':'continueSavedCurrent';
         operationResult=await aProductDetailRuntime[method]({actor,input});
       }
-      const document=await readData(),candidate=document.candidates.find(value=>value.id===candidateId);
+      const document=await readCandidateData(candidateId),candidate=document.candidates.find(value=>value.id===candidateId);
       if(!candidate)throw httpError(404,'当前商品不存在。');
       const revisionText=new URL(req.url, runtimeConfiguration.publicOrigin).searchParams.get('revision');
       if(req.method==='GET'&&(!/^(0|[1-9][0-9]*)$/.test(revisionText??'')||!Number.isSafeInteger(Number(revisionText)))) {
@@ -5406,7 +5439,7 @@ async function handleApi(req, res, pathname) {
   if (req.method === "POST" && lifecycleBEvidencePrepareRoute) {
     const candidateId = lifecycleBEvidencePrepareRoute[1];
     const input = await requestBody(req);
-    const snapshot = await readData();
+    const snapshot = await readCandidateData(candidateId);
     const candidate = snapshot.candidates.find((item) => item.id === candidateId);
     if (!candidate) throw httpError(404, "候选不存在");
     if (!Number.isSafeInteger(input.dataRevision) || input.dataRevision !== candidate.dataRevision) {
@@ -5447,7 +5480,7 @@ async function handleApi(req, res, pathname) {
       });
     }
     if (run.evidencePacksToCommit.length === 0) {
-      const currentSnapshot = await readData();
+      const currentSnapshot = await readCandidateData(candidateId);
       const current = currentSnapshot.candidates.find(item => item.id === candidateId);
       if (!current || current.dataRevision !== input.dataRevision) throw httpError(409, "取证期间商品资料已变化，复用结果已失效");
       try { assertLifecycleBCostsCurrent({ candidate: current, rules: currentSnapshot.rules, otherCosts: preparedCosts, asOf: now() }); }
@@ -5535,7 +5568,7 @@ async function handleApi(req, res, pathname) {
     if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
       return json(res, 403, { code: "B_EVIDENCE_REFRESH_OWNER_REQUIRED", message: "请先登录主人身份后重读费用证据。", platformWrites: 0 });
     }
-    const snapshot = await readData();
+    const snapshot = await readCandidateData(candidateId);
     const candidate = snapshot.candidates.find((item) => item.id === candidateId);
     if (!candidate) throw httpError(404, "候选不存在");
     if (candidate.dataRevision !== input.expectedRevision) throw httpError(409, "商品资料已变化，请刷新后重新读取一次费用证据");
@@ -5589,7 +5622,7 @@ async function handleApi(req, res, pathname) {
         createdBy: "owner_b_evidence_refresh"
       });
     });
-    const savedSnapshot = await readData();
+    const savedSnapshot = await readCandidateData(candidateId);
     const savedCandidate = savedSnapshot.candidates.find((item) => item.id === candidateId);
     if (!savedCandidate) throw httpError(500, "重读结果待核对：未取得当前商品独立回读。");
     return json(res, committed.length === 0 ? 200 : 201, {
@@ -5714,7 +5747,7 @@ async function handleApi(req, res, pathname) {
   // 只读：不写状态、不碰平台。?priceRub= 换一个售价算，?wbSubject= 指定 WB 类目号；CEL 表的位置可用 SELECTION_REVIEW_CEL_TARIFF_FILE 改。
   const wbRoughProfitRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/wb-rough-profit$/);
   if (req.method === "GET" && wbRoughProfitRoute) {
-    const snapshot = await readData();
+    const snapshot = await readCandidateData(decodeURIComponent(wbRoughProfitRoute[1]));
     const candidate = snapshot.candidates.find((item) => item.id === decodeURIComponent(wbRoughProfitRoute[1]));
     if (!candidate) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
     const params = new URL(req.url, `http://${host}:${port}`).searchParams;
@@ -5799,7 +5832,7 @@ async function handleApi(req, res, pathname) {
     if (!Number.isInteger(input.dataRevision)) throw httpError(400, "派发必须提供当前数据修订号");
     const map = await readWorkflowMap(workflowMapFile);
     let dispatchId = null;
-    const result = await mutateData((data) => {
+    const result = await mutateCandidateData(candidateDispatchRoute[1], (data) => {
       const candidate = data.candidates.find((item) => item.id === candidateDispatchRoute[1]);
       if (!candidate) throw httpError(404, "候选不存在");
       if (Number(candidate.dataRevision) !== input.dataRevision) {
@@ -6002,7 +6035,7 @@ async function handleApi(req, res, pathname) {
     if (!Number.isInteger(input.dataRevision) || input.dataRevision !== session.dataRevision) throw httpError(409, "Ozon采集修订号不一致");
     if (!["captured", "failed"].includes(input.status)) throw httpError(400, "Ozon采集状态无效");
 
-    const candidate = await mutateData((data) => {
+    const candidate = await mutateCandidateData(session.candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === session.candidateId);
       if (!current) throw httpError(404, "候选不存在");
       if (Number(current.dataRevision) !== session.dataRevision) throw httpError(409, "商品资料已变化，本次Ozon采集结果已拒绝");
@@ -6288,7 +6321,7 @@ async function handleApi(req, res, pathname) {
       throw httpError(400, "重跑只接受当前数据修订号", { code: "intake_retry_input_invalid" });
     }
     const actor = intakeOwner(req, "intake_owner_required");
-    const candidate = await mutateData((data) => {
+    const candidate = await mutateCandidateData(intakeRetryRoute[1], (data) => {
       const current = data.candidates.find((item) => item.id === intakeRetryRoute[1]);
       if (!current?.intake) throw httpError(404, "这件不是从录入页贴进来的", { code: "intake_not_found" });
       if (Number(current.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后再点重跑", { code: "revision_conflict" });
@@ -6368,7 +6401,7 @@ async function handleApi(req, res, pathname) {
     if (action === "compare" && imageMatchComparisonsInFlight.has(input.captureId)) {
       throw httpError(409, "这次找同款的首图正在比对，等它比完再说", { code: `${prefix}_comparison_in_flight` });
     }
-    const candidate = await mutateData((data) => {
+    const candidate = await mutateCandidateData(candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === candidateId);
       if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
       if (Number(current.dataRevision) !== input.dataRevision) {
@@ -6424,7 +6457,7 @@ async function handleApi(req, res, pathname) {
       throw httpError(409, "找同款作业尚未由插件原子领取，不能回传结果", { code: "capture_job_not_claimed" });
     }
     if (!["captured", "failed"].includes(input.status)) throw httpError(400, "找同款回传状态无效", { code: "capture_result_invalid" });
-    const candidate = await mutateData((data) => {
+    const candidate = await mutateCandidateData(session.candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === session.candidateId);
       if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
       // The record is bound by its captureId and the picture (and words) locked when the job was queued. Unlike a supplier
@@ -6481,7 +6514,7 @@ async function handleApi(req, res, pathname) {
       throw httpError(403, "请先登录主人身份后核实这条采集记录。", { code: "source_capture_review_owner_required" });
     }
     const acknowledgement = input.acknowledgement ?? "no_result_received";
-    const reviewedCandidate = await mutateData((data) => {
+    const reviewedCandidate = await mutateCandidateData(sourceCaptureReviewRoute[1], (data) => {
       const current = data.candidates.find((item) => item.id === sourceCaptureReviewRoute[1]);
       if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
       if (Number(current.dataRevision) !== input.dataRevision) {
@@ -6543,7 +6576,7 @@ async function handleApi(req, res, pathname) {
       throw httpError(403, "请先登录主人身份后重新采集这个1688页面。", { code: "source_capture_recapture_owner_required" });
     }
     const candidateId = decodeURIComponent(sourceCaptureRecaptureRoute[1]);
-    const snapshot = await readData();
+    const snapshot = await readCandidateData(candidateId);
     const snapshotCandidate = snapshot.candidates.find((item) => item.id === candidateId);
     if (!snapshotCandidate) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
     if (Number(snapshotCandidate.dataRevision) !== input.dataRevision) {
@@ -6601,7 +6634,7 @@ async function handleApi(req, res, pathname) {
     const candidateId = sourceCaptureStartRoute[1];
     const existing = captureSession(candidateId);
     if (existing && existing.mode === input.mode && [existing.requestRevision, existing.dataRevision].includes(input.dataRevision)) {
-      const data = await readData();
+      const data = await readCandidateData(candidateId);
       const current = data.candidates.find((item) => item.id === candidateId);
       if (!current) throw httpError(404, "候选不存在");
       return json(res, 200, { candidate: publicCandidate(current, data.rules), ...captureSessionPublic(existing) });
@@ -6625,7 +6658,7 @@ async function handleApi(req, res, pathname) {
     sourceCaptureSessions.set(session.captureId, session);
     let candidate;
     try {
-      candidate = await mutateData((data) => {
+      candidate = await mutateCandidateData(candidateId, (data) => {
         const current = data.candidates.find((item) => item.id === candidateId);
         if (!current) throw httpError(404, "候选不存在");
         if (Number(current.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后再采集1688");
@@ -6716,7 +6749,7 @@ async function handleApi(req, res, pathname) {
       }
     }
     let dispatchId = null;
-    const candidate = await mutateData((data) => {
+    const candidate = await mutateCandidateData(session.candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === session.candidateId);
       if (!current) throw httpError(404, "候选不存在");
       if (Number(current.dataRevision) !== session.dataRevision) throw httpError(409, "商品资料已变化，本次采集结果已拒绝", { code: "revision_conflict" });
@@ -6785,7 +6818,7 @@ async function handleApi(req, res, pathname) {
     if (!Array.isArray(input.sourceSkuIds) || !input.sourceSkuIds.length) throw httpError(400, "请至少选择一个1688 SKU");
     const map = await readWorkflowMap(workflowMapFile);
     let dispatchId = null;
-    const candidate = await mutateData((data) => {
+    const candidate = await mutateCandidateData(sourceCaptureSelectRoute[1], (data) => {
       const current = data.candidates.find((item) => item.id === sourceCaptureSelectRoute[1]);
       if (!current) throw httpError(404, "候选不存在");
       if (Number(current.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后重新选择SKU");
@@ -6869,7 +6902,7 @@ async function handleApi(req, res, pathname) {
     if (reason !== null && !A_DISCOVERY_DECLINE_REASONS.includes(reason)) {
       throw httpError(400, "淘汰理由必须是给定的几个选项之一");
     }
-    const result = await mutateData((data) => {
+    const result = await mutateCandidateData(candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === candidateId);
       if (!current) throw httpError(404, "候选不存在");
       if (Number(current.dataRevision) !== input.dataRevision) {
@@ -6920,7 +6953,7 @@ async function handleApi(req, res, pathname) {
     try {
       if (req.method === "GET") {
         // Opening 找货 derives the market snapshot once from the already-saved discovery receipt; it reads nothing external.
-        const prepared = await mutateDataWhenChanged((data) => {
+        const prepared = await mutateCandidateDataWhenChanged(candidateId, (data) => {
           const current = data.candidates.find((item) => item.id === candidateId);
           if (!current) throw httpError(404, "候选不存在");
           const outcome = ensureDiscoveryMarketSalesSnapshot({ document: data, candidate: current });
@@ -6932,14 +6965,14 @@ async function handleApi(req, res, pathname) {
           return { changed: true, result: outcome.snapshot.snapshotId };
         });
         void prepared;
-        const document = await readData();
+        const document = await readCandidateData(candidateId);
         const candidate = document.candidates.find((item) => item.id === candidateId);
         if (!candidate) throw httpError(404, "候选不存在");
         return json(res, 200, await supplierDraftView(document, candidate));
       }
       const input = await readJsonRequestBody(req, { maxBytes: 8192, requireJsonContentType: true });
       const normalized = normalizeSupplierDraftInput(input);
-      const snapshot = await readData();
+      const snapshot = await readCandidateData(candidateId);
       const snapshotCandidate = snapshot.candidates.find((item) => item.id === candidateId);
       if (!snapshotCandidate) throw httpError(404, "候选不存在");
       if (Number(snapshotCandidate.dataRevision) !== normalized.dataRevision) {
@@ -6948,7 +6981,7 @@ async function handleApi(req, res, pathname) {
       const timestamp = now();
       const draft = buildSupplierDraftV1(normalized, { declaredAt: timestamp });
       const estimate = await supplierDraftEstimate(snapshot, snapshotCandidate, draft);
-      await mutateData((data) => {
+      await mutateCandidateData(candidateId, (data) => {
         const current = data.candidates.find((item) => item.id === candidateId);
         if (!current) throw httpError(404, "候选不存在");
         if (Number(current.dataRevision) !== normalized.dataRevision) {
@@ -6971,7 +7004,7 @@ async function handleApi(req, res, pathname) {
           "主人填写的找货方案已保存为主人声明资料；未确认供货、未开始采集、未形成正式利润结论。", timestamp);
         return current.dataRevision;
       });
-      const savedDocument = await readData();
+      const savedDocument = await readCandidateData(candidateId);
       const savedCandidate = savedDocument.candidates.find((item) => item.id === candidateId);
       if (!savedCandidate) throw httpError(404, "候选不存在");
       return json(res, 200, await supplierDraftView(savedDocument, savedCandidate));
@@ -7012,7 +7045,7 @@ async function handleApi(req, res, pathname) {
     }
     const requestedSkuIds = [...new Set(input.sourceSkuIds.map(id => id.trim()))];
     const timestamp = now();
-    await mutateData((data) => {
+    await mutateCandidateData(candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === candidateId);
       if (!current) throw httpError(404, "候选不存在");
       if (Number(current.dataRevision) !== input.dataRevision) {
@@ -7063,7 +7096,7 @@ async function handleApi(req, res, pathname) {
         timestamp);
       return current.dataRevision;
     });
-    const savedDocument = await readData();
+    const savedDocument = await readCandidateData(candidateId);
     const savedCandidate = savedDocument.candidates.find((item) => item.id === candidateId);
     if (!savedCandidate) throw httpError(404, "候选不存在");
     return json(res, 200, await supplierDraftView(savedDocument, savedCandidate));
@@ -7105,7 +7138,7 @@ async function handleApi(req, res, pathname) {
         { code: "cargo_facts_invalid", errors: validation.errors });
     }
     const timestamp = now();
-    await mutateData((data) => {
+    await mutateCandidateData(candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === candidateId);
       if (!current) throw httpError(404, "候选不存在");
       if (Number(current.dataRevision) !== input.dataRevision) {
@@ -7131,7 +7164,7 @@ async function handleApi(req, res, pathname) {
         timestamp);
       return current.dataRevision;
     });
-    const savedDocument = await readData();
+    const savedDocument = await readCandidateData(candidateId);
     const savedCandidate = savedDocument.candidates.find((item) => item.id === candidateId);
     if (!savedCandidate) throw httpError(404, "候选不存在");
     return json(res, 200, await supplierDraftView(savedDocument, savedCandidate));
@@ -7175,7 +7208,7 @@ async function handleApi(req, res, pathname) {
         { code: "extra_handling_fees_invalid", errors: validation.errors });
     }
     const timestamp = now();
-    await mutateData((data) => {
+    await mutateCandidateData(candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === candidateId);
       if (!current) throw httpError(404, "候选不存在");
       if (Number(current.dataRevision) !== input.dataRevision) {
@@ -7199,7 +7232,7 @@ async function handleApi(req, res, pathname) {
         timestamp);
       return current.dataRevision;
     });
-    const savedDocument = await readData();
+    const savedDocument = await readCandidateData(candidateId);
     const savedCandidate = savedDocument.candidates.find((item) => item.id === candidateId);
     if (!savedCandidate) throw httpError(404, "候选不存在");
     return json(res, 200, await supplierDraftView(savedDocument, savedCandidate));
@@ -7235,7 +7268,7 @@ async function handleApi(req, res, pathname) {
       throw httpError(400, `${SKU_UNIFORM_SUPPLY_LABEL}要么声明、要么撤回，没有第三种`);
     }
     const timestamp = now();
-    await mutateData((data) => {
+    await mutateCandidateData(candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === candidateId);
       if (!current) throw httpError(404, "候选不存在");
       if (Number(current.dataRevision) !== input.dataRevision) {
@@ -7271,7 +7304,7 @@ async function handleApi(req, res, pathname) {
         `${line}这一步只记录这份声明，未派发任务、未联系供应商、未向平台写入任何内容，也未形成利润结论。`, timestamp);
       return current.dataRevision;
     });
-    const savedDocument = await readData();
+    const savedDocument = await readCandidateData(candidateId);
     const savedCandidate = savedDocument.candidates.find((item) => item.id === candidateId);
     if (!savedCandidate) throw httpError(404, "候选不存在");
     return json(res, 200, await supplierDraftView(savedDocument, savedCandidate));
@@ -7292,7 +7325,7 @@ async function handleApi(req, res, pathname) {
     try {
       const input = normalizeSupplierDraftDimensionsInput(await readJsonRequestBody(req, { maxBytes: 4096, requireJsonContentType: true }));
       const frozen = candidate => Boolean(candidate.lifecycleV11?.aConfirmationReceipt || candidate.lifecycleV11?.skuPackage);
-      const snapshot = await readData();
+      const snapshot = await readCandidateData(candidateId);
       const seen = snapshot.candidates.find((item) => item.id === candidateId);
       if (!seen) throw httpError(404, "候选不存在");
       if (Number(seen.dataRevision) !== input.dataRevision) {
@@ -7303,7 +7336,7 @@ async function handleApi(req, res, pathname) {
       const draft = reviseSupplierDraftDimensions(seen.supplierDraftV1 ?? null,
         { dimensionsCm: input.dimensionsCm, revisedAt: timestamp, gate1Decision: seen.gate1DecisionV1 ?? null });
       const estimate = await supplierDraftEstimate(snapshot, seen, draft);
-      await mutateData((data) => {
+      await mutateCandidateData(candidateId, (data) => {
         const current = data.candidates.find((item) => item.id === candidateId);
         if (!current) throw httpError(404, "候选不存在");
         if (Number(current.dataRevision) !== input.dataRevision) {
@@ -7326,7 +7359,7 @@ async function handleApi(req, res, pathname) {
           "估算已按新尺寸重算。未派发任务、未联系供应商、未向平台写入任何内容，也未形成利润结论。", timestamp);
         return current.dataRevision;
       });
-      const savedDocument = await readData();
+      const savedDocument = await readCandidateData(candidateId);
       const savedCandidate = savedDocument.candidates.find((item) => item.id === candidateId);
       if (!savedCandidate) throw httpError(404, "候选不存在");
       return json(res, 200, await supplierDraftView(savedDocument, savedCandidate));
@@ -7341,7 +7374,7 @@ async function handleApi(req, res, pathname) {
     const input = await requestBody(req);
     if (!["confirm", "reject"].includes(input.decision)) throw httpError(400, "请选择确认或淘汰");
     if (!Number.isInteger(input.dataRevision)) throw httpError(400, "A确认必须提供当前数据修订号");
-    const snapshot = await readData();
+    const snapshot = await readCandidateData(realAConfirmationRoute[1]);
     const snapshotCandidate = snapshot.candidates.find((item) => item.id === realAConfirmationRoute[1]);
     if (!snapshotCandidate) throw httpError(404, "候选不存在");
     if (Number(snapshotCandidate.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后重新确认A阶段");
@@ -7444,7 +7477,7 @@ async function handleApi(req, res, pathname) {
     if (orchestration.status !== "completed") {
       // 这一次停下来的事实要落盘，主人刷新之后才找得回那条出路。物流比较能不能一起落盘是另一回事，两支都存。
       const comparisonToSave = orchestration.guooRouteComparison || null;
-      await mutateData((data) => {
+      await mutateCandidateData(snapshotCandidate.id, (data) => {
         const current = data.candidates.find(item => item.id === snapshotCandidate.id);
         if (!current || current.dataRevision !== input.dataRevision) {
           throw httpError(409, comparisonToSave
@@ -7703,7 +7736,7 @@ async function handleApi(req, res, pathname) {
       }
       throw error;
     }
-    const saved = await readData();
+    const saved = await readCandidateData(input.candidateId);
     const current = saved.candidates.find(candidate => candidate.id === input.candidateId);
     if (!current) throw httpError(500, "最终定价保存结果待核对：未取得当前商品回读。");
     return json(res, 200, { pricingStatus: transaction.result.status, transactionStatus: transaction.status,
@@ -7741,7 +7774,7 @@ async function handleApi(req, res, pathname) {
     if (transaction.status === "committed" && transaction.result.status === "passed") {
       await continueC1SoftwareWhenEvidenceReady(input.candidateId, transaction.candidate.dataRevision);
     }
-    const saved = await readData();
+    const saved = await readCandidateData(input.candidateId);
     const candidate = saved.candidates.find(value => value.id === input.candidateId);
     if (!candidate) throw httpError(500, "正式复算结果待核对：未取得当前商品独立回读。");
     return json(res, 200, { recalculationStatus: transaction.status, result: transaction.result,
@@ -7776,7 +7809,7 @@ async function handleApi(req, res, pathname) {
       });
       throw error;
     }
-    const saved = await readData();
+    const saved = await readCandidateData(input.candidateId);
     const candidate = saved.candidates.find(value => value.id === input.candidateId);
     if (!candidate) throw httpError(500, "交接结果待核对：未取得当前商品独立回读。");
     return json(res, 200, { handoffStatus: transaction.status,
@@ -7797,7 +7830,7 @@ async function handleApi(req, res, pathname) {
     if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
       return json(res, 403, { code: "C1_DRAFT_AUTHENTICATED_OWNER_REQUIRED", message: "请先登录主人身份后读取本次文案结果。", externalRequests: 0 });
     }
-    const snapshot = await readData();
+    const snapshot = await readCandidateData(input.candidateId);
     const candidate = snapshot.candidates.find(value => value.id === input.candidateId);
     if (!candidate || candidate.dataRevision !== input.expectedRevision) throw httpError(409, "当前商品资料已变化，未读取旧任务。");
     const view = buildC1DraftRuntimeView({ candidate, runtime: snapshot.runtime,
@@ -7817,7 +7850,7 @@ async function handleApi(req, res, pathname) {
       }
       throw error;
     }
-    const saved = await readData();
+    const saved = await readCandidateData(input.candidateId);
     const current = saved.candidates.find(value => value.id === input.candidateId);
     if (!current) throw httpError(500, "结果读取后未取得当前商品独立回读，请核对记录。");
     return json(res, 200, { executionStatus: execution.status,
@@ -7838,7 +7871,7 @@ async function handleApi(req, res, pathname) {
     if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
       return json(res, 403, { code: "C1_DRAFT_AUTHENTICATED_OWNER_REQUIRED", message: "请先登录主人身份后继续已许可任务。", externalRequests: 0 });
     }
-    const snapshot = await readData();
+    const snapshot = await readCandidateData(input.candidateId);
     const candidate = snapshot.candidates.find(value => value.id === input.candidateId);
     if (!candidate || candidate.dataRevision !== input.expectedRevision) throw httpError(409, "当前商品资料已变化，未继续旧任务。");
     const view = buildC1DraftRuntimeView({ candidate, runtime: snapshot.runtime,
@@ -7849,7 +7882,7 @@ async function handleApi(req, res, pathname) {
     // This consumes the existing permission/job. It creates no new authorization,
     // and the use case rereads admission and claims once under its transaction.
     const execution = await c1DraftRuntimeServices.continueSavedCurrent(input);
-    const saved = await readData();
+    const saved = await readCandidateData(input.candidateId);
     const current = saved.candidates.find(value => value.id === input.candidateId);
     if (!current) throw httpError(500, "继续结果待核对：未取得当前商品独立回读。");
     return json(res, 200, { executionStatus: execution.status,
@@ -7890,7 +7923,7 @@ async function handleApi(req, res, pathname) {
     const execution = await c1DraftRuntimeServices.continueSavedCurrent({
       candidateId: input.candidateId, expectedRevision: ref.revision, jobId: ref.jobId
     });
-    const saved = await readData();
+    const saved = await readCandidateData(input.candidateId);
     const candidate = saved.candidates.find(value => value.id === input.candidateId);
     if (!candidate) throw httpError(500, "许可或执行结果待核对：未取得当前商品独立回读");
     return json(res, 200, { authorizationStatus: transaction.status, executionStatus: execution.status,
@@ -7916,7 +7949,7 @@ async function handleApi(req, res, pathname) {
       }
       throw error;
     }
-    const saved = await readData();
+    const saved = await readCandidateData(input.candidateId);
     const candidate = saved.candidates.find(value => value.id === input.candidateId);
     if (!candidate) throw httpError(500, "修订确认结果尚未取得商品独立回读");
     return json(res, 200, { status: transaction.status, result: transaction.result,
@@ -7945,7 +7978,7 @@ async function handleApi(req, res, pathname) {
       }
       throw error;
     }
-    const saved = await readData();
+    const saved = await readCandidateData(input.candidateId);
     const candidate = saved.candidates.find(value => value.id === input.candidateId);
     return json(res, 200, { status: transaction.status, result: transaction.result,
       candidate: { ...publicCandidate(candidate, saved.rules, {}, saved.evidencePacks || [], saved.currentCommissionCatalogs ?? []),
@@ -7971,7 +8004,7 @@ async function handleApi(req, res, pathname) {
       }
       throw error;
     }
-    const saved = await readData();
+    const saved = await readCandidateData(input.candidateId);
     const candidate = saved.candidates.find(item => item.id === input.candidateId);
     if (!candidate) throw httpError(500, "声明保存结果待核对：未取得当前商品独立回读");
     return json(res, 200, { status: transaction.status, result: transaction.result,
@@ -7996,7 +8029,7 @@ async function handleApi(req, res, pathname) {
       const transaction = await c1SiblingColorRevisionUseCase.prepare({ actor, input: {
         candidateId: input.candidateId, skuPackageId: input.skuPackageId,
         expectedRevision: input.dataRevision } });
-      const saved = await readData();
+      const saved = await readCandidateData(input.candidateId);
       const candidate = saved.candidates.find(item => item.id === input.candidateId);
       if (!candidate) throw httpError(500, '颜色修订结果回读失败');
       return json(res, 200, { status: transaction.status, result: transaction.result,
@@ -8083,7 +8116,7 @@ async function handleApi(req, res, pathname) {
     if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
       return json(res, 403, { code: "C1_CONTINUE_OWNER_REQUIRED", message: "请先登录主人身份后继续准备文案素材", externalRequests: 0 });
     }
-    const snapshot = await readData();
+    const snapshot = await readCandidateData(input.candidateId);
     const current = snapshot.candidates.find(item => item.id === input.candidateId);
     if (!current) throw httpError(404, "候选不存在");
     if (Number(current.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后重试");
@@ -8143,7 +8176,7 @@ async function handleApi(req, res, pathname) {
         });
         throw error;
       }
-      const saved = await readData();
+      const saved = await readCandidateData(input.candidateId);
       const candidate = saved.candidates.find(value => value.id === input.candidateId);
       return json(res, 200, { status: prepared.status, result: prepared.result, paidCalls: 0, platformWrites: 0,
         candidate: { ...publicCandidate(candidate, saved.rules, {}, saved.evidencePacks || [], saved.currentCommissionCatalogs ?? []),
@@ -8195,7 +8228,7 @@ async function handleApi(req, res, pathname) {
     if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
       return json(res, 403, { code: "C1_SUPPLY_ATTRIBUTE_BACKFILL_OWNER_REQUIRED", message: "请先登录主人身份后再补齐供应属性", externalRequests: 0 });
     }
-    const snapshot = await readData();
+    const snapshot = await readCandidateData(input.candidateId);
     const current = snapshot.candidates.find(item => item.id === input.candidateId);
     if (!current) throw httpError(404, "候选不存在");
     const skuPackageId = current.lifecycleV11?.skuPackage?.skuPackageId;
@@ -8228,7 +8261,7 @@ async function handleApi(req, res, pathname) {
     if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
       return json(res, 403, { code: "C1_FROZEN_SCHEMA_REFRESH_OWNER_REQUIRED", message: "请先登录主人身份后再重读类目资料", externalRequests: 0 });
     }
-    const snapshot = await readData();
+    const snapshot = await readCandidateData(input.candidateId);
     const current = snapshot.candidates.find(item => item.id === input.candidateId);
     if (!current) throw httpError(404, "候选不存在");
     if (Number(current.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后重试");
@@ -8304,7 +8337,7 @@ async function handleApi(req, res, pathname) {
     if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
       return json(res, 403, { code: "C1_OZON_ATTRIBUTE_PROPOSAL_OWNER_REQUIRED", message: "请先登录主人身份后再生成属性建议", externalRequests: 0 });
     }
-    const snapshot = await readData();
+    const snapshot = await readCandidateData(input.candidateId);
     const current = snapshot.candidates.find(item => item.id === input.candidateId);
     if (!current) throw httpError(404, "候选不存在");
     if (Number(current.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后重试");
@@ -8461,7 +8494,7 @@ async function handleApi(req, res, pathname) {
         ? await c1ColorDictionaryReadUseCase.authorize({ actor, input: common })
         : await c1ColorDictionaryReadUseCase.continueSaved({ actor,
           input: { ...common, authorizationId: input.authorizationId } });
-      const saved = await readData();
+      const saved = await readCandidateData([]);
       return json(res, 200, { status: transaction.status, result: transaction.result,
         candidate: publicCandidate(transaction.candidate, saved.rules, {}, saved.evidencePacks || [], saved.currentCommissionCatalogs ?? []),
         platformWrites: 0, paidCalls: 0 });
@@ -8492,7 +8525,7 @@ async function handleApi(req, res, pathname) {
     if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
       return json(res, 403, { code: "C1_OZON_ATTRIBUTE_MAPPING_OWNER_REQUIRED", message: "请先登录主人身份后再查看Ozon属性", externalRequests: 0 });
     }
-    const snapshot = await readData();
+    const snapshot = await readCandidateData(c1OzonAttributesRoute[1]);
     const current = snapshot.candidates.find(item => item.id === c1OzonAttributesRoute[1]);
     if (!current) throw httpError(404, "候选不存在");
     const skuPackageId = current.lifecycleV11?.skuPackage?.skuPackageId;
@@ -8522,7 +8555,7 @@ async function handleApi(req, res, pathname) {
     if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
       return json(res, 403, { code: "C1_OZON_ATTRIBUTE_MAPPING_OWNER_REQUIRED", message: "请先登录主人身份后再保存属性映射", externalRequests: 0 });
     }
-    const snapshot = await readData();
+    const snapshot = await readCandidateData(input.candidateId);
     const current = snapshot.candidates.find(item => item.id === input.candidateId);
     if (!current) throw httpError(404, "候选不存在");
     const skuPackageId = current.lifecycleV11?.skuPackage?.skuPackageId;
@@ -8594,7 +8627,7 @@ async function handleApi(req, res, pathname) {
       const status = /NOT_CONFIGURED/.test(error.code) ? 503 : /CHANGED|CONFLICT|EXPIRED|AMBIGUOUS/.test(error.code) ? 409 : 422;
       return json(res, status, { code: error.code, message: "账户读取未完成，请核对当前确认范围及已保存作业。" });
     }
-    const document = await readData(), candidate = document.candidates.find(value => value.id === input.candidateId);
+    const document = await readCandidateData(input.candidateId), candidate = document.candidates.find(value => value.id === input.candidateId);
     if (!candidate) throw httpError(500, "账户读取结果待核对：当前商品独立回读缺失");
     return json(res, 200, { ...execution, candidate: publicSavedDECandidate(candidate, document) });
   }
@@ -8616,7 +8649,7 @@ async function handleApi(req, res, pathname) {
         : error.code === "CANDIDATE_CHANGED" || error.code === "ALREADY_RECOVERED" ? 409 : error.code === "INPUT_INVALID" ? 400 : 422;
       return json(res, status, { code: error.code, message: error.message, externalRequests: 0, platformWrites: 0 });
     }
-    const after = await readData(), current = after.candidates.find(item => item.id === input.candidateId);
+    const after = await readCandidateData(input.candidateId), current = after.candidates.find(item => item.id === input.candidateId);
     if (!current) throw httpError(500, "对账恢复结果待核对：当前商品独立回读缺失");
     return json(res, 200, { ...execution, candidate: publicSavedDECandidate(current, after) });
   }
@@ -8638,7 +8671,7 @@ async function handleApi(req, res, pathname) {
         : error.code === "CANDIDATE_CHANGED" || error.code === "ALREADY_REOBSERVED" ? 409 : error.code === "INPUT_INVALID" ? 400 : 422;
       return json(res, status, { code: error.code, message: error.message, externalRequests: 0, platformWrites: 0 });
     }
-    const after = await readData(), current = after.candidates.find(item => item.id === input.candidateId);
+    const after = await readCandidateData(input.candidateId), current = after.candidates.find(item => item.id === input.candidateId);
     if (!current) throw httpError(500, "重新观察结果待核对：当前商品独立回读缺失");
     return json(res, 200, { ...execution, candidate: publicSavedDECandidate(current, after) });
   }
@@ -8660,7 +8693,7 @@ async function handleApi(req, res, pathname) {
         : ["CANDIDATE_CHANGED", "ALREADY_RECONCILING", "RECONCILE_LIMIT_REACHED"].includes(error.code) ? 409 : error.code === "INPUT_INVALID" ? 400 : 422;
       return json(res, status, { code: error.code, message: error.message, externalRequests: 0, platformWrites: 0 });
     }
-    const after = await readData(), current = after.candidates.find(item => item.id === input.candidateId);
+    const after = await readCandidateData(input.candidateId), current = after.candidates.find(item => item.id === input.candidateId);
     if (!current) throw httpError(500, "收口结果待核对：当前商品独立回读缺失");
     return json(res, 200, { ...execution, candidate: publicSavedDECandidate(current, after) });
   }
@@ -8682,7 +8715,7 @@ async function handleApi(req, res, pathname) {
         : error.code === "CANDIDATE_CHANGED" ? 409 : error.code === "INPUT_INVALID" ? 400 : 422;
       return json(res, status, { code: error.code, message: error.message, externalRequests: 0, platformWrites: 0 });
     }
-    const after = await readData(), current = after.candidates.find(item => item.id === input.candidateId);
+    const after = await readCandidateData(input.candidateId), current = after.candidates.find(item => item.id === input.candidateId);
     if (!current) throw httpError(500, "作废结果待核对：当前商品独立回读缺失");
     return json(res, 200, { ...execution, candidate: publicSavedDECandidate(current, after) });
   }
@@ -8704,7 +8737,7 @@ async function handleApi(req, res, pathname) {
         : error.code === "CANDIDATE_CHANGED" ? 409 : error.code === "INPUT_INVALID" ? 400 : 422;
       return json(res, status, { code: error.code, message: error.message, externalRequests: 0, platformWrites: 0 });
     }
-    const after = await readData(), current = after.candidates.find(item => item.id === input.candidateId);
+    const after = await readCandidateData(input.candidateId), current = after.candidates.find(item => item.id === input.candidateId);
     if (!current) throw httpError(500, "重派结果待核对：当前商品独立回读缺失");
     return json(res, 200, { ...execution, candidate: publicSavedDECandidate(current, after) });
   }
@@ -8719,7 +8752,7 @@ async function handleApi(req, res, pathname) {
     if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
       throw httpError(403, "请先登录主人身份后继续已保存任务");
     }
-    const before = await readData(), candidate = before.candidates.find(item => item.id === input.candidateId);
+    const before = await readCandidateData(input.candidateId), candidate = before.candidates.find(item => item.id === input.candidateId);
     if (!candidate || candidate.dataRevision !== input.expectedRevision) throw httpError(409, "商品资料已变化，请核对当前记录");
     const view = savedDEJobView(candidate, before.runtime);
     if (!view?.canContinueSaved || view.continueJobId !== input.jobId) {
@@ -8727,7 +8760,7 @@ async function handleApi(req, res, pathname) {
     }
     try {
       const execution = await ozonAccountReadServices.continueProduction(input);
-      const after = await readData(), current = after.candidates.find(item => item.id === input.candidateId);
+      const after = await readCandidateData(input.candidateId), current = after.candidates.find(item => item.id === input.candidateId);
       if (!current) throw httpError(500, "执行结果待核对：当前商品独立回读缺失");
       return json(res, 200, { executionStatus: execution.status, candidate: publicSavedDECandidate(current, after) });
     } catch (error) {
@@ -8784,7 +8817,7 @@ async function handleApi(req, res, pathname) {
   if (req.method === "POST" && genericC1CompleteRoute) {
     const input = await requestBody(req);
     if (!Number.isInteger(input.dataRevision)) throw httpError(400, "C1完成必须提供当前数据修订号");
-    const candidate = await mutateData((data) => {
+    const candidate = await mutateCandidateData(genericC1CompleteRoute[1], (data) => {
       const current = data.candidates.find((item) => item.id === genericC1CompleteRoute[1]);
       if (!current) throw httpError(404, "候选不存在");
       if (Number(current.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后重新完成C1");
@@ -8858,7 +8891,7 @@ async function handleApi(req, res, pathname) {
   const c2LinkedAssetRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/c2\/final-assets\/link$/);
   const c2LocalAssetPreviewRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/c2\/local-assets\/([^/]+)$/);
   if (req.method === "GET" && c2LocalAssetPreviewRoute) {
-    const data = await readData();
+    const data = await readCandidateData(c2LocalAssetPreviewRoute[1]);
     const current = data.candidates.find(item => item.id === c2LocalAssetPreviewRoute[1]);
     const asset = current?.lifecycleV11?.c2UploadDraft?.uploads.find(item => item.assetId === c2LocalAssetPreviewRoute[2] && item.status === "ready");
     if (!asset) throw httpError(404, "当前商品没有该本地素材");
@@ -8869,7 +8902,7 @@ async function handleApi(req, res, pathname) {
   }
   if (req.method === "POST" && c2UploadDraftRoute) {
     const input = await requestBody(req);
-    const draft = await mutateData(data => {
+    const draft = await mutateCandidateData(c2UploadDraftRoute[1], data => {
       const current = data.candidates.find(item => item.id === c2UploadDraftRoute[1]);
       if (!current) throw httpError(404, "候选不存在");
       const saved = saveC2UploadSelection(current, input);
@@ -8897,7 +8930,10 @@ async function handleApi(req, res, pathname) {
     try {
       const targetId = c2LinkedAssetRoute[1];
       const uploadId = randomUUID();
-      const { sourceAsset, reserved } = await mutateData(data => {
+      // The two colours and the product they were split from are the only records this reads (AGENTS.md 3.4).
+      const linkSource = (await readCandidateData(input.sourceCandidateId)).candidates.find(item => item.id === input.sourceCandidateId);
+      const linkScope = [input.sourceCandidateId, targetId, linkSource?.siblingSourceV1?.parentCandidateId];
+      const { sourceAsset, reserved } = await mutateCandidateData(linkScope, data => {
         const sources = data.candidates.filter(item => item.id === input.sourceCandidateId);
         const targets = data.candidates.filter(item => item.id === targetId);
         if (sources.length !== 1 || targets.length !== 1 || input.sourceCandidateId === targetId) {
@@ -8944,7 +8980,7 @@ async function handleApi(req, res, pathname) {
       let linked;
       try { linked = await c2LocalAssetStore.linkExisting(sourceAsset, reserved); }
       catch (error) {
-        await mutateData(data => {
+        await mutateCandidateData(targetId, data => {
           const target = data.candidates.find(item => item.id === targetId);
           target.lifecycleV11.c2UploadDraft = settleC2Upload(target.lifecycleV11.c2UploadDraft,
             { uploadId, failureCode: "file_storage_unconfirmed", settledAt: now() });
@@ -8952,7 +8988,7 @@ async function handleApi(req, res, pathname) {
         });
         throw error;
       }
-      const draft = await mutateData(data => {
+      const draft = await mutateCandidateData(targetId, data => {
         const target = data.candidates.find(item => item.id === targetId);
         if (!target || target.dataRevision !== input.dataRevision) {
           throw httpError(409, "引用文件已建立但目标修订变化，请核对素材登记", { code: "c2_link_receipt_conflict" });
@@ -8978,7 +9014,7 @@ async function handleApi(req, res, pathname) {
       const metadata = normalizeC2LocalUpload(requestUrl.searchParams.get("fileName"), req.headers["content-type"]);
       const candidateId = genericC2FinalAssetUploadRoute[1];
       const uploadId = randomUUID();
-      const reserved = await mutateData(data => {
+      const reserved = await mutateCandidateData(candidateId, data => {
         const current = data.candidates.find(item => item.id === candidateId);
         if (!current) throw httpError(404, "候选不存在");
         const draft = reserveC2Upload(current, { dataRevision, draftRevision, uploadId, ...metadata, startedAt: now() });
@@ -8994,7 +9030,7 @@ async function handleApi(req, res, pathname) {
       } catch (error) {
         const rejectedCode = ["c2_upload_content_invalid", "c2_video_validation_unavailable", "c2_upload_animation_unsupported", "c2_upload_decoder_busy"].includes(error.extra?.code) ? error.extra.code : null;
         if (rejectedCode) failureCode = "upload_rejected";
-        await mutateData(data => {
+        await mutateCandidateData(candidateId, data => {
           const current = data.candidates.find(item => item.id === candidateId);
           if (!current?.lifecycleV11?.c2UploadDraft) throw httpError(409, "上传失败且原登记已变化，需要核对本地文件", { code: "c2_upload_receipt_conflict" });
           current.lifecycleV11.c2UploadDraft = settleC2Upload(current.lifecycleV11.c2UploadDraft, { uploadId, failureCode, rejectedCode, settledAt: now() });
@@ -9002,7 +9038,7 @@ async function handleApi(req, res, pathname) {
         });
         throw error;
       }
-      const draft = await mutateData(data => {
+      const draft = await mutateCandidateData(candidateId, data => {
         const current = data.candidates.find(item => item.id === candidateId);
         if (!current?.lifecycleV11?.c2UploadDraft) throw httpError(409, "文件已保存但上传登记已变化，需要核对", { code: "c2_upload_receipt_conflict" });
         current.lifecycleV11.c2UploadDraft = settleC2Upload(current.lifecycleV11.c2UploadDraft, { uploadId, asset, settledAt: now() });
@@ -9018,7 +9054,7 @@ async function handleApi(req, res, pathname) {
   }
   if (req.method === "POST" && realDAssetTransportRoute) {
     const input = await requestBody(req);
-    const currentSnapshot = await readData();
+    const currentSnapshot = await readCandidateData(realDAssetTransportRoute[1]);
     const savedCandidate = currentSnapshot.candidates.find(item => item.id === realDAssetTransportRoute[1]);
     if (savedCandidate?.lifecycleV11?.skuPackage?.dHandoff?.schemaVersion === "c2-d-handoff-v2" ||
         currentSnapshot.runtime?.softwareJobs?.some(job => job.jobType === "d_production_execution" && job.candidateId === savedCandidate?.id)) {
@@ -9030,7 +9066,7 @@ async function handleApi(req, res, pathname) {
       throw httpError(400, "必须锁定当前生产授权和完整最终素材顺序");
     }
 
-    const persisted = await mutateData((data) => {
+    const persisted = await mutateCandidateData(realDAssetTransportRoute[1], (data) => {
       const current = data.candidates.find((item) => item.id === realDAssetTransportRoute[1]);
       if (!current) throw httpError(404, "候选不存在");
       if (Number(current.dataRevision) !== input.dataRevision) throw httpError(409, "商品资料已变化，请刷新后重新确认OSS素材准备");
@@ -9091,7 +9127,7 @@ async function handleApi(req, res, pathname) {
       serverClock: now
     });
 
-    const candidate = await mutateData((data) => {
+    const candidate = await mutateCandidateData(realDAssetTransportRoute[1], (data) => {
       const current = data.candidates.find((item) => item.id === realDAssetTransportRoute[1]);
       if (!current) throw httpError(404, "候选不存在");
       const timestamp = now();
@@ -9126,7 +9162,7 @@ async function handleApi(req, res, pathname) {
     });
   }
   if (req.method === "GET" && productionOwnerPreparationRoute) {
-    const data = await readData();
+    const data = await readCandidateData(productionOwnerPreparationRoute[1]);
     const candidate = data.candidates.find(item => item.id === productionOwnerPreparationRoute[1]);
     if (!candidate) throw httpError(404, "候选不存在");
     return json(res, 200, buildProductionOwnerPreparationView({
@@ -9340,7 +9376,7 @@ async function handleApi(req, res, pathname) {
 
   if (req.method === "POST" && listingPreparationReviewRoute) {
     const input = normalizeListingPreparationReviewInput(await requestBody(req));
-    const candidate = await mutateData((data) => {
+    const candidate = await mutateCandidateData(listingPreparationReviewRoute[1], (data) => {
       const current = data.candidates.find((item) => item.id === listingPreparationReviewRoute[1]);
       if (!current) throw httpError(404, "候选不存在");
       if (isTrustedInternalApiRequest(req.headers, internalApiRequestToken)) assertCurrentMaintenanceWrite(data, current.id, input.runId);
@@ -9787,7 +9823,7 @@ async function handleApi(req, res, pathname) {
     if (!Object.hasOwn(RECOVERY_ACTION_LABELS, input.action)) throw httpError(400, "恢复选择无效");
     const map = await readWorkflowMap(workflowMapFile);
     let dispatchId = null;
-    const result = await mutateData((data) => {
+    const result = await mutateCandidateData(recoveryActionRoute[1], (data) => {
       const current = data.candidates.find((item) => item.id === recoveryActionRoute[1]);
       if (!current) throw httpError(404, "候选不存在");
       if (Number(current.dataRevision) !== input.dataRevision) throw httpError(409, "候选已变化，请刷新后重新选择");
@@ -9862,7 +9898,7 @@ async function handleApi(req, res, pathname) {
     }
     const map = await readWorkflowMap(workflowMapFile);
     let dispatchId = null;
-    const result = await mutateData((data) => {
+    const result = await mutateCandidateData(input.candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === input.candidateId);
       if (!current) throw httpError(404, "候选不存在");
       if (Number(current.dataRevision) !== input.dataRevision) {
@@ -10112,7 +10148,7 @@ async function handleApi(req, res, pathname) {
     if (!input.runId?.trim() || !input.candidateId || !input.evidenceLayer?.trim() || !input.target?.trim()) {
       throw httpError(400, "登记读取尝试必须提供runId、candidateId、证据层和目标");
     }
-    const candidate = await mutateData((data) => {
+    const candidate = await mutateCandidateData(input.candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === input.candidateId);
       if (!current) throw httpError(404, "候选不存在");
       if (Number(current.dataRevision) !== Number(input.dataRevision)) {
@@ -10135,7 +10171,7 @@ async function handleApi(req, res, pathname) {
       throw httpError(403, "实质进展只能由当前受控任务提交", { code: "trusted_progress_required" });
     }
     const input = maintenanceProgressInput(await requestBody(req), { candidateRequired: true });
-    const candidate = await mutateData((data) => {
+    const candidate = await mutateCandidateData(input.candidateId, (data) => {
       const current = data.candidates.find((item) => item.id === input.candidateId);
       if (!current) throw httpError(404, "候选不存在");
       const dispatch = activeDispatchForCandidate(data, current.id);
@@ -10715,7 +10751,7 @@ async function handleApi(req, res, pathname) {
     const input = normalizeCandidateCommentInput(await requestBody(req), {
       actor: isTrustedInternalApiRequest(req.headers, internalApiRequestToken) ? "codex" : "user"
     });
-    const result = await mutateData((data) => {
+    const result = await mutateCandidateData(commentRoute[1], (data) => {
       const current = data.candidates.find((item) => item.id === commentRoute[1]);
       if (!current) throw httpError(404, "候选不存在");
       if (Number(current.dataRevision) !== input.dataRevision) {
@@ -10770,7 +10806,7 @@ async function handleApi(req, res, pathname) {
     }
     const map = await readWorkflowMap(workflowMapFile);
     let dispatchId = null;
-    const candidate = await mutateData((data) => {
+    const candidate = await mutateCandidateData(reviewRoute[1], (data) => {
       const current = data.candidates.find((item) => item.id === reviewRoute[1]);
       if (!current) throw httpError(404, "候选不存在");
       if (isTrustedInternalApiRequest(req.headers, internalApiRequestToken)) assertCurrentMaintenanceWrite(data, current.id, input.runId);
@@ -10944,7 +10980,7 @@ async function handleApi(req, res, pathname) {
     }
     if (input.path !== "system_created") return json(res, 503, { code: "trusted_e_readback_runtime_unavailable",
       message: "外部发现商品的可信回读尚未接通，已有记录保持原样。", externalRequests: 0, platformWrites: 0 });
-    const before = await readData();
+    const before = await readCandidateData(lifecycleEReadbackRoute[1]);
     const current = before.candidates.find(item => item.id === lifecycleEReadbackRoute[1]);
     const sku = current?.lifecycleV11?.skuPackage;
     if (sku?.dHandoff?.schemaVersion === "c2-d-handoff-v2" ||
@@ -10955,7 +10991,7 @@ async function handleApi(req, res, pathname) {
     try {
       const outcome = await eReadbackSoftwareRuntime.run({ actor: runtimeIdentityProvider.resolveActor({ request: req }),
         input: { candidateId: lifecycleEReadbackRoute[1], expectedCandidateRevision: input.dataRevision, sourceRecordId: input.sourceRecordId } });
-      const data = await readData();
+      const data = await readCandidateData([]);
       const status = { verified: 200, not_verified: 422, unknown_outcome: 502, not_applied: 409, idempotent_replay: 200 }[outcome.status];
       if (!status) throw new Error("E_READBACK_RUNTIME_RESULT_INVALID");
       return json(res, status, { candidate: publicCandidate(outcome.candidate, data.rules, {}, data.evidencePacks || [], data.currentCommissionCatalogs ?? []),
@@ -10977,7 +11013,7 @@ async function handleApi(req, res, pathname) {
     } catch (error) {
       throw httpError(400, error.message);
     }
-    const candidate = await mutateData((data) => {
+    const candidate = await mutateCandidateData(listingReadbackRoute[1], (data) => {
       const current = data.candidates.find((item) => item.id === listingReadbackRoute[1]);
       if (!current) throw httpError(404, "候选不存在");
       if (current.workflowStatus === "listed") {
@@ -11029,7 +11065,7 @@ async function handleApi(req, res, pathname) {
     if (!Number.isInteger(input.dataRevision)) {
       throw httpError(400, "标记已上架必须提供当前数据修订号");
     }
-    const candidate = await mutateData((data) => {
+    const candidate = await mutateCandidateData(listedRoute[1], (data) => {
       const current = data.candidates.find((item) => item.id === listedRoute[1]);
       if (!current) throw httpError(404, "候选不存在");
       const explicitlyConfirmedAlreadyListed = input.confirmedAlreadyListed === true;
@@ -11082,7 +11118,7 @@ async function handleApi(req, res, pathname) {
     if (input.status === "notSuitable" && !input.reason?.trim()) {
       throw httpError(400, "WB不适合必须写明当前判断依据");
     }
-    const candidate = await mutateData((data) => {
+    const candidate = await mutateCandidateData(wbRoute[1], (data) => {
       const current = data.candidates.find((item) => item.id === wbRoute[1]);
       if (!current) throw httpError(404, "候选不存在");
       if (current.workflowStatus !== "ready_to_list") {
