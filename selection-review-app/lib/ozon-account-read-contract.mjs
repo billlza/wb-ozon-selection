@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { isCompleteStoreRef, sameStoreRef, STORE_PLATFORMS } from './store-binding.mjs';
 import { fingerprintCanonicalRecord, isCanonicalFrozenRef, assertNoProductionSecrets, assertNoRawPersistenceKeys } from './production-contract-primitives.mjs';
+import { sameTeamUser } from './runtime-identity.mjs';
 
 export const OZON_ACCOUNT_READ_JOB_TYPE='ozon_account_read';
 export const OZON_ACCOUNT_READ_CAPABILITY='ozon-account-read';
@@ -165,7 +166,7 @@ export function assertOzonAccountPreparation(value){
   let previousAt=value.createdAt;
   for(const [index,selection] of value.warehouseSelections.entries()){
     requireValue(closed(selection,['selectionId','revision','selectedAt','selectedByUserId','sourceJobId','sourceReceiptId','sourceRevision','warehouse'])&&
-      ref(selection.selectionId)&&selection.revision===index+1&&time(selection.selectedAt)&&selection.selectedByUserId===value.createdByUserId&&ref(selection.sourceJobId)&&ref(selection.sourceReceiptId)&&integer(selection.sourceRevision)&&selection.sourceRevision<selection.revision&&
+      ref(selection.selectionId)&&selection.revision===index+1&&time(selection.selectedAt)&&sameTeamUser(selection.selectedByUserId,value.createdByUserId)&&ref(selection.sourceJobId)&&ref(selection.sourceReceiptId)&&integer(selection.sourceRevision)&&selection.sourceRevision<selection.revision&&
       Date.parse(selection.selectedAt)>=Date.parse(previousAt)&&Date.parse(selection.selectedAt)<=Date.parse(value.updatedAt),'WAREHOUSE_SELECTION_INVALID');
     assertFacts('warehouse_list',{hasNext:false,warehouses:[selection.warehouse]},true);
     const row=selection.warehouse;

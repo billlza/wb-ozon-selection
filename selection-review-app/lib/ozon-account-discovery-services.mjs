@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
+import { authorizeOperation, sameTeamUser, teamOperationRoles } from './runtime-identity.mjs';
 import { isCanonicalFrozenRef, fingerprintCanonicalRecord } from './production-contract-primitives.mjs';
 import { createSoftwareJobResultEnvelope } from './software-job-contract.mjs';
 import { createOzonAccountReadRuntime } from './ozon-account-read-runtime.mjs';
@@ -15,7 +15,7 @@ function owner(actor){authorizeOperation({actor,requiredRoles: teamOperationRole
 function map(document,key){if(!Object.hasOwn(document.runtime,key))document.runtime[key]={};requireValue(object(document.runtime[key]),'REPOSITORY_INVALID');return document.runtime[key];}
 function preparationFor(document,id,actor){
   const value=document.runtime.ozonAccountPreparations?.[id];requireValue(value!==undefined,'PREPARATION_REQUIRED');
-  const preparation=assertOzonAccountPreparation(value);requireValue(preparation.createdByUserId===actor.userId,'PREPARATION_OWNER_CONFLICT');return preparation;
+  const preparation=assertOzonAccountPreparation(value);requireValue(sameTeamUser(preparation.createdByUserId,actor.userId),'PREPARATION_OWNER_CONFLICT');return preparation;
 }
 function jobsFor(document,preparation){
   requireValue(document.runtime.softwareJobs===undefined||Array.isArray(document.runtime.softwareJobs),'REPOSITORY_INVALID');
@@ -37,8 +37,8 @@ export function createOzonAccountDiscoveryServices({repository,workerRegistry,se
     requireValue(job!==undefined&&jobs[0]?.jobId===jobId&&(jobs.length<2||jobs[0].createdAt!==jobs[1].createdAt),'SOURCE_SUPERSEDED');
     const receipt=document.runtime.ozonAccountReadReceipts?.[jobId],terminal=readOzonAccountReadTerminal(receipt,job);
     requireValue(job.schemaVersion==='software-job-v2'&&job.status==='completed'&&terminal.status==='completed'&&
-      job.externalRequestState==='succeeded'&&terminal.externalRequestState==='succeeded'&&job.ownerUserId===preparation.createdByUserId&&
-      job.requestedByUserId===preparation.createdByUserId&&job.revision<=preparation.revision,'SOURCE_NOT_COMPLETED');
+      job.externalRequestState==='succeeded'&&terminal.externalRequestState==='succeeded'&&sameTeamUser(job.ownerUserId,preparation.createdByUserId)&&
+      job.requestedByUserId===job.ownerUserId&&job.revision<=preparation.revision,'SOURCE_NOT_COMPLETED');
     const scope=receipt.scope;
     const expected=createSoftwareJobResultEnvelope({job,resultRef:receipt.receiptId,payloadKind:'ozon_account_read',
       payload:{schemaVersion:'ozon-account-read-job-result-v1',receiptRef:receipt.receiptId,scopeFingerprint:scope.inputFingerprint},recordedAt:receipt.completedAt});
@@ -50,7 +50,7 @@ export function createOzonAccountDiscoveryServices({repository,workerRegistry,se
     const credentials=document.runtime.softwareJobCredentialBindings.filter(value=>value.sideEffectScope==='ozon_account_read'&&value.scopeBinding?.authorizationRef===scope.authorizationRef);
     requireValue(permissions.length===1&&credentials.length===1,'SOURCE_PERMISSION_REQUIRED');
     const permission=assertOzonAccountReadAuthorization(permissions[0]),credential=assertOzonAccountReadCredential(credentials[0]);
-    requireValue(permission.useCount===1&&permission.consumedByJobId===jobId&&permission.authorizedByUserId===preparation.createdByUserId&&
+    requireValue(permission.useCount===1&&permission.consumedByJobId===jobId&&permission.authorizedByUserId===job.ownerUserId&&
       isDeepStrictEqual(permission.scopeBinding,scope)&&isDeepStrictEqual(credential.scopeBinding,scope)&&credential.allowedWorkerIds.includes(job.workerId)&&
       Date.parse(permission.authorizedAt)<=Date.parse(receipt.startedAt)&&Date.parse(credential.boundAt)<=Date.parse(receipt.startedAt)&&
       Date.parse(receipt.completedAt)<Date.parse(permission.expiresAt)&&Date.parse(receipt.completedAt)<Date.parse(credential.expiresAt),'SOURCE_PERMISSION_CONFLICT');
@@ -67,7 +67,7 @@ export function createOzonAccountDiscoveryServices({repository,workerRegistry,se
     });
     const saved=document.runtime.ozonAccountPreparations;
     requireValue(saved===undefined||object(saved),'REPOSITORY_INVALID');
-    const preparations=Object.values(saved??{}).filter(value=>value.createdByUserId===actor.userId).map(value=>{
+    const preparations=Object.values(saved??{}).filter(value=>sameTeamUser(value.createdByUserId,actor.userId)).map(value=>{
       const preparation=assertOzonAccountPreparation(value),jobs=runtime.view({document,preparationId:preparation.preparationId}).sort((a,b)=>b.job.createdAt.localeCompare(a.job.createdAt));
       const currentRoute=loadCurrentReadBinding({document,preparationId:preparation.preparationId,bindingId:preparation.binding.bindingId,
         configurationVersion:preparation.binding.configurationVersion,checkedAt:serverClock()});
@@ -95,7 +95,7 @@ export function createOzonAccountDiscoveryServices({repository,workerRegistry,se
         const binding=currentBinding(document,null,input),at=serverClock();
         // A new click key cannot duplicate an unresolved/completed preparation for the same account route.
         const preparations=map(document,'ozonAccountPreparations');
-        requireValue(!Object.values(preparations).some(value=>value.createdByUserId===actor.userId&&isDeepStrictEqual(assertOzonAccountPreparation(value).binding,binding)),'PREPARATION_ALREADY_EXISTS');
+        requireValue(!Object.values(preparations).some(value=>sameTeamUser(value.createdByUserId,actor.userId)&&isDeepStrictEqual(assertOzonAccountPreparation(value).binding,binding)),'PREPARATION_ALREADY_EXISTS');
         const preparation=assertOzonAccountPreparation({schemaVersion:'ozon-account-preparation-v1',preparationId:`account-preparation:${randomUUID()}`,revision:0,
           createdByUserId:actor.userId,createdAt:at,updatedAt:at,binding,warehouseSelections:[]});
         preparations[preparation.preparationId]=preparation;const result={preparation:structuredClone(preparation),externalRequests:0,platformWrites:0};

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createADiscoveryRuntimeFixture } from './fixtures/a-discovery-runtime-fixture.mjs';
 import { createADiscoveryCandidateImportUseCase } from '../lib/a-discovery-candidate-import.mjs';
 import { createMemoryBusinessStateRepository } from '../lib/business-state-repository.mjs';
+import { createActorContext } from '../lib/runtime-identity.mjs';
 
 async function completed({ products = null } = {}) {
   const f = createADiscoveryRuntimeFixture();
@@ -106,4 +107,27 @@ test('owner-selected products import from a completed batch with the same duplic
   const after=await f.repository.readSnapshot();
   assert.deepEqual(Object.keys(after.runtime.aDiscoveryCandidateSelections).map(key=>key.split(':').at(-1)).sort(),['3100000001','3100000002']);
   assert.equal(after.candidates.length,2);
+});
+
+test('with team accounts a batch one boss opened is the team\'s: the tester runs it under their own permits and the other boss imports from it',async()=>{
+  const BOSS='team-user:00000000-0000-4000-8000-000000000001',OTHER='local-owner:00000000-0000-4000-8000-000000000002',TESTER='team-user:00000000-0000-4000-8000-000000000003';
+  const f=createADiscoveryRuntimeFixture({ownerUserId:BOSS});
+  const tester=createActorContext({authenticatedAt:f.clock(),userId:TESTER,sessionId:'team-session:tester',actorType:'human',roles:['operator'],source:'authenticated_identity_provider'});
+  const {service}=f.create({onBatchReady:async()=>({status:'awaiting_test_import'})});
+  const created=await f.prepare(service);
+  assert.equal(created.batch.ownerUserId,BOSS);
+  await service.authorizeAndRun({actor:tester,input:{batchId:created.batch.batchId,expectedRevision:created.batch.revision,
+    expiresAt:'2026-09-08T13:00:00.000Z',idempotencyKey:'authorize:tester'}});
+  await service.runDue(); await service.runDue(); await service.stop();
+  const document=await f.repository.readSnapshot();
+  assert.ok(document.runtime.softwareJobs.length===3&&document.runtime.softwareJobs.every(job=>job.status==='completed'));
+  // Every paid call stays the tester's: they asked, own the jobs and gave the permits.
+  assert.deepEqual([...new Set(document.runtime.softwareJobs.flatMap(job=>[job.ownerUserId,job.requestedByUserId]))],[TESTER]);
+  assert.deepEqual([...new Set(document.runtime.softwareJobAuthorizationRecords.map(permit=>permit.authorizedByUserId))],[TESTER]);
+  const usecase=createADiscoveryCandidateImportUseCase({repository:f.repository,serverClock:f.clock,storeBindings:[]});
+  const input={batchId:created.batch.batchId,revision:created.batch.revision,marketProductId:'2107989735'};
+  await assert.rejects(usecase.importSelectedProduct({...input,selectedByUserId:'user:someone-else'}),error=>error.code==='OWNER_CONFLICT');
+  const picked=await usecase.importSelectedProduct({...input,selectedByUserId:OTHER});
+  assert.equal(picked.status,'imported');
+  assert.equal((await f.repository.readSnapshot()).runtime.aDiscoveryCandidateSelections[`${input.batchId}:${input.revision}:${input.marketProductId}`].selectedByUserId,OTHER);
 });

@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { assertBusinessStateRepositoryBoundary } from './business-state-repository.mjs';
 import { isCanonicalFrozenRef } from './production-contract-primitives.mjs';
-import { assertSafeBusinessMutationCandidate } from './runtime-identity.mjs';
+import { assertSafeBusinessMutationCandidate, sameTeamUser } from './runtime-identity.mjs';
 import { AProductDetailError, assertAProductDetailSource, assertAProductDetailReceipt,
   assertAProductDetailAuthorization, assertAProductDetailCredential, nextAProductDetailRequest } from './a-product-detail-contract.mjs';
 import { assertCompletedAProductDetailJobResult } from './software-job-contract.mjs';
@@ -56,7 +56,7 @@ export function readCompletedAProductDetails({document,candidateId,sourceRevisio
     const {batch} = assertAProductDetailSource({document,candidate,scope:receipt.scope});
     check(receipt.scope.requestIndex===index && receipt.status==='completed' && job.status==='completed' &&
       job.externalRequestState==='succeeded' && receipt.steps[0].result.status==='observed' &&
-      job.ownerUserId===batch.ownerUserId && job.requestedByUserId===batch.ownerUserId, 'APPLICATION_SOURCE_INCOMPLETE');
+      job.requestedByUserId===job.ownerUserId && sameTeamUser(job.ownerUserId,batch.ownerUserId), 'APPLICATION_SOURCE_INCOMPLETE');
     assertCompletedAProductDetailJobResult({job,receipt});
     const permits = document.runtime.softwareJobAuthorizationRecords.filter(value=>value.authorizationId===receipt.scope.authorizationRef);
     const credentials = document.runtime.softwareJobCredentialBindings.filter(value=>value.sideEffectScope===job.jobType &&
@@ -64,7 +64,7 @@ export function readCompletedAProductDetails({document,candidateId,sourceRevisio
     check(permits.length===1 && credentials.length===1, 'APPLICATION_PERMISSION_CONFLICT');
     const permit=assertAProductDetailAuthorization(permits[0]),credential=assertAProductDetailCredential(credentials[0]);
     check(isDeepStrictEqual(permit.scopeBinding,receipt.scope) && isDeepStrictEqual(credential.scopeBinding,receipt.scope) &&
-      permit.authorizedByUserId===batch.ownerUserId && permit.useCount===1 && permit.consumedByJobId===job.jobId &&
+      permit.authorizedByUserId===job.ownerUserId && permit.useCount===1 && permit.consumedByJobId===job.jobId &&
       credential.allowedWorkerIds.includes(job.workerId) && Date.parse(permit.authorizedAt)<=Date.parse(receipt.startedAt) &&
       Date.parse(credential.boundAt)<=Date.parse(receipt.startedAt) && Date.parse(receipt.completedAt)<Date.parse(permit.expiresAt) &&
       Date.parse(receipt.completedAt)<Date.parse(credential.expiresAt), 'APPLICATION_PERMISSION_CONFLICT');

@@ -6,7 +6,7 @@ import test from "node:test";
 import { createLocalOwnerIdentityProvider, createPrivateOwnerCredentialRepository, OwnerIdentityError } from "../lib/local-owner-identity.mjs";
 import { createPasswordVerifier, isPasswordVerifier, passwordMatches } from "../lib/scrypt-verifier.mjs";
 import { createConfiguredIdentityProvider } from "../lib/runtime-identity-provider.mjs";
-import { authorizeOperation, createActorContext, teamOperationRoles } from "../lib/runtime-identity.mjs";
+import { authorizeOperation, createActorContext, sameTeamUser, teamOperationRoles } from "../lib/runtime-identity.mjs";
 import { createSelectionReviewRuntimeConfiguration } from "../lib/runtime-configuration.mjs";
 import { runTeamAccountCommand, TeamAccountCommandError } from "../lib/team-account-admin.mjs";
 import { createTeamAccountIdentityProvider, TEAM_ACCOUNT_ROLE_GRANTS } from "../lib/team-account-identity.mjs";
@@ -263,6 +263,13 @@ test("the owner's account on the Mac is imported once, keeping their user id and
   await run(["import-owner", "--from", filePath, "--login", "owner", "--name", "老板甲"]);
   assert.deepEqual([printed[0].imported.userId, printed[0].imported.role, printed[0].imported.loginName], [local.actor.userId, "boss", "owner"]);
   await assert.rejects(run(["import-owner", "--from", filePath, "--login", "owner-2", "--name", "老板甲"]), /已经导入过了/u);
+  // Another Mac's owner cannot come in as a second imported owner either.
+  const otherFile = path.join(directory, "other", "owner.json");
+  const other = createLocalOwnerIdentityProvider({ credentialRepository: createPrivateOwnerCredentialRepository({ filePath: otherFile }) });
+  await other.initialize();
+  await other.setup({ password: "另一台的" });
+  await assert.rejects(run(["import-owner", "--from", otherFile, "--login", "owner-2", "--name", "老板乙"]), /已经导入过了/u);
+  assert.equal((await store.list()).length, 1);
   const provider = createTeamAccountIdentityProvider({ accountStore: store });
   await provider.initialize();
   const signedIn = await provider.login({ loginName: "owner", password: "四个字符" });
@@ -303,4 +310,15 @@ test("the tester's signed-in account works with the operator role; software, wor
   assert.equal(allowed(actor("human", ["operator"], "development_default")), false);
   assert.equal(allowed(actor("software", ["operator"], "selection_review_state_machine")), false);
   assert.equal(allowed(actor("worker", ["operator"], "registered_runtime_worker")), false);
+});
+
+test("records one team member started are any member's; every other id only matches itself", () => {
+  assert.equal(sameTeamUser(BOSS.userId, TESTER.userId), true);
+  assert.equal(sameTeamUser("local-owner:00000000-0000-4000-8000-00000000000a", OTHER_BOSS.userId), true);
+  // Two different local owners are two Macs, not one team.
+  assert.equal(sameTeamUser("local-owner:00000000-0000-4000-8000-00000000000a", "local-owner:00000000-0000-4000-8000-00000000000b"), false);
+  assert.equal(sameTeamUser("owner:synthetic", BOSS.userId), false);
+  assert.equal(sameTeamUser("local-development-owner", "local-development-owner"), true);
+  assert.equal(sameTeamUser("worker:one", "worker:two"), false);
+  assert.equal(sameTeamUser(`${BOSS.userId}x`, TESTER.userId), false);
 });

@@ -5,7 +5,7 @@ import { ADiscoveryError, assertADiscoveryBatch, assertADiscoveryBatchSource, as
 import { assertCompletedADiscoveryJobResult, isADiscoverySoftwareJob } from './software-job-contract.mjs';
 import { isCanonicalFrozenRef } from './production-contract-primitives.mjs';
 import { assertBusinessStateRepositoryBoundary } from './business-state-repository.mjs';
-import { assertSafeBusinessMutationCandidate } from './runtime-identity.mjs';
+import { assertSafeBusinessMutationCandidate, sameTeamUser } from './runtime-identity.mjs';
 import { createInitialCandidate } from './candidate-initialization.mjs';
 
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -67,7 +67,7 @@ export function readCompletedADiscoveryBatch({ document, batchId, revision }) {
     assertADiscoveryBatchSource(batch, receipt.scope);
     requireValue(receipt.scope.requestIndex === index && receipt.status === 'completed' && job.status === 'completed' &&
       job.externalRequestState === 'succeeded' && readADiscoveryMarketResult(receipt).status === 'candidates_found' &&
-      job.ownerUserId === batch.ownerUserId && job.requestedByUserId === batch.ownerUserId, 'IMPORT_SOURCE_INCOMPLETE');
+      job.requestedByUserId === job.ownerUserId && sameTeamUser(job.ownerUserId, batch.ownerUserId), 'IMPORT_SOURCE_INCOMPLETE');
     assertCompletedADiscoveryJobResult({job,receipt});
     const permits = document.runtime.softwareJobAuthorizationRecords.filter(value => value.authorizationId === receipt.scope.authorizationRef);
     const credentials = document.runtime.softwareJobCredentialBindings.filter(value => value.sideEffectScope === job.jobType &&
@@ -75,7 +75,7 @@ export function readCompletedADiscoveryBatch({ document, batchId, revision }) {
     requireValue(permits.length === 1 && credentials.length === 1, 'IMPORT_PERMISSION_CONFLICT');
     const permit = assertADiscoveryAuthorization(permits[0]), credential = assertADiscoveryCredential(credentials[0]);
     requireValue(isDeepStrictEqual(permit.scopeBinding, receipt.scope) && isDeepStrictEqual(credential.scopeBinding, receipt.scope) &&
-      permit.authorizedByUserId === batch.ownerUserId && permit.useCount === 1 && permit.consumedByJobId === job.jobId &&
+      permit.authorizedByUserId === job.ownerUserId && permit.useCount === 1 && permit.consumedByJobId === job.jobId &&
       credential.allowedWorkerIds.includes(job.workerId) && Date.parse(permit.authorizedAt) <= Date.parse(receipt.startedAt) &&
       Date.parse(credential.boundAt) <= Date.parse(receipt.startedAt) && Date.parse(receipt.completedAt) < Date.parse(permit.expiresAt) &&
       Date.parse(receipt.completedAt) < Date.parse(credential.expiresAt), 'IMPORT_PERMISSION_CONFLICT');
@@ -173,7 +173,7 @@ export function createADiscoveryCandidateImportUseCase({ repository, serverClock
       const saved = selections(document)[key];
       if (saved !== undefined) return {changed:false,result:assertADiscoveryCandidateSelectionRecord(saved,{batchId,revision,marketProductId})};
       const {batch,jobs,receipts} = readCompletedADiscoveryBatch({document,batchId,revision});
-      requireValue(batch.ownerUserId === selectedByUserId, 'OWNER_CONFLICT');
+      requireValue(sameTeamUser(batch.ownerUserId, selectedByUserId), 'OWNER_CONFLICT');
       requireValue(Array.isArray(document.candidates), 'IMPORT_REPOSITORY_INVALID');
       const product = readADiscoveryMarketResult(receipts[0]).products.find(value => value.productId === marketProductId);
       requireValue(product !== undefined, 'IMPORT_INPUT_INVALID');

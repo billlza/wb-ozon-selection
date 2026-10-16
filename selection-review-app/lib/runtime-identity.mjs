@@ -349,6 +349,24 @@ export function teamOperationRoles(actor) {
     actor.roles.includes("operator") ? ["owner", "operator"] : ["owner"];
 }
 
+/** User ids of team accounts, and of the local owner, who can be imported as a boss keeping the same id. */
+export function isTeamUserId(value) {
+  return typeof value === "string" && /^(?:team-user|local-owner):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(value);
+}
+
+/**
+ * Whether two user ids stand on the same side of a record a person started. With team accounts the team shares one set
+ * of business data, and the owner decided (2026-10-16) that a discovery batch or an account preparation one member
+ * started is every member's to see and carry on. Team accounts get `team-user:` ids and the one owner imported from the
+ * Mac keeps their `local-owner:` id, so two different ids are teammates only when at least one is a `team-user:` id; on
+ * the Mac's own login, a record another local owner started stays theirs. Any other id (the development default,
+ * software, workers) only matches itself. A paid-call permit stays with the person who gave it: within one job, who
+ * asked, who owns it and who gave its permit is still one and the same id (software-job-admission checks that).
+ */
+export function sameTeamUser(first, second) {
+  return first === second || (isTeamUserId(first) && isTeamUserId(second) && [first, second].some(id => id.startsWith("team-user:")));
+}
+
 export function createOperationAuditEvent({
   eventId,
   action,

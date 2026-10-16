@@ -134,9 +134,22 @@
 - 服务端：`server.mjs` 里 50 多处「要登录的主人」改成「要登录的老板或测试」（`actsForTeam`）；`lib/` 里 30 个用例的角色要求改成 `teamOperationRoles(actor)`（`lib/runtime-identity.mjs`）：登录的人带 `operator` 时才放进来，软件和执行器身份虽然也带 `operator`，照旧进不来。2a 里那几块只有老板能看的详情也跟着放开了。
 - 留给老板的：最终定价复核（确认利润）、关口 2「上架」、生产决定和生产授权、同款整批的确认供货、D 批量授权。这些路由在团队账号的门口先拦一次（`TEAM_OWNER_ONLY_ROUTES`，403 `team_owner_only`，原话「这一步要老板来做……」），用例里本来的老板检查也还在。单件的确认供货和「申请插件采集」「淘汰」共用 `/lifecycle/a-confirm`，所以这个路由在采集那一支之后、真正确认之前查老板：测试能申请采集、能淘汰，确认不了。
 - 页面：测试登录后看到的和老板一样。「确认这套供货，往下做」、整批确认供货、整批确认上架、最终定价、上架和生产授权的按钮对测试置灰，旁边写「这一步要老板来做……」（`BOSS_ONLY_NOTE`，`src/ownerAccess.js`）；页面看 `currentUser.canConfirmSupplyAndProfit`。2a 的 `team_tester_read_only` 拿掉了。
-- 还按人分开的：找新品批次、从批次导入的商品的「本轮详情准备」、账户准备，仍是谁开的谁看、谁接着做（作业、许可、回执一路按开批次的人核对）。一位老板开的找新品批次，另一位老板和测试看不到；导入的商品大家都看得到，但它的「本轮详情准备」只有开批次的人能做。改成团队共用要把这一串核对（谁许可付费调用、谁执行）一起改；10-16 问了主人要不要改，先按人分开。
+- 找新品批次、从批次导入的商品的「本轮详情准备」、账户准备在这一步还是谁开的谁看、谁接着做；主人 10-16 定了改成团队共用，见下一节。
 - 记录里的身份：多数用例的审计记录写的是做操作那个人的用户编号；也有记录写死 `declaredBy: "owner"`、`actor: "user"` 这类字样，测试做的也会这样写，这次没改。
 - 测试：`tests/team-accounts-db.test.mjs` 改成测试能写、六个老板路由拒绝测试、测试确认供货被拒且商品不变、测试淘汰成功；`tests/team-accounts.test.mjs` 加了 `teamOperationRoles` 对人、软件、执行器的判断；`tests/c1-content-review-use-case.test.mjs` 原来断言 `operator` 被拒，改成测试的账号能确认文案、不带登录的 `operator` 仍被拒；`tests/product-page-ui.test.mjs` 加了测试账号看到的确认供货按钮。
+
+### 多人中央服务第 2 步（续）：找新品批次、详情准备和账户准备团队共用（2026-10-16）
+
+主人 10-16 在卡片上选了「现在就改共用」：找新品批次、本轮详情准备、账户准备三个人共用，付费许可仍记在点许可的那个人名下（AGENTS 13.3）。
+
+- 判断「是不是同一边的人」：`lib/runtime-identity.mjs` 的 `sameTeamUser(a, b)`。两个都是团队账号的用户编号（`team-user:…`，或从 Mac 导入的那一位主人的 `local-owner:…`），而且至少一个是 `team-user:…`，就算同一边；两个不同的 `local-owner:…` 是两台 Mac，不算（Mac 本机登录时别的本机主人开的批次照旧看不到）；别的编号（开发时的默认身份、软件、执行器）仍只认自己。所以 `import-owner` 现在只能导一位主人，导过一位以后再导别的 Mac 的主人也说「已经导入过了」。`isTeamUserId` 从 `lib/team-account-store.mjs` 挪到这里，那边照旧导出。
+- 找新品批次：一位老板开的批次，另一位老板和测试都看得到，能接着跑下一轮、不要某个候选、把候选导入成商品；同一个选品计划和店铺同时只跑一轮，别人在跑时再开会得到 `ROUND_ALREADY_RUNNING`。估算和标题翻译也按这个放开。
+- 本轮详情准备：从谁开的批次导入的商品，三个人都能做。
+- 账户准备：同一个店铺的账户准备只有一份，大家看得到、能接着读账户、选仓库；别人已经开了，再开得到 `PREPARATION_ALREADY_EXISTS`。
+- 付费许可：谁点许可，这次调用的作业就记在谁名下（作业的申请人、归属人、许可人还是同一个人，`software-job-admission` 照旧核对）；从批次或账户准备往下核对时，只要求作业那个人和开批次、开准备的人是同一边。
+- 外面的人（不是团队账号）看不到这些，动它们得到 `OWNER_CONFLICT` 或 `PREPARATION_OWNER_CONFLICT`。
+- C1 的付费续跑和其他按人记的地方这次没动。
+- 测试：`tests/ozon-account-discovery.test.mjs`（老板开准备，测试看到、不能重复开、自己许可并读账户、选仓库；外面的人看不到）；`tests/a-discovery-candidate-import.test.mjs`（老板的批次由测试跑完、导入，另一位老板也能导入，外面的人被拒）；`tests/a-discovery-runtime-services.test.mjs`（测试看得到老板的批次、同一轮开不了第二次、能不要候选）；`tests/a-product-detail-application.test.mjs`（测试给老板批次导入的商品做详情准备并采用）；`tests/team-accounts.test.mjs` 测 `sameTeamUser`。
 
 ### 本轮验证
 

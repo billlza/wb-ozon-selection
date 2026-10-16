@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { isCanonicalFrozenRef } from './production-contract-primitives.mjs';
-import { assertSafeRuntimeRecord } from './runtime-identity.mjs';
+import { assertSafeRuntimeRecord, sameTeamUser } from './runtime-identity.mjs';
 import { LINKFOX_DISCOVERY_CONTRACT_VERSION, LINKFOX_DISCOVERY_COSTS, buildLinkfoxDiscoveryRequest, assertLinkfoxDiscoveryResult } from './linkfox-discovery-api.mjs';
 import { SEERFAR_DISCOVERY_CONTRACT_VERSION, SEERFAR_DISCOVERY_CAPABILITY, SEERFAR_DISCOVERY_STEPS, SEERFAR_DISCOVERY_EVIDENCE_FAILURE_CLASSES, SeerfarDiscoveryContractError,
   assertSeerfarDiscoveryRequest, assertSeerfarDiscoveryBudget, assertSeerfarDiscoveryMarketResult, assertSeerfarDiscoveryQuotaResult } from './seerfar-discovery-contract.mjs';
@@ -150,7 +150,7 @@ export function nextADiscoveryRequest({batch,receipts}) {
 export function assertADiscoveryAdmission({batch,scope,authorization,receipts,checkedAt}) {
   assertADiscoveryBatchSource(batch,scope);assertADiscoveryAuthorization(authorization);
   check(time(checkedAt)&&Date.parse(checkedAt)>=Date.parse(authorization.authorizedAt)&&Date.parse(checkedAt)<Date.parse(scope.expiresAt),'AUTHORIZATION_EXPIRED');
-  check(authorization.authorizedByUserId===batch.ownerUserId&&isDeepStrictEqual(authorization.scopeBinding,scope),'AUTHORIZATION_INVALID');
+  check(sameTeamUser(authorization.authorizedByUserId,batch.ownerUserId)&&isDeepStrictEqual(authorization.scopeBinding,scope),'AUTHORIZATION_INVALID');
   check(isDeepStrictEqual(nextADiscoveryRequest({batch,receipts}),scope.request),'SEQUENCE_INVALID');return true;
 }
 

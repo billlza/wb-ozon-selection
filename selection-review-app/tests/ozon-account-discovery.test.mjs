@@ -75,6 +75,27 @@ test('selection refuses expired or unconsumed source and a different owner',asyn
   f.setNow(T);await f.repository.transact(document=>{Object.assign(document.runtime.softwareJobAuthorizationRecords[0],{useCount:0,consumedByJobId:null,consumedAt:null});return {changed:true,document};});
   await assert.rejects(()=>f.service.selectWarehouse({actor,input:selection}),/SOURCE_PERMISSION_CONFLICT/);assert.equal(f.calls,3);
 });
+test('with team accounts one boss\'s preparation is the team\'s: the tester sees it, reads the account under their own permit and picks the warehouse',async()=>{
+  const member=(userId,roles)=>createActorContext({userId,sessionId:`team-session:${roles[0]}`,actorType:'human',roles,source:'authenticated_identity_provider',authenticatedAt:T});
+  const boss=member('team-user:00000000-0000-4000-8000-000000000001',['owner']),tester=member('local-owner:00000000-0000-4000-8000-000000000003',['operator']);
+  const f=setup(),ids={bindingId:binding.bindingId,configurationVersion:binding.configurationVersion,scopeRef:binding.scopeRef};
+  const {preparation:p}=await f.service.createPreparation({actor:boss,input:{...ids,idempotencyKey:'create:boss'}});
+  assert.deepEqual(f.service.view({document:await f.repository.readSnapshot(),actor:tester}).preparations.map(item=>item.preparation.preparationId),[p.preparationId]);
+  // One preparation per account for the whole team.
+  await assert.rejects(()=>f.service.createPreparation({actor:tester,input:{...ids,idempotencyKey:'create:tester'}}),/PREPARATION_ALREADY_EXISTS/);
+  const input={preparationId:p.preparationId,expectedRevision:0,...ids,expiresAt:'2026-09-08T01:00:00.000Z',confirmReadOnce:true,idempotencyKey:'read:tester'};
+  const outcome=await f.service.authorizeAndRun({actor:tester,input});assert.equal(outcome.status,'completed');assert.equal(f.calls,3);
+  const saved=await f.repository.readSnapshot();
+  // The paid read stays the tester's: they asked for it, own the job and gave its permit.
+  assert.deepEqual([outcome.job.ownerUserId,outcome.job.requestedByUserId,saved.runtime.softwareJobAuthorizationRecords[0].authorizedByUserId],[tester.userId,tester.userId,tester.userId]);
+  assert.equal(saved.runtime.ozonAccountPreparations[p.preparationId].createdByUserId,boss.userId);
+  const selected=await f.service.selectWarehouse({actor:tester,input:{preparationId:p.preparationId,expectedRevision:0,sourceJobId:outcome.job.jobId,sourceReceiptId:outcome.receipt.receiptId,warehouseId:'10001',idempotencyKey:'selection:tester'}});
+  assert.deepEqual([selected.preparation.revision,selected.preparation.warehouseSelections[0].selectedByUserId],[1,tester.userId]);
+  assert.equal(f.service.view({document:await f.repository.readSnapshot(),actor:boss}).preparations[0].preparation.revision,1);
+  // Anyone outside the team (here a person whose id is not a team account's) still sees nothing of it and cannot read it.
+  assert.deepEqual(f.service.view({document:await f.repository.readSnapshot(),actor}).preparations,[]);
+  await assert.rejects(()=>f.service.authorizeAndRun({actor,input:{...input,expectedRevision:1,idempotencyKey:'read:outsider'}}),/OWNER_CONFLICT/);
+});
 test('wrong or missing explicit permission creates no queued job and no external call',async()=>{
   const f=setup(),{preparation:p}=await create(f);
   const input={preparationId:p.preparationId,expectedRevision:0,bindingId:binding.bindingId,configurationVersion:binding.configurationVersion,scopeRef:binding.scopeRef,expiresAt:'2026-09-08T01:00:00.000Z',confirmReadOnce:false,idempotencyKey:'read:invalid'};

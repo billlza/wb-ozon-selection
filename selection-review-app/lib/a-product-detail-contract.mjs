@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { isCanonicalFrozenRef } from './production-contract-primitives.mjs';
-import { assertSafeRuntimeRecord } from './runtime-identity.mjs';
+import { assertSafeRuntimeRecord, sameTeamUser } from './runtime-identity.mjs';
 import { A_DISCOVERY_FAILURE_CLASSES,ADiscoveryError,assertADiscoveryReceipt,assertADiscoveryBatchSource } from './a-discovery-contract.mjs';
 import { LINKFOX_DETAIL_CONTRACT_VERSION,buildLinkfoxProductDetailRequest,assertLinkfoxProductDetailResult } from './linkfox-product-detail-api.mjs';
 export const A_PRODUCT_DETAIL_JOB_TYPE='a_product_detail_read';
@@ -61,7 +61,7 @@ function readAProductDetailSource({document,candidate,scope}){
   const jobs=document.runtime.softwareJobs.filter(job=>job.jobId===jobId);check(jobs.length===1,'SOURCE_INVALID');
   const job=jobs[0],receipt=assertADiscoveryReceipt(document.runtime.aDiscoveryReceipts[jobId],job);assertADiscoveryBatchSource(batch,receipt.scope);
   check(job.status==='completed'&&job.externalRequestState==='succeeded'&&receipt.status==='completed'&&receipt.steps[0].result.status==='candidates_found'&&
-   job.ownerUserId===batch.ownerUserId&&receipt.scope.requestIndex===index&&batch.batchId===source.batchId&&batch.revision===source.batchRevision&&
+   sameTeamUser(job.ownerUserId,batch.ownerUserId)&&receipt.scope.requestIndex===index&&batch.batchId===source.batchId&&batch.revision===source.batchRevision&&
    batch.plan.planId===source.planId&&batch.plan.version===source.planVersion&&batch.targetStore===scope.targetStore,'SOURCE_INVALID');return receipt;
  });
  check(receipts[0].steps[0].result.products.some(row=>row.productId===source.marketProductId)&&receipts[1].steps[0].result.products[0].productId===source.supplierOfferId,'SOURCE_INVALID');
@@ -152,6 +152,6 @@ export function nextAProductDetailRequest({candidate,scope,receipts}){
 export function assertAProductDetailAdmission({document,candidate,scope,authorization,receipts,checkedAt}){
  const {batch}=assertAProductDetailSource({document,candidate,scope});assertAProductDetailAuthorization(authorization);
  check(time(checkedAt)&&Date.parse(checkedAt)>=Date.parse(authorization.authorizedAt)&&Date.parse(checkedAt)<Date.parse(scope.expiresAt),'AUTHORIZATION_EXPIRED');
- check(authorization.authorizedByUserId===batch.ownerUserId&&isDeepStrictEqual(authorization.scopeBinding,scope),'AUTHORIZATION_INVALID');
+ check(sameTeamUser(authorization.authorizedByUserId,batch.ownerUserId)&&isDeepStrictEqual(authorization.scopeBinding,scope),'AUTHORIZATION_INVALID');
  check(isDeepStrictEqual(nextAProductDetailRequest({candidate,scope,receipts}),scope.request),'SEQUENCE_INVALID');return true;
 }

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createADiscoveryRuntimeFixture } from './fixtures/a-discovery-runtime-fixture.mjs';
+import { createActorContext } from '../lib/runtime-identity.mjs';
 import { runADiscoverySoftwareJob } from '../lib/a-discovery-software-runner.mjs';
 
 test('configured plans create only a saved batch until explicit owner authorization',async()=>{
@@ -274,4 +275,21 @@ test('刚建好还没开始的那一轮十分钟内挡住同店同方向的新�
     [created.batch.batchId,later.batch.batchId,other.batch.batchId].sort());
   assert.equal(f.counts().requests,1);
   await service.stop();
+});
+
+test('with team accounts the whole team sees a batch one boss opened, turns its products down and cannot open the same round twice',async()=>{
+  const f=createADiscoveryRuntimeFixture({ownerUserId:'team-user:00000000-0000-4000-8000-000000000001'}),{service}=f.create();
+  const person=(userId,roles)=>createActorContext({authenticatedAt:f.clock(),userId,sessionId:`session:${userId}`,actorType:'human',roles,source:'authenticated_identity_provider'});
+  const tester=person('team-user:00000000-0000-4000-8000-000000000003',['operator']),outsider=person('owner:someone-else',['owner']);
+  const created=await f.prepare(service);
+  assert.deepEqual(service.view({document:await f.repository.readSnapshot(),actor:tester}).batches.map(item=>item.batch.batchId),[created.batch.batchId]);
+  assert.deepEqual(service.view({document:await f.repository.readSnapshot(),actor:outsider}).batches,[]);
+  // One round of the same plan for the same store at a time, for the team as a whole.
+  await assert.rejects(()=>service.createBatch({actor:tester,input:{planId:f.batch.plan.planId,planVersion:f.batch.plan.version,targetStore:f.batch.targetStore,
+    bindingId:f.batch.bindingId,configurationVersion:f.batch.configurationVersion,idempotencyKey:'create:tester'}}),/ROUND_ALREADY_RUNNING/);
+  await f.authorize(service,created);
+  const input={batchId:created.batch.batchId,expectedRevision:created.batch.revision,marketProductId:'2107989735',reason:'尺寸太大'};
+  await assert.rejects(()=>service.declineProduct({actor:outsider,input}),/OWNER_CONFLICT/);
+  const declined=await service.declineProduct({actor:tester,input});
+  assert.equal(declined.decline.declinedByUserId,tester.userId);
 });

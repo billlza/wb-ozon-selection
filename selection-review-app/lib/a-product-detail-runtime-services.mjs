@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
+import { authorizeOperation, sameTeamUser, teamOperationRoles } from './runtime-identity.mjs';
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from './business-state-repository.mjs';
 import { fingerprintCanonicalRecord, isCanonicalFrozenRef } from './production-contract-primitives.mjs';
 import { normalizeAProductDetailServiceBindings } from './runtime-configuration.mjs';
@@ -63,7 +63,7 @@ export function createAProductDetailRuntimeServices({repository,softwareJobStore
     const evidence=candidate.aDiscoveryEvidenceV1;check(evidence?.schemaVersion==='a-discovery-candidate-evidence-v1','SOURCE_INVALID');
     check(Object.hasOwn(collection(document,'aDiscoveryBatches'),evidence.batchId),'SOURCE_INVALID');
     const {batch,receipts}=readCompletedADiscoveryBatch({document,batchId:evidence.batchId,revision:evidence.sourceRevision});
-    check(batch.ownerUserId===actor.userId,'OWNER_CONFLICT');
+    check(sameTeamUser(batch.ownerUserId,actor.userId),'OWNER_CONFLICT');
     check(Object.hasOwn(collection(document,'aDiscoveryCandidateImports'),`${batch.batchId}:${batch.revision}`),'SOURCE_INVALID');
     const imported=assertADiscoveryCandidateImportRecord(collection(document,'aDiscoveryCandidateImports')[`${batch.batchId}:${batch.revision}`],{batchId:batch.batchId,revision:batch.revision});
     check(imported.status==='imported'&&imported.candidateId===candidate.id&&imported.marketProductId===evidence.marketProductId&&
@@ -138,7 +138,7 @@ export function createAProductDetailRuntimeServices({repository,softwareJobStore
     view({document,actor,candidateId,expectedRevision}){
       owner(actor);const candidate=candidateFor(document,candidateId,expectedRevision),jobs=collection(document,'softwareJobs',true).filter(job=>job.jobType===A_PRODUCT_DETAIL_JOB_TYPE&&job.subject.candidateId===candidateId),
         receipts=collection(document,'aProductDetailReceipts'),applications=collection(document,'aProductDetailApplications');
-      const batch=collection(document,'aDiscoveryBatches')[candidate.aDiscoveryEvidenceV1?.batchId];if(batch!==undefined)check(batch.ownerUserId===actor.userId,'OWNER_CONFLICT');
+      const batch=collection(document,'aDiscoveryBatches')[candidate.aDiscoveryEvidenceV1?.batchId];if(batch!==undefined)check(sameTeamUser(batch.ownerUserId,actor.userId),'OWNER_CONFLICT');
       const savedApplications=Object.values(applications).filter(value=>value.candidateId===candidateId).map(value=>assertAProductDetailApplicationRecord(value,{candidateId,sourceRevision:value.sourceRevision}));
       let discoverySource,preparationBlockCode=null;
       const existing=jobs.find(job=>job.scopeBinding.requestIndex===0);
@@ -194,7 +194,7 @@ export function createAProductDetailRuntimeServices({repository,softwareJobStore
       return singleflight(async()=>{
         const document=await repository.readSnapshot(),candidate=candidateFor(document,input.candidateId,input.expectedRevision),job=await softwareJobStore.get(input.jobId);
         check(job?.subject?.candidateId===candidate.id&&job.revision===candidate.dataRevision,'CANDIDATE_CHANGED');
-        const {batch}=assertAProductDetailSource({document,candidate,scope:job.scopeBinding});check(batch.ownerUserId===actor.userId,'OWNER_CONFLICT');
+        const {batch}=assertAProductDetailSource({document,candidate,scope:job.scopeBinding});check(sameTeamUser(batch.ownerUserId,actor.userId),'OWNER_CONFLICT');
         return runSelected(serviceFor(job.scopeBinding.bindingId,job.scopeBinding.configurationVersion),job);
       });
     },

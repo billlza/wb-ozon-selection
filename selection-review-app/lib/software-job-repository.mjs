@@ -15,7 +15,7 @@ import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs
 import { assertCurrentC1AiDraftRequest } from "./c1-ai-draft-contract.mjs";
 import { isDeepStrictEqual } from 'node:util';
 import { assertBusinessStateRepositoryBoundary } from "./business-state-repository.mjs";
-import { assertSafeRuntimeRecord, workerSatisfiesCapabilities } from "./runtime-identity.mjs";
+import { assertSafeRuntimeRecord, sameTeamUser, workerSatisfiesCapabilities } from "./runtime-identity.mjs";
 import { assertWorkerRegistryBoundary } from "./worker-registry.mjs";
 import { isDESoftwareJob } from "./d-e-software-job-admission.mjs";
 import { assertCurrentDJobExecutionCursor } from "./d-production-job-cursor.mjs";
@@ -300,7 +300,7 @@ function currentCandidate(document, job, observedAt) {
     const batch = document.runtime?.aDiscoveryBatches?.[job.subject.batchId];
     if (!batch) throw new ADiscoveryExecutionBlockedError("A_DISCOVERY_BATCH_NOT_FOUND");
     assertADiscoveryBatchSource(batch, assertADiscoveryScope(job.scopeBinding, job));
-    if (batch.ownerUserId !== job.ownerUserId || job.ownerUserId !== job.requestedByUserId) throw new ADiscoveryExecutionBlockedError("A_DISCOVERY_OWNER_CONFLICT");
+    if (!sameTeamUser(batch.ownerUserId, job.ownerUserId) || job.ownerUserId !== job.requestedByUserId) throw new ADiscoveryExecutionBlockedError("A_DISCOVERY_OWNER_CONFLICT");
     return batch;
   }
   if(job?.jobType===D_PLATFORM_OBSERVATION_JOB_TYPE)return assertDPlatformObservationJobSource({document,job,observedAt}).candidate;
@@ -308,7 +308,7 @@ function currentCandidate(document, job, observedAt) {
     const preparation = document.runtime?.ozonAccountPreparations?.[job.subject.preparationId];
     if (!preparation) throw new Error('SOFTWARE_JOB_PREPARATION_NOT_FOUND');
     assertOzonAccountReadSubject(preparation, assertOzonAccountReadScope(job.scopeBinding, job));
-    if (preparation.createdByUserId !== job.ownerUserId || job.ownerUserId !== job.requestedByUserId) {
+    if (!sameTeamUser(preparation.createdByUserId, job.ownerUserId) || job.ownerUserId !== job.requestedByUserId) {
       throw new Error('SOFTWARE_JOB_PREPARATION_OWNER_CONFLICT');
     }
     return preparation;

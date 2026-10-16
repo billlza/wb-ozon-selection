@@ -5,9 +5,9 @@ import { createRepositoryBackedSoftwareJobStore } from '../../lib/software-job-r
 import { createLocalDevelopmentWorkerRegistry } from '../../lib/worker-registry.mjs';
 import { LINKFOX_DETAIL_CONTRACT_VERSION } from '../../lib/linkfox-product-detail-api.mjs';
 
-/** Real approved search jobs and import precede every detail test; only the network is synthetic. */
-export async function createAProductDetailRuntimeFixture(){
-  const search=createADiscoveryRuntimeFixture();
+/** Real approved search jobs and import precede every detail test; only the network is synthetic. `ownerUserId` runs the search as someone else. */
+export async function createAProductDetailRuntimeFixture({ownerUserId=null}={}){
+  const search=createADiscoveryRuntimeFixture({ownerUserId});
   const importer=createADiscoveryCandidateImportUseCase({repository:search.repository,serverClock:search.clock,storeBindings:[]});
   const {service}=search.create({onBatchReady:input=>importer.importBatch(input)}),batch=await search.prepare(service);
   await search.authorize(service,batch);await service.runDue();await service.runDue();await service.stop();

@@ -1,4 +1,4 @@
-import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
+import { authorizeOperation, sameTeamUser, teamOperationRoles } from './runtime-identity.mjs';
 import { fingerprintCanonicalRecord } from './production-contract-primitives.mjs';
 import { assertOzonAccountDiscoveryBinding, OzonAccountReadError } from './ozon-account-read-contract.mjs';
 import { OZON_ACCOUNT_OFFICIAL_CONTRACT_REFS } from './ozon-account-read-preparation.mjs';
@@ -43,7 +43,7 @@ export function createConfiguredOzonAccountDiscoveryRuntime({configuration,repos
       if(services.size>0)return services.values().next().value.view({document,actor});
       const saved=document.runtime.ozonAccountPreparations;
       if(saved!==undefined&&(saved===null||typeof saved!=='object'||Array.isArray(saved)))throw new OzonAccountReadError('REPOSITORY_INVALID');
-      if(Object.values(saved??{}).some(value=>value.createdByUserId===actor.userId))throw new OzonAccountReadError('SERVICE_NOT_CONFIGURED');
+      if(Object.values(saved??{}).some(value=>sameTeamUser(value.createdByUserId,actor.userId)))throw new OzonAccountReadError('SERVICE_NOT_CONFIGURED');
       return {schemaVersion:'ozon-account-discovery-view-v1',bindings:[],preparations:[],platformWrites:0};
     },
     createPreparation:({actor,input})=>serviceFor(input?.bindingId).createPreparation({actor,input}),

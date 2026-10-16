@@ -1,7 +1,7 @@
 import { resolveSeerfarDiscoveryEvidence, SeerfarDiscoveryContractError, SEERFAR_DISCOVERY_EVIDENCE_FAILURE_CLASSES } from './seerfar-discovery-contract.mjs';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
+import { authorizeOperation, sameTeamUser, teamOperationRoles } from './runtime-identity.mjs';
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from './business-state-repository.mjs';
 import { fingerprintCanonicalRecord, isCanonicalFrozenRef } from './production-contract-primitives.mjs';
 import { normalizeADiscoveryServiceBindings, assertADiscoveryConnectorBinding } from './runtime-configuration.mjs';
@@ -103,7 +103,7 @@ export function createADiscoveryRuntimeServices({repository,softwareJobStore,run
   }
   function batchFor(document,batchId,actor){
     const batch=readCollection(document,'aDiscoveryBatches')[batchId];requireValue(batch!==undefined,'BATCH_REQUIRED');
-    assertADiscoveryBatch(batch);requireValue(batch.ownerUserId===actor.userId,'OWNER_CONFLICT');return batch;
+    assertADiscoveryBatch(batch);requireValue(sameTeamUser(batch.ownerUserId,actor.userId),'OWNER_CONFLICT');return batch;
   }
   function singleflight(operation){if(active)return active;active=operation().catch(error=>{failed=true;throw error;}).finally(()=>{active=null;});return active;}
   async function continueReadyBatch(batchId=null){
@@ -184,7 +184,7 @@ export function createADiscoveryRuntimeServices({repository,softwareJobStore,run
     for(const [id,saved] of Object.entries(batches)){
       if(id===batchId)continue;
       const batch=assertADiscoveryBatch(saved);
-      if(batch.ownerUserId!==actor.userId||batch.targetStore!==targetStore||batch.plan.planId!==planId)continue;
+      if(!sameTeamUser(batch.ownerUserId,actor.userId)||batch.targetStore!==targetStore||batch.plan.planId!==planId)continue;
       const own=jobs.filter(job=>job.jobType===A_DISCOVERY_JOB_TYPE&&job.subject?.batchId===batch.batchId);
       requireValue(!own.some(job=>ROUND_IN_FLIGHT_JOB_STATUSES.includes(job.status)),'ROUND_ALREADY_RUNNING');
       requireValue(own.length>0||!Number.isFinite(at)||at-Date.parse(batch.createdAt)>=ROUND_RESUMABLE_WINDOW_MS,'ROUND_ALREADY_RUNNING');
@@ -256,7 +256,7 @@ export function createADiscoveryRuntimeServices({repository,softwareJobStore,run
     configurationView:clone(bindings),runDue,
     view({document,actor}){
       owner(actor);
-      const batches=Object.values(readCollection(document,'aDiscoveryBatches')).map(assertADiscoveryBatch).filter(batch=>batch.ownerUserId===actor.userId);
+      const batches=Object.values(readCollection(document,'aDiscoveryBatches')).map(assertADiscoveryBatch).filter(batch=>sameTeamUser(batch.ownerUserId,actor.userId));
       const jobs=readCollection(document,'softwareJobs',true),receipts=readCollection(document,'aDiscoveryReceipts'),imports=readCollection(document,'aDiscoveryCandidateImports'),selections=readCollection(document,'aDiscoveryCandidateSelections');
       const declines=readCollection(document,A_DISCOVERY_DECLINE_COLLECTION);
       const candidates=Array.isArray(document.candidates)?document.candidates:[];

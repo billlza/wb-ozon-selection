@@ -104,7 +104,8 @@ export async function runTeamAccountCommand({ args, store, readPassword, print }
     const name = loginName(input.login);
     const record = await createPrivateOwnerCredentialRepository({ filePath: input.from, protectedPaths: [] }).read();
     if (record === null) throw new TeamAccountCommandError("那个位置没有主人密码文件");
-    if (await store.findByUserId(record.ownerId)) throw new TeamAccountCommandError("主人账号已经导入过了");
+    // Only one: a second Mac's owner would not be the first one's teammate (sameTeamUser in runtime-identity.mjs).
+    if ((await store.list()).some(account => account.userId.startsWith("local-owner:"))) throw new TeamAccountCommandError("主人账号已经导入过了");
     if (await store.findByLoginName(name)) throw new TeamAccountCommandError("这个登录名已经有人用了");
     const account = await store.create({ userId: record.ownerId, loginName: name, displayName: displayName(input.name), role: "boss",
       verifier: record.verifier });

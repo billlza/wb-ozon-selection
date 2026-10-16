@@ -1,4 +1,4 @@
-import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
+import { authorizeOperation, sameTeamUser, teamOperationRoles } from './runtime-identity.mjs';
 import { ADiscoveryError, assertADiscoveryBatch } from './a-discovery-contract.mjs';
 import { isCanonicalFrozenRef } from './production-contract-primitives.mjs';
 import { resolveLifecycleBProfitRule } from './lifecycle-b-evidence-runtime.mjs';
@@ -224,7 +224,7 @@ export function createADiscoveryEstimateUseCase({ repository, serverClock, rules
       const batches = isObject(document?.runtime?.aDiscoveryBatches) ? document.runtime.aDiscoveryBatches : {};
       requireValue(Object.hasOwn(batches, input.batchId), 'BATCH_REQUIRED');
       const batch = assertADiscoveryBatch(batches[input.batchId]);
-      requireValue(batch.ownerUserId === actor.userId, 'OWNER_CONFLICT');
+      requireValue(sameTeamUser(batch.ownerUserId, actor.userId), 'OWNER_CONFLICT');
       requireValue(batch.revision === input.expectedRevision, 'BATCH_CHANGED');
       const at = serverClock();
       requireValue(instant(at), 'ESTIMATE_CLOCK_INVALID');

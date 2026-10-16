@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { assertBusinessStateRepositoryBoundary } from './business-state-repository.mjs';
-import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
+import { authorizeOperation, sameTeamUser, teamOperationRoles } from './runtime-identity.mjs';
 import { assertWorkerRegistryBoundary } from './worker-registry.mjs';
 import { createRepositoryBackedSoftwareJobStore } from './software-job-repository.mjs';
 import { createSoftwareJobEnvelope, enqueueSoftwareJobInDocument, softwareJobsInDocument, findSoftwareJobInDocument,
@@ -103,7 +103,7 @@ export function createOzonAccountReadRuntime({repository,serverClock,workerRegis
   function guard(document,job,leaseId,at){
     const candidate=sourceFor(document,job);
     assertOzonAccountReadCandidate(candidate,job.scopeBinding);
-    if(discovery)requireValue(candidate.createdByUserId===job.ownerUserId&&candidate.createdByUserId===job.requestedByUserId,'PREPARATION_OWNER_CONFLICT');
+    if(discovery)requireValue(sameTeamUser(candidate.createdByUserId,job.ownerUserId)&&job.requestedByUserId===job.ownerUserId,'PREPARATION_OWNER_CONFLICT');
     const binding=bindingFor(document,sourceId(job),job.skuPackageId,at,job.scopeBinding);
     requireValue(Object.keys(binding).every(field=>isDeepStrictEqual(binding[field],job.scopeBinding[field])),'BINDING_CHANGED');
     requireValue(Date.parse(at)<Date.parse(job.leaseExpiresAt),'LEASE_EXPIRED');
@@ -153,7 +153,7 @@ export function createOzonAccountReadRuntime({repository,serverClock,workerRegis
         try{
           const source=sourceFor(document,job);
           assertOzonAccountReadCandidate(source,job.scopeBinding);
-          if(discovery)requireValue(source.createdByUserId===job.ownerUserId&&source.createdByUserId===job.requestedByUserId,'PREPARATION_OWNER_CONFLICT');
+          if(discovery)requireValue(sameTeamUser(source.createdByUserId,job.ownerUserId)&&job.requestedByUserId===job.ownerUserId,'PREPARATION_OWNER_CONFLICT');
           const binding=bindingFor(document,sourceId(job),job.skuPackageId,at,job.scopeBinding);
           requireValue(Object.keys(binding).every(field=>isDeepStrictEqual(binding[field],job.scopeBinding[field])),'BINDING_CHANGED');
         }catch(error){if(!isPermissionStop(error))throw error;sourceFailure=error.code??error.message;}
@@ -184,7 +184,7 @@ export function createOzonAccountReadRuntime({repository,serverClock,workerRegis
           return {changed:false,result:{...viewJob(document,job),idempotentReplay:true}};
         }
         const candidate=sourceFor(document,input),binding=bindingFor(document,sourceId(input),input.skuPackageId,at,input);
-        if(discovery)requireValue(candidate.createdByUserId===actor.userId,'PREPARATION_OWNER_CONFLICT');
+        if(discovery)requireValue(sameTeamUser(candidate.createdByUserId,actor.userId),'PREPARATION_OWNER_CONFLICT');
         requireValue((discovery?candidate.revision:candidate.dataRevision)===input.expectedRevision,discovery?'PREPARATION_CHANGED':'CANDIDATE_CHANGED');
         requireValue(['bindingId','configurationVersion','scopeRef'].every(field=>binding[field]===input[field]),'BINDING_CHANGED');
         requireValue(Date.parse(input.expiresAt)>Date.parse(at),'AUTHORIZATION_EXPIRED');

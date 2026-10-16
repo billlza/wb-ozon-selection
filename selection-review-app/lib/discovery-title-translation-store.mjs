@@ -1,4 +1,4 @@
-import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
+import { authorizeOperation, sameTeamUser, teamOperationRoles } from './runtime-identity.mjs';
 import { ADiscoveryError, assertADiscoveryBatch, assertADiscoveryReceipt, readADiscoveryMarketResult } from './a-discovery-contract.mjs';
 import { isADiscoverySoftwareJob } from './software-job-contract.mjs';
 import { isCanonicalFrozenRef } from './production-contract-primitives.mjs';
@@ -101,7 +101,7 @@ export function createADiscoveryTitleTranslationUseCase({ repository, serverCloc
       const batches = isObject(document?.runtime?.aDiscoveryBatches) ? document.runtime.aDiscoveryBatches : {};
       requireValue(Object.hasOwn(batches, input.batchId), 'BATCH_REQUIRED');
       const batch = assertADiscoveryBatch(batches[input.batchId]);
-      requireValue(batch.ownerUserId === actor.userId, 'OWNER_CONFLICT');
+      requireValue(sameTeamUser(batch.ownerUserId, actor.userId), 'OWNER_CONFLICT');
       requireValue(batch.revision === input.expectedRevision, 'BATCH_CHANGED');
       const saved = readDiscoveryTitleTranslations(document);
       const products = readADiscoveryBatchMarketProducts({ document, batch });

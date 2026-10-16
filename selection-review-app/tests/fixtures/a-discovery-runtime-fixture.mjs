@@ -6,9 +6,10 @@ import { createADiscoveryRuntimeServices } from '../../lib/a-discovery-runtime-s
 import { LINKFOX_DISCOVERY_GATEWAY } from '../../lib/linkfox-discovery-api.mjs';
 import { createADiscoveryContractFixture, discoveryAt } from './a-discovery-contract-fixture.mjs';
 
-export function createADiscoveryRuntimeFixture(){
+/** `ownerUserId` opens the batch as someone else, e.g. a team account; the fixture's own id is not a team account's. */
+export function createADiscoveryRuntimeFixture({ownerUserId=null}={}){
   const {batch}=createADiscoveryContractFixture();let now=discoveryAt,secrets=0;const calls=[],imports=[];
-  const clock=()=>now,owner=createActorContext({authenticatedAt:now,userId:batch.ownerUserId,sessionId:'session:discovery-test',
+  const clock=()=>now,owner=createActorContext({authenticatedAt:now,userId:ownerUserId??batch.ownerUserId,sessionId:'session:discovery-test',
     actorType:'human',roles:['owner'],source:'authenticated_identity_provider'});
   const repository=createMemoryBusinessStateRepository({candidates:[],runtime:{softwareJobs:[],softwareJobAuthorizationRecords:[],softwareJobCredentialBindings:[],operationAudit:[],idempotencyRecords:[]}});
   const connectorBinding={provider:'linkfox',bindingId:batch.bindingId,configurationVersion:batch.configurationVersion,gatewayOrigin:LINKFOX_DISCOVERY_GATEWAY,

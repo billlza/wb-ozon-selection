@@ -7,6 +7,7 @@ import {createAProductDetailRuntimeFixture} from './fixtures/a-product-detail-ru
 import {createAProductDetailApplicationUseCase} from '../lib/a-product-detail-application.mjs';
 import {createJsonBusinessStateRepository} from '../lib/business-state-repository.mjs';
 import {readAProductDetailSupplierEvidence} from '../lib/a-product-detail-evidence.mjs';
+import {createActorContext} from '../lib/runtime-identity.mjs';
 
 async function completed({fetchImpl=null}={}){
  const f=await createAProductDetailRuntimeFixture();
@@ -113,4 +114,21 @@ test('unexpected local candidate materialization faults preserve failure and ret
   assert.deepEqual(saved.runtime.aProductDetailReceipts,f.before.runtime.aProductDetailReceipts);assert.equal(JSON.stringify(saved).includes('private synthetic fault'),false);
   assert.deepEqual(await usecase.applyDetails(f.input),record);assert.equal(injections,1);assert.deepEqual(f.counts(),{secrets:2,requests:2});
  }
+});
+
+test('with team accounts the tester reads the details of a product from a boss\'s batch under their own permits, and the details apply',async()=>{
+ const TESTER='team-user:00000000-0000-4000-8000-000000000003';
+ const f=await createAProductDetailRuntimeFixture({ownerUserId:'team-user:00000000-0000-4000-8000-000000000001'});
+ const tester=createActorContext({authenticatedAt:f.clock(),userId:TESTER,sessionId:'team-session:tester',actorType:'human',roles:['operator'],source:'authenticated_identity_provider'});
+ const outsider=createActorContext({authenticatedAt:f.clock(),userId:'owner:someone-else',sessionId:'session:outsider',actorType:'human',roles:['owner'],source:'authenticated_identity_provider'});
+ const {service}=f.create({onDetailsReady:async()=>({status:'application_paused_for_test'})});
+ await assert.rejects(service.authorizeAndRun({actor:outsider,input:f.input}),/OWNER_CONFLICT/);
+ assert.equal((await service.authorizeAndRun({actor:tester,input:f.input})).status,'completed');
+ assert.equal((await service.runDue()).status,'completed');await service.stop();
+ const saved=await f.repository.readSnapshot();
+ assert.deepEqual([...new Set(detailJobs(saved).flatMap(job=>[job.ownerUserId,job.requestedByUserId]))],[TESTER]);
+ assert.deepEqual([...new Set(saved.runtime.softwareJobAuthorizationRecords.filter(value=>value.action==='a_product_detail_read').map(value=>value.authorizedByUserId))],[TESTER]);
+ const usecase=createAProductDetailApplicationUseCase({repository:f.repository,serverClock:f.clock});
+ const result=await usecase.applyDetails({candidateId:f.candidate.id,sourceRevision:f.candidate.dataRevision});
+ assert.equal(result.status,'applied');
 });

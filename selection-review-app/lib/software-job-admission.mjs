@@ -4,7 +4,7 @@ import { A_DISCOVERY_JOB_TYPE, assertADiscoveryScope, assertADiscoveryBatchSourc
   assertADiscoveryAuthorization, assertADiscoveryCredential } from "./a-discovery-contract.mjs";
 import { D_PLATFORM_OBSERVATION_JOB_TYPE, assertDPlatformObservationScope, createDPlatformObservationAdmission } from './d-platform-observation-contract.mjs';
 import { fingerprintCanonicalRecord, dProductionJobRound } from "./production-contract-primitives.mjs";
-import { assertSafeRuntimeRecord, workerSatisfiesCapabilities } from "./runtime-identity.mjs";
+import { assertSafeRuntimeRecord, sameTeamUser, workerSatisfiesCapabilities } from "./runtime-identity.mjs";
 import { legacyKeywordJobBlocksPaidExecution } from "./keyword-evidence-software-job-state.mjs";
 import { normalizeC1SourceIdentity } from "./c1-product-plan.mjs";
 import { sameStoreRef } from "./store-binding.mjs";
@@ -430,14 +430,14 @@ function candidateForJob(document, job) {
     const batch = document.runtime?.aDiscoveryBatches?.[job.subject.batchId];
     if (!batch) throw new Error("A_DISCOVERY_BATCH_NOT_FOUND");
     assertADiscoveryBatchSource(batch, assertADiscoveryScope(job.scopeBinding, job));
-    if (batch.ownerUserId !== job.ownerUserId || job.ownerUserId !== job.requestedByUserId) throw new Error("A_DISCOVERY_OWNER_CONFLICT");
+    if (!sameTeamUser(batch.ownerUserId, job.ownerUserId) || job.ownerUserId !== job.requestedByUserId) throw new Error("A_DISCOVERY_OWNER_CONFLICT");
     return batch;
   }
   if (isAccountPreparationSoftwareJob(job)) {
     const preparation = document.runtime?.ozonAccountPreparations?.[job.subject.preparationId];
     if (!preparation) throw new Error('SOFTWARE_JOB_ADMISSION_PREPARATION_NOT_FOUND');
     assertOzonAccountReadSubject(preparation, assertOzonAccountReadScope(job.scopeBinding, job));
-    if (preparation.createdByUserId !== job.ownerUserId || job.ownerUserId !== job.requestedByUserId) {
+    if (!sameTeamUser(preparation.createdByUserId, job.ownerUserId) || job.ownerUserId !== job.requestedByUserId) {
       throw new Error('SOFTWARE_JOB_ADMISSION_PREPARATION_OWNER_MISMATCH');
     }
     return preparation;

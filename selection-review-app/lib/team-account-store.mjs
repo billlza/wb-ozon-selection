@@ -1,5 +1,8 @@
 import { isPasswordVerifier } from "./scrypt-verifier.mjs";
 import { isPostgresConnectionString } from "./postgres-business-state-store.mjs";
+import { isTeamUserId } from "./runtime-identity.mjs";
+
+export { isTeamUserId };
 
 // The team's sign-in accounts: who may log in, under which name, with which role. They live in their own table, never in
 // the business state document or its public views; a password is kept only as its verifier. Accounts are created from
@@ -38,10 +41,6 @@ export function normalizeDisplayName(value) {
   if (typeof value !== "string") return null;
   const name = value.trim();
   return name.length >= 1 && [...name].length <= 40 && !/[\u0000-\u001f\u007f]/u.test(name) ? name : null;
-}
-
-export function isTeamUserId(value) {
-  return typeof value === "string" && /^(?:team-user|local-owner):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(value);
 }
 
 function validAccount(account) {
