@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -14,8 +14,8 @@ import { createPostgresTeamAccountStore } from "../lib/team-account-store.mjs";
 import { stopApiProcess } from "./helpers/api-process-lifecycle.mjs";
 
 // The whole service in a central mode, the way a host such as Render starts it: Postgres, team accounts, the port the host
-// gives in PORT, the AI gateway and the Ozon evidence service as private-network neighbours, and its secrets in the
-// server's own settings. Runs against a real, disposable Postgres (scripts/run-ci-database-tests.mjs), in its own schema.
+// gives in PORT, the AI gateway and the Ozon evidence service as private-network neighbours, its secrets in the server's
+// own settings, and its picture folders on a disk outside the code folder. Runs against a real, disposable Postgres (scripts/run-ci-database-tests.mjs), in its own schema.
 const DATABASE_URL = process.env.SELECTION_REVIEW_TEST_DATABASE_URL;
 if (!/^postgres(?:ql)?:\/\//u.test(DATABASE_URL ?? "")) {
   throw new Error("TEST_REQUIRES_DATABASE: set SELECTION_REVIEW_TEST_DATABASE_URL to a disposable Postgres");
@@ -52,6 +52,8 @@ async function startCentralService(t, extraEnv = {}) {
       SELECTION_REVIEW_RUNTIME_MODE: "central_test", SELECTION_REVIEW_BIND_HOST: "0.0.0.0",
       SELECTION_REVIEW_STATE_ADAPTER: "postgres", SELECTION_REVIEW_DATABASE_URL: connectionString, SELECTION_REVIEW_INITIALIZE_DATA_FILE: "1",
       SELECTION_REVIEW_DATA_FILE: path.join(directory, "unused.json"),
+      SELECTION_REVIEW_C2_UPLOAD_DIR: path.join(directory, "disk", "c2-final-uploads"),
+      SELECTION_REVIEW_PRODUCT_IMAGES_DIR: path.join(directory, "disk", "product-images"),
       SELECTION_REVIEW_IDENTITY_PROVIDER: "team_accounts", SELECTION_REVIEW_DEFAULT_USER_ID: "central-test",
       SELECTION_REVIEW_PUBLIC_ORIGIN: PUBLIC_ORIGIN,
       SELECTION_REVIEW_AI_GATEWAY_URL: "http://ai-gateway:10000", SELECTION_REVIEW_OZON_EVIDENCE_SERVICE_URL: "http://ozon-evidence:10000",
@@ -97,11 +99,11 @@ async function startCentralService(t, extraEnv = {}) {
       request.end(payload);
     });
   }
-  return { call, stderr, port };
+  return { call, stderr, port, directory };
 }
 
 test("a central service starts on the host's port, answers the host's health check, and signs people in", async t => {
-  const { call, stderr } = await startCentralService(t);
+  const { call, stderr, directory } = await startCentralService(t);
   // The host's health check may use a name other than the team's address.
   const live = await call("/api/live", { host: "10.0.0.7:10000" });
   assert.equal(live.status, 200, JSON.stringify(live.body));
@@ -121,6 +123,15 @@ test("a central service starts on the host's port, answers the host's health che
   assert.equal(state.body.runtimeArchitecture.deploymentMode, "central_test");
   assert.equal(state.body.runtimeArchitecture.multiUserReady, true);
   assert.deepEqual(state.body.runtimeArchitecture.limitations, []);
+
+  // Product pictures come from the folder on the disk, and only for someone signed in.
+  const picture = Buffer.from("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4b20000000049454e44ae426082", "hex");
+  await mkdir(path.join(directory, "disk", "product-images"), { recursive: true });
+  await writeFile(path.join(directory, "disk", "product-images", "synthetic.png"), picture);
+  assert.equal((await call("/product-images/synthetic.png")).status, 401);
+  const served = await call("/product-images/synthetic.png", { headers: { Cookie: cookie } });
+  assert.equal(served.status, 200);
+  assert.equal(served.headers["content-type"], "image/png");
 
   // The keyword service needs the Seerfar key; the setting is empty, so the log names it once, without any value.
   const log = stderr.join("");
@@ -147,7 +158,9 @@ test("a central service refuses to start with the Ozon evidence service on an in
       SELECTION_REVIEW_STATE_ADAPTER: "postgres", SELECTION_REVIEW_DATABASE_URL: DATABASE_URL,
       SELECTION_REVIEW_IDENTITY_PROVIDER: "team_accounts", SELECTION_REVIEW_DEFAULT_USER_ID: "central-test",
       SELECTION_REVIEW_PUBLIC_ORIGIN: PUBLIC_ORIGIN, SELECTION_REVIEW_AI_GATEWAY_URL: "http://ai-gateway:10000",
-      SELECTION_REVIEW_OZON_EVIDENCE_SERVICE_URL: "https://ozon-evidence.example.test" },
+      SELECTION_REVIEW_OZON_EVIDENCE_SERVICE_URL: "https://ozon-evidence.example.test",
+      SELECTION_REVIEW_C2_UPLOAD_DIR: path.join(tmpdir(), "central-boot-unused", "c2"),
+      SELECTION_REVIEW_PRODUCT_IMAGES_DIR: path.join(tmpdir(), "central-boot-unused", "images") },
     stdio: ["ignore", "ignore", "pipe"]
   });
   let stderr = "";

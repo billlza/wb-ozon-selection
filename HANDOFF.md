@@ -235,7 +235,16 @@
 - **健康检查**：`GET /api/live` 放在 Host 检查前面回答。主机查活时用的地址不一定是团队用的那个（Render 可能用服务自己的 onrender.com 名字，别的主机用内网地址），原来会被 403，部署会一直判不健康；它只说「这个进程在跑」，和等着交接时（`lib/process-handoff.mjs`）一样。`/api/health`、`/api/ready` 照旧只认服务自己的地址。
 - **AI 网关和 Ozon 证据服务的地址**：中央模式除了非本机 https，还可以是同一私有网络里的邻居，形如 `http://ai-gateway:10000`（一段名字加端口，Render 的 private service 就是这个样子，这种名字只在内网里解析）。页面地址（`SELECTION_REVIEW_PUBLIC_ORIGIN`、`ALLOWED_ORIGINS`）照旧必须 https。Ozon 证据服务更严：拿着店铺密钥、来人不用凭据，所以中央模式只能是内网邻居，填公网 https 拒绝启动；两个证据读取（类目和佣金、字典）也只认本机或内网邻居。
 - D 批量导入要的中央 worker，3c 的进程租约登记已经满足，这次不用改。Seerfar 网页账号信息（P1-22）在中央模式照旧不存（`not_local`），那一轮照常收商品。
-- 还没做（第 4 步剩下的）：AI 网关（Mac 上 `~/Documents/电商能力实验室/ecommerce-ai-gateway`）和 Ozon 证据服务（4173）的代码不在 GitHub 上，要先在 Mac 上看到代码才能搬；它们现在都不认来人，搬上 Render 时做成 private service。上传的图片放 OSS、图片文字识别也还没做。
+- 还没做（第 4 步剩下的）：AI 网关（Mac 上 `~/Documents/电商能力实验室/ecommerce-ai-gateway`）和 Ozon 证据服务（4173）的代码不在 GitHub 上，要先在 Mac 上看到代码才能搬；它们现在都不认来人，搬上 Render 时做成 private service。图片文字识别也还没做。图片放哪见下一节。
+
+### 多人中央服务第 4 步之二：图片放在部署后还在的磁盘上（2026-10-16）
+
+服务运行时往硬盘上写的只有一处：上传的最终素材（C2，`lib/c2-local-asset-store.mjs`，目录是 `SELECTION_REVIEW_C2_UPLOAD_DIR`）。上架时 OSS 从这里读文件再传上去给 Ozon 用，所以这里是原件。老的商品图片（`/product-images/`）只读不写。别的业务数据都在 Postgres 里。Render 每次部署都会换掉代码目录，所以：
+
+- 中央模式必须写明 `SELECTION_REVIEW_C2_UPLOAD_DIR` 和新加的 `SELECTION_REVIEW_PRODUCT_IMAGES_DIR`：都是代码目录外的绝对路径，而且两个目录互不包含。没写、写成相对路径或写在代码目录里，启动就报错并点名是哪个设置。本机照旧默认放在代码目录里（`data/c2-final-uploads`、`product-images`），也可以用新设置改商品图片目录。
+- 选的是 Render 的持久磁盘，没走计划里写的 OSS。磁盘要付费实例才能挂，$0.25/GB/月，每天自动快照、至少留 7 天。挂了磁盘的服务只能开一个实例，部署时先停旧的再起新的，会断几秒；3c 的「等旧进程让位」在这种情况下用不上，也不碍事。整个换成 OSS 要改上传和读取两头，等磁盘不够用再说。
+- 第 5 步搬数据时，把 Mac 上 `selection-review-app/product-images/` 整个拷到磁盘上的商品图片目录（候选里记的是 `/product-images/文件名`），已上传的素材目录也整个拷过去。
+- 测试：`runtime-configuration` 加了中央模式必须写明两个目录（缺、空、相对路径、前后有空格、在代码目录里、互相包含都拒绝）；`central-runtime-boot-db` 用临时目录当磁盘，登录后从那里读到商品图片，没登录 401。
 
 ### 本轮验证
 

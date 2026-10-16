@@ -340,7 +340,7 @@ const runtimeHealth = runtimeConfiguration.stateAdapter === "postgres"
   ? createRepositoryRuntimeHealth({ readSnapshot: () => businessStateRepository.readSnapshot() })
   : createRuntimeHealth({ filePath: dataFile, storageAdapter: runtimeConfiguration.stateAdapter });
 const workflowMapFile = runtimeConfiguration.workflowMapFile;
-const imagesDir = path.join(appDir, "product-images");
+const imagesDir = runtimeConfiguration.productImagesDir;
 const c2FinalUploadsDir = runtimeConfiguration.c2FinalUploadsDir;
 const c2LocalAssetStore = createC2LocalAssetStore({ directory: c2FinalUploadsDir });
 let c2UploadInProgress = false;

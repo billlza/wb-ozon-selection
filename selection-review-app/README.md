@@ -23,6 +23,7 @@ node scripts/prepare-local-runtime.mjs --output /absolute/new/runtime-directory
 
 - `SELECTION_REVIEW_DATA_FILE`：候选、生命周期、作业、决定及回执的当前持久化入口。
 - `SELECTION_REVIEW_C2_UPLOAD_DIR`：当前服务的本地最终素材目录，与其他实例隔离。
+- `SELECTION_REVIEW_PRODUCT_IMAGES_DIR`：`/product-images/`读的商品图片目录，本机默认是代码目录下的`product-images`。中央模式这两个目录都必须写明，放在代码目录外、部署后还在的磁盘上（Render 上挂一块磁盘，比如挂在`/var/data`，就填`/var/data/c2-final-uploads`和`/var/data/product-images`），而且互不包含；没写或写在代码目录里时启动就报错，因为代码目录每次部署都会换掉。
 - `SELECTION_REVIEW_STORE_BINDINGS_JSON`：明确配置内部店铺、平台与完整`storeRef`；不从店名猜卖家ID。
 - `SELECTION_REVIEW_PRODUCTION_BINDINGS_JSON`：可缺省的生产绑定声明。每条锁定完整店铺、绑定ID与配置版本、中文店铺/仓库名称、准确仓库引用和平台仓库ID、凭据别名，以及核验声明的来源与有效期。配置值不是本轮平台回读，前检仍须核对真实连接与权限。此配置不存秘密值。
 - `SELECTION_REVIEW_IDENTITY_PROVIDER=local_owner_password`：启用单机主人登录，限本地回环服务。另须明确指定`SELECTION_REVIEW_OWNER_IDENTITY_FILE`为独立私有目录中的绝对文件路径，不能放进源码、候选/工作流数据或素材目录。未识别的提供器在启动时拒绝，不退回开发身份。

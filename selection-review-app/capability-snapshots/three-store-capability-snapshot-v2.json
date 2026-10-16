@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-16T22:55:33.263Z",
+  "frozenAt": "2026-10-16T23:01:32.741Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 1036,
-      "sha256": "2d5171688e4afb46d06ff40e0eb1c7412975c9326bfa494be1f5fcc0af81e67f",
+      "sha256": "ba83a0de72e70ac66a3b6998c2a9afa5ad3cf86a049c91c8c5cce9b0a3b9b1d4",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -456,7 +456,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "0160cdcf75247a2c4eadfd25f1e52412498e94d5b2eb29038caff6126fe52543"
+        "sha256": "06531199ba75e57108a9967702f65fdb7b4a2a71c002bde583135143543133a5"
       },
       {
         "path": "lib/capture-assignment.mjs",
@@ -1148,7 +1148,7 @@
       },
       {
         "path": "lib/runtime-configuration.mjs",
-        "sha256": "98ea0677d9e4f635b9102585ac5e642cbab6829e0249a8d7c53fac20df2323e0"
+        "sha256": "5e934d1025cdbacc7800deeea62f0a8a204f78118183102c44789a43e3d7f116"
       },
       {
         "path": "lib/runtime-health-worker.mjs",
@@ -1764,7 +1764,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "9ea4d3fa841245a7b78321d8528492f69b22b9dc38ed3642351f6ad11661430f"
+        "sha256": "b67ea3c50014ce08425ddc646e3f1da2bb43df787e0fd89981fb4d0d10122907"
       },
       {
         "path": "src/App.jsx",
@@ -2728,7 +2728,7 @@
       },
       {
         "path": "tests/central-runtime-boot-db.test.mjs",
-        "sha256": "9a8586ad59d05ec2a797396e98babbbc467962a3d0e511cd24b3dc468a651de2"
+        "sha256": "b74e1bfc6af0e552daa985035ed9407d8b755e72bdccb6e1c0bf215183ab7f20"
       },
       {
         "path": "tests/ci-api-boundary.test.mjs",
@@ -3840,7 +3840,7 @@
       },
       {
         "path": "tests/runtime-configuration.test.mjs",
-        "sha256": "7d3360bc4326019f9b8fe3ba0da105a3fe33fd06b8798e5f6e5205992ff367ac"
+        "sha256": "0f63fd84b11cf08afe8c790ca2cd5c3a6ad3c39d054d66065cd296ee2f372dcb"
       },
       {
         "path": "tests/runtime-health-api.test.mjs",

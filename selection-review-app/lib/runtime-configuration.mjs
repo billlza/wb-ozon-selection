@@ -85,11 +85,12 @@ export function isRuntimeConfigurationTimestamp(value) {
   return new Date(`${value.slice(0, 10)}T00:00:00.000Z`).toISOString().slice(0, 10) === value.slice(0, 10);
 }
 
+const pathContains = (parent, child) => { const relative = path.relative(parent, child); return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative)); };
+
 /** Both lexical configuration and resolved filesystem paths use this isolation rule. */
 export function isOwnerCredentialPathIsolated(credentialFile, protectedPaths) {
-  const contains = (parent, child) => { const relative = path.relative(parent, child); return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative)); };
   const privateDirectory = path.dirname(credentialFile);
-  return !protectedPaths.some(protectedPath => contains(protectedPath, credentialFile) || contains(privateDirectory, protectedPath));
+  return !protectedPaths.some(protectedPath => pathContains(protectedPath, credentialFile) || pathContains(privateDirectory, protectedPath));
 }
 
 export function isConfiguredProductionReference(value) {
@@ -641,6 +642,22 @@ export function createSelectionReviewRuntimeConfiguration({ env = process.env, a
   const dataFile = path.resolve(env.SELECTION_REVIEW_DATA_FILE || path.join(resolvedAppDir, "data", "candidates.json"));
   const workflowMapFile = path.resolve(env.SELECTION_REVIEW_WORKFLOW_MAP_FILE || path.join(resolvedAppDir, "data", "workflow-map.json"));
   const c2FinalUploadsDir = path.resolve(env.SELECTION_REVIEW_C2_UPLOAD_DIR || path.join(resolvedAppDir, "data", "c2-final-uploads"));
+  const productImagesDir = path.resolve(env.SELECTION_REVIEW_PRODUCT_IMAGES_DIR || path.join(resolvedAppDir, "product-images"));
+  // Uploaded listing pictures and the older product pictures are files, not database rows. A host replaces the code folder on
+  // every deploy, so a central mode names both on a disk that outlives deploys (on Render, the service's persistent disk);
+  // the defaults inside the code folder are for the owner's own computer.
+  if (deploymentMode !== "local_development") {
+    for (const [variable, label] of [["SELECTION_REVIEW_C2_UPLOAD_DIR", "上传的素材"], ["SELECTION_REVIEW_PRODUCT_IMAGES_DIR", "商品图片"]]) {
+      const configured = env[variable];
+      if (typeof configured !== "string" || !configured || configured !== configured.trim() || !path.isAbsolute(configured) ||
+          configured.includes("\0") || pathContains(resolvedAppDir, path.resolve(configured))) {
+        throw new Error(`RUNTIME_CONFIGURATION_INVALID: 中央模式要用 ${variable} 写明${label}放在哪：代码目录外、部署后还在的磁盘上的绝对路径（Render 上是挂上的磁盘里的一个目录）；代码目录每次部署都会换掉`);
+      }
+    }
+    if (pathContains(c2FinalUploadsDir, productImagesDir) || pathContains(productImagesDir, c2FinalUploadsDir)) {
+      throw new Error("RUNTIME_CONFIGURATION_INVALID: 上传的素材和商品图片要放在两个互不包含的目录里");
+    }
+  }
   const c1ImageTextExecutable = env.SELECTION_REVIEW_C1_IMAGE_TEXT_EXECUTABLE || null;
   if (c1ImageTextExecutable !== null && (deploymentMode !== "local_development" || typeof c1ImageTextExecutable !== "string" || !path.isAbsolute(c1ImageTextExecutable))) {
     throw new Error("C1_IMAGE_TEXT_LOCAL_EXECUTABLE_CONFIGURATION_INVALID");
@@ -703,6 +720,7 @@ export function createSelectionReviewRuntimeConfiguration({ env = process.env, a
     guooTariffFile,
     guooTariffRuleVersion,
     c2FinalUploadsDir,
+    productImagesDir,
     legacyFireTrainAssetRoot: legacyFireTrainAssetRoot ? path.resolve(legacyFireTrainAssetRoot) : null,
     identityProvider,
     localOwnerIdentity,
