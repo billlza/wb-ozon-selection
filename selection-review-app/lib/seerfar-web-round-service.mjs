@@ -91,13 +91,14 @@ export function createSeerfarWebRoundService({ readData, mutateData, mutateDataW
     return [...sessions.values()].find(session => ['queued', 'claim_pending', 'claimed'].includes(session.jobStatus)) || null;
   }
 
-  async function startRound({ actor, targetStore, queryId }) {
+  /** `assignedTo`: under team accounts, the computer whose page started the round; only it may claim the round's job. */
+  async function startRound({ actor, targetStore, queryId, assignedTo = null }) {
     if (!config) throw httpFail(503, 'CONFIG_UNAVAILABLE', 'Seerfar 选品档案或季节日历读不出来，这一轮没有开始。');
     if (activeSession() || isCaptureControlBusy()) throw httpFail(409, 'CAPTURE_BUSY', '插件正在做别的采集，这一轮没有开始，也不会排队。');
     const captureId = `SWR-${randomUUID()}`;
     const session = { captureId, token: randomBytes(32).toString('base64url'), roundId: null, targetStore, candidateId: null,
       captureKind: SEERFAR_WEB_CAPTURE_KIND, jobStatus: 'queued', attempt: 0, createdAt: Date.now(), expiresAt: Date.now() + queueTtlMs,
-      requiredExtensionVersion, claimedAt: null, claimedExtensionVersion: '', claimedBy: '' };
+      requiredExtensionVersion, claimedAt: null, claimedExtensionVersion: '', claimedBy: '', assignedTo };
     sessions.set(captureId, session);
     let record;
     try {
@@ -268,5 +269,6 @@ export function createSeerfarWebRoundService({ readData, mutateData, mutateDataW
     });
   }
 
-  return Object.freeze({ view, startRound, claim, acceptResult, reconcileRoundsAfterRestart, activeSession, owns: captureId => sessions.has(captureId) });
+  return Object.freeze({ view, startRound, claim, acceptResult, reconcileRoundsAfterRestart, activeSession, owns: captureId => sessions.has(captureId),
+    sessionFor: captureId => sessions.get(captureId) ?? null });
 }

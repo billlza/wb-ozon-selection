@@ -242,6 +242,8 @@ import { assertSafeBusinessMutationCandidate, createActorContext } from "./lib/r
 import { createRepositoryBackedSoftwareJobStore } from "./lib/software-job-repository.mjs";
 import { createLocalDevelopmentWorkerRegistry } from "./lib/worker-registry.mjs";
 import { createConfiguredWorkstationAccess } from "./lib/workstation-access.mjs";
+import { ANY_COMPUTER, captureControlView, captureHolder, claimantFor, computersReadyForSoftwareJob, pageWorkstationId, teamCaptureControl,
+  teamCaptureRefusal, teamClaimRefusal } from "./lib/capture-assignment.mjs";
 import { assertRuntimeBoundaries } from "./lib/multi-user-central-runtime.mjs";
 import { commitSingleOwnerProductionAuthorization, PRODUCTION_AUTHORIZATION_VERSION } from "./lib/production-authorization.mjs";
 import { commitBatchOwnerProductionAuthorization } from './lib/d-batch-production-authorization.mjs';
@@ -604,7 +606,8 @@ const seerfarWebRounds = createSeerfarWebRoundService({
   readData: () => readData(), mutateData: mutator => mutateData(mutator), mutateDataWhenChanged: mutator => mutateDataWhenChanged(mutator),
   now: () => now(), businessDate: () => businessDate(), estimateInputs: supplierDraftEstimateInputs, storeBindings: runtimeConfiguration.storeBindings,
   config: seerfarSelectionConfig.config, configError: seerfarSelectionConfig.error, requiredExtensionVersion: REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION,
-  isCaptureControlBusy: () => captureControlSnapshot().status === "busy",
+  // Under team accounts the round's route checks this computer and the round service still runs one round at a time.
+  isCaptureControlBusy: () => !workstationAccess && captureControlSnapshot().status === "busy",
   // P1-22（主人 2026-10-15）：Seerfar 账号 ID、手机号、邮箱存本机系统钥匙串；只在本地开发方式下读写，建好时不碰钥匙串。
   accountVault: createSeerfarAccountVault({ runtimeMode: runtimeConfiguration.deploymentMode }),
   log: (message, error) => console.error(message, error)
@@ -723,7 +726,8 @@ async function runGate1AutopilotStep(candidate, next) {
     const target = ozonPageReadTarget(candidate);
     const requestedProductUrl = target.ok && target.productId === next.productId ? null : next.productUrl;
     try {
-      await enqueueOzonPageReadJob({ candidateId, requestRevision: revision, requestedProductUrl, queuedBy: GATE1_AUTOPILOT_ACTOR_SOURCE });
+      await enqueueOzonPageReadJob({ candidateId, requestRevision: revision, requestedProductUrl, queuedBy: GATE1_AUTOPILOT_ACTOR_SOURCE,
+        forComputer: ANY_COMPUTER });
     } catch (error) {
       if (!error?.extra?.captureControl) throw error;
       gate1AutopilotWaitingForCapture.add(candidateId);
@@ -1092,46 +1096,65 @@ function purgeExpiredCaptureSessions(timestamp = Date.now()) {
   }
 }
 
-function captureControlSnapshot(timestamp = Date.now()) {
+/** Every open plugin job, oldest first, with the computer it keeps busy under team accounts (`holder`). */
+function activeCaptureJobs(timestamp = Date.now()) {
   purgeExpiredCaptureSessions(timestamp);
-  const active = [
-    ...[...sourceCaptureSessions.values()].map((session) => ({ ...session, platform: "1688", captureKind: "supplier" })),
-    ...[...salesCaptureSessions.values()].map((session) => ({ ...session, platform: "ozon", captureKind: "sales" })),
-    ...[...imageMatchSessions.values()].map((session) => ({ ...session, platform: session.matchKind === "ozon" ? "ozon" : "1688",
-      captureKind: session.matchKind === "ozon" ? "ozon_image_match" : "image_match" })),
-    ...[seerfarWebRounds.activeSession()].filter(Boolean).map((session) => ({ ...session, candidateId: "Seerfar 榜单", platform: "seerfar", captureKind: "seerfar_web" }))
-  ].sort((left, right) => left.createdAt - right.createdAt)[0];
-  if (!active) {
-    return {
-      status: "idle",
-      label: "商品采集控制空闲",
-      candidateId: null,
-      captureId: null,
-      platform: null,
-      captureKind: null,
-      startedAt: null,
-      expiresAt: null
-    };
-  }
-  return {
-    status: "busy",
-    label: `商品采集控制已由 ${active.candidateId} 占用（${active.platform}）`,
-    candidateId: active.candidateId,
-    captureId: active.captureId,
-    platform: active.platform,
-    captureKind: active.captureKind,
-    startedAt: active.jobStatus === "claimed" && Number.isFinite(active.claimedAt)
-      ? new Date(active.claimedAt).toISOString() : null,
-    expiresAt: new Date(active.expiresAt).toISOString()
-  };
+  const job = (session, platform, captureKind, candidateId = session.candidateId) => ({ captureId: session.captureId, candidateId,
+    label: candidateId ?? "Seerfar 榜单", platform, captureKind, createdAt: session.createdAt, claimedAt: session.claimedAt,
+    expiresAt: session.expiresAt, jobStatus: session.jobStatus, holder: captureHolder(session) });
+  return [
+    ...[...sourceCaptureSessions.values()].map((session) => job(session, "1688", "supplier")),
+    ...[...salesCaptureSessions.values()].map((session) => job(session, "ozon", "sales")),
+    ...[...imageMatchSessions.values()].map((session) => job(session, session.matchKind === "ozon" ? "ozon" : "1688",
+      session.matchKind === "ozon" ? "ozon_image_match" : "image_match")),
+    ...[seerfarWebRounds.activeSession()].filter(Boolean).map((session) => job(session, "seerfar", "seerfar_web", null))
+  ].sort((left, right) => left.createdAt - right.createdAt);
 }
 
-function ensureCaptureControlAvailable(candidateId) {
+/** The whole service's control: the oldest open job holds it. This is the only control without team accounts. */
+function captureControlSnapshot(timestamp = Date.now()) {
+  return captureControlView(activeCaptureJobs(timestamp)[0], {
+    busyLabel: (job) => `商品采集控制已由 ${job.label} 占用（${job.platform}）`, idleLabel: "商品采集控制空闲" });
+}
+
+/** What one review page shows: under team accounts only its own computer's job holds it (lib/capture-assignment.mjs). */
+function pageCaptureControl(request) {
+  if (!workstationAccess) return captureControlSnapshot();
+  return teamCaptureControl({ active: activeCaptureJobs(), workstationId: pageWorkstationId(request),
+    presence: (workstationId) => workstationAccess.presence(workstationId) });
+}
+
+/**
+ * Refuses a new plugin job while its control is taken. Without team accounts that is the whole service's single control.
+ * With them it is the product (one job per product, on any computer) and the computer the job is for: the page's own
+ * computer (`forComputer`, from the page's request) or, for a job the software queues by itself, `ANY_COMPUTER`.
+ * Called again right before a job is registered, with nothing awaited in between, so two requests cannot both pass.
+ */
+function ensureCaptureControlAvailable(candidateId, forComputer = null) {
+  if (workstationAccess) {
+    const refusal = teamCaptureRefusal({ active: activeCaptureJobs(), candidateId, forComputer,
+      presence: (workstationId) => workstationAccess.presence(workstationId) });
+    if (!refusal) return;
+    throw httpError(409, refusal.message, { code: refusal.code,
+      captureControl: refusal.job ? captureControlView(refusal.job, { busyLabel: (job) => `${job.label} 正在采集（${job.platform}）` }) : null });
+  }
   const control = captureControlSnapshot();
   if (control.status !== "busy") return;
   throw httpError(409, `商品采集控制正由 ${control.candidateId} 使用；本次没有启动，也不会排队或自动重试`, {
     captureControl: control
   });
+}
+
+/** The computer a new job is for under team accounts; null without them. */
+const assignedComputer = (forComputer) => (workstationAccess && forComputer !== ANY_COMPUTER ? forComputer : null);
+
+/**
+ * An existing job for the same product is handed back as a duplicate only to the computer it is for; another computer's
+ * page is told whose it is, since its own plugin could never claim it.
+ */
+function ensureDuplicateIsForThisComputer(existing, forComputer) {
+  if (!workstationAccess || forComputer === ANY_COMPUTER || !existing.assignedTo || existing.assignedTo === forComputer) return;
+  ensureCaptureControlAvailable(existing.candidateId, forComputer);
 }
 
 function currentProfitRule(persisted, current) {
@@ -1297,9 +1320,7 @@ const extensionWorkstations = new WeakMap();
 // Who claims a plugin job and must be the one to finish it: the plugin's origin, and under team accounts also the computer
 // whose key the call carried. Every computer runs the same plugin, so the origin alone cannot tell them apart.
 function extensionClaimant(req) {
-  const origin = String(req.headers.origin || "").trim();
-  const workstation = extensionWorkstations.get(req);
-  return workstation ? `${origin} ${workstation.workstationId}` : origin;
+  return claimantFor(String(req.headers.origin || "").trim(), extensionWorkstations.get(req)?.workstationId ?? null);
 }
 
 function assertClaimedCaptureResultOrigin(session, req, label) {
@@ -1549,11 +1570,13 @@ function aSupplierRecaptureHistoryDetail(superseded, reason) {
  * saved 1688 link, the same guards and the same lease, plus one extra history line written inside this same mutation
  * so the voided specifications and the queued job can never be recorded apart from each other.
  */
-async function enqueueASupplierCaptureJob({ candidateId, requestRevision, requestedSourceUrl, ownerRecapture = null, onQueued = null }) {
+async function enqueueASupplierCaptureJob({ candidateId, requestRevision, requestedSourceUrl, ownerRecapture = null, onQueued = null,
+  forComputer = null }) {
   const existing = captureSession(candidateId);
   if (existing?.mode === "a_supplier_capture" &&
     [existing.requestRevision, existing.dataRevision].includes(requestRevision) &&
     ["queued", "claimed"].includes(existing.jobStatus)) {
+    ensureDuplicateIsForThisComputer(existing, forComputer);
     const data = await readCandidateData(candidateId);
     const current = data.candidates.find((item) => item.id === candidateId);
     if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
@@ -1564,7 +1587,7 @@ async function enqueueASupplierCaptureJob({ candidateId, requestRevision, reques
     }
     return { candidate: publicCandidate(current, data.rules), captureJob: sourceCaptureJobPublic(existing), duplicate: true };
   }
-  ensureCaptureControlAvailable(candidateId);
+  ensureCaptureControlAvailable(candidateId, forComputer);
   const source = normalizeSupplierCaptureSource(requestedSourceUrl);
   if (source.type === "invalid") {
     throw httpError(422, "A阶段供应链接不是允许的1688或拼多多短链或精确商品链接", { code: "source_url_invalid" });
@@ -1587,7 +1610,8 @@ async function enqueueASupplierCaptureJob({ candidateId, requestRevision, reques
     requiredExtensionVersion: REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION,
     claimedAt: null,
     claimedExtensionVersion: "",
-    claimedBy: ""
+    claimedBy: "",
+    assignedTo: assignedComputer(forComputer)
   };
   sourceCaptureSessions.set(session.captureId, session);
   let candidate;
@@ -1904,7 +1928,7 @@ async function releaseATerraAssistBlocksAfterRestart() {
   });
 }
 
-async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedProductUrl = null, queuedBy = "owner" }) {
+async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedProductUrl = null, queuedBy = "owner", forComputer = null }) {
   // queuedBy：主人点的（owner），或者「做这件」许可下软件读主人认的那个 Ozon 同款（gate1_autopilot）。只改记录里那句话和
   // 「谁排的」，作业本身、插件领取和结果回传一模一样。
   const bySoftware = queuedBy === GATE1_AUTOPILOT_ACTOR_SOURCE;
@@ -1912,6 +1936,7 @@ async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedP
   if (existing?.captureKind === OZON_PAGE_READ_CAPTURE_KIND &&
     [existing.requestRevision, existing.dataRevision].includes(requestRevision) &&
     ["queued", "claimed"].includes(existing.jobStatus)) {
+    ensureDuplicateIsForThisComputer(existing, forComputer);
     const data = await readCandidateData(candidateId);
     const current = data.candidates.find((item) => item.id === candidateId);
     if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
@@ -1921,7 +1946,7 @@ async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedP
     }
     return { candidate: publicCandidate(current, data.rules), captureJob: ozonCapturePageJobPublic(existing), duplicate: true };
   }
-  ensureCaptureControlAvailable(candidateId);
+  ensureCaptureControlAvailable(candidateId, forComputer);
   const snapshot = await readCandidateData(candidateId);
   const snapshotCandidate = snapshot.candidates.find((item) => item.id === candidateId);
   if (!snapshotCandidate) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
@@ -1949,8 +1974,11 @@ async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedP
     requiredExtensionVersion: REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION,
     claimedAt: null,
     claimedExtensionVersion: "",
-    claimedBy: ""
+    claimedBy: "",
+    assignedTo: assignedComputer(forComputer)
   };
+  // The page was read above: check again with nothing awaited before the job is registered.
+  ensureCaptureControlAvailable(candidateId, forComputer);
   salesCaptureSessions.set(session.captureId, session);
   let candidate;
   try {
@@ -2219,10 +2247,12 @@ async function reconcileImageMatchJobsAfterRestart() {
   });
 }
 
-async function enqueueImageMatchJob(kind, { candidateId, requestRevision, acknowledgeUnknownOutcome, actor, input = {}, onQueued = null }) {
+async function enqueueImageMatchJob(kind, { candidateId, requestRevision, acknowledgeUnknownOutcome, actor, input = {}, onQueued = null,
+  forComputer = null }) {
   const existing = imageMatchSessionFor(kind, candidateId);
   if (existing && [existing.requestRevision, existing.dataRevision].includes(requestRevision) &&
     ["queued", "claimed"].includes(existing.jobStatus)) {
+    ensureDuplicateIsForThisComputer(existing, forComputer);
     const data = await readCandidateData(candidateId);
     const current = data.candidates.find((item) => item.id === candidateId);
     if (!current) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
@@ -2231,7 +2261,7 @@ async function enqueueImageMatchJob(kind, { candidateId, requestRevision, acknow
     }
     return { candidate: publicCandidate(current, data.rules), captureJob: kind.jobPublic(existing), duplicate: true };
   }
-  ensureCaptureControlAvailable(candidateId);
+  ensureCaptureControlAvailable(candidateId, forComputer);
   const snapshot = await readCandidateData(candidateId);
   const snapshotCandidate = snapshot.candidates.find((item) => item.id === candidateId);
   if (!snapshotCandidate) throw httpError(404, "候选不存在", { code: "candidate_not_found" });
@@ -2259,8 +2289,11 @@ async function enqueueImageMatchJob(kind, { candidateId, requestRevision, acknow
     requiredExtensionVersion: REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION,
     claimedAt: null,
     claimedExtensionVersion: "",
-    claimedBy: ""
+    claimedBy: "",
+    assignedTo: assignedComputer(forComputer)
   };
+  // The product was read above: check again with nothing awaited before the job is registered.
+  ensureCaptureControlAvailable(candidateId, forComputer);
   imageMatchSessions.set(session.captureId, session);
   let candidate;
   try {
@@ -2311,7 +2344,8 @@ function seerfarWebClaim(captureId, extensionVersion, claimant) {
 }
 
 function seerfarWebHttpError(error) {
-  if (!Number.isInteger(error?.status)) return error;
+  // The service's own refusals get a Seerfar code; the server's (input, computers) already carry theirs.
+  if (!Number.isInteger(error?.status) || error.extra) return error;
   return httpError(error.status, error.publicMessage || "Seerfar 榜单作业没有继续", { code: `seerfar_web_${String(error.code).toLowerCase()}` });
 }
 
@@ -2348,6 +2382,8 @@ let intakeHasOpenWork = false;
 // 启动时不为录入多读一遍整份数据（数据大时会拖慢启动自检）；工作台页面第一次来看队列时，有排着的才叫醒泵。
 let intakePumpPrimed = false;
 let intakeBridgeSeenAt = 0;
+// Under team accounts, when each computer's page last came for the queue (only computers whose plugin is online).
+const intakeBridgeSeenBy = new Map();
 let intakeLastStart = null;
 // 正在等 AI 网关翻俄文词的商品。服务重启后记录上还是 requested、这里却没有的，就是没等到结果（不重发）。
 const intakeOzonWordsInFlight = new Set();
@@ -2360,15 +2396,35 @@ const intakeOzonWordsTranslator = (() => {
   } catch { return null; }
 })();
 
-function intakeExtensionState(timestamp = Date.now()) {
+const intakeBridgeFresh = (workstationId, timestamp) => timestamp - (intakeBridgeSeenBy.get(workstationId) ?? 0) < INTAKE_BRIDGE_TTL_MS;
+
+/** Under team accounts: the computers that could take the software's next plugin job now (lib/capture-assignment.mjs). */
+function intakeReadyComputers(timestamp = Date.now()) {
+  return computersReadyForSoftwareJob({ online: workstationAccess.onlineWorkstations(), active: activeCaptureJobs(timestamp),
+    requiredVersion: REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION, pageSeenLately: (workstationId) => intakeBridgeFresh(workstationId, timestamp) });
+}
+
+function intakeExtensionState(timestamp = Date.now(), forComputer = null) {
+  if (workstationAccess) {
+    const online = workstationAccess.onlineWorkstations().filter((computer) => computer.backgroundReady);
+    const current = (computer) => computer.version === REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION;
+    const shown = online.find((computer) => computer.workstationId === forComputer) ?? online.find(current) ?? online[0] ?? null;
+    return { online: online.length > 0, version: shown?.version ?? null, requiredVersion: REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION,
+      versionOk: online.some(current), bridge: online.some((computer) => intakeBridgeFresh(computer.workstationId, timestamp)),
+      captureControl: intakeReadyComputers(timestamp).length > 0 ? "idle" : "busy" };
+  }
   const heartbeat = extensionHeartbeatSnapshot(timestamp);
   return { online: heartbeat.fresh && heartbeat.backgroundReady, version: heartbeat.version || null,
     requiredVersion: REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION, versionOk: heartbeat.version === REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION,
     bridge: timestamp - intakeBridgeSeenAt < INTAKE_BRIDGE_TTL_MS, captureControl: captureControlSnapshot(timestamp).status };
 }
 
-/** 录入泵排好、插件还没领的那一个作业：工作台页面拿这个编号去递开始信号。一次只有一个。 */
-function intakePendingStart(candidates, timestamp = Date.now()) {
+/**
+ * 录入泵排好、插件还没领的那一个作业：工作台页面拿这个编号去递开始信号。一次只有一个。
+ * 团队账号下只交给闲着的电脑上的页面（forComputer 是页面说的这台电脑），哪台先领到就是哪台做。
+ */
+function intakePendingStart(candidates, timestamp = Date.now(), forComputer = null) {
+  if (workstationAccess && !intakeReadyComputers(timestamp).some((computer) => computer.workstationId === forComputer)) return null;
   for (const candidate of candidates) {
     const jobs = candidate.intake?.jobs;
     if (!jobs || candidate.workflowStatus === "eliminated" || candidate.gate1) continue;
@@ -2520,7 +2576,8 @@ async function intakePumpStep() {
   };
   try {
     if (step === "capture_source") {
-      await enqueueASupplierCaptureJob({ candidateId, requestRevision: dataRevision, requestedSourceUrl: intake.sourceUrl, onQueued });
+      await enqueueASupplierCaptureJob({ candidateId, requestRevision: dataRevision, requestedSourceUrl: intake.sourceUrl, onQueued,
+        forComputer: ANY_COMPUTER });
     } else {
       await enqueueImageMatchJob(step === "search_1688" ? IMAGE_MATCH_KINDS.supplier : IMAGE_MATCH_KINDS.ozon, {
         candidateId, requestRevision: dataRevision, actor: { userId: intake.submittedBy },
@@ -2528,7 +2585,7 @@ async function intakePumpStep() {
         acknowledgeUnknownOutcome: intake.lastRetry?.step === step,
         input: step === "search_ozon" ? { searchBy: "image" }
           : step === "search_ozon_words" ? { searchBy: "text", query: intake.ozonWords?.query, queryOrigin: "ai_translation" } : {},
-        onQueued });
+        onQueued, forComputer: ANY_COMPUTER });
     }
     return { ...quiet, active: true };
   } catch (error) {
@@ -4663,7 +4720,7 @@ function responseState(data, request) {
     meta: data.meta,
     rules,
     extensionHeartbeat: extensionHeartbeatSnapshot(),
-    captureControl: captureControlSnapshot(),
+    captureControl: pageCaptureControl(request),
     runtimeArchitecture: {
       ...runtimeArchitecture,
       c1DraftServices: c1DraftRuntimeServices.configurationView,
@@ -5189,7 +5246,10 @@ async function handleApi(req, res, pathname) {
     if (!headers["Access-Control-Allow-Origin"]) throw httpError(403, "只接受本机Chrome扩展心跳");
     const heartbeat = recordExtensionHeartbeat(await requestBody(req));
     const workstation = extensionWorkstations.get(req);
-    if (workstation) workstationAccess.recordHeartbeat(workstation.workstationId, { version: heartbeat.version });
+    if (workstation) {
+      workstationAccess.recordHeartbeat(workstation.workstationId, { version: heartbeat.version, name: workstation.name,
+        backgroundReady: heartbeat.backgroundReady });
+    }
     // 录入页排着的商品在等插件：插件一回来就接着往下走（排着的还没开始过，不算重跑）。
     if (intakeHasOpenWork && heartbeat.fresh) scheduleIntakePump(0);
     return json(res, 200, { accepted: true, heartbeat, captureJob: null, jobNotice: null }, headers);
@@ -5201,6 +5261,15 @@ async function handleApi(req, res, pathname) {
     const input = await requestBody(req);
     if (Object.keys(input).length !== 1 || typeof input.version !== "string" || !/^\d+\.\d+\.\d+$/.test(input.version)) {
       throw httpError(400, "领取请求必须只包含插件版本", { code: "capture_claim_invalid" });
+    }
+    // Under team accounts a computer claims only a job that is for it (or for any computer), and one job at a time.
+    const workstation = extensionWorkstations.get(req);
+    if (workstation) {
+      const captureId = captureClaimRoute[1];
+      const session = sourceCaptureSessions.get(captureId) ?? salesCaptureSessions.get(captureId) ?? imageMatchSessions.get(captureId) ??
+        seerfarWebRounds.sessionFor(captureId);
+      const refusal = teamClaimRefusal({ session, active: activeCaptureJobs(), workstationId: workstation.workstationId });
+      if (refusal) throw httpError(409, refusal.message, { code: refusal.code });
     }
     const claim = await claimCaptureJob(captureClaimRoute[1], input.version, extensionClaimant(req));
     return json(res, 200, { accepted: true, ...claim }, headers);
@@ -5388,7 +5457,11 @@ async function handleApi(req, res, pathname) {
             typeof input.targetStore !== 'string' || typeof input.queryId !== 'string' || input.queryId.length > 300) {
           throw httpError(400, 'Seerfar 榜单请求的字段无效', { code: 'seerfar_web_input_invalid' });
         }
-        operationResult = await seerfarWebRounds.startRound({ actor, targetStore: input.targetStore, queryId: input.queryId });
+        // Under team accounts the round is for this page's computer; nothing is awaited between this check and the round's job.
+        const forComputer = pageWorkstationId(req);
+        if (workstationAccess) ensureCaptureControlAvailable(null, forComputer);
+        operationResult = await seerfarWebRounds.startRound({ actor, targetStore: input.targetStore, queryId: input.queryId,
+          assignedTo: assignedComputer(forComputer) });
       }
       const document = await readData();
       return json(res, req.method === 'POST' ? 202 : 200, seerfarSelectionView(document, operationResult));
@@ -6110,7 +6183,8 @@ async function handleApi(req, res, pathname) {
     const queued = await enqueueOzonPageReadJob({
       candidateId: decodeURIComponent(salesCaptureStartRoute[1]),
       requestRevision: input.dataRevision,
-      requestedProductUrl: Object.hasOwn(input, "productUrl") ? input.productUrl.trim() : null
+      requestedProductUrl: Object.hasOwn(input, "productUrl") ? input.productUrl.trim() : null,
+      forComputer: pageWorkstationId(req)
     });
     // The same receipt shape the 1688 capture request returns, so the page reuses its one start-signal path.
     return json(res, queued.duplicate ? 200 : 202, {
@@ -6300,7 +6374,8 @@ async function handleApi(req, res, pathname) {
       // 「贴货源链接」：一条链接接到一件还没有能用货源的商品上，这件从读货源页重新走，不另建一件。
       if (parsed.links.length !== 1) throw httpError(400, "给一件商品贴货源时一次只贴一条链接", { code: "intake_attach_one_link" });
       const [link] = parsed.links;
-      const busyCandidateId = captureControlSnapshot().candidateId;
+      // Under team accounts any computer's open job on this product counts; without them, the one control's product.
+      const capturingIds = new Set(workstationAccess ? activeCaptureJobs().map((job) => job.candidateId) : [captureControlSnapshot().candidateId]);
       const item = await mutateData((data) => {
         const target = data.candidates.find((candidate) => candidate.id === attachTo.candidateId);
         if (!target) throw httpError(404, "要接货源的商品不存在", { code: "intake_attach_target_missing" });
@@ -6313,7 +6388,7 @@ async function handleApi(req, res, pathname) {
         const submittedAt = now();
         const plan = intakeAttachPlan(target, link, { candidates: data.candidates, requestedAt: submittedAt, requestedBy: actor.userId,
           batchId: `INB-${randomUUID()}`, stillOpen: intakeStillBeforeGate1,
-          busy: busyCandidateId === target.id || Boolean(activeDispatchForCandidate(data, target.id)) });
+          busy: capturingIds.has(target.id) || Boolean(activeDispatchForCandidate(data, target.id)) });
         if (!plan.ok) {
           throw httpError(409, INTAKE_ATTACH_MESSAGES[plan.code] ?? "这件现在不能接货源链接", { code: plan.code,
             ...(plan.duplicate ? { duplicateOfCandidateId: plan.duplicate.id, duplicateEliminated: plan.duplicate.workflowStatus === "eliminated" } : {}) });
@@ -6364,8 +6439,10 @@ async function handleApi(req, res, pathname) {
 
   if (req.method === "GET" && pathname === "/api/intake/queue") {
     // 工作台页面的开始信号桥每隔几秒来看一眼；它来过，排着的才有人把作业编号递给插件。
+    const pageComputer = workstationAccess ? pageWorkstationId(req) : null;
     if (new URL(req.url, runtimeConfiguration.publicOrigin).searchParams.get("bridge") === "1") {
       intakeBridgeSeenAt = Date.now();
+      if (pageComputer && workstationAccess.presence(pageComputer).online) intakeBridgeSeenBy.set(pageComputer, intakeBridgeSeenAt);
       if (intakeHasOpenWork) scheduleIntakePump(0);
     }
     const data = await readData();
@@ -6380,14 +6457,14 @@ async function handleApi(req, res, pathname) {
     const finished = data.candidates.filter((candidate) => candidate.intake?.stage === "ready" && candidate.workflowStatus !== "eliminated" &&
       openBatches.has(candidate.intake.batch?.id)).map((candidate) => ({ candidate, progress: intakeProgress(candidate), queue: null,
       batch: { position: candidate.intake.batch.index + 1, total: candidate.intake.batch.size } }));
-    const extension = intakeExtensionState();
+    const extension = intakeExtensionState(Date.now(), pageComputer);
     return json(res, 200, {
       items: [...entries, ...finished].map(({ candidate, progress, queue, batch }) => ({
         candidateId: candidate.id, title: candidate.productName, imageUrl: candidate.imageUrl || null, sourceKind: candidate.intake.sourceKind,
         sourceUrl: candidate.intake.sourceUrl, submittedAt: candidate.intake.submittedAt, dataRevision: Number(candidate.dataRevision),
         stage: progress.stage, blocker: progress.blocker ?? null, queue, batch, roughProfit: candidate.roughProfit ?? null })),
       pause: intakePause(data.candidates),
-      pendingStart: intakePendingStart(data.candidates),
+      pendingStart: intakePendingStart(data.candidates, Date.now(), pageComputer),
       extension: { online: extension.online, versionOk: extension.versionOk, version: extension.version, requiredVersion: extension.requiredVersion,
         bridge: extension.bridge, login1688: intakeLogin1688State(data.candidates), lastStart: intakeLastStart }
     });
@@ -6489,7 +6566,7 @@ async function handleApi(req, res, pathname) {
     }
     if (action === "start") {
       const queued = await enqueueImageMatchJob(kind, { candidateId, requestRevision: input.dataRevision,
-        acknowledgeUnknownOutcome: input.acknowledgeUnknownOutcome === true, actor, input });
+        acknowledgeUnknownOutcome: input.acknowledgeUnknownOutcome === true, actor, input, forComputer: pageWorkstationId(req) });
       // The same receipt shape as the other two capture requests, so the page reuses its one start-signal path.
       return json(res, queued.duplicate ? 200 : 202, {
         status: kind.key === "ozon" ? "ozon_image_match_job_queued" : "supplier_image_match_job_queued", candidate: queued.candidate,
@@ -6696,7 +6773,8 @@ async function handleApi(req, res, pathname) {
       candidateId: snapshotCandidate.id,
       requestRevision: input.dataRevision,
       requestedSourceUrl: capture.sourceUrl || snapshotCandidate.sourceUrl || "",
-      ownerRecapture: { reason: input.reason ?? null }
+      ownerRecapture: { reason: input.reason ?? null },
+      forComputer: pageWorkstationId(req)
     });
     // The same receipt shape the capture request already returns, so the page reuses its one start-signal path.
     return json(res, queued.duplicate ? 200 : 202, {
@@ -7502,7 +7580,8 @@ async function handleApi(req, res, pathname) {
         const queued = await enqueueASupplierCaptureJob({
           candidateId: snapshotCandidate.id,
           requestRevision: input.dataRevision,
-          requestedSourceUrl
+          requestedSourceUrl,
+          forComputer: pageWorkstationId(req)
         });
         return json(res, queued.duplicate ? 200 : 202, {
           status: "supplier_capture_job_queued",

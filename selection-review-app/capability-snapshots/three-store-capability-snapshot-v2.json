@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-16T18:29:54.607Z",
+  "frozenAt": "2026-10-16T18:30:22.655Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -16,8 +16,8 @@
   "sourceBaselines": {
     "integration": {
       "status": "inspected",
-      "artifactCount": 1025,
-      "sha256": "2a3aa1db7e1179f2807b957b023538cc13272fbb13c5dd492eb53329c6761067",
+      "artifactCount": 1028,
+      "sha256": "3d12fe6ca600bf91da98bd98c69fb86dd348b5726095ce29a1315c3eeeb9a1d6",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -456,7 +456,11 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "5578df28f24fc59ac01bb45c3ccb2656ecd302cb0960a477517ba5679fe4a3fe"
+        "sha256": "daa5ed508f66673584d139e97f1ce33c9ed7b503e5e93b7c456857e19905456a"
+      },
+      {
+        "path": "lib/capture-assignment.mjs",
+        "sha256": "3fe9dcf4c5ae38df7770c7fe23c1ff7fdf897e691b50cdd7f2a2e95ea0347c0d"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -1204,7 +1208,7 @@
       },
       {
         "path": "lib/seerfar-web-round-service.mjs",
-        "sha256": "fae793247e74b3b3fbd8b22d4f98850f61cf66310fbbb87a0d71b5fbb68b2b8d"
+        "sha256": "39666f219ffd5d46dcd2ef489dfada457b96b5adb863c0ec517e287ade0c1cd7"
       },
       {
         "path": "lib/seerfar-web-round.mjs",
@@ -1360,7 +1364,7 @@
       },
       {
         "path": "lib/workstation-access.mjs",
-        "sha256": "1e52639f7c2928827083cd9ca356dcec6e71183a429b2b1be1b36fb4243b8b7f"
+        "sha256": "4a3caf5be461883875e05f19db9fe9077d9e2186ebdda29ff42dbcbe4331c41b"
       },
       {
         "path": "lib/workstation-store.mjs",
@@ -1748,11 +1752,11 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "26e403d7eaac0c7caaf34bda4996eb838e28fb23f8a05c5634c4987c4eacf1cc"
+        "sha256": "30a53845319acc66f4cf3bad195bedfc86ebc5b89afbdbeeb50941022e55d3b5"
       },
       {
         "path": "src/App.jsx",
-        "sha256": "83984911388b25208d0fdbfc6d8dee7da35f1ea86cc161145e0ac5808cc51604"
+        "sha256": "f3dbf6156f7414fc6679805fb85f5d3dc101b4483942cbe2d5bf9fcc3c43c670"
       },
       {
         "path": "src/aConfirmationInput.js",
@@ -1764,7 +1768,7 @@
       },
       {
         "path": "src/api.js",
-        "sha256": "412823e44ec2971a03054db2c2769dfc74e7b06f9074ed0247af0b7efb0f8c8e"
+        "sha256": "37962d0ff36f36ab98139bb73e4c4a5bbce76435ba99aec2ae08855bffa8eeb4"
       },
       {
         "path": "src/bExactCommissionInput.js",
@@ -1789,6 +1793,10 @@
       {
         "path": "src/candidateViews.js",
         "sha256": "8281a88c8f481c2fb57202b9040deddc5efde84dd49f8430889e859f24e57315"
+      },
+      {
+        "path": "src/captureControlView.js",
+        "sha256": "096f3f28a548bc8674c8a55663c14dd8d23e15508fb77de0db01971f818f47e1"
       },
       {
         "path": "src/captureStart.js",
@@ -2020,7 +2028,7 @@
       },
       {
         "path": "src/components/UserInspector.jsx",
-        "sha256": "c6f5b9a0a1aa5cecd402d80326605c6fb9a1e5ae55b779ad02a82953382f0c6d"
+        "sha256": "53b6624be3b574b59ae3e7c7b4a492e5401add9fbe59e7ad47e40ee23aa0c04e"
       },
       {
         "path": "src/components/WorkflowMap.jsx",
@@ -2068,7 +2076,7 @@
       },
       {
         "path": "src/headerStatusView.js",
-        "sha256": "bcbfe291e65e53597792b91a8a53cbd4490cb22b914ceeb9c95f178ec70c8285"
+        "sha256": "9250440b9ecb705dbced6155ae99e11ebc6cdf02bc924b1aa36c96333dd2b12e"
       },
       {
         "path": "src/intakeJobBridge.js",
@@ -2693,6 +2701,10 @@
       {
         "path": "tests/capability-source-snapshot.test.mjs",
         "sha256": "b9fe613cf6fcecddd07b8483e7dd9280c0999609adc1aa1a082716de7e6ec1bb"
+      },
+      {
+        "path": "tests/capture-assignment.test.mjs",
+        "sha256": "9adf4918db0ff09d219d5c1a0ef1273a4dd108a2e9cba6dfaa1dcc09938cddc2"
       },
       {
         "path": "tests/cargo-facts-declaration.test.mjs",
@@ -4112,7 +4124,7 @@
       },
       {
         "path": "tests/workstation-access.test.mjs",
-        "sha256": "8d005c682327363992aeb439e1e73b7bf21e08f9506651da0b84210ffd736800"
+        "sha256": "2ff187d3ca6368421f187e27a5e9a017e431a8faba8d35a41b45579d82e7dad6"
       },
       {
         "path": "tests/workstation-extension.test.mjs",
@@ -4120,11 +4132,11 @@
       },
       {
         "path": "tests/workstation-ui.test.mjs",
-        "sha256": "e1f254b75aad3cfebcc12f39c3e45892d7adcdf1f663e5727b066eeaf0fa9bbd"
+        "sha256": "93d9f024dcf182577ae89796503ca8927376f3311522a403421fa4961f63fe69"
       },
       {
         "path": "tests/workstations-db.test.mjs",
-        "sha256": "baf3a4d8425d788bfe722cb1366aaecafd4394183f35b67c77543f9671550b0c"
+        "sha256": "9add31efcfe71cb52baa2a91d94cd793da8bd9eb9dce09b130a9e4229f13e13b"
       },
       {
         "path": "vite.config.js",
@@ -4315,6 +4327,10 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "lib/capture-assignment.mjs",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "lib/local-owner-identity.mjs",
           "status": "present_in_integration_source"
         },
@@ -4363,6 +4379,14 @@
           "status": "present_in_integration_source"
         },
         {
+          "path": "src/api.js",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "src/captureControlView.js",
+          "status": "present_in_integration_source"
+        },
+        {
           "path": "src/components/HeaderStatus.jsx",
           "status": "present_in_integration_source"
         },
@@ -4392,6 +4416,10 @@
         },
         {
           "path": "src/workstationKey.js",
+          "status": "present_in_integration_source"
+        },
+        {
+          "path": "tests/capture-assignment.test.mjs",
           "status": "present_in_integration_source"
         },
         {

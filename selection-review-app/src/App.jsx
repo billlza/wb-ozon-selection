@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "./api";
+import { api, setPageWorkstation } from "./api";
 import { createPreparationSaveState } from './siblingPreparationState.js';
 import { createLatestRead, createSelectionGuard, openSavedCandidate, runMutation, shouldContinuePolling, errorMessage, candidatePlatform } from "./formState.js";
 import { validateCandidateCommentReceipt } from "./commentInput.js";
@@ -437,6 +437,8 @@ export default function App() {
         otherService: event.data.otherService === true
       }));
       const workstation = event.data.workstation;
+      // Only an answer changes which computer this page's requests name; a plugin slow to answer once keeps the last one.
+      setPageWorkstation(workstation?.workstationId);
       setThisComputer({ answered: true, otherService: event.data.otherService === true, workstation: typeof workstation?.workstationId === "string" && typeof workstation.name === "string"
         ? { workstationId: workstation.workstationId, name: workstation.name } : null });
     }

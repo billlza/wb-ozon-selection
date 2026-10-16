@@ -96,9 +96,23 @@ export function createWorkstationAccess({ store, clock = () => new Date().toISOS
       if (workstation === null) throw failure(401, "WORKSTATION_KEY_REJECTED", "这台电脑的钥匙不对，或者这台电脑已经移除了");
       return Object.freeze({ workstationId: workstation.workstationId, name: workstation.name });
     },
-    recordHeartbeat(workstationId, { version }) {
+    recordHeartbeat(workstationId, { version, name = null, backgroundReady = true }) {
       if (!isWorkstationId(workstationId)) throw new Error("WORKSTATION_INPUT_INVALID");
-      heartbeats.set(workstationId, { version: typeof version === "string" ? version : null, receivedAtMs: nowMs() });
+      heartbeats.set(workstationId, { version: typeof version === "string" ? version : null, receivedAtMs: nowMs(),
+        name: normalizeWorkstationName(name), backgroundReady: backgroundReady === true });
+    },
+    /** From this process's heartbeats only: whether a computer's plugin is online, and what it is called. */
+    presence(workstationId) {
+      const seen = isWorkstationId(workstationId) ? heartbeats.get(workstationId) ?? null : null;
+      if (seen === null) return { online: false, name: null, version: null, backgroundReady: false };
+      return { online: nowMs() - seen.receivedAtMs <= heartbeatTtlMs, name: seen.name, version: seen.version,
+        backgroundReady: seen.backgroundReady };
+    },
+    /** The computers whose plugin sent a heartbeat recently. */
+    onlineWorkstations() {
+      const at = nowMs();
+      return [...heartbeats].filter(([, seen]) => at - seen.receivedAtMs <= heartbeatTtlMs)
+        .map(([workstationId, seen]) => ({ workstationId, name: seen.name, version: seen.version, backgroundReady: seen.backgroundReady }));
     }
   });
 }

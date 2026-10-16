@@ -72,6 +72,28 @@ test("the list shows who is online from heartbeats kept in this process; they la
   assert.throws(() => access.recordHeartbeat("workstation:not-an-id", { version: "1.6.0" }), /WORKSTATION_INPUT_INVALID/);
 });
 
+test("which computers can take a job is read from the same heartbeats: online, its name, its plugin, and gone once removed", async () => {
+  const { access, advance } = fixture();
+  const first = (await access.add({ actor: BOSS, name: "老板甲的 MacBook" })).workstation.workstationId;
+  const second = (await access.add({ actor: TESTER, name: "测试丙的电脑" })).workstation.workstationId;
+  assert.deepEqual(access.presence(first), { online: false, name: null, version: null, backgroundReady: false });
+  assert.deepEqual(access.onlineWorkstations(), []);
+  access.recordHeartbeat(first, { version: "1.6.0", name: "老板甲的 MacBook", backgroundReady: true });
+  advance(40_000);
+  access.recordHeartbeat(second, { version: "1.5.0", name: "测试丙的电脑", backgroundReady: false });
+  assert.deepEqual(access.presence(first), { online: true, name: "老板甲的 MacBook", version: "1.6.0", backgroundReady: true });
+  assert.deepEqual(access.onlineWorkstations(), [
+    { workstationId: first, name: "老板甲的 MacBook", version: "1.6.0", backgroundReady: true },
+    { workstationId: second, name: "测试丙的电脑", version: "1.5.0", backgroundReady: false }]);
+  advance(35_001);
+  assert.equal(access.presence(first).online, false, "a computer that stopped sending heartbeats is offline");
+  assert.deepEqual(access.onlineWorkstations().map(computer => computer.workstationId), [second]);
+  await access.remove({ workstationId: second });
+  assert.deepEqual(access.onlineWorkstations(), []);
+  assert.equal(access.presence(second).online, false);
+  assert.equal(access.presence("workstation:not-an-id").online, false);
+});
+
 test("a computer needs a name of 1 to 40 characters, and at most the set number of computers are in use", async () => {
   const { access } = fixture({ maxActive: 2 });
   for (const name of ["", "   ", "x".repeat(41), "带\n换行", 7, null]) {

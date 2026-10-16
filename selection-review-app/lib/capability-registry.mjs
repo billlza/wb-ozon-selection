@@ -509,8 +509,8 @@ export const CAPABILITY_NODES = Object.freeze([
     integrationStatus: "partial", runtimeScope: "local_development",
     baselineHealth: { state: "risk", reason: "本地身份和 Worker 注册表存在，但没有中央身份、租约和多机验收。" },
     stopConditions: "身份、角色、能力或心跳不满足时不得领取或执行。",
-    breakpoint: "本地主人认证已接入可替换提供器；团队账号登录（老板和测试各自的登录名和密码，账号存在 Postgres）已接入，测试能做除确认供货、确认利润、许可上架以外的操作，找新品批次、详情准备和账户准备团队共用；团队账号下每台装插件的电脑各有一把钥匙，插件每次回传都带着，哪台领的作业只能由哪台交回。点插件图标打开设置页，能填团队服务的 https 网址，插件就替那个服务干活；中央模式还没开。",
-    nextStep: "完成作业租约与中央模式，新旧进程交接。",
+    breakpoint: "本地主人认证已接入可替换提供器；团队账号登录（老板和测试各自的登录名和密码，账号存在 Postgres）已接入，测试能做除确认供货、确认利润、许可上架以外的操作，找新品批次、详情准备和账户准备团队共用；团队账号下每台装插件的电脑各有一把钥匙，插件每次回传都带着，哪台领的作业只能由哪台交回。点插件图标打开设置页，能填团队服务的 https 网址，插件就替那个服务干活。团队账号下每台电脑各管各的采集：人点的作业只给点的那台电脑做，软件自己排的给闲着的那台，一件商品同一时间只有一个作业；中央模式还没开。",
+    nextStep: "新旧进程交接，再开中央模式。",
     position: { x: 960, y: 180 },
     codeRefs: [
       capabilityRef("lib/runtime-identity.mjs", "createActorContext", "运行身份"),
@@ -518,7 +518,8 @@ export const CAPABILITY_NODES = Object.freeze([
       capabilityRef("lib/team-account-identity.mjs", "createTeamAccountIdentityProvider", "团队账号登录"),
       capabilityRef("lib/team-account-store.mjs", "createPostgresTeamAccountStore", "团队账号存储"),
       capabilityRef("lib/workstation-access.mjs", "createWorkstationAccess", "每台电脑的钥匙：加、移除、核对插件回传"),
-      capabilityRef("lib/workstation-store.mjs", "createPostgresWorkstationStore", "电脑名单存储（只存钥匙的摘要）")
+      capabilityRef("lib/workstation-store.mjs", "createPostgresWorkstationStore", "电脑名单存储（只存钥匙的摘要）"),
+      capabilityRef("lib/capture-assignment.mjs", "teamCaptureRefusal", "每台电脑各管各的采集：作业给哪台、哪台忙、一件商品一个作业")
     ],
     uiRefs: [capabilityRef("src/components/HeaderStatus.jsx", "HeaderStatus", "顶栏那一个状态指示器：运行方式、插件、采集控制三条合成一条"),
       capabilityRef("src/components/TeamAccountPanel.jsx", "TeamAccountView", "改自己的密码；老板给别人重设密码"),
@@ -531,12 +532,13 @@ export const CAPABILITY_NODES = Object.freeze([
       capabilityRef("tests/workstation-extension.test.mjs", "test(", "插件收下钥匙并在每次回传时带上"),
       capabilityRef("tests/workstation-ui.test.mjs", "test(", "页面把钥匙交给插件、电脑名单怎么显示"),
       capabilityRef("tests/workstations-db.test.mjs", "test(", "真 Postgres 上：没钥匙不收，别的电脑交不了这台领的作业"),
-      capabilityRef("tests/service-address-extension.test.mjs", "test(", "插件改连团队服务：先要许可，桥、回传和钥匙都跟着那个地址")],
+      capabilityRef("tests/service-address-extension.test.mjs", "test(", "插件改连团队服务：先要许可，桥、回传和钥匙都跟着那个地址"),
+      capabilityRef("tests/capture-assignment.test.mjs", "test(", "作业给哪台电脑、哪台忙、页面和顶栏怎么说")],
     artifactRefs: ["lib/runtime-identity-provider.mjs", "lib/runtime-configuration.mjs", "lib/local-owner-identity.mjs",
       "lib/scrypt-verifier.mjs", "lib/team-account-admin.mjs", "scripts/manage-team-accounts.mjs",
       "src/components/LocalOwnerAccessPanel.jsx", "src/ownerAccess.js", "src/runtimeArchitectureView.js", "src/headerStatusView.js",
       "src/workstationKey.js", "extension/1688-capture/background.js", "extension/1688-capture/bridge.js",
-      "extension/1688-capture/capture-request.js", "extension/1688-capture/options.html"]
+      "extension/1688-capture/capture-request.js", "extension/1688-capture/options.html", "src/captureControlView.js", "src/api.js"]
   }),
   capability({
     id: "1.5", capabilityId: "presentation.review-desk", areaId: "1",

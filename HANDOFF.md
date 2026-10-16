@@ -184,8 +184,21 @@
 - 服务端：团队账号下插件回传不再要求把每台电脑的插件 id 配进 `SELECTION_REVIEW_ALLOWED_EXTENSION_ORIGINS`（每台电脑装的插件 id 都不一样），任何 `chrome-extension://` 加 32 个字母的来源都能敲门，进门靠这台电脑的钥匙（`lib/http-api-boundary.mjs` 的 `anyChromeExtensionOrigin`，`server.mjs` 的 `chromeExtensionCors`）。网页来源和不像插件的来源照旧不收；不开团队账号时照旧只认配置的插件 id。
 - 页面：插件连的不是这个网址时，顶上显示「插件连的是别的服务地址 · 点浏览器右上角的插件图标，改成这个网址」（`other_service`），「干活的电脑」里也这样说；没找到插件时提示去插件图标里看连的是哪个网址。开始采集被拒的两句话（`src/captureStart.js`）也改成先看插件连的网址。
 - 合进 main、Mac 升级后要到 chrome://extensions 重新加载插件（1.6.0）。
-- 还没做（3c）：中央模式能起来、作业租约（作业派给具体哪台，那台掉线能收回）、新旧进程交接。
+- 还没做（3c）：每台电脑各管各的采集（见下一节）、新旧进程交接、中央模式能起来。
 - 测试：`tests/service-address-extension.test.mjs`（网址怎么算、只有设置页能改、要许可、桥和回传跟着地址、钥匙只给发它的服务、作业中不让改、后台刚醒先读地址、设置页先问许可再告诉后台）；`tests/http-api-boundary.test.mjs` 加了团队账号下任何插件来源都能敲门；`tests/workstations-db.test.mjs` 改成两台电脑各用自己的插件 id、服务端不配插件 id。
+
+### 多人中央服务第 3 步之三（上）：每台电脑各管各的采集（2026-10-16）
+
+以前全服务只有一把「商品采集控制」：同一时间只能有一个插件作业，五六台电脑也只能一台一台轮流。团队账号下改成每台电脑各管各的；不开团队账号时（主人 Mac 本机）还是原来那一把，什么都不变。
+
+- 作业给哪台（`lib/capture-assignment.mjs`）：人在页面上点的作业（A 卡确认去读货源、重新采集、读 Ozon 页面、找同款、收一轮 Seerfar）只给点的那台电脑。页面从插件那里知道自己在哪台电脑上，以后每个请求都带一个 `X-Selection-Review-Workstation` 头说是哪台（`src/api.js` 的 `setPageWorkstation`）。软件自己排的作业（录入流水线、「做这件」读 Ozon 页面）不指定电脑，只交给闲着的电脑上开着的页面，哪台先领到就是哪台做。
+- 一台电脑同一时间一个作业，一件商品同一时间一个作业（不管在哪台）。建作业时不行就当场 409，不排队、不自动重试：没说是哪台或这台没加进来（`workstation_not_added`）、这台的插件没连上服务（`workstation_offline`）、这件商品别的电脑正在采（`capture_candidate_busy`，说出是哪台）、这台电脑手上有别的作业（`workstation_busy`）。查完到登记作业之间不等任何东西，两个请求不会都通过（读了商品之后再查一遍）。
+- 领作业（`server.mjs` 领取那条路由）：分给别的电脑的作业这台领不了（`capture_job_for_other_computer`），这台手上还有作业也领不了（`workstation_busy`）。
+- 掉线：一台电脑关了，只有它自己的作业要等到期（排队 2 分钟、执行 60 秒，原来的规矩，结果不明的照旧等人核实），别的电脑照常干活；它没领的那些软件作业别的闲电脑会领。移除一台电脑后它的钥匙马上失效。
+- 页面：团队账号下 `/api/state` 的 `captureControl` 只说这台电脑（`scope: "this_computer"`），`elsewhere` 列出别的电脑正在采的商品和电脑名；那件商品的按钮写「别的电脑正在采集这件」（`src/captureControlView.js`），顶栏写「这台电脑正在采集 X，这台电脑上别的商品要等它结束；别的电脑照常能用」。`/api/health` 还是整个服务最早的那个作业。
+- Seerfar：一轮还是全服务同一时间一轮（Seerfar 自己的规矩），同时占着点它的那台电脑。Seerfar 路由里服务端自己的拒绝原样带着原因返回，不再都变成「Seerfar 榜单作业没有继续」。
+- 插件不用改（还是 1.6.0）。
+- 测试：`tests/capture-assignment.test.mjs`（给哪台、哪台忙、领取、页面和顶栏怎么说、软件作业交给哪台）；`tests/workstations-db.test.mjs` 加了两台电脑同时各做一件、同一件商品和同一台电脑各只一个作业、别的电脑领不了；`tests/workstation-access.test.mjs` 加了在线和名字；`tests/workstation-ui.test.mjs` 加了页面带上电脑的请求头。
 
 ### 本轮验证
 

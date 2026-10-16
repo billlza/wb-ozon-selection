@@ -1,7 +1,18 @@
+/** Sent with each request under team accounts, so the service knows which computer's plugin a job started here is for. */
+export const PAGE_WORKSTATION_HEADER = "X-Selection-Review-Workstation";
+const WORKSTATION_ID = /^workstation:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+let pageWorkstation = "";
+
+/** The computer this page's plugin said it is (empty when it has none, or no plugin answered). */
+export function setPageWorkstation(workstationId) {
+  pageWorkstation = typeof workstationId === "string" && WORKSTATION_ID.test(workstationId) ? workstationId : "";
+}
+
 async function request(path, options = {}) {
   const response = await fetch(path, {
     ...options,
-    headers: { "Content-Type": "application/json", ...options.headers }
+    headers: { "Content-Type": "application/json", ...(pageWorkstation ? { [PAGE_WORKSTATION_HEADER]: pageWorkstation } : {}),
+      ...options.headers }
   });
   let body;
   try { body = await response.json(); }

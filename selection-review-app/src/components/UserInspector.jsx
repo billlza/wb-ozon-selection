@@ -15,6 +15,7 @@ import C1OzonAttributePanel from "./C1OzonAttributePanel.jsx";
 import { candidateStoreFrozen, candidateProductionFactsFrozen } from "../../lib/candidate-user-fields.mjs";
 import { STORE_LABELS } from "../constants";
 import { salesCaptureFailurePresentation } from "../extensionStatus";
+import { captureBlockFor } from "../captureControlView.js";
 import { wbPresentation } from "../wbPresentation";
 import { MessageIcon } from "./Icons";
 import { evaluatePostLaunchObservation, POST_LAUNCH_THRESHOLDS } from "../../lib/post-launch-observation.mjs";
@@ -564,7 +565,8 @@ function ComparableCapturePanel({ candidate, captureControl, onStart }) {
   const snapshots = Array.isArray(candidate.salesSnapshotsV11) ? candidate.salesSnapshotsV11 : [];
   const comparables = snapshots.filter(snapshot => snapshot?.comparable === true);
   const own = snapshots.filter(snapshot => snapshot?.comparable !== true);
-  const busy = captureControl?.status === "busy";
+  const block = captureBlockFor(captureControl, candidate.id);
+  const busy = block.busy;
   const valid = /^https:\/\/(?:www\.)?ozon\.ru\/product\/[^\s]+$/i.test(url.trim());
   if (!candidate.lifecycleV11?.skuPackage) return null;
   return (
@@ -596,7 +598,7 @@ function ComparableCapturePanel({ candidate, captureControl, onStart }) {
       {error ? <p role="alert">{error}</p> : null}
       <button type="button" className="button secondary" disabled={!valid || saving || busy}
         onClick={() => run(async () => { await onStart(url.trim()); setUrl(""); })}>
-        {saving ? "正在连接Chrome…" : busy ? "其他商品正在采集" : "用Chrome读这个对标页面（一次）"}
+        {saving ? "正在连接Chrome…" : busy ? block.button : "用Chrome读这个对标页面（一次）"}
       </button>
     </section>
   );
@@ -1160,7 +1162,8 @@ function OzonSalesCapturePanel({ candidate, captureControl, extensionStatus, onS
   const canShow = /^https:\/\/(?:www\.)?ozon\.ru\/product\//i.test(candidate.productUrl || "") &&
     ["awaiting_user_direction", "codex_processing", "needs_user_data"].includes(candidate.workflowStatus) &&
     !candidate.lifecycleV11?.skuPackage;
-  const captureBusy = captureControl?.status === "busy";
+  const captureBlock = captureBlockFor(captureControl, candidate.id);
+  const captureBusy = captureBlock.busy;
   const { saving, error: actionError, run: submitAction } = useSubmit();
   if (!canShow) return null;
 
@@ -1213,12 +1216,12 @@ function OzonSalesCapturePanel({ candidate, captureControl, extensionStatus, onS
         {captureBusy && capture.status !== "waiting_extension" ? (
           <div className="source-capture-summary capture-busy">
             <b>商品采集控制正在使用</b>
-            <span>{captureControl.label}；当前商品不会排队，也不会自动重试。</span>
+            <span>{captureBlock.label}；当前商品不会排队，也不会自动重试。</span>
           </div>
         ) : null}
         {capture.status !== "waiting_extension" ? (
           <button type="button" className="button primary" disabled={saving || captureBusy} onClick={start}>
-            {saving ? "正在连接Chrome…" : captureBusy ? "其他商品正在采集" : capture.status === "failed" ? "按当前页面重试一次" : "用Chrome采集当前Ozon快照（一次）"}
+            {saving ? "正在连接Chrome…" : captureBusy ? captureBlock.button : capture.status === "failed" ? "按当前页面重试一次" : "用Chrome采集当前Ozon快照（一次）"}
           </button>
         ) : null}
       </div>

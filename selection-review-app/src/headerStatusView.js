@@ -51,11 +51,17 @@ function captureIssue(control) {
   const candidateId = textOf(control?.candidateId);
   const platform = textOf(control?.platform);
   const who = candidateId === "" ? "另一件商品" : candidateId;
+  const where = platform === "" ? "" : `（${platform}）`;
+  // 团队账号下每台电脑各管各的：这里只说这台电脑，别的电脑不受它影响。
+  if (control?.scope === "this_computer") {
+    return { source: "capture", code: "busy", tone: "busy",
+      sentence: `这台电脑正在采集 ${who}${where}，这台电脑上别的商品要等它结束；别的电脑照常能用` };
+  }
   return {
     source: "capture",
     code: "busy",
     tone: "busy",
-    sentence: `${who} 正在采集${platform === "" ? "" : `（${platform}）`}，这会儿别的商品要等它结束`
+    sentence: `${who} 正在采集${where}，这会儿别的商品要等它结束`
   };
 }
 

@@ -13,6 +13,7 @@ import { importBusinessStateToPostgres } from "../lib/business-state-import.mjs"
 import { createPasswordVerifier } from "../lib/scrypt-verifier.mjs";
 import { createPostgresBusinessStateStore } from "../lib/postgres-business-state-store.mjs";
 import { createPostgresTeamAccountStore } from "../lib/team-account-store.mjs";
+import { PAGE_WORKSTATION_HEADER } from "../lib/capture-assignment.mjs";
 import { workstationKeyDigest } from "../lib/workstation-access.mjs";
 import { createPostgresWorkstationStore, WORKSTATION_TABLE } from "../lib/workstation-store.mjs";
 import { SYNTHETIC_STORE_REF } from "./fixtures/store-binding-fixture.mjs";
@@ -81,6 +82,11 @@ test("computers live in their own table: a digest per key, a cap on how many, an
   assert.deepEqual(rows.map(row => [row.workstation_id, row.status]), [[id(1), "removed"], [id(2), "active"], [id(3), "active"]]);
 });
 
+// The A card's "confirm" for a product not read yet: it asks for one 1688 read first.
+const confirmSupply = (productId, revision) => ({ dataRevision: revision, sourceCandidateId: productId, sourceDataRevision: revision,
+  targetPlatform: "ozon", storeRef: structuredClone(SYNTHETIC_STORE_REF), decision: "confirm", salesReview: {},
+  supplierConfirmation: { productUrl: "https://qr.1688.com/s/7OnLCakq", ownerSupplyConfirmed: false } });
+
 const BOSS = { userId: "team-user:00000000-0000-4000-8000-000000000001", loginName: "boss-a", displayName: "老板甲", role: "boss" };
 const TESTER = { userId: "team-user:00000000-0000-4000-8000-000000000003", loginName: "tester", displayName: "测试丙", role: "tester" };
 const PASSWORDS = { "boss-a": "synthetic boss a 2026", tester: "synthetic tester 2026" };
@@ -97,7 +103,8 @@ function unreadProduct(productId) {
     comments: [], history: [], createdAt: "2026-08-19T00:00:00.000Z", updatedAt: "2026-08-19T00:00:00.000Z" };
 }
 
-test("with team accounts a plugin call needs its computer's key, and a job claimed by one computer is finished only by it", async t => {
+// One service process with team accounts over its own schema, seeded with these products; the calls a page and a plugin make.
+async function startTeamService(t, candidates) {
   const port = Number(process.env.SELECTION_REVIEW_TEST_PORT);
   if (!Number.isSafeInteger(port) || port < 1 || [4317, 4318, 4173, 4319].includes(port)) throw new Error("TEST_REQUIRES_ISOLATED_PORT");
   const base = `http://127.0.0.1:${port}`;
@@ -108,7 +115,7 @@ test("with team accounts a plugin call needs its computer's key, and a job claim
   const directory = await mkdtemp(path.join(tmpdir(), "workstations-api-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const seed = path.join(directory, "seed.json");
-  await writeFile(seed, JSON.stringify({ ...initialBusinessStateDocument(), candidates: [unreadProduct("WS-1")] }));
+  await writeFile(seed, JSON.stringify({ ...initialBusinessStateDocument(), candidates }));
   const businessStore = createPostgresBusinessStateStore({ connectionString });
   try {
     assert.equal((await importBusinessStateToPostgres({ sourceFile: seed, store: businessStore, write: true })).status, "imported");
@@ -159,6 +166,11 @@ test("with team accounts a plugin call needs its computer's key, and a job claim
   const heartbeat = (key, origin) => plugin("/api/extension/heartbeat", { version: "1.6.0", backgroundReady: true, observedAt: new Date().toISOString() },
     key, origin);
 
+  return { base, admin, schema, connectionString, stderr, call, login, plugin, heartbeat };
+}
+
+test("with team accounts a plugin call needs its computer's key, and a job claimed by one computer is finished only by it", async t => {
+  const { base, admin, schema, connectionString, stderr, call, login, plugin, heartbeat } = await startTeamService(t, [unreadProduct("WS-1")]);
   // Nobody signed in sees or adds a computer.
   assert.equal((await call("/api/workstations")).status, 401);
   assert.equal((await call("/api/workstations/add", { body: { name: "外人的电脑" }, headers: { Origin: base, "Sec-Fetch-Site": "same-origin" } })).status, 401);
@@ -205,10 +217,9 @@ test("with team accounts a plugin call needs its computer's key, and a job claim
   assert.deepEqual(listed.body.workstations.map(workstation => [workstation.name, workstation.online, workstation.extensionVersion]),
     [["老板甲的 MacBook", true, "1.6.0"], ["测试丙的电脑", false, null]]);
 
-  // The boss confirms the product's supply: one 1688 read is queued. Computer A claims it; only A can hand it back.
-  const queued = await call("/api/candidates/WS-1/lifecycle/a-confirm", { cookie: boss, body: { dataRevision: 1, sourceCandidateId: "WS-1",
-    sourceDataRevision: 1, targetPlatform: "ozon", storeRef: structuredClone(SYNTHETIC_STORE_REF), decision: "confirm", salesReview: {},
-    supplierConfirmation: { productUrl: "https://qr.1688.com/s/7OnLCakq", ownerSupplyConfirmed: false } } });
+  // The boss confirms the product's supply on computer A: one 1688 read is queued for A. A claims it; only A can hand it back.
+  const queued = await call("/api/candidates/WS-1/lifecycle/a-confirm", { cookie: boss, body: confirmSupply("WS-1", 1),
+    headers: { [PAGE_WORKSTATION_HEADER]: computerA } });
   assert.equal(queued.status, 202, JSON.stringify(queued.body));
   const jobId = queued.body.captureJob.jobId;
   assert.equal((await plugin(`/api/extension/capture-jobs/${jobId}/claim`, { version: "1.6.0" })).status, 401, "no key, no claim");
@@ -234,4 +245,66 @@ test("with team accounts a plugin call needs its computer's key, and a job claim
   assert.deepEqual((await call("/api/workstations", { cookie: boss })).body.workstations.map(workstation => workstation.workstationId), [computerB]);
   assert.equal(stderr.join("").includes(connectionString), false);
   assert.equal(stderr.join("").includes(keyA) || stderr.join("").includes(keyB), false);
+});
+
+test("with team accounts each computer runs its own job at the same time; a product and a computer each hold one job", async t => {
+  const { call, login, plugin, heartbeat } = await startTeamService(t, [unreadProduct("WS-1"), unreadProduct("WS-2")]);
+  const boss = await login("boss-a");
+  const tester = await login("tester");
+  const add = async (cookie, name) => (await call("/api/workstations/add", { cookie, body: { name } })).body;
+  const [a, b, c] = [await add(boss, "老板甲的 MacBook"), await add(tester, "测试丙的电脑"), await add(boss, "老板乙的电脑")];
+  const [computerA, computerB, computerC] = [a, b, c].map(added => added.workstation.workstationId);
+  assert.equal((await heartbeat(a.key)).status, 200);
+  assert.equal((await heartbeat(b.key, OTHER_EXTENSION_ORIGIN)).status, 200);
+  const from = computer => (computer ? { [PAGE_WORKSTATION_HEADER]: computer } : {});
+  const confirm = (cookie, productId, revision, computer) => call(`/api/candidates/${productId}/lifecycle/a-confirm`,
+    { cookie, body: confirmSupply(productId, revision), headers: from(computer) });
+  const product = async productId => (await call("/api/state", { cookie: boss })).body.candidates.find(item => item.id === productId);
+
+  // A page that has not said which computer it is on, or names one whose plugin is not online, starts nothing.
+  const unnamed = await confirm(boss, "WS-1", 1, null);
+  assert.deepEqual([unnamed.status, unnamed.body.code], [409, "workstation_not_added"], JSON.stringify(unnamed.body));
+  const offline = await confirm(boss, "WS-1", 1, computerC);
+  assert.deepEqual([offline.status, offline.body.code], [409, "workstation_offline"], JSON.stringify(offline.body));
+  assert.equal((await product("WS-1")).sourceCapture ?? null, null, "nothing was queued or written");
+
+  // A and B each start a read on their own product; both are open at once.
+  const onA = await confirm(boss, "WS-1", 1, computerA);
+  assert.equal(onA.status, 202, JSON.stringify(onA.body));
+  const busyA = await confirm(boss, "WS-2", 1, computerA);
+  assert.deepEqual([busyA.status, busyA.body.code], [409, "workstation_busy"], JSON.stringify(busyA.body));
+  assert.match(busyA.body.message, /这台电脑的插件正在采集 WS-1/u);
+  const onB = await confirm(tester, "WS-2", 1, computerB);
+  assert.equal(onB.status, 202, JSON.stringify(onB.body));
+  // B asking for the product A already has is told whose it is, not handed A's job.
+  const taken = await confirm(tester, "WS-1", 2, computerB);
+  assert.deepEqual([taken.status, taken.body.code], [409, "capture_candidate_busy"], JSON.stringify(taken.body));
+  assert.match(taken.body.message, /「老板甲的 MacBook」采集/u);
+
+  // Each page sees its own computer's job; the other computer's product is listed with its name.
+  const pageA = (await call("/api/state", { cookie: boss, headers: from(computerA) })).body.captureControl;
+  assert.deepEqual([pageA.status, pageA.scope, pageA.candidateId], ["busy", "this_computer", "WS-1"]);
+  assert.deepEqual(pageA.elsewhere, [{ candidateId: "WS-2", platform: "1688", captureKind: "supplier", computer: "测试丙的电脑" }]);
+  const pageB = (await call("/api/state", { cookie: tester, headers: from(computerB) })).body.captureControl;
+  assert.deepEqual([pageB.status, pageB.candidateId], ["busy", "WS-2"]);
+
+  // A job is claimed only by the computer it is for.
+  const [jobA, jobB] = [onA.body.captureJob.jobId, onB.body.captureJob.jobId];
+  const wrong = await plugin(`/api/extension/capture-jobs/${jobA}/claim`, { version: "1.6.0" }, b.key, OTHER_EXTENSION_ORIGIN);
+  assert.deepEqual([wrong.status, wrong.body.code], [409, "capture_job_for_other_computer"], JSON.stringify(wrong.body));
+  const claimedA = await plugin(`/api/extension/capture-jobs/${jobA}/claim`, { version: "1.6.0" }, a.key);
+  assert.equal(claimedA.status, 200, JSON.stringify(claimedA.body));
+  const claimedB = await plugin(`/api/extension/capture-jobs/${jobB}/claim`, { version: "1.6.0" }, b.key, OTHER_EXTENSION_ORIGIN);
+  assert.equal(claimedB.status, 200, JSON.stringify(claimedB.body));
+  assert.equal((await product("WS-1")).sourceCapture.status, "capturing");
+  assert.equal((await product("WS-2")).sourceCapture.status, "capturing");
+
+  // A finishes; A is free again while B keeps going.
+  const job = claimedA.body.captureJob;
+  const done = await plugin("/api/candidates/WS-1/source-capture/result", { captureId: job.captureId, token: job.token,
+    dataRevision: job.dataRevision, status: "failed", failureCode: "site_login_required", observedAt: new Date().toISOString() }, a.key);
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  const freeA = (await call("/api/state", { cookie: boss, headers: from(computerA) })).body.captureControl;
+  assert.deepEqual([freeA.status, freeA.elsewhere.map(item => item.candidateId)], ["idle", ["WS-2"]]);
+  assert.equal((await call("/api/state", { cookie: tester, headers: from(computerB) })).body.captureControl.status, "busy");
 });

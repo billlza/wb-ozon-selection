@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "vite";
 import react from "@vitejs/plugin-react";
 
-import { api } from "../src/api.js";
+import { api, PAGE_WORKSTATION_HEADER, setPageWorkstation } from "../src/api.js";
 import { CAPTURE_START_REJECTION_MESSAGES } from "../src/captureStart.js";
 import { EXPECTED_EXTENSION_VERSION, extensionConnectionStatus } from "../src/extensionStatus.js";
 import { handWorkstationKeyToPlugin, WORKSTATION_KEY_ACK, WORKSTATION_KEY_MESSAGE, WORKSTATION_KEY_TIMEOUT_MS,
@@ -83,6 +83,27 @@ test("the page asks the service for the computers with the fields it expects and
     { url: "/api/workstations/add", method: "POST", body: JSON.stringify({ name: "老板甲的 MacBook" }) },
     { url: "/api/workstations/remove", method: "POST", body: JSON.stringify({ workstationId: WORKSTATION_ID }) }
   ]);
+});
+
+test("once its plugin says which computer it is on, the page names that computer on every request, and only a well-formed one", async () => {
+  const sent = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    sent.push(init.headers?.[PAGE_WORKSTATION_HEADER] ?? null);
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    await api.listWorkstations();
+    setPageWorkstation(WORKSTATION_ID);
+    await api.listWorkstations();
+    await api.addWorkstation({ name: "老板甲的 MacBook" });
+    for (const value of ["workstation:not-an-id", 7, null, undefined]) {
+      setPageWorkstation(value);
+      await api.listWorkstations();
+    }
+  } finally { globalThis.fetch = previousFetch; setPageWorkstation(""); }
+  assert.equal(PAGE_WORKSTATION_HEADER.toLowerCase(), "x-selection-review-workstation");
+  assert.deepEqual(sent, [null, WORKSTATION_ID, WORKSTATION_ID, null, null, null, null]);
 });
 
 test("the computers panel shows this computer, who is online, and adds or removes one", async () => {
