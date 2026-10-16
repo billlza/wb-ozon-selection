@@ -595,6 +595,11 @@ export function createSelectionReviewRuntimeConfiguration({ env = process.env, a
   const allowedOrigins = String(env.SELECTION_REVIEW_ALLOWED_ORIGINS || publicOrigin)
     .split(",")
     .map((item) => normalizeServiceOrigin(item.trim(), { deploymentMode, label: "allowedOrigin" }));
+  // How many proxies in front of this service add the address they saw to X-Forwarded-For (on Render, set it when
+  // deploying and check it there). 0: whoever connects is the caller. Sign-in failures are counted by that address.
+  const trustedProxyHopsText = String(env.SELECTION_REVIEW_TRUSTED_PROXY_HOPS || "0").trim();
+  if (!/^[0-3]$/u.test(trustedProxyHopsText)) throw new Error("RUNTIME_CONFIGURATION_INVALID: 代理层数只能是0到3");
+  const trustedProxyHops = Number(trustedProxyHopsText);
   const allowedExtensionOrigins = String(env.SELECTION_REVIEW_ALLOWED_EXTENSION_ORIGINS || "")
     .split(",")
     .map((item) => item.trim())
@@ -656,6 +661,7 @@ export function createSelectionReviewRuntimeConfiguration({ env = process.env, a
     publicOrigin,
     allowedOrigins: Object.freeze([...new Set(allowedOrigins)]),
     allowedExtensionOrigins: Object.freeze([...new Set(allowedExtensionOrigins)]),
+    trustedProxyHops,
     aiGatewayUrl,
     ozonEvidenceServiceUrl,
     stateAdapter,

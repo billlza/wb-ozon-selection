@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-16T14:55:44.739Z",
+  "frozenAt": "2026-10-16T15:37:57.839Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 1014,
-      "sha256": "c503c09f5ecb6eee9250c16740b760141bbbb7226d52cdeb5913af9810022f50",
+      "sha256": "2368bd053bac8421ddc5c8ff62f63f2a084709f5c6bff28fe96cb1da063301f6",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -1128,7 +1128,7 @@
       },
       {
         "path": "lib/runtime-configuration.mjs",
-        "sha256": "d2daf1b554587b0a160202d9721d47622d91a998d14819a6e51c0e7c44ff8364"
+        "sha256": "9309a9a44995936336e8e0a8f07f1438efa1f8de8f92df8a69d600239eb5e7fe"
       },
       {
         "path": "lib/runtime-health-worker.mjs",
@@ -1140,7 +1140,7 @@
       },
       {
         "path": "lib/runtime-identity-provider.mjs",
-        "sha256": "72b988700246a4f59466528aba2218793c987d4093ea2175c1a521a7aaeaad84"
+        "sha256": "036ee179b70cdfa716a95aee3cce9763dcff2ac89a1d86f2f48d6bfa84f89415"
       },
       {
         "path": "lib/runtime-identity.mjs",
@@ -1320,7 +1320,7 @@
       },
       {
         "path": "lib/team-account-identity.mjs",
-        "sha256": "8858959f2333f0407f52c95bc7b0a911e80f316c83c17049831437d6ff8ed190"
+        "sha256": "7cde675c0557f8800cc8c36654aefe7d652b15683f266fe38769823a909f146d"
       },
       {
         "path": "lib/team-account-store.mjs",
@@ -1732,7 +1732,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "202600b156ffb0009a3b3eff0e3c8923fcda098aac5c3eb5b4dd3d950cddbb54"
+        "sha256": "d3a4c5ff779efe731ed569931e56171291716c89941c7fba768434f6262f2935"
       },
       {
         "path": "src/App.jsx",
@@ -4040,7 +4040,7 @@
       },
       {
         "path": "tests/team-accounts.test.mjs",
-        "sha256": "e67efc3d45bbf3e5a2a05b7890d1fddd313250faf23e39656154e8497ca112a6"
+        "sha256": "121953705107d2490eb164de00bc0f920baafb74afbffa07414289732ebedf39"
       },
       {
         "path": "tests/three-store-map-api.test.mjs",

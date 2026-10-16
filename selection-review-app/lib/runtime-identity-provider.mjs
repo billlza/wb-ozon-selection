@@ -14,6 +14,7 @@ export function createConfiguredIdentityProvider({ configuration, clock = () => 
   // environment, like the repository's.
   if (configuration?.identityProvider === "team_accounts" && configuration.stateAdapter === "postgres") {
     return createTeamAccountIdentityProvider({ clock, secureCookies: new URL(configuration.publicOrigin).protocol === "https:",
+      trustedProxyHops: configuration.trustedProxyHops ?? 0,
       accountStore: accountStore ?? createPostgresTeamAccountStore({ connectionString: String(env?.SELECTION_REVIEW_DATABASE_URL ?? "").trim() }) });
   }
   if (configuration?.identityProvider === "local_owner_password" && configuration.deploymentMode === "local_development" &&

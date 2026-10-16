@@ -121,7 +121,7 @@
 
 - 开法：`SELECTION_REVIEW_IDENTITY_PROVIDER=team_accounts`，只能和 Postgres 一起用（账号表 `selection_review_accounts` 和业务数据在同一个库，`lib/team-account-store.mjs`）。不设就和以前一样，主人 Mac 上的本机主人密码不受影响。
 - 账号只用命令行开：`scripts/manage-team-accounts.mjs`（list、add、reset-password、disable、enable、import-owner）。数据库地址从 `SELECTION_REVIEW_DATABASE_URL` 读，不打印；密码从键盘输入时不回显，管道输入取第一行，不能写在参数里。`import-owner --from /绝对路径/owner.json` 把 Mac 上的主人密码文件导成一个老板账号，用户编号和密码都不变，以前主人做过的确认仍归这个人。新密码至少 8 个字符（服务器在公网上）；导入的主人密码保持原样。
-- 登录（`lib/team-account-identity.mjs`）：登录名不分大小写。同一个名字 15 分钟内错 5 次、所有名字合计错 20 次，就先停 15 分钟；不存在的名字也照样算一遍密码，回应时间看不出名字存不存在。会话存在服务进程的内存里（重启要重新登录），8 小时到期，30 分钟没有写操作也到期；一个账号最多 6 处同时登录，全部最多 30 个。Cookie 是 `HttpOnly`、`SameSite=Strict`，公网地址是 https 时加 `Secure`。每个请求都重读账号：停用或改了密码，别处登着的下一下就退出。
+- 登录（`lib/team-account-identity.mjs`）：登录名不分大小写。同一个来源地址 15 分钟内对同一个名字错 5 次、对所有名字合计错 20 次，这个地址就先停 15 分钟（按来源地址计是下面「上公网前的登录加固」改的）；不存在的名字也照样算一遍密码，回应时间看不出名字存不存在。会话存在服务进程的内存里（重启要重新登录），8 小时到期，30 分钟没有写操作也到期；一个账号最多 6 处同时登录，全部最多 30 个。Cookie 是 `HttpOnly`、`SameSite=Strict`，公网地址是 https 时加 `Secure`。每个请求都重读账号：停用或改了密码，别处登着的下一下就退出。
 - 权限：老板按主人（`owner`）算，测试按 `operator` 算。没登录时只能读 `/api/live`、`/api/health`、`/api/ready`、登录状态和登录接口，商品图片也要登录；测试的写请求一律 403 `team_tester_read_only`。有几块现在也只有老板能看（找新品、Seerfar、店铺画像、以图找货源、商品详情、账户准备、找货资料、属性映射、同款整批和 D 批量的详情），下一个 PR 和测试能做的操作一起放开。插件回传和服务内部请求不走这道门，第 3 步给插件配对时再管。
 - 改密码：`POST /api/owner-access/password` 改自己的，要先填现在的密码，改完别处退出、这里继续登着。老板用 `GET /api/team-accounts` 看名单（不含密码校验值），用 `POST /api/team-accounts/reset-password` 给另一位老板或测试重设（不能给自己），那个人各处退出。页面：登录框多了登录名；「维护」里写明谁登着、什么角色，下面是改密码和重设密码（`src/components/TeamAccountPanel.jsx`）。没登录时页面不读数据，登录后自己开始读；退出时把读到的数据清掉。
 - 中央模式仍然起不来（要等第 3 步），现在只能在本机开发方式加 Postgres 下试。
@@ -150,6 +150,16 @@
 - 外面的人（不是团队账号）看不到这些，动它们得到 `OWNER_CONFLICT` 或 `PREPARATION_OWNER_CONFLICT`。
 - C1 的付费续跑和其他按人记的地方这次没动。
 - 测试：`tests/ozon-account-discovery.test.mjs`（老板开准备，测试看到、不能重复开、自己许可并读账户、选仓库；外面的人看不到）；`tests/a-discovery-candidate-import.test.mjs`（老板的批次由测试跑完、导入，另一位老板也能导入，外面的人被拒）；`tests/a-discovery-runtime-services.test.mjs`（测试看得到老板的批次、同一轮开不了第二次、能不要候选）；`tests/a-product-detail-application.test.mjs`（测试给老板批次导入的商品做详情准备并采用）；`tests/team-accounts.test.mjs` 测 `sameTeamUser`。
+
+### 多人中央服务第 2 步（再续）：上公网前的登录加固（2026-10-16）
+
+合进 #16 时审查提出：原来同一个名字错 5 次、全部合计错 20 次就停 15 分钟，服务器在公网上，谁知道网址就能一直把三个人都锁在外面。
+
+- 现在按来源地址计（`lib/team-account-identity.mjs` 的 `signInSource`）：同一个地址对同一个名字错 5 次、对所有名字合计错 20 次，停的只是这个地址；别的地址上的人照常登录。IPv6 按前 64 位算一个地址（`failureSourceKey`），换同一段里的别的地址不能重新计。改自己密码时填错现在的密码也一样计。去掉了全局的那道锁。计数最多记一万条，多了先丢最久没动的。
+- 来源地址默认取连接过来的地址。服务前面有代理（放到 Render 上就有）时，设 `SELECTION_REVIEW_TRUSTED_PROXY_HOPS` 为代理层数（0 到 3，默认 0），取 `X-Forwarded-For` 从右数第几个，那是最外一层代理亲眼看到的地址；更左边的是调用的人自己写的，不看。第 5 步部署时要实测核对 Render 的层数；设错了，要么大家共用一个地址的计数，要么认的是别人能伪造的地址。
+- 还没补、上公网前要补的：团队账号下插件回传（心跳、领作业、各类结果、以图搜）不用登录，只看 `Origin` 头，命令行能伪造。第 3 步给每台电脑配一把钥匙时挂上；在那之前中央部署不要配 `SELECTION_REVIEW_ALLOWED_EXTENSION_ORIGINS`（中央模式第 3 步之前本来也起不来）。
+- 测试：`tests/team-accounts.test.mjs` 加了「一个地址乱试锁不住别的地址」「IPv6 按前 64 位计」「代理后面只认代理看到的地址」和代理层数配置。
+- 没防住的：很多地址一起慢慢猜，只靠 scrypt 慢（一次只核一个密码）和新密码至少 8 个字符挡着，所以团队账号的密码别用常见词。
 
 ### 本轮验证
 

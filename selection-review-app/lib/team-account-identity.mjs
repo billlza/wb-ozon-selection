@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { isIP } from "node:net";
 import { OwnerIdentityError } from "./local-owner-identity.mjs";
 import { createPasswordVerifier, passwordMatches } from "./scrypt-verifier.mjs";
 import { isRuntimeConfigurationTimestamp } from "./runtime-configuration.mjs";
@@ -14,9 +15,12 @@ const SESSION_LIFETIME_MS = 8 * 60 * 60 * 1000;
 const SESSION_IDLE_MS = 30 * 60 * 1000;
 const MAX_SESSIONS_PER_ACCOUNT = 6;
 const MAX_SESSIONS = 30;
+// Wrong passwords are counted by where they come from, so someone else guessing cannot lock the team out: one address
+// waits after five wrong passwords for one login name, or twenty for any names, within fifteen minutes.
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
-const MAX_FAILURES_PER_NAME = 5;
-const MAX_FAILURES_TOTAL = 20;
+const MAX_FAILURES_PER_SOURCE_NAME = 5;
+const MAX_FAILURES_PER_SOURCE = 20;
+const MAX_FAILURE_COUNTERS = 10000;
 // The server is reachable from the internet, so a new password is longer than the local owner's four characters.
 export const TEAM_PASSWORD_MIN_CHARACTERS = 8;
 
@@ -40,6 +44,41 @@ export function newTeamPassword(value) {
   return password;
 }
 
+/**
+ * Where a sign-in comes from: the connecting address, or, with `trustedProxyHops` proxies in front of the service (each
+ * adding the address it saw to X-Forwarded-For), the address the outermost of them saw. Anything earlier in that header
+ * is whatever the caller wrote, so it is never read.
+ */
+export function signInSource(request, trustedProxyHops = 0) {
+  const connected = request?.socket?.remoteAddress;
+  const fallback = typeof connected === "string" && isIP(connected) ? connected : "unknown";
+  if (trustedProxyHops === 0) return fallback;
+  const header = request?.headers?.["x-forwarded-for"];
+  if (typeof header !== "string" || header.length > 2048) return fallback;
+  const entries = header.split(",").map(item => item.trim());
+  const address = entries[entries.length - trustedProxyHops];
+  return typeof address === "string" && isIP(address) ? address : fallback;
+}
+
+/**
+ * What wrong passwords are counted under: an IPv4 address as it is (also when written as IPv6), and for IPv6 its /64,
+ * since one connection usually holds a whole /64 and could otherwise start afresh from each address in it.
+ */
+export function failureSourceKey(address) {
+  if (isIP(address) === 4) return address;
+  if (isIP(address) !== 6) return String(address);
+  const lower = address.toLowerCase().split("%")[0];
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/u.exec(lower);
+  if (mapped) return mapped[1];
+  // A dotted IPv4 tail is the last two groups, past the /64 anyway.
+  const plain = lower.replace(/\d+\.\d+\.\d+\.\d+$/u, "0:0");
+  const groups = part => part === "" ? [] : part.split(":");
+  const [head, tail] = plain.includes("::") ? plain.split("::") : [plain, ""];
+  const left = groups(head), right = groups(tail);
+  const full = [...left, ...Array(8 - left.length - right.length).fill("0"), ...right];
+  return `${full.slice(0, 4).map(group => Number.parseInt(group, 16).toString(16)).join(":")}::/64`;
+}
+
 function cookieToken(request) {
   const header = request?.headers?.cookie;
   if (typeof header !== "string" || header.length > 4096) return null;
@@ -49,16 +88,18 @@ function cookieToken(request) {
   return /^[A-Za-z0-9_-]{43}$/u.test(token) ? token : null;
 }
 
-export function createTeamAccountIdentityProvider({ accountStore, secureCookies = false, clock = () => new Date().toISOString() } = {}) {
-  if (accountStore?.boundaryType !== "team_account_store" || typeof secureCookies !== "boolean" || typeof clock !== "function") {
+export function createTeamAccountIdentityProvider({ accountStore, secureCookies = false, trustedProxyHops = 0,
+  clock = () => new Date().toISOString() } = {}) {
+  if (accountStore?.boundaryType !== "team_account_store" || typeof secureCookies !== "boolean" || typeof clock !== "function" ||
+      !Number.isInteger(trustedProxyHops) || trustedProxyHops < 0 || trustedProxyHops > 3) {
     throw failure("TEAM_IDENTITY_CONFIGURATION_INVALID", 503, "团队登录配置无效");
   }
   let initialized = false;
   let operationRunning = false;
   let unknownNameVerifier = null;
   const sessions = new Map();
+  // Wrong-password counters by source address, and by source address and login name; oldest first.
   const failures = new Map();
-  let failuresTotal = null;
   // What each request was found to be, set once by authenticateRequest before any route reads it.
   const resolved = new WeakMap();
 
@@ -82,8 +123,7 @@ export function createTeamAccountIdentityProvider({ accountStore, secureCookies 
   }
   function purgeExpired(nowMs) {
     for (const [token, session] of sessions) if (session.expiresAt <= nowMs || session.idleUntil <= nowMs) sessions.delete(token);
-    for (const [name, window] of failures) if (window.until <= nowMs) failures.delete(name);
-    if (failuresTotal && failuresTotal.until <= nowMs) failuresTotal = null;
+    for (const [key, window] of failures) if (window.until <= nowMs) failures.delete(key);
   }
   function endSessionsOf(userId) {
     for (const [token, session] of sessions) if (session.userId === userId) sessions.delete(token);
@@ -119,18 +159,27 @@ export function createTeamAccountIdentityProvider({ accountStore, secureCookies 
     try { return await operation(); }
     finally { operationRunning = false; }
   }
-  function assertNotRateLimited(name, nowMs) {
+  function failureKeys(source, name) {
+    const key = failureSourceKey(source);
+    return { bySource: JSON.stringify([key]), byName: JSON.stringify([key, name]) };
+  }
+  function assertNotRateLimited(source, name, nowMs) {
     purgeExpired(nowMs);
-    if ((failures.get(name)?.count ?? 0) >= MAX_FAILURES_PER_NAME || (failuresTotal?.count ?? 0) >= MAX_FAILURES_TOTAL) {
+    const keys = failureKeys(source, name);
+    if ((failures.get(keys.bySource)?.count ?? 0) >= MAX_FAILURES_PER_SOURCE ||
+        (failures.get(keys.byName)?.count ?? 0) >= MAX_FAILURES_PER_SOURCE_NAME) {
       throw failure("TEAM_LOGIN_RATE_LIMITED", 429, "密码错的次数太多，请15分钟后再试");
     }
   }
-  function recordFailure(name, nowMs) {
-    const window = failures.get(name) ?? { count: 0, until: nowMs + FAILURE_WINDOW_MS };
-    window.count += 1;
-    failures.set(name, window);
-    failuresTotal ??= { count: 0, until: nowMs + FAILURE_WINDOW_MS };
-    failuresTotal.count += 1;
+  function recordFailure(source, name, nowMs) {
+    for (const key of Object.values(failureKeys(source, name))) {
+      const window = failures.get(key) ?? { count: 0, until: nowMs + FAILURE_WINDOW_MS };
+      window.count += 1;
+      failures.delete(key);
+      failures.set(key, window);
+    }
+    // Many addresses guessing at once cannot grow this without bound; the counters touched longest ago go first.
+    while (failures.size > MAX_FAILURE_COUNTERS) failures.delete(failures.keys().next().value);
   }
   function signedIn(request) {
     requireInitialized();
@@ -183,20 +232,21 @@ export function createTeamAccountIdentityProvider({ accountStore, secureCookies 
     async setup() {
       throw failure("TEAM_ACCOUNT_SETUP_DISABLED", 403, "账号只能用管理命令建立，网页上不能自己开账号");
     },
-    async login(input) {
+    async login(input, { request } = {}) {
       if (!exact(input, ["loginName", "password"]) || typeof input.loginName !== "string" || enteredPassword(input.password) === null) {
         throw failure("TEAM_LOGIN_INPUT_INVALID", 400, "请填写登录名和密码");
       }
       const name = normalizeLoginName(input.loginName) ?? "";
+      const source = signInSource(request, trustedProxyHops);
       return exclusive(async () => {
-        assertNotRateLimited(name, instant().ms);
+        assertNotRateLimited(source, name, instant().ms);
         const account = name ? await stored(() => accountStore.findByLoginName(name)) : null;
         const matches = await verify(account, input.password);
         if (!matches || account.status !== "active") {
-          recordFailure(name, instant().ms);
+          recordFailure(source, name, instant().ms);
           throw failure("TEAM_LOGIN_REJECTED", 401, "登录名或密码不正确");
         }
-        failures.delete(name);
+        failures.delete(failureKeys(source, name).byName);
         return createSession(account);
       });
     },
@@ -213,16 +263,17 @@ export function createTeamAccountIdentityProvider({ accountStore, secureCookies 
         throw failure("TEAM_PASSWORD_INPUT_INVALID", 400, "请填写现在的密码和新密码");
       }
       const password = newTeamPassword(input.newPassword);
+      const source = signInSource(request, trustedProxyHops);
       return exclusive(async () => {
         const name = entry.account.loginName;
-        assertNotRateLimited(name, instant().ms);
+        assertNotRateLimited(source, name, instant().ms);
         const account = await stored(() => accountStore.findByUserId(entry.account.userId));
         if (!account || account.status !== "active" || account.credentialRevision !== entry.session.credentialRevision) {
           sessions.delete(entry.token);
           throw failure("OWNER_LOGIN_REQUIRED", 401, "请先登录");
         }
         if (!await verify(account, input.currentPassword)) {
-          recordFailure(name, instant().ms);
+          recordFailure(source, name, instant().ms);
           throw failure("TEAM_CURRENT_PASSWORD_REJECTED", 403, "现在的密码不对，密码没有改");
         }
         const updated = await stored(async () => accountStore.setPassword({ userId: account.userId,

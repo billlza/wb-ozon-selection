@@ -5106,7 +5106,7 @@ async function handleApi(req, res, pathname) {
       return json(res, 200, changed.access, { "Set-Cookie": changed.setCookie });
     }
     const result = action === "setup" ? await runtimeIdentityProvider.setup(input)
-      : action === "login" ? await runtimeIdentityProvider.login(input) : runtimeIdentityProvider.logout({ request: req });
+      : action === "login" ? await runtimeIdentityProvider.login(input, { request: req }) : runtimeIdentityProvider.logout({ request: req });
     const access = action === "logout" ? runtimeIdentityProvider.publicAccessState({}) : result.access ?? {
       providerType: runtimeIdentityProvider.providerType, status: "authenticated", user: { userId: result.actor.userId }
     };

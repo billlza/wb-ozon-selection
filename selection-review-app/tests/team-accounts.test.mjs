@@ -9,7 +9,7 @@ import { createConfiguredIdentityProvider } from "../lib/runtime-identity-provid
 import { authorizeOperation, createActorContext, sameTeamUser, teamOperationRoles } from "../lib/runtime-identity.mjs";
 import { createSelectionReviewRuntimeConfiguration } from "../lib/runtime-configuration.mjs";
 import { runTeamAccountCommand, TeamAccountCommandError } from "../lib/team-account-admin.mjs";
-import { createTeamAccountIdentityProvider, TEAM_ACCOUNT_ROLE_GRANTS } from "../lib/team-account-identity.mjs";
+import { createTeamAccountIdentityProvider, failureSourceKey, signInSource, TEAM_ACCOUNT_ROLE_GRANTS } from "../lib/team-account-identity.mjs";
 import { createMemoryTeamAccountStore, isTeamUserId, normalizeDisplayName, normalizeLoginName, publicTeamAccount,
   TeamAccountStoreError } from "../lib/team-account-store.mjs";
 
@@ -22,12 +22,12 @@ const PASSWORDS = { "boss-a": "synthetic boss a 2026", "boss-b": "synthetic boss
 const requestWith = setCookie => ({ headers: setCookie ? { cookie: setCookie.split(";", 1)[0] } : {} });
 const code = expected => error => error instanceof OwnerIdentityError && error.code === expected;
 
-async function team({ accounts = [BOSS, OTHER_BOSS, TESTER], secureCookies = false } = {}) {
+async function team({ accounts = [BOSS, OTHER_BOSS, TESTER], secureCookies = false, trustedProxyHops = 0 } = {}) {
   let at = Date.parse("2026-10-16T08:00:00.000Z");
   const clock = () => new Date(at).toISOString();
   const store = createMemoryTeamAccountStore({ clock });
   for (const account of accounts) await store.create({ ...account, verifier: await createPasswordVerifier(PASSWORDS[account.loginName]) });
-  const provider = createTeamAccountIdentityProvider({ accountStore: store, secureCookies, clock });
+  const provider = createTeamAccountIdentityProvider({ accountStore: store, secureCookies, trustedProxyHops, clock });
   await provider.initialize();
   // Each call is a new request, as the server sees it: the account behind the cookie is read once.
   async function as(setCookie) {
@@ -35,7 +35,7 @@ async function team({ accounts = [BOSS, OTHER_BOSS, TESTER], secureCookies = fal
     await provider.authenticateRequest(request);
     return request;
   }
-  const login = account => provider.login({ loginName: account.loginName, password: PASSWORDS[account.loginName] });
+  const login = (account, request) => provider.login({ loginName: account.loginName, password: PASSWORDS[account.loginName] }, { request });
   return { store, provider, as, login, advance: ms => { at += ms; } };
 }
 
@@ -128,6 +128,62 @@ test("the limit lifts after fifteen minutes, and a right password clears the cou
   assert.equal((await login(BOSS)).access.status, "authenticated");
   await assert.rejects(provider.login({ loginName: "boss-a", password: "synthetic guess" }), code("TEAM_LOGIN_REJECTED"));
   assert.equal((await login(BOSS)).access.status, "authenticated");
+});
+
+// A sign-in request as the server sees it: who connected, and what X-Forwarded-For said, if anything.
+const from = (address, forwardedFor) => ({ socket: { remoteAddress: address }, headers: forwardedFor === undefined ? {} : { "x-forwarded-for": forwardedFor } });
+
+test("wrong passwords from one address do not lock the team out from another", async () => {
+  const { provider, login } = await team();
+  const guess = (loginName, request) => provider.login({ loginName, password: "synthetic guess" }, { request });
+  const stranger = from("203.0.113.9"), office = from("198.51.100.7");
+  for (let attempt = 0; attempt < 5; attempt += 1) await assert.rejects(guess("boss-a", stranger), code("TEAM_LOGIN_REJECTED"));
+  await assert.rejects(login(BOSS, stranger), code("TEAM_LOGIN_RATE_LIMITED"));
+  assert.equal((await login(BOSS, office)).access.status, "authenticated");
+  // Twenty wrong passwords from one address over any names: that address waits, for every name.
+  for (let attempt = 0; attempt < 15; attempt += 1) await assert.rejects(guess(`guess-${attempt}`, stranger), code("TEAM_LOGIN_REJECTED"));
+  await assert.rejects(login(TESTER, stranger), code("TEAM_LOGIN_RATE_LIMITED"));
+  for (const account of [OTHER_BOSS, TESTER]) assert.equal((await login(account, office)).access.status, "authenticated");
+});
+
+test("an IPv6 caller is counted by its /64, so moving to another address in it starts nothing afresh", async () => {
+  assert.equal(failureSourceKey("203.0.113.9"), "203.0.113.9");
+  assert.equal(failureSourceKey("::ffff:203.0.113.9"), "203.0.113.9");
+  for (const address of ["2001:db8::7", "2001:DB8:0:0:1::7", "2001:db8:0:0:ffff:1:2:3", "2001:db8::192.0.2.33", "2001:db8::1%eth0"]) {
+    assert.equal(failureSourceKey(address), "2001:db8:0:0::/64");
+  }
+  assert.equal(failureSourceKey("2001:db8:1:2:3:4:5:6"), "2001:db8:1:2::/64");
+  const { provider, login } = await team();
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await assert.rejects(provider.login({ loginName: "boss-a", password: "synthetic guess" }, { request: from(`2001:db8::${attempt + 1}`) }),
+      code("TEAM_LOGIN_REJECTED"));
+  }
+  await assert.rejects(login(BOSS, from("2001:db8::ffff")), code("TEAM_LOGIN_RATE_LIMITED"));
+  assert.equal((await login(BOSS, from("2001:db8:0:1::1"))).access.status, "authenticated");
+});
+
+test("behind a proxy the address it saw counts, never what the caller wrote before it", async () => {
+  const proxy = "10.0.0.2";
+  assert.equal(signInSource(from("203.0.113.9")), "203.0.113.9");
+  assert.equal(signInSource(from("203.0.113.9", "198.51.100.7")), "203.0.113.9");
+  assert.equal(signInSource(from(proxy, "198.51.100.7"), 1), "198.51.100.7");
+  assert.equal(signInSource(from(proxy, "198.51.100.1, 198.51.100.7"), 1), "198.51.100.7");
+  assert.equal(signInSource(from(proxy, "198.51.100.1, 2001:db8::7, 10.0.0.9"), 2), "2001:db8::7");
+  // Fewer entries than proxies, or one that is not an address: the connecting address.
+  for (const header of [undefined, "", "not-an-address", "x".repeat(3000)]) assert.equal(signInSource(from(proxy, header), 1), proxy);
+  assert.equal(signInSource(from(proxy, "198.51.100.7"), 2), proxy);
+  assert.equal(signInSource({ headers: {} }), "unknown");
+
+  const { provider, login } = await team({ trustedProxyHops: 1 });
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    // Someone guessing writes a different first entry each time; the proxy's own entry still names them.
+    await assert.rejects(provider.login({ loginName: "boss-a", password: "synthetic guess" }, { request: from(proxy, `192.0.2.${attempt}, 203.0.113.9`) }),
+      code("TEAM_LOGIN_REJECTED"));
+  }
+  await assert.rejects(login(BOSS, from(proxy, "203.0.113.9")), code("TEAM_LOGIN_RATE_LIMITED"));
+  assert.equal((await login(BOSS, from(proxy, "198.51.100.7"))).access.status, "authenticated");
+  assert.throws(() => createTeamAccountIdentityProvider({ accountStore: createMemoryTeamAccountStore(), trustedProxyHops: 4 }),
+    code("TEAM_IDENTITY_CONFIGURATION_INVALID"));
 });
 
 test("a session ends after thirty idle minutes or eight hours; writing keeps it awake", async () => {
@@ -285,6 +341,14 @@ test("team sign-in needs the Postgres store and follows the public address for s
   }
   const configuration = createSelectionReviewRuntimeConfiguration({ env: { ...base, SELECTION_REVIEW_STATE_ADAPTER: "postgres" }, appDir: os.tmpdir(), argv: [] });
   assert.equal(configuration.identityProvider, "team_accounts");
+  // Proxies in front of the service are only what the deployment says, zero to three.
+  assert.equal(configuration.trustedProxyHops, 0);
+  assert.equal(createSelectionReviewRuntimeConfiguration({ env: { ...base, SELECTION_REVIEW_STATE_ADAPTER: "postgres", SELECTION_REVIEW_TRUSTED_PROXY_HOPS: "1" },
+    appDir: os.tmpdir(), argv: [] }).trustedProxyHops, 1);
+  for (const hops of ["4", "-1", "1.5", "one", " "]) {
+    assert.throws(() => createSelectionReviewRuntimeConfiguration({ env: { ...base, SELECTION_REVIEW_STATE_ADAPTER: "postgres", SELECTION_REVIEW_TRUSTED_PROXY_HOPS: hops },
+      appDir: os.tmpdir(), argv: [] }), /代理层数只能是0到3/u);
+  }
   const accountStore = createMemoryTeamAccountStore();
   await accountStore.create({ ...BOSS, verifier: await createPasswordVerifier(PASSWORDS["boss-a"]) });
   const local = createConfiguredIdentityProvider({ configuration, accountStore });
