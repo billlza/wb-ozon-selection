@@ -158,6 +158,15 @@ test("a lost COMMIT answer is settled from the row: saved, not saved, or reporte
   await assert.rejects(createPostgresBusinessStateStore({ pool: unknown.pool }).runLocked({}, bump),
     error => error.message === "BUSINESS_STATE_REPOSITORY_COMMIT_OUTCOME_UNKNOWN" && error.cause === unknownFailure);
 
+  // The import insert settles a lost COMMIT answer the same way.
+  const imported = fakePool({ fail: { COMMIT: lost(), ROLLBACK: new Error("Client was closed") } });
+  assert.equal(await createPostgresBusinessStateStore({ pool: imported.pool }).insertDocument({ meta: { version: 2 } }), true);
+  assert.equal(imported.kinds().at(-1), "SELECT_FOR_SHARE");
+  const notImportedFailure = lost();
+  const notImported = fakePool({ fail: { COMMIT: notImportedFailure } });
+  await assert.rejects(createPostgresBusinessStateStore({ pool: notImported.pool }).insertDocument({ meta: { version: 2 } }),
+    error => error === notImportedFailure);
+
   // A read-only transaction has nothing to settle.
   const quiet = fakePool({ row: row(), fail: { COMMIT: lost() } });
   await assert.rejects(createPostgresBusinessStateStore({ pool: quiet.pool }).runLocked({}, () => "looked"), /Connection terminated/);

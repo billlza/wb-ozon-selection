@@ -91,7 +91,7 @@
 主人 10-15 定：工作台要放到网上给几个人一起用（两位老板加一个测试，五六台电脑装插件，人在国内，公司有合法的科学上网）。计划在项目共享文件 `wb-ozon/多人中央服务计划-2026-10-15.md`，分六步，每步一个 PR；本机 JSON 用法每一步都保留，默认不变。这一步只做存储：
 
 - `SELECTION_REVIEW_STATE_ADAPTER=postgres` 加 `SELECTION_REVIEW_DATABASE_URL` 就用 Postgres（`lib/postgres-business-state-store.mjs`）。整份业务状态照旧当一份存，放在表 `selection_review_business_state` 的一行里；`json` 列原样保留文本和键的顺序。每次事务先 `SELECT … FOR UPDATE` 锁住这一行，几个服务进程同时写也不会互相覆盖；读的时候每次都查一下这一行的 revision，没变就用上一次解析好的。数据库地址只从环境变量读，不进运行配置，也不打印。
-- 每条语句都有时限（`POSTGRES_BUSINESS_STATE_TIMEOUTS`）：等行锁 15 秒、单条语句 30 秒、客户端等回应 40 秒、事务闲着 2 分钟，卡住的写不会把写队列永远堵住。COMMIT 发出去却没收到回应时，再读一次这一行来定：是我们写的就当成功，还是原来的 revision 就当失败，分不清就报 `BUSINESS_STATE_REPOSITORY_COMMIT_OUTCOME_UNKNOWN`，不让用户以为没存上又点一次。
+- 每条语句都有时限（`POSTGRES_BUSINESS_STATE_TIMEOUTS`）：等行锁 15 秒、单条语句 30 秒、客户端等回应 40 秒、事务闲着 2 分钟，卡住的写不会把写队列永远堵住。COMMIT 发出去却没收到回应时，再读一次这一行来定：是我们写的就当成功，还是原来的 revision 就当失败，分不清就报 `BUSINESS_STATE_REPOSITORY_COMMIT_OUTCOME_UNKNOWN`，不让用户以为没存上又点一次。导入脚本的写入也一样核对。
 - 同一份数据只允许一个服务进程：用 Postgres 时服务一启动就拿一把会话级咨询锁（`holdProcessLease`），第二个进程拿不到就起不来（`BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_HELD`）；拿锁的那条数据库连接断了，这个进程的写立刻全部拒掉（每次写都在行锁下让数据库确认锁还在本进程手里），然后服务自己停下。原因是启动时那些「重启收口」会把不在本进程里的作业都当成丢了，第二个进程会把第一个进程正在跑的作业记成失败。等第 3 步作业带上自己的租约再放开。Render 默认的不停机部署会让新旧两个进程重叠，第 5 步上线前要处理。
 - 借出连接池的连接都挂了错误监听：写到一半连接断了，只让这一次写失败，不会把整个服务带崩。
 - 整份存一行意味着改一个商品也要整份重写、几个人同时写会排队（本机 JSON 本来也这样）。10-16 发卡片问主人现在拆还是以后拆，建议以后再拆。

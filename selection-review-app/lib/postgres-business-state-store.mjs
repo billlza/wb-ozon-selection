@@ -237,26 +237,32 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
       await ensureSchema();
       const connection = await checkOut();
       const { client } = connection;
-      let releaseError;
+      const text = JSON.stringify(document);
+      let releaseError, pendingCommit = null, commitFailure;
       try {
         await client.query("BEGIN");
         const insert = await client.query(
           `INSERT INTO ${BUSINESS_STATE_TABLE} (document_id, document, revision) VALUES ($1, $2::json, 1)
            ON CONFLICT (document_id) DO NOTHING`,
-          [documentId, JSON.stringify(document)]);
+          [documentId, text]);
         if (insert.rowCount !== 1) {
           await client.query("ROLLBACK");
           return false;
         }
         await verify((await selectForUpdate(client)).document);
+        pendingCommit = { before: null, after: "1", text };
         await client.query("COMMIT");
         return true;
       } catch (error) {
         releaseError = await abandon(client, error);
-        throw error;
+        if (pendingCommit === null) throw error;
+        commitFailure = error;
       } finally {
         connection.release(releaseError);
       }
+      // As for writes: a lost COMMIT answer is settled from the row, so an import is never reported as failed when it
+      // landed (a rerun would then find the target "not empty" with no way to tell it was this import).
+      return settleLostCommit(pendingCommit, commitFailure, true);
     },
     /**
      * Holds the document for one service process: a session advisory lock on a connection kept for the life of the

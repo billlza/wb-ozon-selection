@@ -206,6 +206,16 @@ test("when another write lands before the check, a lost COMMIT answer is reporte
   assert.equal((await database.storedText()).revision, "3");
 });
 
+test("an import whose COMMIT answer is lost is reported by what the table actually holds", async t => {
+  const database = await isolatedSchema(t);
+  // The COMMIT never reached the database: the import fails and the table stays empty.
+  await assert.rejects(database.storeLosingCommitAnswer(async () => {}).insertDocument(seed()), /Connection terminated unexpectedly/);
+  assert.equal(await database.storedText(), null);
+  // The COMMIT landed but its answer was lost: the import is reported as done, once.
+  assert.equal(await database.storeLosingCommitAnswer(send => send()).insertDocument(seed()), true);
+  assert.deepEqual(await database.storedText(), { text: JSON.stringify(seed()), revision: "1" });
+});
+
 test("waiting for a row another process holds has a deadline, and later writes still go through", async t => {
   const database = await isolatedSchema(t);
   await database.store().insertDocument(seed());
