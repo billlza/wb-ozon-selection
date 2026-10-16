@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-16T17:50:49.965Z",
+  "frozenAt": "2026-10-16T18:29:54.607Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 1025,
-      "sha256": "e81c87212fb5d9932a98ecb37c6ad65203aaf489212ac61270bb3f45af64a695",
+      "sha256": "2a3aa1db7e1179f2807b957b023538cc13272fbb13c5dd492eb53329c6761067",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -40,7 +40,7 @@
       },
       {
         "path": "extension/1688-capture/background.js",
-        "sha256": "87a5ca5fc23167a6d11fae46f0e7da9da93b3c2f4518fd24cfccba436a627127"
+        "sha256": "7c405aeace55de7eb10577b3b77323c406d554d96a42e04a09f207ac3da6317b"
       },
       {
         "path": "extension/1688-capture/bridge.js",
@@ -2068,7 +2068,7 @@
       },
       {
         "path": "src/headerStatusView.js",
-        "sha256": "aa13ff829448b54a20a57f79faec73f9de8a2b215e16a82854065fabc3baf6cd"
+        "sha256": "bcbfe291e65e53597792b91a8a53cbd4490cb22b914ceeb9c95f178ec70c8285"
       },
       {
         "path": "src/intakeJobBridge.js",
@@ -3240,7 +3240,7 @@
       },
       {
         "path": "tests/header-status-view.test.mjs",
-        "sha256": "8a3ca19e9c998e4f34c9c73c9c9b1ab2bdbfd6d63ad94c96420c9a6e49b325db"
+        "sha256": "045fbfc829a6070023fa0945765f927e70df3a7a4a0530bb65fa97df39093db2"
       },
       {
         "path": "tests/helpers/a-supplier-image-search-fixture.mjs",

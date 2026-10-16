@@ -23,7 +23,9 @@ const EXTENSION_ISSUES = Object.freeze({
   reload_required: { tone: "warning", sentence: "插件是旧版本，要在浏览器里重新加载一次，否则采集1688页面会失败" },
   background_unavailable: { tone: "warning", sentence: "插件后台没有响应，现在发不出采集任务" },
   tab_left_open: { tone: "warning", sentence: "插件上次打开的一个页面没能自动关上；把它关掉（或重新加载插件）之前发不出新的采集任务" },
-  tab_unconfirmed: { tone: "warning", sentence: "插件上次开页面时 Chrome 没回话；重新加载插件之前发不出新的采集任务" }
+  tab_unconfirmed: { tone: "warning", sentence: "插件上次开页面时 Chrome 没回话；重新加载插件之前发不出新的采集任务" },
+  other_service: { tone: "warning", sentence: "插件连的是别的服务地址，这一页的采集任务它收不到；点浏览器右上角的插件图标，改成这个网址" },
+  workstation_not_added: { tone: "warning", sentence: "这台电脑还没加进团队，插件领不了采集作业；到「维护」里的「干活的电脑」加一下" }
 });
 const EXTENSION_UNKNOWN = { tone: "error", sentence: "插件状态没取到，现在说不准能不能采集1688页面" };
 

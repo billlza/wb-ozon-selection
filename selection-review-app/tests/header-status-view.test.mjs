@@ -26,7 +26,9 @@ const EXTENSION_STATES = [
   extensionConnectionStatus({ cachedVersion: '0.9.1' }),
   extensionConnectionStatus({}),
   extensionConnectionStatus({ serverHeartbeat: { fresh: true, version: EXPECTED_EXTENSION_VERSION, backgroundReady: true } }),
-  extensionConnectionStatus({ serverHeartbeat: { fresh: true, version: EXPECTED_EXTENSION_VERSION, backgroundReady: false } })
+  extensionConnectionStatus({ serverHeartbeat: { fresh: true, version: EXPECTED_EXTENSION_VERSION, backgroundReady: false } }),
+  extensionConnectionStatus({ liveVersion: EXPECTED_EXTENSION_VERSION, backgroundReady: true, otherService: true }),
+  extensionConnectionStatus({ liveVersion: EXPECTED_EXTENSION_VERSION, backgroundReady: true, workstationNotAdded: true })
 ];
 const CONNECTED = extensionConnectionStatus({ liveVersion: EXPECTED_EXTENSION_VERSION, backgroundReady: true });
 
@@ -62,7 +64,7 @@ test('插件那条线的每一种不正常都还说得出来，而且说的是�
   // 先证明枚举本身没有漏：这些输入确实覆盖了 extensionConnectionStatus 能返回的全部 code。
   assert.deepEqual(new Set(EXTENSION_STATES.map(status => status.code)),
     new Set(['connected', 'background_unavailable', 'tab_left_open', 'tab_unconfirmed', 'reload_required', 'page_refresh_required',
-      'disconnected']));
+      'disconnected', 'other_service', 'workstation_not_added']));
   const said = new Map();
   for (const extensionStatus of EXTENSION_STATES) {
     const view = headerStatusIndicator({ extensionStatus, captureControl: IDLE_CONTROL, runtimeArchitecture: LOCAL_RUNTIME });
@@ -83,6 +85,8 @@ test('插件那条线的每一种不正常都还说得出来，而且说的是�
   assert.match(said.get('page_refresh_required'), /刷新这一页/u);
   assert.match(said.get('tab_left_open'), /没能自动关上.*关掉/u);
   assert.match(said.get('tab_unconfirmed'), /重新加载插件/u);
+  assert.match(said.get('other_service'), /别的服务地址.*插件图标/u);
+  assert.match(said.get('workstation_not_added'), /还没加进团队.*干活的电脑/u);
   // 认不出来的 code 也算不正常：「不知道」不能显示成「一切正常」。
   for (const unknown of [{ code: 'brand_new_failure' }, { code: '' }, {}, null]) {
     const view = headerStatusIndicator({ extensionStatus: unknown, captureControl: IDLE_CONTROL, runtimeArchitecture: LOCAL_RUNTIME });
