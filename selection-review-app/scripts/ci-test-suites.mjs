@@ -87,7 +87,8 @@ export const ISOLATED_TESTS = Object.freeze([...API_PROCESS_TESTS, ...SOURCE_CON
 // Need a disposable Postgres (SELECTION_REVIEW_TEST_DATABASE_URL); run by scripts/run-ci-database-tests.mjs only.
 export const DATABASE_TESTS = Object.freeze([
   "postgres-business-state-db.test.mjs",
-  "team-accounts-db.test.mjs"
+  "team-accounts-db.test.mjs",
+  "workstations-db.test.mjs"
 ]);
 
 export const BUILT_RUNTIME_TESTS = Object.freeze([

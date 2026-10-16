@@ -509,23 +509,31 @@ export const CAPABILITY_NODES = Object.freeze([
     integrationStatus: "partial", runtimeScope: "local_development",
     baselineHealth: { state: "risk", reason: "本地身份和 Worker 注册表存在，但没有中央身份、租约和多机验收。" },
     stopConditions: "身份、角色、能力或心跳不满足时不得领取或执行。",
-    breakpoint: "本地主人认证已接入可替换提供器；团队账号登录（老板和测试各自的登录名和密码，账号存在 Postgres）已接入，测试能做除确认供货、确认利润、许可上架以外的操作，找新品批次、详情准备和账户准备团队共用，但中央模式还没开；多Worker尚未接通。",
-    nextStep: "完成租约与中央模式。",
+    breakpoint: "本地主人认证已接入可替换提供器；团队账号登录（老板和测试各自的登录名和密码，账号存在 Postgres）已接入，测试能做除确认供货、确认利润、许可上架以外的操作，找新品批次、详情准备和账户准备团队共用；团队账号下每台装插件的电脑各有一把钥匙，插件每次回传都带着，哪台领的作业只能由哪台交回。插件还只连 127.0.0.1:4317，中央模式还没开。",
+    nextStep: "插件里能填服务地址；完成作业租约与中央模式。",
     position: { x: 960, y: 180 },
     codeRefs: [
       capabilityRef("lib/runtime-identity.mjs", "createActorContext", "运行身份"),
       capabilityRef("lib/worker-registry.mjs", "createLocalDevelopmentWorkerRegistry", "本地 Worker 注册表"),
       capabilityRef("lib/team-account-identity.mjs", "createTeamAccountIdentityProvider", "团队账号登录"),
-      capabilityRef("lib/team-account-store.mjs", "createPostgresTeamAccountStore", "团队账号存储")
+      capabilityRef("lib/team-account-store.mjs", "createPostgresTeamAccountStore", "团队账号存储"),
+      capabilityRef("lib/workstation-access.mjs", "createWorkstationAccess", "每台电脑的钥匙：加、移除、核对插件回传"),
+      capabilityRef("lib/workstation-store.mjs", "createPostgresWorkstationStore", "电脑名单存储（只存钥匙的摘要）")
     ],
     uiRefs: [capabilityRef("src/components/HeaderStatus.jsx", "HeaderStatus", "顶栏那一个状态指示器：运行方式、插件、采集控制三条合成一条"),
-      capabilityRef("src/components/TeamAccountPanel.jsx", "TeamAccountView", "改自己的密码；老板给别人重设密码")],
+      capabilityRef("src/components/TeamAccountPanel.jsx", "TeamAccountView", "改自己的密码；老板给别人重设密码"),
+      capabilityRef("src/components/WorkstationPanel.jsx", "WorkstationView", "干活的电脑：把这台加进来、看谁在线、移除一台")],
     testRefs: [capabilityRef("tests/runtime-identity-software-job.test.mjs", "test(", "身份与作业测试"),
       capabilityRef("tests/team-accounts.test.mjs", "test(", "团队账号、登录、改密码和命令行测试"),
-      capabilityRef("tests/team-accounts-db.test.mjs", "test(", "真 Postgres 上的团队账号、登录拦截和老板才能做的确认")],
+      capabilityRef("tests/team-accounts-db.test.mjs", "test(", "真 Postgres 上的团队账号、登录拦截和老板才能做的确认"),
+      capabilityRef("tests/workstation-access.test.mjs", "test(", "电脑钥匙的发放、核对和移除"),
+      capabilityRef("tests/workstation-extension.test.mjs", "test(", "插件收下钥匙并在每次回传时带上"),
+      capabilityRef("tests/workstation-ui.test.mjs", "test(", "页面把钥匙交给插件、电脑名单怎么显示"),
+      capabilityRef("tests/workstations-db.test.mjs", "test(", "真 Postgres 上：没钥匙不收，别的电脑交不了这台领的作业")],
     artifactRefs: ["lib/runtime-identity-provider.mjs", "lib/runtime-configuration.mjs", "lib/local-owner-identity.mjs",
       "lib/scrypt-verifier.mjs", "lib/team-account-admin.mjs", "scripts/manage-team-accounts.mjs",
-      "src/components/LocalOwnerAccessPanel.jsx", "src/ownerAccess.js", "src/runtimeArchitectureView.js", "src/headerStatusView.js"]
+      "src/components/LocalOwnerAccessPanel.jsx", "src/ownerAccess.js", "src/runtimeArchitectureView.js", "src/headerStatusView.js",
+      "src/workstationKey.js", "extension/1688-capture/background.js", "extension/1688-capture/bridge.js"]
   }),
   capability({
     id: "1.5", capabilityId: "presentation.review-desk", areaId: "1",

@@ -80,6 +80,7 @@ export const CAPTURE_START_REJECTION_MESSAGES = Object.freeze({
   no_bridge: "这个标签页里没有采集插件：请用 http://127.0.0.1:4317 打开页面（不是 localhost），按 Cmd+Shift+R 强制刷新后再试；仍然不行就到 chrome://extensions 确认插件已启用",
   capture_busy: "插件正在采另一件商品，等它结束再试",
   extension_identity_rejected: "服务端没有允许这个插件（白名单里没有它的 ID），需要改配置后重启",
+  workstation_not_added: "这台电脑还没加进来（或者已经被移除），插件领不了作业；到「维护」里点「把这台电脑加进来」再试，软件不会自动重试",
   background_unavailable: "插件后台没有响应，请在 chrome://extensions 重新加载插件",
   heartbeat_unavailable: "插件后台还没有和评审台连上，这次没有领取；请确认评审台正在运行，然后重新申请一次采集，软件不会自动重试",
   request_origin_invalid: "插件认为这条开始提示不是来自本机评审台页面，因此拒绝领取；请用 http://127.0.0.1:4317 打开页面后重新申请一次采集，软件不会自动重试",

@@ -204,6 +204,9 @@ test("actual access views distinguish loading, first setup, login, authenticated
   assert.match(boss, /已登录：老板甲（老板）/); assert.match(boss, /退出登录/); assert.match(boss, /改我的密码/); assert.match(boss, /给别人重设密码/);
   const tester = render({ status: "loaded", access: teamAccess("authenticated", { userId: "team-user:synthetic-tester", displayName: "测试丙", role: "tester" }) }, true);
   assert.match(tester, /已登录：测试丙（测试）/); assert.match(tester, /要老板来做/); assert.match(tester, /改我的密码/); assert.doesNotMatch(tester, /给别人重设密码/);
+  // Both see the computers whose plugin works for the team (central plan step 3).
+  for (const view of [boss, tester]) assert.match(view, /干活的电脑/);
+  assert.doesNotMatch(authenticated, /干活的电脑/);
   // App reads only the extension-version cache during its browser initializer; SSR runs no effects or requests.
   const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
   Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: { getItem: () => null } } });

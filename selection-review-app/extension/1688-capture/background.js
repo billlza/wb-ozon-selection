@@ -32,13 +32,16 @@ import {
   validateImageMatchRequest,
   validateOzonImageMatchRequest,
   validateOzonCaptureRequest,
-  validateSupplierCaptureRequest
+  validateSupplierCaptureRequest,
+  validateWorkstationKeyMessage,
+  WORKSTATION_KEY_MESSAGE_TYPE
 } from "./capture-request.js";
 import { SEERFAR_WEB_REQUEST_TYPE, isSeerfarWebJob, runSeerfarWebCapture, validateSeerfarWebRequest } from "./seerfar-web-capture.js";
 
 export const HEARTBEAT_ALARM = "selection-review-extension-heartbeat";
 const API_ORIGIN = "http://127.0.0.1:4317"; // Explicit local-development adapter, not central identity.
 const BACKGROUND_PING = "SELECTION_REVIEW_EXTENSION_BACKGROUND_PING";
+const WORKSTATION_STORAGE_KEY = "selectionReviewWorkstation";
 const START_TYPES = new Set(["SELECTION_REVIEW_1688_CAPTURE_REQUEST", "SELECTION_REVIEW_OZON_CAPTURE_REQUEST", IMAGE_MATCH_REQUEST_TYPE,
   OZON_IMAGE_MATCH_REQUEST_TYPE, SEERFAR_WEB_REQUEST_TYPE]);
 const FAILURE_CODES = new Set([
@@ -50,6 +53,11 @@ const FAILURE_CODES = new Set([
 ]);
 const safeFailureCode = (code) => FAILURE_CODES.has(code) ? code : "system_error";
 const failure = (code) => Object.assign(new Error(code), { code });
+// 401: the team's service wants this computer's key (none, wrong or removed); 403: it does not accept this plugin at all.
+const refusal = (status, otherwise) => failure(status === 401 ? "workstation_not_added" : status === 403 ? "extension_identity_rejected" : otherwise);
+const SERVICE_REFUSALS = ["workstation_not_added", "extension_identity_rejected"];
+const validWorkstation = (value) => value !== null && typeof value === "object" && value.serviceOrigin === API_ORIGIN &&
+  validateWorkstationKeyMessage({ type: WORKSTATION_KEY_MESSAGE_TYPE, workstationId: value.workstationId, name: value.name, key: value.key });
 
 // A 1688 image search passes through its s.1688.com entry address to the air.1688.com result page and is read there only.
 function inspectImageSearchTab(tab) {
@@ -228,7 +236,22 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
   let strayTab = null;
   let lastHeartbeat = { ok: false, code: "heartbeat_not_observed", observedAt: null };
   let lastCaptureCode = "";
+  // This computer's key from a team's central service, kept in the plugin's own storage and sent with every call to that
+  // service. Without one (the owner's own Mac) calls go out as before.
+  let workstation = null;
+  let workstationLoad = null;
   const version = chromeApi.runtime.getManifest().version;
+  function loadWorkstation() {
+    workstationLoad ??= Promise.resolve().then(() => chromeApi.storage.local.get(WORKSTATION_STORAGE_KEY)).then((stored) => {
+      const value = stored?.[WORKSTATION_STORAGE_KEY];
+      workstation = validWorkstation(value) ? value : null;
+    }, () => { workstation = null; });
+    return workstationLoad;
+  }
+  async function serviceHeaders() {
+    await loadWorkstation();
+    return { "Content-Type": "application/json", ...(workstation ? { Authorization: `Bearer ${workstation.key}` } : {}) };
+  }
   const status = () => {
     // Transport health TTL matches the existing local heartbeat contract, not product evidence age.
     const fresh = lastHeartbeat.ok && Date.parse(clock()) - Date.parse(lastHeartbeat.observedAt) <= 75000;
@@ -240,6 +263,7 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       observedAt: lastHeartbeat.observedAt,
       captureActive: Boolean(activeCapture),
       lastCaptureCode,
+      workstation: workstation ? { workstationId: workstation.workstationId, name: workstation.name } : null,
       version
     };
   };
@@ -281,10 +305,10 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
   async function sendResult(payload, result) {
     if (isSeerfarWebJob(payload)) {
       const response = await fetchImpl(`${API_ORIGIN}/api/seerfar-selection/rounds/${encodeURIComponent(payload.roundId)}/result`, {
-        method: "POST", signal: AbortSignal.timeout(10000), headers: { "Content-Type": "application/json" },
+        method: "POST", signal: AbortSignal.timeout(10000), headers: await serviceHeaders(),
         body: JSON.stringify({ captureId: payload.captureId, token: payload.token, ...result })
       });
-      if (!response.ok) throw failure([401, 403].includes(response.status) ? "extension_identity_rejected" : "result_rejected");
+      if (!response.ok) throw refusal(response.status, "result_rejected");
       return;
     }
     const route = isImageMatchJob(payload) ? "image-match" : isOzonImageMatchJob(payload) ? "ozon-match"
@@ -292,10 +316,10 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
     const response = await fetchImpl(`${API_ORIGIN}/api/candidates/${encodeURIComponent(payload.candidateId)}/${route}/result`, {
       method: "POST",
       signal: AbortSignal.timeout(10000),
-      headers: { "Content-Type": "application/json" },
+      headers: await serviceHeaders(),
       body: JSON.stringify({ captureId: payload.captureId, token: payload.token, dataRevision: payload.dataRevision, ...result })
     });
-    if (!response.ok) throw failure([401, 403].includes(response.status) ? "extension_identity_rejected" : "result_rejected");
+    if (!response.ok) throw refusal(response.status, "result_rejected");
   }
 
   // The one picture an Ozon image search uploads, handed out by the review app for this claimed job only.
@@ -305,7 +329,7 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       response = await fetchImpl(`${API_ORIGIN}/api/extension/capture-jobs/${encodeURIComponent(payload.captureId)}/search-image`, {
         method: "POST",
         signal: AbortSignal.timeout(15000),
-        headers: { "Content-Type": "application/json" },
+        headers: await serviceHeaders(),
         body: JSON.stringify({ token: payload.token, dataRevision: payload.dataRevision })
       });
     } catch { throw failure("search_image_unavailable"); }
@@ -342,7 +366,7 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       await sendResult(payload, result);
       lastCaptureCode = result.status === "failed" ? result.failureCode : "capture_reported";
     } catch (error) {
-      lastCaptureCode = ["extension_identity_rejected", "result_rejected"].includes(error?.code) ? error.code : "result_delivery_unconfirmed";
+      lastCaptureCode = [...SERVICE_REFUSALS, "result_rejected"].includes(error?.code) ? error.code : "result_delivery_unconfirmed";
     } finally {
       activeCapture = null;
     }
@@ -439,8 +463,8 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       await sendResult(payload, result);
       lastCaptureCode = result.status === "failed" ? result.failureCode : "capture_reported";
     } catch (error) {
-      lastCaptureCode = ["extension_identity_rejected", "result_rejected"].includes(error?.code) ? error.code : "result_delivery_unconfirmed";
-      if (error?.code === "extension_identity_rejected") lastHeartbeat = { ok: false, code: "extension_identity_rejected", observedAt: clock() };
+      lastCaptureCode = [...SERVICE_REFUSALS, "result_rejected"].includes(error?.code) ? error.code : "result_delivery_unconfirmed";
+      if (SERVICE_REFUSALS.includes(error?.code)) lastHeartbeat = { ok: false, code: error.code, observedAt: clock() };
     } finally {
       activeCapture = null;
     }
@@ -452,17 +476,17 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       try {
         await settleStrayTab();
         const response = await fetchImpl(`${API_ORIGIN}/api/extension/heartbeat`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, signal: AbortSignal.timeout(10000),
+          method: "POST", headers: await serviceHeaders(), signal: AbortSignal.timeout(10000),
           body: JSON.stringify({ version, backgroundReady: !strayTab, observedAt: clock() })
         });
-        if (!response.ok) throw failure([401, 403].includes(response.status) ? "extension_identity_rejected" : "heartbeat_unavailable");
+        if (!response.ok) throw refusal(response.status, "heartbeat_unavailable");
         const body = await response.json();
         if (body?.accepted !== true) throw failure("heartbeat_rejected");
         lastHeartbeat = { ok: true, code: "", observedAt: clock() };
         // Even an older service returning a job cannot start work from a heartbeat.
         return status();
       } catch (error) {
-        lastHeartbeat = { ok: false, code: error?.code === "extension_identity_rejected" ? "extension_identity_rejected" : "heartbeat_unavailable", observedAt: clock() };
+        lastHeartbeat = { ok: false, code: SERVICE_REFUSALS.includes(error?.code) ? error.code : "heartbeat_unavailable", observedAt: clock() };
         return status();
       } finally { heartbeatPending = null; }
     })();
@@ -476,10 +500,10 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
     activeCapture = message.captureId;
     try {
       const response = await fetchImpl(`${API_ORIGIN}/api/extension/capture-jobs/${encodeURIComponent(message.captureId)}/claim`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, signal: AbortSignal.timeout(10000),
+        method: "POST", headers: await serviceHeaders(), signal: AbortSignal.timeout(10000),
         body: JSON.stringify({ version })
       });
-      if (!response.ok) throw failure([401, 403].includes(response.status) ? "extension_identity_rejected" : "capture_job_not_claimed");
+      if (!response.ok) throw refusal(response.status, "capture_job_not_claimed");
       const body = await response.json();
       const payload = body?.captureJob;
       const validation = isSeerfarWebJob(payload) ? validateSeerfarWebRequest({ payload, manifestVersion: version })
@@ -499,10 +523,27 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       return { accepted: true, claimedCaptureId: message.captureId };
     } catch (error) {
       activeCapture = null;
-      lastCaptureCode = ["extension_identity_rejected", "capture_job_not_claimed", "capture_job_invalid"].includes(error?.code)
+      lastCaptureCode = [...SERVICE_REFUSALS, "capture_job_not_claimed", "capture_job_invalid"].includes(error?.code)
         ? error.code : "capture_claim_unconfirmed";
       return { accepted: false, code: lastCaptureCode };
     }
+  }
+
+  // The review page on this computer hands over the key the team's service made for it. A newer key replaces the one kept.
+  async function keepWorkstation(message, senderUrl) {
+    const record = { serviceOrigin: new URL(senderUrl).origin, workstationId: message.workstationId, name: message.name, key: message.key };
+    if (!validWorkstation(record)) return { accepted: false, code: "workstation_key_invalid" };
+    try {
+      await loadWorkstation();
+      await chromeApi.storage.local.set({ [WORKSTATION_STORAGE_KEY]: record });
+    } catch {
+      return { accepted: false, code: "workstation_storage_unavailable" };
+    }
+    workstation = record;
+    // One heartbeat that carries the new key, so the page can say at once whether the service took it.
+    if (heartbeatPending) await heartbeatPending;
+    const current = await heartbeat();
+    return { accepted: true, workstation: current.workstation, serviceConnected: current.serviceConnected };
   }
 
   function ensureHeartbeatAlarm() {
@@ -517,10 +558,18 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
   }
 
   function handleMessage(message, sender, sendResponse) {
-    if (message?.type !== BACKGROUND_PING && !START_TYPES.has(message?.type)) return false;
+    if (message?.type !== BACKGROUND_PING && message?.type !== WORKSTATION_KEY_MESSAGE_TYPE && !START_TYPES.has(message?.type)) return false;
     if (!isReviewSender(sender?.url)) {
       sendResponse({ accepted: false, code: "request_origin_invalid" });
       return false;
+    }
+    if (message.type === WORKSTATION_KEY_MESSAGE_TYPE) {
+      if (!validateWorkstationKeyMessage(message)) {
+        sendResponse({ accepted: false, code: "workstation_key_invalid" });
+        return false;
+      }
+      void keepWorkstation(message, sender.url).then(sendResponse);
+      return true;
     }
     if (message.type === BACKGROUND_PING) {
       // No network, no lease claim, no capture from a health inquiry. A tab that would not close is looked up again in
@@ -557,6 +606,7 @@ export function createCaptureRuntime({ chromeApi, fetchImpl, clock = () => new D
       });
     };
     chromeApi.runtime.onMessage.addListener(handleMessage);
+    void loadWorkstation();
     chromeApi.alarms.onAlarm.addListener((alarm) => { if (alarm.name === HEARTBEAT_ALARM) void heartbeat(); });
     chromeApi.runtime.onInstalled.addListener(start);
     chromeApi.runtime.onStartup.addListener(start);

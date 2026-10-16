@@ -159,6 +159,10 @@ export const api = {
   listTeamAccounts: signal => request("/api/team-accounts", { signal }),
   resetTeamPassword: ({ userId, newPassword }) => request("/api/team-accounts/reset-password", { method: "POST",
     body: JSON.stringify({ userId, newPassword }) }),
+  // Team accounts: the computers whose plugin works for the team. Adding one answers with its key, once.
+  listWorkstations: signal => request("/api/workstations", { signal }),
+  addWorkstation: ({ name }) => request("/api/workstations/add", { method: "POST", body: JSON.stringify({ name }) }),
+  removeWorkstation: ({ workstationId }) => request("/api/workstations/remove", { method: "POST", body: JSON.stringify({ workstationId }) }),
   getSeerfarRuntimeStatus: () => request("/api/integrations/seerfar/runtime-status"),
   getPhase2ASimulation: () => request("/api/simulations/phase-2a"),
   confirmPhase2ASimulation: (payload) =>

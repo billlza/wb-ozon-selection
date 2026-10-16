@@ -11,7 +11,7 @@ export const SENDER = { url: "http://127.0.0.1:4317/" };
 export const supplierJob = (extra = {}) => ({
   captureId: "job-1", candidateId: "candidate-1", token: "synthetic-fixture-token", dataRevision: 2,
   mode: "a_supplier_capture", sourceUrl: SUPPLIER_URL, expectedOfferId: "876240928352",
-  requiredExtensionVersion: "1.4.2", attempt: 1, ...extra
+  requiredExtensionVersion: "1.5.0", attempt: 1, ...extra
 });
 export const ozonJob = (extra = {}) => ({
   captureId: "ozon-1", candidateId: "candidate-2", token: "synthetic-fixture-token", dataRevision: 4,
@@ -23,12 +23,22 @@ export function event() {
     emit: (...args) => { for (const fn of [...listeners]) fn(...args); }, listeners };
 }
 export function harness(options = {}) {
-  const calls = { requests: [], created: [], removed: [], executions: [], alarmCreates: [] };
+  const calls = { requests: [], created: [], removed: [], executions: [], alarmCreates: [], stored: [] };
+  // The plugin's own storage: holds at most the key a team's central service gave this computer.
+  const stored = options.workstation ? { selectionReviewWorkstation: options.workstation } : {};
   let tab = null;
   let alarm = options.alarm || null;
   const chromeApi = {
-    runtime: { getManifest: () => ({ version: "1.4.2" }), onMessage: event(), onInstalled: event(), onStartup: event() },
+    runtime: { getManifest: () => ({ version: "1.5.0" }), onMessage: event(), onInstalled: event(), onStartup: event() },
     alarms: { onAlarm: event(), get: async () => alarm, create: async (name, config) => { calls.alarmCreates.push({ name, config }); alarm = { name, ...config }; } },
+    storage: { local: {
+      get: async (key) => (Object.hasOwn(stored, key) ? { [key]: structuredClone(stored[key]) } : {}),
+      set: async (values) => {
+        if (options.storageFails) throw new Error("synthetic storage failure");
+        calls.stored.push(structuredClone(values));
+        Object.assign(stored, structuredClone(values));
+      }
+    } },
     tabs: {
       onUpdated: event(),
       create: async (input) => {
@@ -49,7 +59,7 @@ export function harness(options = {}) {
     } }
   };
   const fetchImpl = async (url, input) => {
-    calls.requests.push({ url, body: JSON.parse(input.body) });
+    calls.requests.push({ url, body: JSON.parse(input.body), headers: input.headers });
     if (url.endsWith("/heartbeat")) {
       if (options.heartbeat) return options.heartbeat();
       return { ok: true, json: async () => ({ accepted: true, captureJob: options.job || null }) };

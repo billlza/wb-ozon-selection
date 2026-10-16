@@ -239,6 +239,7 @@ import { createConfiguredIdentityProvider, OwnerIdentityError } from "./lib/runt
 import { assertSafeBusinessMutationCandidate, createActorContext } from "./lib/runtime-identity.mjs";
 import { createRepositoryBackedSoftwareJobStore } from "./lib/software-job-repository.mjs";
 import { createLocalDevelopmentWorkerRegistry } from "./lib/worker-registry.mjs";
+import { createConfiguredWorkstationAccess } from "./lib/workstation-access.mjs";
 import { assertRuntimeBoundaries } from "./lib/multi-user-central-runtime.mjs";
 import { commitSingleOwnerProductionAuthorization, PRODUCTION_AUTHORIZATION_VERSION } from "./lib/production-authorization.mjs";
 import { commitBatchOwnerProductionAuthorization } from './lib/d-batch-production-authorization.mjs';
@@ -380,6 +381,9 @@ const runtimeIdentityProvider = createConfiguredIdentityProvider({
   clock: () => new Date().toISOString()
 });
 await runtimeIdentityProvider.initialize();
+// With team accounts each computer's plugin carries its own key (central plan step 3); without them nothing here changes.
+const workstationAccess = createConfiguredWorkstationAccess({ configuration: runtimeConfiguration });
+await workstationAccess?.initialize();
 const workerRegistry = createLocalDevelopmentWorkerRegistry({ clock: () => new Date().toISOString() });
 const softwareJobStore = createRepositoryBackedSoftwareJobStore({
   businessStateRepository,
@@ -587,7 +591,7 @@ const supplierDraftEstimateInputs = createADiscoveryEstimateInputs({
   rules:DEFAULT_RULES,readers:aEstimateReaders,configuration:aEstimateConfiguration
 });
 /** The extension version every plugin job requires; declared before the Seerfar round service, which reads it at startup. */
-const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.4.2";
+const REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION = "1.5.0";
 /**
  * Seerfar 自动选品方案 B（主人 2026-10-10 定）：会员前台「热销榜单选品」一页结果 → 固定规则筛 → 前几个收成待核验候选。
  * 档案和季节日历是 data/seerfar-selection/ 里的版本化配置；读不出来时不启动任何一轮，页面照实显示原因。
@@ -1279,18 +1283,28 @@ function chromeExtensionCors(req) {
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Vary": "Origin"
   };
 }
 
-function assertClaimedCaptureResultOrigin(session, req, label) {
+// Which computer each plugin call came from, under team accounts (set once the call's key is checked in handleApi).
+const extensionWorkstations = new WeakMap();
+
+// Who claims a plugin job and must be the one to finish it: the plugin's origin, and under team accounts also the computer
+// whose key the call carried. Every computer runs the same plugin, so the origin alone cannot tell them apart.
+function extensionClaimant(req) {
   const origin = String(req.headers.origin || "").trim();
-  if (!session?.claimedExtensionOrigin) {
+  const workstation = extensionWorkstations.get(req);
+  return workstation ? `${origin} ${workstation.workstationId}` : origin;
+}
+
+function assertClaimedCaptureResultOrigin(session, req, label) {
+  if (!session?.claimedBy) {
     throw httpError(409, `${label}作业尚未由插件后台原子领取，不能回传结果`, { code: "capture_job_not_claimed" });
   }
-  if (session?.claimedExtensionOrigin && session.claimedExtensionOrigin !== origin) {
-    throw httpError(409, `${label}回传来源与领取来源不一致`, { code: "capture_extension_origin_mismatch" });
+  if (session.claimedBy !== extensionClaimant(req)) {
+    throw httpError(409, `${label}回传的插件或电脑不是领取这次作业的那个`, { code: "capture_extension_origin_mismatch" });
   }
 }
 
@@ -1570,7 +1584,7 @@ async function enqueueASupplierCaptureJob({ candidateId, requestRevision, reques
     requiredExtensionVersion: REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION,
     claimedAt: null,
     claimedExtensionVersion: "",
-    claimedExtensionOrigin: ""
+    claimedBy: ""
   };
   sourceCaptureSessions.set(session.captureId, session);
   let candidate;
@@ -1670,7 +1684,7 @@ async function closeRejectedCaptureClaim(session, error, { recordOf, inFlight, c
 const captureRecordWaiting = (record) => ["waiting_extension", "capturing"].includes(record?.status) ||
   ["queued", "claimed"].includes(record?.jobStatus);
 
-function claimASupplierCaptureJob(captureId, extensionVersion, extensionOrigin) {
+function claimASupplierCaptureJob(captureId, extensionVersion, claimant) {
   const operation = sourceCaptureJobClaimQueue.then(async () => {
     const session = sourceCaptureSessions.get(captureId);
     if (!session || session.mode !== "a_supplier_capture") {
@@ -1686,7 +1700,7 @@ function claimASupplierCaptureJob(captureId, extensionVersion, extensionOrigin) 
     session.attempt = 1;
     session.claimedAt = Date.now();
     session.claimedExtensionVersion = String(extensionVersion);
-    session.claimedExtensionOrigin = String(extensionOrigin || "");
+    session.claimedBy = claimant;
     clearSourceCaptureJobTimer(session.captureId);
     try {
       const claimedRevision = await mutateCandidateData(session.candidateId, (data) => {
@@ -1932,7 +1946,7 @@ async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedP
     requiredExtensionVersion: REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION,
     claimedAt: null,
     claimedExtensionVersion: "",
-    claimedExtensionOrigin: ""
+    claimedBy: ""
   };
   salesCaptureSessions.set(session.captureId, session);
   let candidate;
@@ -1993,7 +2007,7 @@ async function enqueueOzonPageReadJob({ candidateId, requestRevision, requestedP
   return { candidate, captureJob: ozonCapturePageJobPublic(session), duplicate: false };
 }
 
-function claimOzonPageReadJob(captureId, extensionVersion, extensionOrigin) {
+function claimOzonPageReadJob(captureId, extensionVersion, claimant) {
   const operation = sourceCaptureJobClaimQueue.then(async () => {
     const session = salesCaptureSessions.get(captureId);
     if (!session || session.captureKind !== OZON_PAGE_READ_CAPTURE_KIND) {
@@ -2009,7 +2023,7 @@ function claimOzonPageReadJob(captureId, extensionVersion, extensionOrigin) {
     session.attempt = 1;
     session.claimedAt = Date.now();
     session.claimedExtensionVersion = String(extensionVersion);
-    session.claimedExtensionOrigin = String(extensionOrigin || "");
+    session.claimedBy = claimant;
     clearSourceCaptureJobTimer(session.captureId);
     try {
       const claimedRevision = await mutateCandidateData(session.candidateId, (data) => {
@@ -2069,11 +2083,11 @@ function claimOzonPageReadJob(captureId, extensionVersion, extensionOrigin) {
  * claimASupplierCaptureJob。所以 1688 那侧的判断顺序、错误码和文案一个字都没变 —— 连「当前服务没有这次明确
  * 创建的采集作业」这句拒绝也仍然由它自己给出。两种作业编号前缀不同（SCJ- / OPR-），不会互相认领。
  */
-function claimCaptureJob(captureId, extensionVersion, extensionOrigin) {
-  if (salesCaptureSessions.has(captureId)) return claimOzonPageReadJob(captureId, extensionVersion, extensionOrigin);
-  if (imageMatchSessions.has(captureId)) return claimImageMatchJob(captureId, extensionVersion, extensionOrigin);
-  if (seerfarWebRounds.owns(captureId)) return seerfarWebClaim(captureId, extensionVersion, extensionOrigin);
-  return claimASupplierCaptureJob(captureId, extensionVersion, extensionOrigin);
+function claimCaptureJob(captureId, extensionVersion, claimant) {
+  if (salesCaptureSessions.has(captureId)) return claimOzonPageReadJob(captureId, extensionVersion, claimant);
+  if (imageMatchSessions.has(captureId)) return claimImageMatchJob(captureId, extensionVersion, claimant);
+  if (seerfarWebRounds.owns(captureId)) return seerfarWebClaim(captureId, extensionVersion, claimant);
+  return claimASupplierCaptureJob(captureId, extensionVersion, claimant);
 }
 
 /**
@@ -2242,7 +2256,7 @@ async function enqueueImageMatchJob(kind, { candidateId, requestRevision, acknow
     requiredExtensionVersion: REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION,
     claimedAt: null,
     claimedExtensionVersion: "",
-    claimedExtensionOrigin: ""
+    claimedBy: ""
   };
   imageMatchSessions.set(session.captureId, session);
   let candidate;
@@ -2286,8 +2300,8 @@ async function enqueueImageMatchJob(kind, { candidateId, requestRevision, acknow
 }
 
 /** Seerfar 榜单作业和其他插件作业排同一个领取队列，避免两张领取请求交错写数据。 */
-function seerfarWebClaim(captureId, extensionVersion, extensionOrigin) {
-  const operation = sourceCaptureJobClaimQueue.then(() => seerfarWebRounds.claim(captureId, extensionVersion, extensionOrigin)
+function seerfarWebClaim(captureId, extensionVersion, claimant) {
+  const operation = sourceCaptureJobClaimQueue.then(() => seerfarWebRounds.claim(captureId, extensionVersion, claimant)
     .catch((error) => { throw seerfarWebHttpError(error); }));
   sourceCaptureJobClaimQueue = operation.then(() => undefined, () => undefined);
   return operation;
@@ -2683,7 +2697,7 @@ function intakeStillBeforeGate1(candidate) {
     !candidate.lifecycleV11?.skuPackage && !candidate.gate1;
 }
 
-function claimImageMatchJob(captureId, extensionVersion, extensionOrigin) {
+function claimImageMatchJob(captureId, extensionVersion, claimant) {
   const operation = sourceCaptureJobClaimQueue.then(async () => {
     const session = imageMatchSessions.get(captureId);
     const kind = imageMatchKindOf(session);
@@ -2700,7 +2714,7 @@ function claimImageMatchJob(captureId, extensionVersion, extensionOrigin) {
     session.attempt = 1;
     session.claimedAt = Date.now();
     session.claimedExtensionVersion = String(extensionVersion);
-    session.claimedExtensionOrigin = String(extensionOrigin || "");
+    session.claimedBy = claimant;
     clearSourceCaptureJobTimer(session.captureId);
     try {
       const claimedRevision = await mutateCandidateData(session.candidateId, (data) => {
@@ -5139,6 +5153,29 @@ async function handleApi(req, res, pathname) {
       throw httpError(403, TEAM_OWNER_ONLY_MESSAGE, { code: "team_owner_only" });
     }
   }
+  // With team accounts a plugin call counts only with its computer's key: claims are held for that computer.
+  if (workstationAccess && extensionCallback && req.method !== "OPTIONS") {
+    extensionWorkstations.set(req, await workstationAccess.authenticate(req));
+  }
+  // The computers whose plugin works for the team. Whoever is signed in sees them, adds the computer they are sitting at
+  // (the key goes back in this answer only, for the page to hand to the plugin next to it) and removes one.
+  if (workstationAccess && pathname === "/api/workstations" && req.method === "GET") {
+    runtimeIdentityProvider.resolveActor({ request: req });
+    return json(res, 200, { workstations: await workstationAccess.list(), maxActive: workstationAccess.maxActive });
+  }
+  const workstationAction = workstationAccess && req.method === "POST" && pathname.match(/^\/api\/workstations\/(add|remove)$/);
+  if (workstationAction) {
+    assertTrustedApiRequest({ method: req.method, pathname, headers: req.headers,
+      trustedServiceOrigins: [...trustedServiceOrigins], allowedReviewOrigins: [...allowedReviewOrigins] });
+    const actor = runtimeIdentityProvider.resolveActor({ request: req, touch: true });
+    const field = workstationAction[1] === "add" ? "name" : "workstationId";
+    const input = await readJsonRequestBody(req, { maxBytes: 4096, requireJsonContentType: true });
+    if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).join() !== field || typeof input[field] !== "string") {
+      throw httpError(400, "请求字段无效", { code: "workstation_input_invalid" });
+    }
+    if (workstationAction[1] === "add") return json(res, 201, await workstationAccess.add({ actor, name: input.name }));
+    return json(res, 200, { workstation: await workstationAccess.remove({ workstationId: input.workstationId }) });
+  }
   if (req.method === "OPTIONS" && (pathname === "/api/extension/heartbeat" || /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/(?:claim|search-image)$/.test(pathname) || /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(pathname) || /^\/api\/seerfar-selection\/rounds\/[^/]+\/result$/.test(pathname))) {
     const headers = chromeExtensionCors(req);
     if (!headers["Access-Control-Allow-Origin"]) throw httpError(403, "只接受本机Chrome扩展回传");
@@ -5150,6 +5187,8 @@ async function handleApi(req, res, pathname) {
     const headers = chromeExtensionCors(req);
     if (!headers["Access-Control-Allow-Origin"]) throw httpError(403, "只接受本机Chrome扩展心跳");
     const heartbeat = recordExtensionHeartbeat(await requestBody(req));
+    const workstation = extensionWorkstations.get(req);
+    if (workstation) workstationAccess.recordHeartbeat(workstation.workstationId, { version: heartbeat.version });
     // 录入页排着的商品在等插件：插件一回来就接着往下走（排着的还没开始过，不算重跑）。
     if (intakeHasOpenWork && heartbeat.fresh) scheduleIntakePump(0);
     return json(res, 200, { accepted: true, heartbeat, captureJob: null, jobNotice: null }, headers);
@@ -5162,7 +5201,7 @@ async function handleApi(req, res, pathname) {
     if (Object.keys(input).length !== 1 || typeof input.version !== "string" || !/^\d+\.\d+\.\d+$/.test(input.version)) {
       throw httpError(400, "领取请求必须只包含插件版本", { code: "capture_claim_invalid" });
     }
-    const claim = await claimCaptureJob(captureClaimRoute[1], input.version, String(req.headers.origin));
+    const claim = await claimCaptureJob(captureClaimRoute[1], input.version, extensionClaimant(req));
     return json(res, 200, { accepted: true, ...claim }, headers);
   }
   /**
@@ -5360,7 +5399,7 @@ async function handleApi(req, res, pathname) {
     if (!headers['Access-Control-Allow-Origin']) throw httpError(403, '只接受已配置的Chrome扩展回传');
     const input = await readJsonRequestBody(req, { maxBytes: 512 * 1024, requireJsonContentType: true });
     try {
-      const round = await seerfarWebRounds.acceptResult({ roundId: decodeURIComponent(seerfarWebResultRoute[1]), input, origin: String(req.headers.origin || '') });
+      const round = await seerfarWebRounds.acceptResult({ roundId: decodeURIComponent(seerfarWebResultRoute[1]), input, claimant: extensionClaimant(req) });
       return json(res, 200, { accepted: true, round }, headers);
     } catch (error) { throw seerfarWebHttpError(error); }
   }

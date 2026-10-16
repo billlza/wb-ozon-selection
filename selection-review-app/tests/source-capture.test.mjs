@@ -514,11 +514,12 @@ test("1688 collector accepts a real top-level SKU ID on a single-specification o
 
 test("extension manifest stays limited to the 1688 short-link/detail allowlist, the 1688 image-search pages, Pinduoduo goods pages, Ozon product, search and image-search pages, the Seerfar member site and the local review app", async () => {
   const manifest = JSON.parse(await readFile(path.join(appDir, "extension", "1688-capture", "manifest.json"), "utf8"));
-  assert.equal(manifest.version, "1.4.2");
+  assert.equal(manifest.version, "1.5.0");
   assert.equal(manifest.name, "全店经营工作台 · 商品只读采集器");
   assert.equal(manifest.action.default_title, "全店经营工作台 · 商品只读采集器");
   assert.match(manifest.description, /本机全店经营工作台/);
-  assert.deepEqual(manifest.permissions.sort(), ["alarms", "scripting"]);
+  // storage keeps the one key a team's central service gave this computer (central plan step 3).
+  assert.deepEqual(manifest.permissions.sort(), ["alarms", "scripting", "storage"]);
   assert.equal(manifest.minimum_chrome_version, "120");
   assert.deepEqual(manifest.host_permissions.sort(), [
     "http://127.0.0.1:4317/*",
@@ -595,7 +596,7 @@ test("explicit capture claims only the requested ID and rejects mismatched or re
   assert.equal((await startCapture(mismatch.runtime, "job-1")).code, "capture_job_invalid");
   assert.equal(mismatch.calls.created.length, 0);
   assert.match(mismatch.calls.requests[0].url, /capture-jobs\/job-1\/claim$/);
-  assert.deepEqual(mismatch.calls.requests[0].body, { version: "1.4.2" });
+  assert.deepEqual(mismatch.calls.requests[0].body, { version: "1.5.0" });
   assert.equal((await startCapture(mismatch.runtime, "job-1")).code, "capture_replay_rejected");
   assert.equal(mismatch.calls.requests.length, 1);
 
@@ -643,7 +644,7 @@ test("a page the owner already closed counts as closed: the next job is taken, n
   const seerfarJob = { captureId: "SWR-00000000-0000-4000-8000-000000000001", jobId: "SWR-00000000-0000-4000-8000-000000000001",
     roundId: "seerfar-web-round:00000000-0000-4000-8000-000000000002", mode: SEERFAR_WEB_MODE, pageUrl: SEERFAR_WEB_SEARCH_PAGE,
     endpoint: SEERFAR_WEB_SEARCH_ENDPOINT, categoryPaths: ["宠物用品 > 宠物服装和靴子 > 宠物服装"], sellerType: "cross_border",
-    maxRecords: 20, waitMs: 5000, requiredExtensionVersion: "1.4.2", attempt: 1, token: "synthetic-token" };
+    maxRecords: 20, waitMs: 5000, requiredExtensionVersion: "1.5.0", attempt: 1, token: "synthetic-token" };
   let seerfar;
   let tabGone = false;
   seerfar = harness({ job: seerfarJob, execute: () => { tabGone = true; throw noSuchTab(7); } });

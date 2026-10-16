@@ -1580,3 +1580,6 @@ label em { color: var(--red); font-style: normal; font-size: 9px; }
 .seerfar-profile-link { margin: 0; color: var(--muted); font-size: var(--fs-xs); }
 .team-account-panel select { width: min(260px, 100%); }
 @media (max-width: 600px) { .team-account-panel select { width: 100%; } }
+.workstation-list { width: 100%; margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.workstation-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 12px; }
+.workstation-list li > span + span { color: var(--muted); font-size: 11px; }

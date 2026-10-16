@@ -8,6 +8,12 @@ const ROUTES = Object.freeze({
 const STATUS_PING = "SELECTION_REVIEW_EXTENSION_STATUS_PING";
 const STATUS_RESPONSE = "SELECTION_REVIEW_EXTENSION_STATUS_RESPONSE";
 const BACKGROUND_PING = "SELECTION_REVIEW_EXTENSION_BACKGROUND_PING";
+// The key a team's central service made for this computer: the page hands it over once, the background keeps it.
+const WORKSTATION_KEY = "SELECTION_REVIEW_WORKSTATION_KEY";
+const WORKSTATION_KEY_ACK = "SELECTION_REVIEW_WORKSTATION_KEY_ACK";
+const WORKSTATION_KEY_CODES = new Set(["workstation_key_invalid", "workstation_storage_unavailable", "request_origin_invalid", "background_unavailable"]);
+const workstationView = (value) => value && typeof value.workstationId === "string" && /^workstation:[0-9a-f-]{36}$/.test(value.workstationId) &&
+  typeof value.name === "string" && value.name.length <= 40 ? { workstationId: value.workstationId, name: value.name } : null;
 // A tab the worker opened and could not yet account for. Passing the reason on lets the page tell the owner to close that
 // tab (or reload the plugin), instead of saying the background is not answering.
 const TAB_HOLDS = ["tab_cleanup_failed", "tab_creation_unconfirmed"];
@@ -24,10 +30,15 @@ async function readBackgroundStatus() {
       lastCaptureCode: typeof response?.lastCaptureCode === "string" ? response.lastCaptureCode : "",
       captureActive: response?.captureActive === true,
       heldBy: TAB_HOLDS.includes(response?.code) ? response.code : "",
-      backgroundError: response?.accepted === true ? "" : response?.code === "extension_identity_rejected" ? "插件身份未获服务端允许，禁止领取作业" : "插件后台或评审台连接尚未确认"
+      // Which computer this is for the team's service, and whether that service wants this computer added first.
+      workstation: workstationView(response?.workstation),
+      workstationNotAdded: response?.code === "workstation_not_added",
+      backgroundError: response?.accepted === true ? "" : response?.code === "extension_identity_rejected" ? "插件身份未获服务端允许，禁止领取作业"
+        : response?.code === "workstation_not_added" ? "这台电脑还没加进来，插件领不了作业" : "插件后台或评审台连接尚未确认"
     };
   } catch {
-    return { backgroundReady: false, serviceConnected: false, lastCaptureCode: "", captureActive: false, heldBy: "", backgroundError: "插件后台没有响应" };
+    return { backgroundReady: false, serviceConnected: false, lastCaptureCode: "", captureActive: false, heldBy: "", workstation: null,
+      workstationNotAdded: false, backgroundError: "插件后台没有响应" };
   }
 }
 
@@ -45,6 +56,17 @@ window.addEventListener("message", async (event) => {
   const message = event.data;
   if (message?.type === STATUS_PING) {
     await publishStatus(typeof message.nonce === "string" ? message.nonce.slice(0, 128) : "");
+    return;
+  }
+  if (message?.type === WORKSTATION_KEY) {
+    // Only the four fields go on to the background, which checks them again; the key is never posted back to the page.
+    let response = { accepted: false, code: "background_unavailable" };
+    try {
+      response = await chrome.runtime.sendMessage({ type: WORKSTATION_KEY, workstationId: message.workstationId, name: message.name, key: message.key });
+    } catch {}
+    window.postMessage({ type: WORKSTATION_KEY_ACK, workstationId: typeof message.workstationId === "string" ? message.workstationId.slice(0, 64) : "",
+      accepted: response?.accepted === true, serviceConnected: response?.serviceConnected === true, workstation: workstationView(response?.workstation),
+      code: WORKSTATION_KEY_CODES.has(response?.code) ? response.code : "" }, window.location.origin);
     return;
   }
   const ackType = message && ROUTES[message.type];
@@ -73,7 +95,8 @@ window.addEventListener("message", async (event) => {
     captureId: message.captureId,
     accepted: response?.accepted === true,
     code: ["request_origin_invalid", "start_signal_invalid", "capture_busy", "capture_job_invalid", "capture_job_not_claimed", "heartbeat_unavailable",
-      "extension_identity_rejected", "background_unavailable", "tab_cleanup_failed", "tab_creation_unconfirmed"].includes(response?.code) ? response.code : "",
+      "extension_identity_rejected", "workstation_not_added", "background_unavailable", "tab_cleanup_failed", "tab_creation_unconfirmed"].includes(response?.code)
+      ? response.code : "",
     error: response?.accepted === true ? "" : "插件未确认领取作业，请查看当前技术状态"
   }, window.location.origin);
 });

@@ -3,6 +3,10 @@ import { api } from "../api.js";
 import { createLatestRead, createSubmitLock } from "../formState.js";
 import { assertOwnerAccessDto, ownerAccessPasswordInput, TEAM_ROLE_LABELS } from "../ownerAccess.js";
 import TeamAccountPanel from "./TeamAccountPanel.jsx";
+import WorkstationPanel from "./WorkstationPanel.jsx";
+
+// What this page's plugin said last: whether it answered, and which team computer's key it holds.
+const NO_PLUGIN_ANSWER = Object.freeze({ answered: false, workstation: null });
 
 /**
  * 已登录是常态，不必每一页头上都声明一遍：showAuthenticated 为假时这一条整条不显示（「退出登录」在「维护」里）。
@@ -10,7 +14,7 @@ import TeamAccountPanel from "./TeamAccountPanel.jsx";
  * 团队账号（两位老板和测试各一个登录名）：登录要填登录名；登着时「维护」里写明是谁、什么角色，下面是改密码。
  */
 export function LocalOwnerAccessView({ state, saving, password, repeatedPassword, loginName = "", inputError, showAuthenticated = false,
-  onPasswordChange, onRepeatedPasswordChange, onLoginNameChange, onSubmit, onRefresh }) {
+  thisComputer = NO_PLUGIN_ANSWER, onPasswordChange, onRepeatedPasswordChange, onLoginNameChange, onSubmit, onRefresh }) {
   if (state.status === "loading") return <section className="local-owner-access" aria-busy="true"><b>主人登录</b><span>正在读取登录状态…</span></section>;
   if (state.status === "failed") return <section className="local-owner-access">
     <b>主人登录状态未确认</b><p role="alert">{state.error}</p>
@@ -30,6 +34,7 @@ export function LocalOwnerAccessView({ state, saving, password, repeatedPassword
       <button type="button" className="button secondary" disabled={saving} onClick={onSubmit}>{saving ? "正在退出…" : "退出登录"}</button>
     </section>
     {team ? <TeamAccountPanel user={access.user} onAccessChanged={onRefresh} /> : null}
+    {team ? <WorkstationPanel thisComputer={thisComputer} onAccessChanged={onRefresh} /> : null}
   </> : null;
   if (team) return <section className="local-owner-access">
     <div><b>登录</b><p>用你自己的登录名和密码。账号由管服务器的人用命令行开，网页上开不了。</p></div>
@@ -61,7 +66,8 @@ export function LocalOwnerAccessView({ state, saving, password, repeatedPassword
   </section>;
 }
 
-export default function LocalOwnerAccessPanel({ onAccessResolved, onAccessUnknown, showAuthenticated = false, accessCheck = 0 }) {
+export default function LocalOwnerAccessPanel({ onAccessResolved, onAccessUnknown, showAuthenticated = false, accessCheck = 0,
+  thisComputer = NO_PLUGIN_ANSWER }) {
   const [state, setState] = useState({ status: "loading", access: null, error: "" });
   const [password, setPassword] = useState("");
   const [repeatedPassword, setRepeatedPassword] = useState("");
@@ -137,7 +143,7 @@ export default function LocalOwnerAccessPanel({ onAccessResolved, onAccessUnknow
     });
   }
   return <LocalOwnerAccessView state={state} saving={saving} password={password} repeatedPassword={repeatedPassword} loginName={loginName}
-    inputError={inputError} showAuthenticated={showAuthenticated}
+    inputError={inputError} showAuthenticated={showAuthenticated} thisComputer={thisComputer}
     onPasswordChange={setPassword} onRepeatedPasswordChange={setRepeatedPassword} onLoginNameChange={setLoginName}
     onSubmit={submit} onRefresh={refresh} />;
 }

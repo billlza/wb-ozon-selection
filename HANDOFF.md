@@ -157,9 +157,21 @@
 
 - 现在按来源地址计（`lib/team-account-identity.mjs` 的 `signInSource`）：同一个地址对同一个名字错 5 次、对所有名字合计错 20 次，停的只是这个地址；别的地址上的人照常登录。IPv6 按前 64 位算一个地址（`failureSourceKey`），换同一段里的别的地址不能重新计。改自己密码时填错现在的密码也一样计。去掉了全局的那道锁。计数最多记一万条，多了先丢最久没动的。
 - 来源地址默认取连接过来的地址。服务前面有代理（放到 Render 上就有）时，设 `SELECTION_REVIEW_TRUSTED_PROXY_HOPS` 为代理层数（0 到 3，默认 0），取 `X-Forwarded-For` 从右数第几个，那是最外一层代理亲眼看到的地址；更左边的是调用的人自己写的，不看。第 5 步部署时要实测核对 Render 的层数；设错了，要么大家共用一个地址的计数，要么认的是别人能伪造的地址。
-- 还没补、上公网前要补的：团队账号下插件回传（心跳、领作业、各类结果、以图搜）不用登录，只看 `Origin` 头，命令行能伪造。第 3 步给每台电脑配一把钥匙时挂上；在那之前中央部署不要配 `SELECTION_REVIEW_ALLOWED_EXTENSION_ORIGINS`（中央模式第 3 步之前本来也起不来）。
+- 还没补、上公网前要补的：团队账号下插件回传（心跳、领作业、各类结果、以图搜）不用登录，只看 `Origin` 头，命令行能伪造。第 3 步给每台电脑配一把钥匙时挂上；在那之前中央部署不要配 `SELECTION_REVIEW_ALLOWED_EXTENSION_ORIGINS`（中央模式第 3 步之前本来也起不来）。钥匙已经挂上了，见下一节。
 - 测试：`tests/team-accounts.test.mjs` 加了「一个地址乱试锁不住别的地址」「IPv6 按前 64 位计」「代理后面只认代理看到的地址」和代理层数配置。
 - 没防住的：很多地址一起慢慢猜，只靠 scrypt 慢（一次只核一个密码）和新密码至少 8 个字符挡着，所以团队账号的密码别用常见词。
+
+### 多人中央服务第 3 步之一：每台电脑一把钥匙（2026-10-16）
+
+五六台电脑都装同一个插件，`Origin` 头一样，服务分不出是哪台；`Origin` 头在命令行里也能随便写。所以团队账号下每台电脑各有一把钥匙，插件每次找服务都带着。不开团队账号时（主人 Mac 本机）一切照旧，插件不带钥匙也照样收。
+
+- 加电脑：登录的人坐在哪台电脑前，就在那台的「维护」→「干活的电脑」里起个名字、点「把这台电脑加进来」。服务做一把钥匙（`srw_` 开头，32 字节随机），只在这一次回答里给出；页面马上通过插件的内容脚本交给同一台电脑上的插件（`src/workstationKey.js`），插件存进自己的存储（`chrome.storage.local`，所以插件多要了 `storage` 权限）。插件没收下的，页面当场把这台撤掉。谁登录都能加、都能移除（主人没另定，按「测试除三项确认外都能做」处理）；最多 20 台。
+- 服务端（`lib/workstation-access.mjs`、`lib/workstation-store.mjs`）：电脑名单存在 Postgres 自己的表 `selection_review_workstations`，只存钥匙的 SHA-256 摘要，不进业务数据。`GET /api/workstations` 看名单（谁在线、插件版本），`POST /api/workstations/add`、`/remove` 加和移除；移除后那把钥匙马上不认，行留着。
+- 插件回传（心跳、领作业、以图搜取图、各类结果、Seerfar 一轮的结果）在团队账号下都要带 `Authorization: Bearer <钥匙>`，没带或不对回 401（`WORKSTATION_KEY_REQUIRED`、`WORKSTATION_KEY_REJECTED`）。领作业时记下「插件来源 + 这台电脑」（原来只记来源，字段从 `claimedExtensionOrigin` 改名 `claimedBy`），交结果时必须是同一台，别的电脑交回 409 `capture_extension_origin_mismatch`，什么都不改。
+- 插件 1.4.2 → 1.5.0（`manifest.json`、`server.mjs` 的 `REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION`、`src/extensionStatus.js`）：存钥匙、带钥匙；服务回 401 时说「这台电脑还没加进来」（`workstation_not_added`），和 403「不认这个插件」分开；状态里告诉页面它拿着哪台电脑的钥匙，钥匙本身不回给页面。合进 main、Mac 升级后要到 chrome://extensions 重新加载插件。
+- 谁在线：心跳只记在服务进程内存里，重启后半分钟内就又齐了；只用来显示，不派也不收作业。
+- 还没做：插件还只连 `http://127.0.0.1:4317`（下一步 3b 让插件能填服务地址）；作业租约、中央模式能起来是 3c。开着的工作台页面仍会把排着的录入作业递给自己那台的插件，哪台先领到就是哪台的。
+- 测试：`tests/workstation-access.test.mjs`（发钥匙、核对、移除、在线、上限）；`tests/workstation-extension.test.mjs`（插件存钥匙、每次带上、401 和 403 分开、桥接不回传钥匙）；`tests/workstation-ui.test.mjs`（页面交钥匙、电脑名单的样子）；`tests/workstations-db.test.mjs` 要真数据库，起一个团队账号的服务：没钥匙不收，A 台领的作业 B 台交不了、A 台能交，移除后 A 的钥匙失效，归在 `DATABASE_TESTS`。
 
 ### 本轮验证
 

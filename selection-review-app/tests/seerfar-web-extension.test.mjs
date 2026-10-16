@@ -13,17 +13,17 @@ function payload(overrides = {}) {
   return { captureId: 'SWR-00000000-0000-4000-8000-000000000001', jobId: 'SWR-00000000-0000-4000-8000-000000000001',
     roundId: 'seerfar-web-round:00000000-0000-4000-8000-000000000002', mode: SEERFAR_WEB_MODE, pageUrl: SEERFAR_WEB_SEARCH_PAGE,
     endpoint: SEERFAR_WEB_SEARCH_ENDPOINT, categoryPaths: [CLOTHING], sellerType: 'cross_border', maxRecords: 20, waitMs: 5000,
-    requiredExtensionVersion: '1.4.2', attempt: 1, token: 'synthetic-token', ...overrides };
+    requiredExtensionVersion: '1.5.0', attempt: 1, token: 'synthetic-token', ...overrides };
 }
 const record = (sku, path = CLOTHING) => ({ sku, title: `Synthetic ${sku}`, categoryInfo: { cnTitlePath: path } });
 
 test('only the exact claimed job shape is accepted', () => {
-  assert.equal(validateSeerfarWebRequest({ payload: payload(), manifestVersion: '1.4.2' }).ok, true);
+  assert.equal(validateSeerfarWebRequest({ payload: payload(), manifestVersion: '1.5.0' }).ok, true);
   for (const [bad, code] of [[payload({ pageUrl: 'https://www.seerfar.cn/admin/other' }), 'source_url_invalid'],
     [payload({ endpoint: 'https://api.seerfar.cn/open-api/quota' }), 'source_url_invalid'], [payload({ attempt: 2 }), 'attempt_invalid'],
     [payload({ waitMs: 10 * 60 * 1000 }), 'request_payload_missing'], [payload({ sourceUrl: 'https://detail.1688.com/offer/1.html' }), 'capture_mode_invalid'],
     [payload({ categoryPaths: [] }), 'request_payload_missing']]) {
-    assert.equal(validateSeerfarWebRequest({ payload: bad, manifestVersion: '1.4.2' }).code, code);
+    assert.equal(validateSeerfarWebRequest({ payload: bad, manifestVersion: '1.5.0' }).code, code);
   }
   assert.equal(validateSeerfarWebRequest({ payload: payload(), manifestVersion: '1.3.0' }).code, 'extension_version_mismatch');
 });
@@ -142,8 +142,8 @@ test('a login page or another page ends the job with its reason, and waiting has
 
 test('the manifest can reach the Seerfar member site and nothing new beyond it', async () => {
   const manifest = JSON.parse(await readFile(new URL('../extension/1688-capture/manifest.json', import.meta.url), 'utf8'));
-  assert.equal(manifest.version, '1.4.2');
+  assert.equal(manifest.version, '1.5.0');
   assert.ok(manifest.host_permissions.includes('https://www.seerfar.cn/*'));
   assert.equal(manifest.host_permissions.some(value => value.includes('api.seerfar.cn')), false);
-  assert.deepEqual(manifest.permissions, ['alarms', 'scripting']);
+  assert.deepEqual(manifest.permissions, ['alarms', 'scripting', 'storage']);
 });

@@ -27,6 +27,20 @@ export function isReviewSender(value) {
   } catch { return false; }
 }
 
+export const WORKSTATION_KEY_MESSAGE_TYPE = "SELECTION_REVIEW_WORKSTATION_KEY";
+
+/**
+ * The key a team's central service made for this computer, as the review page on this computer hands it over: the
+ * computer's id, the name the person gave it and the key itself, nothing else.
+ */
+export function validateWorkstationKeyMessage(message) {
+  return message !== null && typeof message === "object" && !Array.isArray(message) &&
+    Object.keys(message).sort().join() === "key,name,type,workstationId" && message.type === WORKSTATION_KEY_MESSAGE_TYPE &&
+    /^workstation:[0-9a-f-]{36}$/.test(message.workstationId) && typeof message.name === "string" &&
+    message.name === message.name.trim() && [...message.name].length >= 1 && [...message.name].length <= 40 &&
+    !/[\u0000-\u001f\u007f]/.test(message.name) && typeof message.key === "string" && /^srw_[A-Za-z0-9_-]{43}$/.test(message.key);
+}
+
 export function validateCaptureStartSignal(message) {
   const valid = message && typeof message === "object" && !Array.isArray(message) &&
     Object.keys(message).length === 2 &&

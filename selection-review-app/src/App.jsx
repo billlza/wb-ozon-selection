@@ -82,6 +82,8 @@ const emptyAppState = () => ({
   captureControl: { status: "idle", label: "商品采集控制空闲" }
 });
 
+const NO_PLUGIN_ANSWER = Object.freeze({ answered: false, workstation: null });
+
 export default function App() {
   const [preparationSaveState] = useState(createPreparationSaveState);
   const [state, setState] = useState(emptyAppState);
@@ -392,9 +394,11 @@ export default function App() {
   const [extensionStatus, setExtensionStatus] = useState(() => extensionConnectionStatus({
     cachedVersion: readCachedExtensionVersion()
   }));
+  // Which team computer this page's plugin holds a key for (shown in 维护 under 干活的电脑); unknown until it answers.
+  const [thisComputer, setThisComputer] = useState(NO_PLUGIN_ANSWER);
   const effectiveExtensionStatus = useMemo(() => {
     // The page bridge answered for this exact tab, so its verdict wins; only an unanswered ping falls back to the heartbeat.
-    if (["connected", "background_unavailable", "tab_left_open", "tab_unconfirmed", "reload_required"].includes(extensionStatus.code)) {
+    if (["connected", "background_unavailable", "tab_left_open", "tab_unconfirmed", "reload_required", "workstation_not_added"].includes(extensionStatus.code)) {
       return extensionStatus;
     }
     return extensionConnectionStatus({
@@ -415,6 +419,7 @@ export default function App() {
       responseTimer = window.setTimeout(() => {
         liveVersion = "";
         setExtensionStatus(extensionConnectionStatus({ cachedVersion: readCachedExtensionVersion() }));
+        setThisComputer(NO_PLUGIN_ANSWER);
       }, EXTENSION_STATUS_RESPONSE_TIMEOUT_MS);
     }
     function onMessage(event) {
@@ -426,8 +431,12 @@ export default function App() {
       setExtensionStatus(extensionConnectionStatus({
         liveVersion,
         backgroundReady: event.data.backgroundReady === true,
-        heldBy: typeof event.data.heldBy === "string" ? event.data.heldBy : ""
+        heldBy: typeof event.data.heldBy === "string" ? event.data.heldBy : "",
+        workstationNotAdded: event.data.workstationNotAdded === true
       }));
+      const workstation = event.data.workstation;
+      setThisComputer({ answered: true, workstation: typeof workstation?.workstationId === "string" && typeof workstation.name === "string"
+        ? { workstationId: workstation.workstationId, name: workstation.name } : null });
     }
     window.addEventListener("message", onMessage);
     ping();
@@ -1515,7 +1524,7 @@ export default function App() {
         </div>
       </header>
       {/* 已登录是常态，不必每一页都声明；没登录、读不出来或只是预览身份时这一条必须仍然显眼。退出登录收在「维护」里。 */}
-      <LocalOwnerAccessPanel showAuthenticated={view === "maint"} accessCheck={accessCheck}
+      <LocalOwnerAccessPanel showAuthenticated={view === "maint"} accessCheck={accessCheck} thisComputer={thisComputer}
         onAccessResolved={refreshOwnerPermissions} onAccessUnknown={clearOwnerPermissions} />
       {notice ? <div role={notice.type === "error" ? "alert" : "status"} className={`global-notice ${notice.type}`}>{notice.message}</div> : null}
 

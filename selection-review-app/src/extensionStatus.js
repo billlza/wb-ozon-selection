@@ -1,4 +1,4 @@
-export const EXPECTED_EXTENSION_VERSION = "1.4.2";
+export const EXPECTED_EXTENSION_VERSION = "1.5.0";
 export const EXTENSION_STATUS_PING = "SELECTION_REVIEW_EXTENSION_STATUS_PING";
 export const EXTENSION_STATUS_RESPONSE = "SELECTION_REVIEW_EXTENSION_STATUS_RESPONSE";
 export const EXTENSION_LAST_SEEN_KEY = "selection-review-extension-last-seen";
@@ -11,7 +11,8 @@ const TAB_HOLD_STATUS = Object.freeze({
   tab_creation_unconfirmed: { code: "tab_unconfirmed", label: "插件上次开页面时 Chrome 没回话 · 请重新加载插件" }
 });
 
-export function extensionConnectionStatus({ liveVersion = "", cachedVersion = "", backgroundReady = false, heldBy = "", serverHeartbeat = null } = {}) {
+export function extensionConnectionStatus({ liveVersion = "", cachedVersion = "", backgroundReady = false, heldBy = "", workstationNotAdded = false,
+  serverHeartbeat = null } = {}) {
   const live = String(liveVersion || "").trim();
   const heartbeatVersion = serverHeartbeat?.fresh === true
     ? String(serverHeartbeat.version || "").trim()
@@ -24,6 +25,10 @@ export function extensionConnectionStatus({ liveVersion = "", cachedVersion = ""
   if (activeVersion) {
     if (activeVersion !== EXPECTED_EXTENSION_VERSION) {
       return { code: "reload_required", label: `插件代码已更新 · 请重新加载（当前v${activeVersion}，需要v${EXPECTED_EXTENSION_VERSION}）` };
+    }
+    // The team's service turned this computer's plugin away for want of its key (none yet, or the computer was removed).
+    if (live && workstationNotAdded === true) {
+      return { code: "workstation_not_added", label: "这台电脑还没加进来 · 到「维护」里的「干活的电脑」加一下才能领作业" };
     }
     // A background that answers the handshake is connected and waiting for work; only a silent background, or one holding
     // new work back for a tab it opened, is a problem. Whether one capture then succeeds is reported by that capture's own

@@ -97,7 +97,7 @@ export function createSeerfarWebRoundService({ readData, mutateData, mutateDataW
     const captureId = `SWR-${randomUUID()}`;
     const session = { captureId, token: randomBytes(32).toString('base64url'), roundId: null, targetStore, candidateId: null,
       captureKind: SEERFAR_WEB_CAPTURE_KIND, jobStatus: 'queued', attempt: 0, createdAt: Date.now(), expiresAt: Date.now() + queueTtlMs,
-      requiredExtensionVersion, claimedAt: null, claimedExtensionVersion: '', claimedExtensionOrigin: '' };
+      requiredExtensionVersion, claimedAt: null, claimedExtensionVersion: '', claimedBy: '' };
     sessions.set(captureId, session);
     let record;
     try {
@@ -121,7 +121,7 @@ export function createSeerfarWebRoundService({ readData, mutateData, mutateDataW
     return { round: seerfarWebRoundPublic(record), captureJob: { jobId: captureId, mode: SEERFAR_WEB_ROUND_MODE, status: 'queued', roundId: record.roundId } };
   }
 
-  async function claim(captureId, extensionVersion, extensionOrigin) {
+  async function claim(captureId, extensionVersion, claimant) {
     const session = sessions.get(captureId);
     if (!session || session.jobStatus !== 'queued' || session.attempt !== 0 || session.expiresAt <= Date.now()) {
       throw httpFail(409, 'NOT_CLAIMABLE', '这次 Seerfar 作业已领取、失效或不存在，不能再次执行。');
@@ -150,7 +150,7 @@ export function createSeerfarWebRoundService({ readData, mutateData, mutateDataW
     session.jobStatus = 'claimed';
     session.claimedAt = Date.now();
     session.claimedExtensionVersion = String(extensionVersion);
-    session.claimedExtensionOrigin = String(extensionOrigin || '');
+    session.claimedBy = String(claimant || '');
     session.expiresAt = Date.now() + executionTtlMs;
     scheduleExpiry(session, 'claimed', executionTtlMs);
     return { captureJob: { captureId, jobId: captureId, roundId: record.roundId, mode: SEERFAR_WEB_ROUND_MODE, pageUrl: SEERFAR_WEB_SEARCH_PAGE,
@@ -188,11 +188,11 @@ export function createSeerfarWebRoundService({ readData, mutateData, mutateDataW
     }
   }
 
-  async function acceptResult({ roundId, input, origin }) {
+  async function acceptResult({ roundId, input, claimant }) {
     const session = sessions.get(String(input?.captureId || ''));
     if (!session || session.roundId !== roundId) throw httpFail(409, 'SESSION_INVALID', 'Seerfar 作业会话不存在或已失效。');
-    if (!session.claimedExtensionOrigin || session.claimedExtensionOrigin !== String(origin || '')) {
-      throw httpFail(409, 'ORIGIN_MISMATCH', '回传来源与领取来源不一致。');
+    if (!session.claimedBy || session.claimedBy !== String(claimant || '')) {
+      throw httpFail(409, 'ORIGIN_MISMATCH', '回传的插件或电脑不是领取这一轮的那个。');
     }
     if (!sameToken(session.token, input.token)) throw httpFail(403, 'TOKEN_INVALID', 'Seerfar 作业令牌无效。');
     if (session.jobStatus !== 'claimed' || session.attempt !== 1) throw httpFail(409, 'NOT_CLAIMED', '这次作业还没有被插件领取，不能回传结果。');
