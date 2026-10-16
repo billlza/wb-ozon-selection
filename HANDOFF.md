@@ -113,6 +113,7 @@
 - 本机 JSON 和内存：同一套切法，单件事务在整份文件上切开、检查、拼回，看到的东西和拒绝的条件跟 Postgres 一样；文件格式不变，主人 Mac 上的数据不用动。
 - 第 1 步那张一行表 `selection_review_business_state` 不再读。第 1 步没有部署过，没有要搬的数据；导入脚本照旧用，现在写进这三张表，写完在同一个事务里读回来逐项比对。
 - 测试：`tests/business-state-partitions.test.mjs`（切和拼、顺序、越界、唯一编号、行格式）；`tests/business-state-repository.test.mjs` 里三种存法同一套单件读写测试；`tests/postgres-business-state-store.test.mjs` 和要真数据库的 `tests/postgres-business-state-db.test.mjs` 按新存法重写，后者加了不同商品并行、整份事务等单件事务、两个进程抢同一个编号。
+- 本机验证（10-16，Node 22，`NODE_OPTIONS=--throw-deprecation`）：纯测试 3382 项、隔离接口测试 332 项、真数据库测试 17 项全过，构建没有警告，能力快照对得上。接口测试先查出一个真问题：商品没有正式实体记录时，单件写把共用部分里的空列表去掉了，被当成改了共用部分（保存权利声明报服务器错误）；现在空列表和没有这一项算一样。
 
 ### 本轮验证
 
