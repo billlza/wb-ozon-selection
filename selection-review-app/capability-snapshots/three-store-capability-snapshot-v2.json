@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-16T12:24:15.706Z",
+  "frozenAt": "2026-10-16T13:25:32.255Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 1006,
-      "sha256": "9902a419bcfa5e94801b2d37277f6e2b83646da61f63481cf444e24a536b3428",
+      "sha256": "ec700523172f70e5649c659b070f5f22fdf10f74dc9808ccf208dd4463e272e3",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -192,7 +192,7 @@
       },
       {
         "path": "lib/business-state-partitions.mjs",
-        "sha256": "1004663b9f3bc42bb7f7932318b0f5c127ea0caa5b0c54313560fdeb68f759d8"
+        "sha256": "f9417e823f5d0866fb1e972130cc6468e048a2c0e1cc1c727d7a1b385c62d634"
       },
       {
         "path": "lib/business-state-repository.mjs",
@@ -2256,11 +2256,11 @@
       },
       {
         "path": "tests/business-state-partitions.test.mjs",
-        "sha256": "e3369f1afa748415d11f9d2fcb72f4e33919e48efa6a2a1eb5acc5c4ac3b1a12"
+        "sha256": "190d9a59f235baa7706f7cda6d74452a62a70b746fd6c7dd375b1bff7e2a537a"
       },
       {
         "path": "tests/business-state-repository.test.mjs",
-        "sha256": "c717dc8f8bc44a26c07a1b70f86fec3731b640e833bd8c88bd51efaa97de089b"
+        "sha256": "4790537e79549e939e45eb08b408177344a954be0c1fd25faca2d1aa18efea72"
       },
       {
         "path": "tests/c1-ai-contract-unification.test.mjs",

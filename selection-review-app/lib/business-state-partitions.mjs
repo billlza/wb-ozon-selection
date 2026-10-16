@@ -176,6 +176,16 @@ function withoutNewEmptyCollections(next, previous) {
   return { document, positions };
 }
 
+// The stored positions for one owner's records after some were taken out: the records unchanged at the start and at the
+// end keep their own; the ones between them (changed in place) take the freed positions in order.
+function positionsLeft(old, left) {
+  let start = 0;
+  while (start < left.length && isDeepStrictEqual(old.records[start], left[start])) start += 1;
+  let end = 0;
+  while (start + end < left.length && isDeepStrictEqual(old.records.at(-1 - end), left.at(-1 - end))) end += 1;
+  return [...old.positions.slice(0, left.length - end), ...old.positions.slice(old.positions.length - end)];
+}
+
 /**
  * Cuts the document a transaction wrote, against the parts it loaded. `scope` is null for a whole-document transaction
  * (every part was loaded) or the set of candidate ids a single-candidate transaction may change; anything outside it is
@@ -207,10 +217,15 @@ export async function splitBusinessStateResult(document, loaded, { scope = null,
       }
     });
     // Each owner's records keep their stored positions in order. Records added at the start (the old first record now
-    // further down) take the positions from the end of the list instead, so the new ones count as added in front.
+    // further down) take the positions from the end of the list instead, so the new ones count as added in front. When
+    // records were taken out, the ones left keep their own positions, so later records do not move past other owners'.
     const assigned = new Array(records.length).fill(undefined);
     for (const [owner, own] of indexes) {
       const old = before(owner);
+      if (own.length < old.positions.length) {
+        positionsLeft(old, own.map(index => records[index])).forEach((position, k) => { assigned[own[k]] = position; });
+        continue;
+      }
       const extra = own.length - old.positions.length;
       const front = extra > 0 && old.records.length > 0 && isDeepStrictEqual(old.records[0], records[own[extra]]) &&
         !isDeepStrictEqual(old.records[0], records[own[0]]);

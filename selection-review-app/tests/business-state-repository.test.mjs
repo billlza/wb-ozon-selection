@@ -287,6 +287,13 @@ async function scopedContract(repository) {
   }
   assert.deepEqual(await repository.readSnapshot(), saved, "被拒绝的事务一点都不留下");
 
+  // 删掉 A 前面那条：A 后面那条仍排在 B 的后面，和整份写入时一样。
+  await repository.transactCandidates(["A"], async document => {
+    document.dispatches = document.dispatches.filter(record => record.id !== "d-a");
+    return { changed: true, document };
+  });
+  assert.deepEqual((await repository.readSnapshot()).dispatches.map(record => record.id), ["d-b", "d-a2"]);
+
   for (const ids of [["A", ""], Array.from({ length: 201 }, (_, index) => `C-${index}`), "A"]) {
     assert.throws(() => repository.transactCandidates(ids, async () => ({ changed: false })), /BUSINESS_STATE_REPOSITORY_SCOPE_INVALID/u);
   }
@@ -297,7 +304,7 @@ test("单件商品的读写只看见、只改动它自己，三种存法一样",
 
   const store = createFakePostgresBusinessStateStore({ document: scopedDocument() });
   await scopedContract(createPostgresBusinessStateRepository({ store }));
-  assert.equal(store.calls.writes, 1);
+  assert.equal(store.calls.writes, 2);
   assert.deepEqual(store.calls.lockedCandidateIds.at(-1), ["A"]);
 
   const directory = await mkdtemp(path.join(os.tmpdir(), "scoped-state-repository-"));

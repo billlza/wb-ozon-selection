@@ -123,6 +123,22 @@ test("单件商品在自己的记录前面插入，它自己的顺序保持准�
   assert.equal(document.runtime.idempotencyRecords.length, 3);
 });
 
+test("单件商品删掉自己前面的记录，留下的记录不挪到别的商品的记录前面", async () => {
+  const { next, document } = await scopedWrite(storedDocument(), ["A"], view => {
+    view.dispatches = view.dispatches.filter(record => record.id !== "d-a1");
+  });
+  assert.equal(next.shared, null);
+  assert.deepEqual(document.dispatches.map(record => record.id), ["d-shared", "d-b1", "d-a2"]);
+  // Taking out a record and changing the next one in the same write: the changed one keeps a place among A's own.
+  const interleaved = { ...storedDocument(), dispatches: ["a1", "b1", "a2", "b2", "a3", "a4"].map(id => ({ id: `d-${id}`, candidateId: id[0].toUpperCase() })) };
+  const changed = await scopedWrite(interleaved, ["A"], view => {
+    view.dispatches = view.dispatches.filter(record => record.id !== "d-a2");
+    view.dispatches.find(record => record.id === "d-a3").note = "改过";
+  });
+  assert.deepEqual(changed.document.dispatches.map(record => record.id), ["d-a1", "d-b1", "d-a3", "d-b2", "d-a4"]);
+  assert.equal(changed.document.dispatches[2].note, "改过");
+});
+
 test("新建的商品排在最前；整份写入可以随意重排", async () => {
   const created = await scopedWrite(storedDocument(), ["C"], view => {
     view.candidates.unshift({ id: "C", title: "新品" });

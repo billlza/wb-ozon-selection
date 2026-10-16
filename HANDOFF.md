@@ -105,7 +105,7 @@
 
 主人 10-16 选了「现在就拆」：单件商品的动作只读、只锁、只写这件商品（AGENTS 3.4）。这一步也回了 PR #14 上 Codex 那条「不要整份替换候选池」的意见。
 
-- 存法（`lib/business-state-partitions.mjs` 切和拼，`lib/postgres-business-state-store.mjs` 存）：三张表。`selection_review_state_shared` 一行放共用部分：规则、设置，以及几件商品共用或不属于任何商品的记录。`selection_review_state_candidates` 每件商品一行：商品本身和只属于它的记录（派单、幂等记录、操作审计、软件作业、作业授权、凭据绑定、正式实体记录、C1 两种改版历史）。`selection_review_state_keys` 记唯一编号（幂等键、作业号、派单号等）归哪件商品，单件事务也用不了别的商品已经占着的编号。每条记录带位置，拼回整份时顺序和写进去时一样；新建的商品排最前，新记录排最后。
+- 存法（`lib/business-state-partitions.mjs` 切和拼，`lib/postgres-business-state-store.mjs` 存）：三张表。`selection_review_state_shared` 一行放共用部分：规则、设置，以及几件商品共用或不属于任何商品的记录。`selection_review_state_candidates` 每件商品一行：商品本身和只属于它的记录（派单、幂等记录、操作审计、软件作业、作业授权、凭据绑定、正式实体记录、C1 两种改版历史）。`selection_review_state_keys` 记唯一编号（幂等键、作业号、派单号等）归哪件商品，单件事务也用不了别的商品已经占着的编号。每条记录带位置，拼回整份时顺序和写进去时一样；新建的商品排最前，新记录排最后；删掉一件商品前面的记录，它留下的记录位置不动，不会挪到别的商品的记录前面（PR #15 上 Codex 提的）。
 - 接口：`repository.readCandidates(ids)` 和 `repository.transactCandidates(ids, mutator)`。事务里只看得见这几件商品和共用部分，也只能改这几件；改了共用部分或碰了别的商品，整笔失败，报 `BUSINESS_STATE_REPOSITORY_SCOPE_VIOLATION:<哪里>`。一次最多 200 件；空列表只读共用设置、什么都存不了（查一个不存在的商品时用，好照常回「找不到」）。`server.mjs` 里包了一层 `readCandidateData` / `mutateCandidateData` / `mutateCandidateDataWhenChanged`，在库之前再查一遍共用部分没被改。
 - 锁：整份事务把共用行 `FOR UPDATE`，等手上的单件事务都结束，也挡住新的；单件事务对共用行只 `FOR SHARE`，自己的商品行 `FOR UPDATE`。不同商品的单件事务在同一进程里并行（最多连接数减 2 个），同一件商品的按先来后到。整份读走 `REPEATABLE READ READ ONLY`，各行版本一致。COMMIT 没收到回应时，在共用行的行锁下读回来核对。
 - 改了哪些：`server.mjs` 里 57 处写、约 75 处读改成只碰目标商品（C2 关联图那条同时带上来源、目标和姊妹色的父商品）。单件写不改 `meta.updatedAt`，那个字段在共用部分里。`lib/d-e-software-integration.mjs` 的 `dPersistenceBoundary` 也包住了单件读写，出错时照旧不泄露存储细节。
