@@ -338,6 +338,17 @@ export function authorizeOperation({ actor, requiredRoles }) {
   return Object.freeze({ allowed: true, userId: actor.userId, roles: Object.freeze([...actor.roles]) });
 }
 
+/**
+ * The roles that may do work on products for the team: the owner, and the tester's signed-in account, which acts with the
+ * operator role. The owner decided (2026-10-16) the tester does everything but confirm supply, confirm profit and authorize
+ * listing; those operations keep requiring the owner. Software and workers also carry the operator role, so for them (and
+ * for anyone not signed in as a person) this stays the owner alone.
+ */
+export function teamOperationRoles(actor) {
+  return actor?.actorType === "human" && actor.source === "authenticated_identity_provider" && Array.isArray(actor.roles) &&
+    actor.roles.includes("operator") ? ["owner", "operator"] : ["owner"];
+}
+
 export function createOperationAuditEvent({
   eventId,
   action,

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { executeBusinessMutation } from './business-mutation-transaction.mjs';
-import { authorizeOperation } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from './business-state-repository.mjs';
 import { fingerprintCanonicalRecord } from './production-contract-primitives.mjs';
 import { readC1ImageTextManifest, extractC1ImageTextEvidence, assertC1ImageTextEvidenceMatches } from './c1-image-text-evidence.mjs';
@@ -11,7 +11,7 @@ export function createC1ImageTextUseCase({ repository, runtimeMode, assetStore, 
   const processRunId = randomUUID();
   let running = false, activeController = null, activeCompletion = null;
   return Object.freeze({ async extract({ actor, input }) {
-    authorizeOperation({ actor, requiredRoles: ['owner'] });
+    authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
     if (actor.actorType !== 'human' || actor.source !== 'authenticated_identity_provider') fail('C1_IMAGE_TEXT_OWNER_REQUIRED');
     if (!input || Object.keys(input).sort().join(',') !== 'candidateId,expectedRevision' || typeof input.candidateId !== 'string' || !Number.isSafeInteger(input.expectedRevision)) fail('C1_IMAGE_TEXT_INPUT_INVALID');
     if (!extractor) fail('C1_IMAGE_TEXT_SERVICE_UNAVAILABLE');
@@ -38,7 +38,7 @@ export function createC1ImageTextUseCase({ repository, runtimeMode, assetStore, 
       const receiptId = `${jobId}:receipt`;
       const source = { jobId, processRunId, inputCandidateRevision: input.expectedRevision, sourceCandidateRevision: manifest.sourceCandidateRevision, sourceSkuRevision: manifest.sourceSkuRevision,
         sourceFinalManifestSha256: manifest.sourceFinalManifestSha256, receiptId, status: 'running' };
-      const started = await executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: ['owner'], action: 'prepare_c1_image_text',
+      const started = await executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: teamOperationRoles(actor), action: 'prepare_c1_image_text',
         candidateId: candidate.id, skuPackageId: manifest.skuPackageId, expectedRevision: input.expectedRevision,
         idempotencyKey: `${jobId}:intent`, inputFingerprint: fingerprintCanonicalRecord(manifest), auditEventId: `${jobId}:intent-audit`, serverClock,
         mutate: ({ candidate: latest, observedAt }) => {
@@ -53,7 +53,7 @@ export function createC1ImageTextUseCase({ repository, runtimeMode, assetStore, 
       if (!latest || latest.lifecycleV11.c1ImageTextExtractionV1?.jobId !== jobId) fail('C1_IMAGE_TEXT_JOB_CHANGED');
       const latestManifest = readC1ImageTextManifest(latest);
       if (latestManifest.sourceFinalManifestSha256 !== manifest.sourceFinalManifestSha256) fail('C1_IMAGE_TEXT_MANIFEST_CHANGED');
-      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: ['owner'], action: 'settle_c1_image_text',
+      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: teamOperationRoles(actor), action: 'settle_c1_image_text',
         candidateId: candidate.id, skuPackageId: manifest.skuPackageId, expectedRevision: latest.dataRevision,
         idempotencyKey: `${jobId}:receipt`, inputFingerprint: fingerprintCanonicalRecord(receipt), auditEventId: `${jobId}:receipt-audit`, serverClock,
         mutate: ({ candidate: current, observedAt }) => {

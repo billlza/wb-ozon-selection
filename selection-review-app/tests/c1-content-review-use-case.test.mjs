@@ -114,14 +114,16 @@ test("stale revision, stale content, replacement text and false confirmation lea
   assert.deepEqual(await f.repository.readSnapshot(), before);
 });
 
-test("authenticated human owner is required and an idempotency key cannot transfer confirmation to another owner", async () => {
+test("a signed-in owner or tester is required and an idempotency key cannot transfer confirmation to another person", async () => {
   const f = await fixture();
   for (const [changes, code] of [
-    [{ roles: ["operator"] }, "RUNTIME_OPERATION_FORBIDDEN"],
+    [{ roles: ["reviewer"] }, "RUNTIME_OPERATION_FORBIDDEN"],
+    [{ roles: ["operator"], source: "selection_review_state_machine" }, "RUNTIME_OPERATION_FORBIDDEN"],
     [{ source: "selection_review_state_machine" }, "C1_CONTENT_REVIEW_AUTHENTICATED_OWNER_REQUIRED"],
     [{ actorType: "worker" }, "C1_CONTENT_REVIEW_AUTHENTICATED_OWNER_REQUIRED"]
   ]) await assert.rejects(f.useCase.confirm({ actor: { ...f.owner, ...changes }, input: f.input }), error => error.code === code);
-  await f.useCase.confirm({ actor: f.owner, input: f.input });
+  // The tester's signed-in account confirms the copy too (the owner's decision of 2026-10-16).
+  await f.useCase.confirm({ actor: { ...f.owner, roles: ["operator"] }, input: f.input });
   await assert.rejects(f.useCase.confirm({ actor: { ...f.owner, userId: "another-owner" }, input: f.input }),
     error => error.code === "BUSINESS_MUTATION_IDEMPOTENCY_CONFLICT");
 });

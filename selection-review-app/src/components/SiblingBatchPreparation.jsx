@@ -4,6 +4,7 @@ import { api } from '../api.js';
 import { effectivePreparationValue, requiredPreparationNumber, preparationWorkflowAvailable, preparationDraftScopeCurrent } from '../siblingPreparationState.js';
 import { useState } from 'react';
 import { errorMessage, optionalNumber } from '../formState.js';
+import { BOSS_ONLY_NOTE } from '../ownerAccess.js';
 import { siblingBatchReview } from '../siblingBatchReview.js';
 import { siblingBatchAuthorizationInput } from '../siblingBatchAuthorizationInput.js';
 import { siblingMerchantSkuSuggestions, siblingBatchMemberDefaults } from '../siblingBatchFormDefaults.js';
@@ -45,7 +46,7 @@ export default function SiblingBatchPreparation(props) {
 }
 
 function SiblingBatchPreparationBody({ parent, siblings, preparationSaveState, onConfirmA, onConfirmC1, onPreviewC1, onReadColorDictionary,
-  onAuthorize, onSaveStockDrafts, executionView, executionError, executionLoading = false,
+  onAuthorize, bossOnly = false, onSaveStockDrafts, executionView, executionError, executionLoading = false,
   onRefreshExecution, onResumeStock,
   onUploadAsset, onLinkAsset, onConfirmC2 }) {
   const review = siblingBatchReview(parent, siblings);
@@ -367,9 +368,10 @@ function SiblingBatchPreparationBody({ parent, siblings, preparationSaveState, o
         onChange={event => sharedField('confirmSalesReview', event.target.checked)} />
         我已核对共用销售快照仍适用且商品可比；它只作为各规格的市场证据。</label>
       </> : <p>一次确认沿用上方资料并保存当前草稿，随后分别计算正式利润；未修改额外费用即无新增费用。缺项不会作为零放行。</p>}
-      <button className="button secondary" type="submit" disabled={saving || workspaceSaving || !sales || Boolean(merchantSkuError) ||
+      <button className="button secondary" type="submit" disabled={saving || workspaceSaving || !sales || Boolean(merchantSkuError) || bossOnly ||
         (workspaceValues ? !workspaceSupply || workspaceSupply.gaps.length>0 || draft.shared.otherPurchaseCosts==='' : workspaceDirty || !draft.shared.confirmExactSkuSupply || !draft.shared.confirmSalesReview)}>
         {saving ? '正在保存…' : '整批确认供货并分别计算正式利润'}</button>
+      {bossOnly ? <p role="status">{BOSS_ONLY_NOTE}</p> : null}
     </form> : null}
     {workflowAvailable && allAtC1 && (!workspaceValues || workspacePage===1) ? <form onSubmit={submitC1} aria-label="整批 C1 事实与颜色确认">
       <h4>同页核对官方颜色和共用上架文字</h4>
@@ -456,8 +458,9 @@ function SiblingBatchPreparationBody({ parent, siblings, preparationSaveState, o
       <p>全成员 E 独立回读范围：{review.rows.map(row => row.merchantSku ?? `${row.color} 货号缺失`).join('、')}。首件历史导入不在本批范围。</p>
       <label><input type="checkbox" checked={isFinalConfirmed} disabled={!workflowAvailable || workspaceSaving || !finalInput.ready || workspaceGaps.length>0 || workspaceDirty || stockDirty || Boolean(executionError) || executionLoading}
         onChange={event => setFinalConfirmed(event.target.checked ? confirmationKey : '')} />我已核对本批全部规格的商品、RUB 买家价、CNY 写入价、库存、共同仓库、最终图、创建、上架审核提交和各款库存，一次确认全部成员。</label>
-      <button className="button primary" type="submit" disabled={!workflowAvailable || workspaceSaving || saving || workspaceGaps.length>0 || workspaceDirty || stockDirty || Boolean(executionError) || executionLoading || !isFinalConfirmed || !finalInput.ready}>
+      <button className="button primary" type="submit" disabled={!workflowAvailable || workspaceSaving || saving || workspaceGaps.length>0 || workspaceDirty || stockDirty || Boolean(executionError) || executionLoading || !isFinalConfirmed || !finalInput.ready || bossOnly}>
         {saving ? '正在保存整批授权…' : '确认上架（含创建和库存）'}</button>
+      {bossOnly ? <p role="status">{BOSS_ONLY_NOTE}</p> : null}
       {!finalInput.ready ? <p role="status">{finalInput.reason}</p> : null}
       {executionLoading ? <p role="status">正在核对本批是否已有生产记录。</p> : null}
     </form> : null}

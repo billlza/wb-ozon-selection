@@ -1,6 +1,6 @@
 import { executeBusinessMutation } from "./business-mutation-transaction.mjs";
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from "./business-state-repository.mjs";
-import { authorizeOperation } from "./runtime-identity.mjs";
+import { authorizeOperation, teamOperationRoles } from "./runtime-identity.mjs";
 import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
 import { gate1AutopilotMayAct, isGate1AutopilotActor } from "./gate1-autopilot.mjs";
 
@@ -53,7 +53,7 @@ export function createC1SupplyAttributeBackfillUseCase({ repository, runtimeMode
       }
       // 主人点过「做这件」并许可之后，软件身份也能做这一步（lib/gate1-autopilot.mjs）；许可在事务里再核一次。
       const software = isGate1AutopilotActor(actor);
-      const requiredRoles = software ? ["operator"] : ["owner"];
+      const requiredRoles = software ? ["operator"] : teamOperationRoles(actor);
       authorizeOperation({ actor, requiredRoles });
       if (!software && (actor.actorType !== "human" || actor.source !== "authenticated_identity_provider")) {
         throw new C1SupplyAttributeBackfillError("C1_SUPPLY_ATTRIBUTE_BACKFILL_AUTHENTICATED_OWNER_REQUIRED");

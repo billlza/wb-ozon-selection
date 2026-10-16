@@ -6,6 +6,7 @@ import test from "node:test";
 import { createLocalOwnerIdentityProvider, createPrivateOwnerCredentialRepository, OwnerIdentityError } from "../lib/local-owner-identity.mjs";
 import { createPasswordVerifier, isPasswordVerifier, passwordMatches } from "../lib/scrypt-verifier.mjs";
 import { createConfiguredIdentityProvider } from "../lib/runtime-identity-provider.mjs";
+import { authorizeOperation, createActorContext, teamOperationRoles } from "../lib/runtime-identity.mjs";
 import { createSelectionReviewRuntimeConfiguration } from "../lib/runtime-configuration.mjs";
 import { runTeamAccountCommand, TeamAccountCommandError } from "../lib/team-account-admin.mjs";
 import { createTeamAccountIdentityProvider, TEAM_ACCOUNT_ROLE_GRANTS } from "../lib/team-account-identity.mjs";
@@ -288,4 +289,18 @@ test("team sign-in needs the Postgres store and follows the public address for s
   assert.match((await secure.login({ loginName: "boss-a", password: PASSWORDS["boss-a"] })).setCookie, /; Secure$/u);
   // Without a store of its own it opens the database named in the environment, and only that.
   assert.throws(() => createConfiguredIdentityProvider({ configuration, env: {} }), error => error instanceof TeamAccountStoreError && error.code === "TEAM_ACCOUNT_DATABASE_URL_REQUIRED");
+});
+
+test("the tester's signed-in account works with the operator role; software, workers and unsigned people with it stay refused", () => {
+  const actor = (actorType, roles, source = "authenticated_identity_provider") => createActorContext({ userId: `${actorType}:synthetic`,
+    sessionId: "session:synthetic", actorType, roles, source, authenticatedAt: "2026-10-16T08:00:00.000Z" });
+  const allowed = value => { try { authorizeOperation({ actor: value, requiredRoles: teamOperationRoles(value) }); return true; } catch { return false; } };
+  assert.deepEqual(TEAM_ACCOUNT_ROLE_GRANTS, { boss: ["owner"], tester: ["operator"] });
+  assert.deepEqual(teamOperationRoles(actor("human", ["operator"])), ["owner", "operator"]);
+  assert.equal(allowed(actor("human", ["owner"])), true);
+  assert.equal(allowed(actor("human", ["operator"])), true);
+  assert.equal(allowed(actor("human", ["reviewer"])), false);
+  assert.equal(allowed(actor("human", ["operator"], "development_default")), false);
+  assert.equal(allowed(actor("software", ["operator"], "selection_review_state_machine")), false);
+  assert.equal(allowed(actor("worker", ["operator"], "registered_runtime_worker")), false);
 });

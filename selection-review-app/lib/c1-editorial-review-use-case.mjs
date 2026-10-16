@@ -2,7 +2,7 @@ import { completeC1FinalPlanRevision } from "./c1-final-plan-revision-preparatio
 import { isDeepStrictEqual } from "node:util";
 import { executeBusinessMutation } from "./business-mutation-transaction.mjs";
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from "./business-state-repository.mjs";
-import { authorizeOperation } from "./runtime-identity.mjs";
+import { authorizeOperation, teamOperationRoles } from "./runtime-identity.mjs";
 import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
 import { assessC1DraftEditorialCorrection } from "./c1-draft-recovery-assessment.mjs";
 import { assertCurrentC1AiDraftRequestSources } from "./c1-ai-draft-request-source.mjs";
@@ -156,12 +156,12 @@ export function createC1EditorialReviewUseCase({ repository, runtimeMode, server
   return Object.freeze({
     async confirm({ actor, input }) {
       actor = structuredClone(actor); input = structuredClone(input);
-      assertInput(input); authorizeOperation({ actor, requiredRoles: ["owner"] });
+      assertInput(input); authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
       if (actor.actorType !== "human" || actor.source !== "authenticated_identity_provider") fail("C1_EDITORIAL_REVIEW_AUTHENTICATED_OWNER_REQUIRED");
       if (bundle === null) fail("C1_EDITORIAL_REVIEW_PROPOSAL_REQUIRED");
       const snapshot = await repository.readSnapshot(), target = snapshot.candidates.find(candidate => candidate.id === input.candidateId);
       if (!target?.lifecycleV11?.skuPackage) fail("C1_EDITORIAL_REVIEW_CANDIDATE_NOT_FOUND");
-      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: ["owner"], action: "c1_confirm_editorial_content",
+      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: teamOperationRoles(actor), action: "c1_confirm_editorial_content",
         candidateId: input.candidateId, skuPackageId: target.lifecycleV11.skuPackage.skuPackageId, expectedRevision: input.expectedRevision,
         idempotencyKey: input.idempotencyKey, inputFingerprint: fingerprintCanonicalRecord({ input, ownerUserId: actor.userId }),
         auditEventId: input.auditEventId, serverClock, includeRelatedSoftwareJobs: true, includeFinalPlanHistory: true,

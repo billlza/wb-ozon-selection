@@ -1,16 +1,22 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 
+import { initialBusinessStateDocument } from "../lib/business-state-repository.mjs";
+import { importBusinessStateToPostgres } from "../lib/business-state-import.mjs";
 import { createPasswordVerifier, passwordMatches } from "../lib/scrypt-verifier.mjs";
+import { createPostgresBusinessStateStore } from "../lib/postgres-business-state-store.mjs";
+import { sanitize1688Evidence } from "../lib/source-capture.mjs";
 import { createPostgresTeamAccountStore, TEAM_ACCOUNT_TABLE } from "../lib/team-account-store.mjs";
+import { SYNTHETIC_STORE_REF } from "./fixtures/store-binding-fixture.mjs";
 import { stopApiProcess } from "./helpers/api-process-lifecycle.mjs";
+import { createMusicBoxCandidate } from "./helpers/legacy-candidate-fixture.mjs";
 
 // Runs against a real, disposable Postgres (CI starts one; see scripts/run-ci-database-tests.mjs, which also hands out the
 // loopback port). Each test works in its own schema and drops it afterwards. Synthetic people and passwords only.
@@ -71,7 +77,22 @@ test("accounts live in their own table: unique names, a verifier that reads back
   assert.equal(rows[0].count, 2);
 });
 
-test("with team accounts the server shows nothing before sign-in, lets the tester only read, and changes passwords as decided", async t => {
+// One synthetic product whose 1688 capture came back and waits for its supply to be confirmed.
+function captureReadyCandidate() {
+  const candidate = createMusicBoxCandidate();
+  candidate.sourceUrl = "https://detail.1688.com/offer/876240928352.html";
+  const evidence = sanitize1688Evidence({ offerId: "876240928352", sourceUrl: candidate.sourceUrl, observedAt: new Date().toISOString(),
+    title: "Explicitly synthetic team test supplier SKU",
+    skus: [{ sourceSkuId: "SKU-SEWING-MACHINE-01", propPath: "手摇缝纫机音乐盒", attributes: { 款式: "手摇缝纫机音乐盒" },
+      priceCny: null, priceSource: null, stock: null, stockSource: null }] }, "876240928352");
+  candidate.sourceCapture = { ...evidence, captureId: "SCJ-team-test-ready", jobId: "SCJ-team-test-ready",
+    status: "captured_waiting_owner_selection", jobStatus: "completed", mode: "a_supplier_capture", attempt: 1,
+    sourceUrl: candidate.sourceUrl, offerId: "876240928352", skuChoices: evidence.skus, selectedSkuIds: [],
+    ownerSupplyConfirmed: false, writeOccurred: false, businessStateEffect: "unchanged" };
+  return candidate;
+}
+
+test("with team accounts the server shows nothing before sign-in, lets the tester do all but the bosses' confirmations, and changes passwords as decided", async t => {
   const port = Number(process.env.SELECTION_REVIEW_TEST_PORT);
   if (!Number.isSafeInteger(port) || port < 1 || [4317, 4318, 4173, 4319].includes(port)) throw new Error("TEST_REQUIRES_ISOLATED_PORT");
   const base = `http://127.0.0.1:${port}`;
@@ -80,12 +101,20 @@ test("with team accounts the server shows nothing before sign-in, lets the teste
   for (const account of [BOSS, TESTER]) await accounts.create({ ...account, verifier: await createPasswordVerifier(PASSWORDS[account.loginName]) });
   const directory = await mkdtemp(path.join(tmpdir(), "team-accounts-api-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
+  const product = captureReadyCandidate();
+  const seed = path.join(directory, "seed.json");
+  await writeFile(seed, JSON.stringify({ ...initialBusinessStateDocument(), candidates: [product] }));
+  const businessStore = createPostgresBusinessStateStore({ connectionString });
+  try {
+    assert.equal((await importBusinessStateToPostgres({ sourceFile: seed, store: businessStore, write: true })).status, "imported");
+  } finally { await businessStore.close(); }
 
   const stderr = [];
   const child = spawn(process.execPath, [path.join(appDir, "server.mjs"), "--api-only"], {
     cwd: appDir, env: { ...process.env, SELECTION_REVIEW_API_PORT: String(port), SELECTION_REVIEW_DATA_FILE: path.join(directory, "unused.json"),
       SELECTION_REVIEW_STATE_ADAPTER: "postgres", SELECTION_REVIEW_DATABASE_URL: connectionString, SELECTION_REVIEW_INITIALIZE_DATA_FILE: "1",
       SELECTION_REVIEW_IDENTITY_PROVIDER: "team_accounts", SELECTION_REVIEW_PUBLIC_ORIGIN: base, SELECTION_REVIEW_ALLOWED_ORIGINS: base,
+      SELECTION_REVIEW_STORE_BINDINGS_JSON: JSON.stringify([{ targetStore: "dandanshu", platform: "ozon", storeRef: SYNTHETIC_STORE_REF }]),
       SELECTION_REVIEW_CODEX_DISPATCH: "off", SELECTION_REVIEW_AUTO_DELIVER: "off" },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -139,17 +168,40 @@ test("with team accounts the server shows nothing before sign-in, lets the teste
   const bossState = await call("/api/state", { cookie: boss.cookie });
   assert.equal(bossState.status, 200);
   assert.deepEqual([bossState.body.runtimeArchitecture.currentUser.userId, bossState.body.runtimeArchitecture.currentUser.roles,
-    bossState.body.runtimeArchitecture.currentUser.canAuthorizeProduction], [BOSS.userId, ["owner"], true]);
+    bossState.body.runtimeArchitecture.currentUser.canAuthorizeProduction, bossState.body.runtimeArchitecture.currentUser.canConfirmSupplyAndProfit],
+  [BOSS.userId, ["owner"], true, true]);
   assert.equal((await call("/product-images/synthetic.png", { cookie: boss.cookie })).status, 404);
 
-  // The tester reads everything a boss reads, and for now writes nothing.
+  // The tester reads everything a boss reads and does everything but confirm supply, confirm profit and authorize listing.
   let tester = await login("tester", PASSWORDS.tester);
   const testerState = await call("/api/state", { cookie: tester.cookie });
   assert.equal(testerState.status, 200);
-  assert.deepEqual([testerState.body.runtimeArchitecture.currentUser.roles, testerState.body.runtimeArchitecture.currentUser.canAuthorizeProduction],
-    [["operator"], false]);
+  const testerUser = testerState.body.runtimeArchitecture.currentUser;
+  assert.deepEqual([testerUser.roles, testerUser.canAuthorizeProduction, testerUser.canSaveProductionOwnerDecision, testerUser.canConfirmSupplyAndProfit,
+    testerUser.canSaveC1RightsReview, testerUser.canAuthorizeC1PaidCall], [["operator"], false, false, false, true, true]);
+  // An ordinary write gets past the sign-in gate to the route's own checks (here: an incomplete comment).
   const write = await call("/api/node-comments", { cookie: tester.cookie, body: { text: "synthetic" } });
-  assert.deepEqual([write.status, write.body.code], [403, "team_tester_read_only"]);
+  assert.equal(write.status, 400, JSON.stringify(write.body));
+  // Taking a listing authorization back is the tester's too; this one is only refused for naming no product.
+  assert.equal((await call(`/api/candidates/${product.id}/lifecycle/d/authorization-rollback`, { cookie: tester.cookie, body: {} })).status, 400);
+  for (const route of [`/api/candidates/${product.id}/lifecycle/final-pricing/review`, `/api/candidates/${product.id}/gate2/list`,
+    `/api/candidates/${product.id}/lifecycle/production-owner-decision`, `/api/candidates/${product.id}/lifecycle/production-authorization`,
+    `/api/candidates/${product.id}/sibling-batch-a-confirm`, "/api/d-batches/authorize"]) {
+    const refused = await call(route, { cookie: tester.cookie, body: {} });
+    assert.deepEqual([refused.status, refused.body.code], [403, "team_owner_only"], route);
+    assert.match(refused.body.message, /要老板来做/u, route);
+  }
+  // Confirming this product's supply is refused, and the product stays as it was; turning it down is the tester's to do.
+  const supply = { dataRevision: product.dataRevision, sourceCandidateId: product.id, sourceDataRevision: product.dataRevision,
+    targetPlatform: product.targetPlatform, storeRef: product.storeRef };
+  const confirmed = await call(`/api/candidates/${product.id}/lifecycle/a-confirm`, { cookie: tester.cookie, body: { ...supply, decision: "confirm" } });
+  assert.deepEqual([confirmed.status, confirmed.body.code], [403, "team_owner_only"], JSON.stringify(confirmed.body));
+  const unchanged = (await call("/api/state", { cookie: tester.cookie })).body.candidates.find(candidate => candidate.id === product.id);
+  assert.deepEqual([unchanged.dataRevision, unchanged.sourceCapture.status], [product.dataRevision, "captured_waiting_owner_selection"]);
+  const rejected = await call(`/api/candidates/${product.id}/lifecycle/a-confirm`, { cookie: tester.cookie, body: { ...supply, decision: "reject" } });
+  assert.equal(rejected.status, 200, JSON.stringify(rejected.body));
+  const eliminated = (await call("/api/state", { cookie: boss.cookie })).body.candidates.find(candidate => candidate.id === product.id);
+  assert.deepEqual([eliminated.dataRevision, eliminated.workflowStatus], [product.dataRevision + 1, "eliminated"]);
   assert.equal((await call("/api/team-accounts", { cookie: tester.cookie })).body.code, "TEAM_ACCOUNT_MANAGER_REQUIRED");
 
   // The tester changes their own password: this device stays signed in, the old session ends.

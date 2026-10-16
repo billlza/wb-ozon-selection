@@ -1,5 +1,5 @@
 import { executeBusinessMutation } from './business-mutation-transaction.mjs';
-import { authorizeOperation } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
 import { fingerprintCanonicalRecord } from './production-contract-primitives.mjs';
 import { sameStoreRef } from './store-binding.mjs';
 import { isDeepStrictEqual } from 'node:util';
@@ -21,7 +21,7 @@ export class C1ColorDictionaryReadError extends Error {
 }
 
 function owner(actor) {
-  authorizeOperation({ actor, requiredRoles: ['owner'] });
+  authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
   if (actor.actorType !== 'human' || actor.source !== 'authenticated_identity_provider') {
     fail('C1_COLOR_DICTIONARY_OWNER_REQUIRED');
   }
@@ -135,7 +135,7 @@ export function createC1ColorDictionaryReadUseCase({ repository, runtimeMode, se
         fail('C1_COLOR_DICTIONARY_INPUT_INVALID');
       }
       const key = `c1-color-dictionary:${input.candidateId}:${input.attributeId}:${input.expectedRevision}`;
-      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: ['owner'],
+      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: teamOperationRoles(actor),
         action: 'authorize_c1_color_dictionary_read', candidateId: input.candidateId,
         skuPackageId: input.skuPackageId, expectedRevision: input.expectedRevision,
         idempotencyKey: key, inputFingerprint: fingerprintCanonicalRecord(input),
@@ -192,7 +192,7 @@ export function createC1ColorDictionaryReadUseCase({ repository, runtimeMode, se
         fail('C1_COLOR_DICTIONARY_INPUT_INVALID');
       }
       const claimKey = `${input.authorizationId}:claim`;
-      const claim = await executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: ['owner'],
+      const claim = await executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: teamOperationRoles(actor),
         action: 'claim_c1_color_dictionary_read', candidateId: input.candidateId,
         skuPackageId: input.skuPackageId, expectedRevision: input.expectedRevision,
         idempotencyKey: claimKey, inputFingerprint: fingerprintCanonicalRecord(input),
@@ -227,7 +227,7 @@ export function createC1ColorDictionaryReadUseCase({ repository, runtimeMode, se
       }
       const settleKey = `${input.authorizationId}:settle`;
       try {
-        return await executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: ['owner'],
+        return await executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: teamOperationRoles(actor),
           action: 'settle_c1_color_dictionary_read', candidateId: input.candidateId,
           skuPackageId: input.skuPackageId, expectedRevision: claim.candidate.dataRevision,
           idempotencyKey: settleKey, inputFingerprint: fingerprintCanonicalRecord(outcome),

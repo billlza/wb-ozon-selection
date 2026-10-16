@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { executeBusinessMutation } from './business-mutation-transaction.mjs';
-import { authorizeOperation } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
 import { fingerprintCanonicalRecord } from './production-contract-primitives.mjs';
 import { assertValidLifecyclePackage } from './product-lifecycle-schema.mjs';
 import { replaceC1ProductPlanForRightsReview } from './c1-product-plan.mjs';
@@ -89,7 +89,7 @@ export function prepareC1SiblingColorRevision({ candidate, expectedRevision, rel
 
 export function createC1SiblingColorRevisionUseCase({ repository, runtimeMode, serverClock }) {
   return Object.freeze({ async prepare({ actor, input }) {
-    authorizeOperation({ actor, requiredRoles: ['owner'] });
+    authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
     if (actor.actorType !== 'human' || actor.source !== 'authenticated_identity_provider') {
       reject('C1_SIBLING_COLOR_REVISION_OWNER_REQUIRED');
     }
@@ -100,7 +100,7 @@ export function createC1SiblingColorRevisionUseCase({ repository, runtimeMode, s
       reject('C1_SIBLING_COLOR_REVISION_INPUT_INVALID');
     }
     const key = `sibling-color-revision:${input.candidateId}:${input.expectedRevision}`;
-    return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: ['owner'],
+    return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: teamOperationRoles(actor),
       action: 'prepare_sibling_color_revision', candidateId: input.candidateId,
       skuPackageId: input.skuPackageId, expectedRevision: input.expectedRevision,
       idempotencyKey: key, inputFingerprint: fingerprintCanonicalRecord(input),

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { errorMessage } from "../formState.js";
+import { BOSS_ONLY_NOTE } from "../ownerAccess.js";
 import { storeLabel } from "../selectionDeskView.js";
 import { toggleLocalSupplierSkuSelection } from "../aSupplierCaptureSelection.js";
 import { profitStepGaps, profitStepSubmission } from "../../lib/profit-step-review.mjs";
@@ -1564,7 +1565,7 @@ export function CommissionEstimateBlock({ estimate, authorized, saving, onAuthor
  */
 function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep = null, commissionEstimate = null, gate1Pick = null,
   dataRevision, saving, onConfirm, onDeclareCargoFacts, onDeclareExtraHandlingFees, onReadOzonPage,
-  onReviseDraftDimensions = null, noticeAt = null, error = null, notice = null }) {
+  onReviseDraftDimensions = null, noticeAt = null, error = null, notice = null, bossOnly = false }) {
   const [firstPick, setFirstPick] = useState(null);
   const [comparabilityTicked, setComparability] = useState(false);
   const [commissionEstimateTicked, setCommissionEstimateTicked] = useState(false);
@@ -1810,13 +1811,13 @@ function ProfitStepSection({ review, cargoStep, categoryStep, extraHandlingStep 
     </div>}
 
     <div className="product-actions">
-      <button type="button" className="button primary" disabled={saving || !state.ready}
+      <button type="button" className="button primary" disabled={saving || !state.ready || bossOnly}
         onClick={() => onConfirm(firstSkuId, { comparabilityConfirmed, supplyConfirmed: true,
           commissionEstimateAuthorized,
           commissionEstimateRate: commissionEstimateAuthorized ? commissionProposal.commissionRate : null,
           declare: { fees: feesFolded ? extraHandlingFeesPayload(feeRows, dataRevision) : null,
             cargo: cargoFolded ? cargoFactsPayload(cargoForm, dataRevision) : null } })}>确认这套供货，往下做</button>
-      <span className="product-actions-note">{state.hint}</span>
+      <span className="product-actions-note">{bossOnly ? BOSS_ONLY_NOTE : state.hint}</span>
     </div>
 
     <p className="product-sku-foot">
@@ -2140,6 +2141,9 @@ export default function ProductPage({
 
   if (!candidate) return <div className="page-panel"><p role="status">{loadingLabel}</p></div>;
 
+  // The tester's account prepares everything; confirming supply and profit and authorizing listing are the bosses'.
+  const bossOnly = productionIdentity?.canConfirmSupplyAndProfit === false;
+
   const extensionCode = extensionStatus?.code ?? "disconnected";
   const extensionConnected = extensionCode === "connected";
   const title = textOf(titleZh) || textOf(candidate.productName) || candidate.id;
@@ -2273,7 +2277,7 @@ export default function ProductPage({
       typeof onConfirmSiblingBatchA === 'function' && typeof onAuthorizeSiblingProductionBatch === 'function'
       ? <SiblingBatchPreparation key={`${candidate.id}:batch`} parent={candidate} siblings={siblingCandidates}
           preparationSaveState={preparationSaveState}
-          onConfirmA={onConfirmSiblingBatchA} onAuthorize={onAuthorizeSiblingProductionBatch}
+          onConfirmA={onConfirmSiblingBatchA} onAuthorize={onAuthorizeSiblingProductionBatch} bossOnly={bossOnly}
           onSaveStockDrafts={onSaveSiblingBatchStockDrafts} executionView={siblingBatchExecutionView}
           executionError={siblingBatchExecutionError} executionLoading={siblingBatchExecutionLoading}
           onRefreshExecution={onRefreshSiblingBatchExecution}
@@ -2326,7 +2330,7 @@ export default function ProductPage({
       onConfirm={confirmProfitStep} onDeclareCargoFacts={declareCargoFacts}
       onDeclareExtraHandlingFees={declareExtraHandlingFees} onReadOzonPage={readOzonPage}
       onReviseDraftDimensions={typeof onReviseDraftDimensions === "function" ? reviseDraftDimensions : null}
-      noticeAt={noticeAt} error={error} notice={notice} /> : null}
+      noticeAt={noticeAt} error={error} notice={notice} bossOnly={bossOnly} /> : null}
 
     {/* 算利润停在条件测算之后，这一步就只剩这一件事可做，按钮就在这一页上。 */}
     {recalculationOpen ? <BetterCommissionEvidenceSection candidate={candidate} saving={saving}

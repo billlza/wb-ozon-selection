@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { authorizeOperation } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
 import { isCanonicalFrozenRef, fingerprintCanonicalRecord } from './production-contract-primitives.mjs';
 import { createSoftwareJobResultEnvelope } from './software-job-contract.mjs';
 import { createOzonAccountReadRuntime } from './ozon-account-read-runtime.mjs';
@@ -11,7 +11,7 @@ const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value)
 const closed=(value,fields)=>object(value)&&Object.keys(value).length===fields.length&&fields.every(field=>Object.hasOwn(value,field));
 const requireValue=(value,code)=>{if(!value)throw new OzonAccountReadError(code);};
 const bindingFields=['scopeRef','bindingId','configurationVersion','platform','targetStore','storeIdentityStatus','credentialAlias','clientIdRef','officialContractRefs'];
-function owner(actor){authorizeOperation({actor,requiredRoles:['owner']});requireValue(actor.actorType==='human'&&actor.source==='authenticated_identity_provider','AUTHENTICATED_OWNER_REQUIRED');}
+function owner(actor){authorizeOperation({actor,requiredRoles: teamOperationRoles(actor)});requireValue(actor.actorType==='human'&&actor.source==='authenticated_identity_provider','AUTHENTICATED_OWNER_REQUIRED');}
 function map(document,key){if(!Object.hasOwn(document.runtime,key))document.runtime[key]={};requireValue(object(document.runtime[key]),'REPOSITORY_INVALID');return document.runtime[key];}
 function preparationFor(document,id,actor){
   const value=document.runtime.ozonAccountPreparations?.[id];requireValue(value!==undefined,'PREPARATION_REQUIRED');

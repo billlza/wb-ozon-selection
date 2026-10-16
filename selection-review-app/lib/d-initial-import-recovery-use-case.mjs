@@ -1,4 +1,4 @@
-import { authorizeOperation, createOperationAuditEvent } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles, createOperationAuditEvent } from './runtime-identity.mjs';
 import { assertBusinessStateRepositoryBoundary } from './business-state-repository.mjs';
 import { recoverDInitialImportStoppedInDocument, createDPlatformObservationScope } from './d-platform-observation-contract.mjs';
 import { findSoftwareJobInDocument } from './software-job-contract.mjs';
@@ -27,7 +27,7 @@ export function createDInitialImportRecoveryUseCase({ repository, serverClock, l
   }
   return Object.freeze({
     async recover({ actor, input }) {
-      authorizeOperation({ actor, requiredRoles: ['owner'] });
+      authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
       if (actor.actorType !== 'human' || actor.source !== 'authenticated_identity_provider') {
         throw new DInitialImportRecoveryError('OWNER_REQUIRED', '请先登录主人身份再对账恢复已接受的导入。');
       }

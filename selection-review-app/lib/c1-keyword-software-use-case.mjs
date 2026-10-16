@@ -2,7 +2,7 @@ import { buildC1KeywordSoftwareJobPlan, assertC1KeywordSoftwareJobClientInput } 
 import { executeBusinessMutation, assertReplaySoftwareJob } from "./business-mutation-transaction.mjs";
 import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
 import { legacyKeywordJobBlocksPaidExecution } from "./keyword-evidence-software-job-state.mjs";
-import { authorizeOperation } from "./runtime-identity.mjs";
+import { authorizeOperation, teamOperationRoles } from "./runtime-identity.mjs";
 import {
   C1_PAID_KEYWORD_EVIDENCE_JOB_TYPE,
   C1_PAID_KEYWORD_POINTS,
@@ -307,7 +307,7 @@ export async function enqueueC1PaidKeywordEvidenceJob({
   if (!repository || typeof repository.readSnapshot !== "function" || typeof repository.transact !== "function") {
     throw new Error("C1_KEYWORD_SOFTWARE_REPOSITORY_REQUIRED");
   }
-  authorizeOperation({ actor, requiredRoles: ["owner"] });
+  authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
   const plannedAt = typeof serverClock === "function" ? serverClock() : serverTime;
   if (!nonEmpty(plannedAt) || Number.isNaN(Date.parse(plannedAt))) {
     throw new Error("C1_KEYWORD_SOFTWARE_ENQUEUE_CLOCK_INVALID");
@@ -360,7 +360,7 @@ export async function enqueueC1PaidKeywordEvidenceJob({
     repository,
     runtimeMode,
     actor,
-    requiredRoles: ["owner"],
+    requiredRoles: teamOperationRoles(actor),
     action: C1_PAID_KEYWORD_EVIDENCE_JOB_TYPE,
     candidateId: softwareJobInput.candidateId,
     skuPackageId: softwareJobInput.skuPackageId,

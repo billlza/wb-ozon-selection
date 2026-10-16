@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { assertBusinessStateRepositoryBoundary } from './business-state-repository.mjs';
-import { authorizeOperation } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
 import { assertWorkerRegistryBoundary } from './worker-registry.mjs';
 import { createRepositoryBackedSoftwareJobStore } from './software-job-repository.mjs';
 import { createSoftwareJobEnvelope, enqueueSoftwareJobInDocument, softwareJobsInDocument, findSoftwareJobInDocument,
@@ -170,7 +170,7 @@ export function createOzonAccountReadRuntime({repository,serverClock,workerRegis
   }
   return Object.freeze({
     async authorizeAndEnqueue({actor,input}){
-      authorizeOperation({actor,requiredRoles:['owner']});
+      authorizeOperation({actor,requiredRoles: teamOperationRoles(actor)});
       requireValue(actor.actorType==='human'&&actor.source==='authenticated_identity_provider','AUTHENTICATED_OWNER_REQUIRED');
       requireValue(closed(input,[...(discovery?['preparationId']:['candidateId','skuPackageId']),'expectedRevision','bindingId','configurationVersion','scopeRef','confirmReadOnce','expiresAt','idempotencyKey'])&&
         [...(discovery?['preparationId']:['candidateId','skuPackageId']),'bindingId','configurationVersion','scopeRef','idempotencyKey'].every(field=>ref(input[field]))&&input.confirmReadOnce===true&&

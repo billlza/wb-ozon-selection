@@ -1,7 +1,7 @@
 import { buildLifecycleBExplicitOtherCosts, resolveLifecycleBProfitRule } from "./lifecycle-b-evidence-runtime.mjs";
 import { executeBusinessMutation } from "./business-mutation-transaction.mjs";
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from "./business-state-repository.mjs";
-import { authorizeOperation } from "./runtime-identity.mjs";
+import { authorizeOperation, teamOperationRoles } from "./runtime-identity.mjs";
 import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
 import { BExactCommissionRecalculationError, runSavedConditionalBWithExactEvidence } from "./real-a-b-c1-flow.mjs";
 import { recoverBExactCommissionTechnicalFailure, startSoftwareStep, completeExecutionStep } from "./software-execution-state.mjs";
@@ -29,7 +29,7 @@ export function createBExactCommissionRecalculationUseCase({ repository, runtime
         throw new BExactCommissionRecalculationError("B_EXACT_RECALCULATION_INPUT_INVALID");
       }
       const software = isGate1AutopilotActor(actor);
-      const requiredRoles = software ? ["operator"] : ["owner"];
+      const requiredRoles = software ? ["operator"] : teamOperationRoles(actor);
       authorizeOperation({ actor, requiredRoles });
       if (!software && (actor.actorType !== "human" || actor.source !== "authenticated_identity_provider")) {
         throw new BExactCommissionRecalculationError("B_EXACT_RECALCULATION_AUTHENTICATED_OWNER_REQUIRED");

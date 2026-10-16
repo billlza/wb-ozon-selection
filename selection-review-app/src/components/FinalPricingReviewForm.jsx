@@ -1,7 +1,7 @@
 import FormRevisionNotice, { useCandidateForm, useSubmit } from './FormRevisionNotice.jsx';
 import { buildFinalPricingReviewInput, newFinalPricingReview, FINAL_PRICING_FACT_LABELS } from '../finalPricingReviewInput.js';
 
-export default function FinalPricingReviewForm({ candidate, onSave, disabled = false }) {
+export default function FinalPricingReviewForm({ candidate, onSave, disabled = false, disabledNote = null }) {
   const sku = candidate.lifecycleV11?.skuPackage;
   const snapshots = candidate.salesSnapshotsV11 || [];
   const profit = sku?.profitModels?.find(model => model.profitModelVersion === sku.activeProfitModelVersion);
@@ -24,6 +24,7 @@ export default function FinalPricingReviewForm({ candidate, onSave, disabled = f
     <p>已保存成交价：{profit?.recommendedSalePriceRub ?? '未取得'} RUB。提交本表时，仍须完成所选样本的核验。</p>
     <FormRevisionNotice guard={guard} disabled={saving} />
     {error && <p role="alert">{error}</p>}
+    {disabled && disabledNote ? <p role="status">{disabledNote}</p> : null}
     <p>已选择 {form.reviews.length} 条待审样本，尚不代表有效可比样本数量。</p>
     {form.reviews.length < 3 && <p>当前选择不足3条；2条有效样本可比较并保留不足3条提示，只有1条不能形成最终比较。</p>}
     {!snapshots.length && <p>没有已保存销售样本，请先补充可追溯资料。</p>}

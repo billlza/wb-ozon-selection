@@ -6,6 +6,7 @@ import { buildOzonFinalProductPreview } from "../../lib/ozon-final-product-previ
 import ProductionOwnerDecisionForm from "./ProductionOwnerDecisionForm.jsx";
 import Gate2ListingForm from "./Gate2ListingForm.jsx";
 import FinalPricingReviewForm from "./FinalPricingReviewForm.jsx";
+import { BOSS_ONLY_NOTE } from "../ownerAccess.js";
 import { useSubmit } from "./FormRevisionNotice.jsx";
 
 const VALUE_LABELS = { unknown: "未确认", no_battery: "无电池", battery_present: "含电池", verified: "已核验",
@@ -195,7 +196,8 @@ export default function FinalProductPlanCard({ candidate, identity, onSaveProduc
         identity={identity} onSave={onSaveProductionOwnerDecision} showReadinessReason={false} /> : null}
     {!provisional && !authorized && currentCard && onSaveFinalPricingReview ? <details className="final-plan-price-change"><summary>调整售价</summary>
       <p>仅在主动调整售价时使用。保存会重新核验成本及后续确认要求。</p>
-      <FinalPricingReviewForm candidate={listing?.candidate ?? candidate} onSave={onSaveFinalPricingReview} disabled={identity?.canSaveProductionOwnerDecision !== true} />
+      <FinalPricingReviewForm candidate={listing?.candidate ?? candidate} onSave={onSaveFinalPricingReview} disabled={identity?.canSaveProductionOwnerDecision !== true}
+        disabledNote={identity?.authenticated === true ? BOSS_ONLY_NOTE : null} />
     </details> : null}
 
     <details className="final-plan-technical-details"><summary>技术详情与资料记录</summary>

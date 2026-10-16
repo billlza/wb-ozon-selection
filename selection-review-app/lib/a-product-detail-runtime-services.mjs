@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { authorizeOperation } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from './business-state-repository.mjs';
 import { fingerprintCanonicalRecord, isCanonicalFrozenRef } from './production-contract-primitives.mjs';
 import { normalizeAProductDetailServiceBindings } from './runtime-configuration.mjs';
@@ -16,7 +16,7 @@ import { assertAProductDetailApplicationRecord } from './a-product-detail-applic
 const clone=value=>structuredClone(value);
 const closed=(value,fields)=>value!==null&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===fields.length&&fields.every(key=>Object.hasOwn(value,key));
 const check=(value,code)=>{if(!value)throw new AProductDetailError(code);};
-function owner(actor){authorizeOperation({actor,requiredRoles:['owner']});check(actor.actorType==='human'&&actor.source==='authenticated_identity_provider','AUTHENTICATED_OWNER_REQUIRED');}
+function owner(actor){authorizeOperation({actor,requiredRoles: teamOperationRoles(actor)});check(actor.actorType==='human'&&actor.source==='authenticated_identity_provider','AUTHENTICATED_OWNER_REQUIRED');}
 function collection(document,key,array=false,create=false){
   if(!Object.hasOwn(document,'runtime')){
     if(!create)return array?[]:{};

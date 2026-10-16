@@ -1,4 +1,4 @@
-import { authorizeOperation, createOperationAuditEvent } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles, createOperationAuditEvent } from './runtime-identity.mjs';
 import { assertBusinessStateRepositoryBoundary } from './business-state-repository.mjs';
 import { rollbackProductionAuthorizationInDocument } from './production-authorization-rollback.mjs';
 
@@ -18,7 +18,7 @@ export function createProductionAuthorizationRollbackUseCase({ repository, serve
   if (typeof serverClock !== 'function') throw new Error('PRODUCTION_AUTHORIZATION_ROLLBACK_DEPENDENCY_INVALID');
   return Object.freeze({
     async rollback({ actor, input }) {
-      authorizeOperation({ actor, requiredRoles: ['owner'] });
+      authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
       if (actor.actorType !== 'human' || actor.source !== 'authenticated_identity_provider') {
         throw new ProductionAuthorizationRollbackError('OWNER_REQUIRED', '请先登录主人身份再作废生产授权。');
       }

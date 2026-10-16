@@ -1,7 +1,7 @@
 import { resolveSeerfarDiscoveryEvidence, SeerfarDiscoveryContractError, SEERFAR_DISCOVERY_EVIDENCE_FAILURE_CLASSES } from './seerfar-discovery-contract.mjs';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { authorizeOperation } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from './business-state-repository.mjs';
 import { fingerprintCanonicalRecord, isCanonicalFrozenRef } from './production-contract-primitives.mjs';
 import { normalizeADiscoveryServiceBindings, assertADiscoveryConnectorBinding } from './runtime-configuration.mjs';
@@ -44,7 +44,7 @@ export function assertADiscoveryDeclineRecord(record,{batchId,revision,marketPro
 const supportsPlan=(service,plan)=>service.connector.provider===plan.provider&&service.connector.contractVersion===plan.contractVersion&&
   (plan.provider!=='seerfar'||service.connector.budgetPolicyRef===plan.budget.policyRef)&&plan.requests.every(request=>service.connector.allowedMethods.includes(request.method));
 function owner(actor){
-  authorizeOperation({actor,requiredRoles:['owner']});
+  authorizeOperation({actor,requiredRoles: teamOperationRoles(actor)});
   requireValue(actor.actorType==='human'&&actor.source==='authenticated_identity_provider','AUTHENTICATED_OWNER_REQUIRED');
 }
 function collection(document,key,array=false){

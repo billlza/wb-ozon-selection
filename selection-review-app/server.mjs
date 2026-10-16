@@ -638,7 +638,7 @@ async function gate1Route(req, res, pathname) {
   const route = pathname.match(/^\/api\/candidates\/([^/]+)\/gate1\/(accept|skip|shortfall)$/);
   if (req.method !== "POST" || !route) return false;
   const actor = runtimeIdentityProvider.resolveActor({ request: req });
-  if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+  if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
     throw httpError(403, "请先登录主人身份后再决定做不做这件。", { code: "gate1_owner_required" });
   }
   const input = await readJsonRequestBody(req, { maxBytes: 4096, requireJsonContentType: true });
@@ -844,7 +844,7 @@ function scheduleGate1AutopilotAfterCapture(req, res, pathname) {
  */
 async function gate1AutopilotContinueRoute(req, res, pathname) {
   const actor = runtimeIdentityProvider.resolveActor({ request: req });
-  if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+  if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
     throw httpError(403, "请先登录主人身份后再让软件接着做。", { code: "gate1_autopilot_owner_required" });
   }
   const input = await readJsonRequestBody(req, { maxBytes: 1024, requireJsonContentType: true });
@@ -2647,9 +2647,17 @@ async function settleIntakeEstimate(candidateId) {
   });
 }
 
+// Who works on products for the team: a boss (owner) or the tester (operator). The owner decided (2026-10-16) the tester
+// does everything but the three confirmations — confirm supply, confirm profit, authorize listing — which stay with the
+// bosses (TEAM_OWNER_ONLY_ROUTES, and the checks on those routes). Callers also require a signed-in person.
+function actsForTeam(actor) {
+  return actor.roles.includes("owner") || actor.roles.includes("operator");
+}
+const TEAM_OWNER_ONLY_MESSAGE = "这一步要老板来做：确认供货、确认利润和许可上架只有老板能做。";
+
 function intakeOwner(req, code) {
   const actor = runtimeIdentityProvider.resolveActor({ request: req });
-  if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+  if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
     throw httpError(403, "请先登录主人身份。", { code });
   }
   return actor;
@@ -4645,14 +4653,16 @@ function responseState(data, request) {
       currentUser: (() => {
         const access = runtimeIdentityProvider.publicAccessState({ request });
         if (access.status !== "authenticated" && access.status !== "development_only") return {
-          userId: null, roles: [], authenticated: false, canSaveProductionOwnerDecision: false, canSaveC1RightsReview: false, canAuthorizeC1PaidCall: false, canAuthorizeProduction: false
+          userId: null, roles: [], authenticated: false, canSaveProductionOwnerDecision: false, canSaveC1RightsReview: false, canAuthorizeC1PaidCall: false, canConfirmSupplyAndProfit: false, canAuthorizeProduction: false
         };
         const actor = runtimeIdentityProvider.resolveActor({ request });
         const authenticated = actor.source === "authenticated_identity_provider" && actor.actorType === "human";
         return { userId: actor.userId, roles: actor.roles, authenticated,
           canSaveProductionOwnerDecision: authenticated && actor.roles.includes("owner"),
-          canSaveC1RightsReview: authenticated && actor.roles.includes("owner"),
-          canAuthorizeC1PaidCall: authenticated && actor.roles.includes("owner"),
+          canSaveC1RightsReview: authenticated && actsForTeam(actor),
+          canAuthorizeC1PaidCall: authenticated && actsForTeam(actor),
+          // Same test as the confirmation routes: the bosses, and the development default, may; the tester may not.
+          canConfirmSupplyAndProfit: actor.roles.includes("owner"),
           canAuthorizeProduction: authenticated && actor.roles.includes("owner") };
       })(),
       workers: workerRegistry.snapshot().map((worker) => ({
@@ -4978,6 +4988,9 @@ async function saveProductionOwnerDecisionFor({ actor, candidateId, input }) {
   if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human") {
     return productionDecisionResponse(503, { message: "正式主人身份来源尚未接通，当前不能保存生产授权。", code: "production_identity_unavailable", externalRequests: 0, platformWrites: 0 });
   }
+  if (!actor.roles.includes("owner")) {
+    return productionDecisionResponse(403, { message: TEAM_OWNER_ONLY_MESSAGE, code: "team_owner_only", externalRequests: 0, platformWrites: 0 });
+  }
   let transaction;
   try {
     transaction = await commitSingleOwnerProductionAuthorization({ repository: businessStateRepository,
@@ -5041,6 +5054,18 @@ async function saveProductionOwnerDecisionFor({ actor, candidateId, input }) {
 
 // Health checks a host polls; with team accounts every other API path needs a signed-in person.
 const TEAM_PUBLIC_API_PATHS = new Set(["/api/live", "/api/health", "/api/ready"]);
+// Routes that do nothing but one of the three confirmations the owner kept for the bosses (2026-10-16): confirm profit
+// (final pricing review), authorize listing (gate 2, the production decision and authorization) and the batch forms (a
+// sibling batch's supply, a D batch's authorization). Each of them checks the owner role itself too. Taking a listing
+// authorization back is the tester's as well (also decided 2026-10-16). Confirming one product's supply shares
+// /lifecycle/a-confirm with asking for its capture, so that route checks the owner after its capture branch instead.
+const TEAM_OWNER_ONLY_ROUTES = Object.freeze([
+  /^\/api\/candidates\/[^/]+\/lifecycle\/final-pricing\/review$/,
+  GATE2_LISTING_ROUTE,
+  /^\/api\/candidates\/[^/]+\/lifecycle\/production-(?:owner-decision|authorization)$/,
+  /^\/api\/candidates\/[^/]+\/sibling-batch-a-confirm$/,
+  /^\/api\/d-batches\/authorize$/
+]);
 
 async function handleApi(req, res, pathname) {
   assertTrustedApiRequest({
@@ -5106,13 +5131,12 @@ async function handleApi(req, res, pathname) {
   if (runtimeIdentityProvider.providerType === "local_owner_password" && writing && !extensionCallback && !internalRequest) {
     runtimeIdentityProvider.resolveActor({ request: req, touch: true });
   }
-  // With team accounts nothing but the health checks is readable before signing in. The tester only reads for now: the
-  // owner decided (2026-10-16) the tester does everything but confirm supply, confirm profit and authorize listing, and
-  // those actions are opened in the next change.
+  // With team accounts nothing but the health checks is readable before signing in. The tester does everything but the
+  // three confirmations the owner kept for the bosses.
   if (teamAccounts && !extensionCallback && !internalRequest && !TEAM_PUBLIC_API_PATHS.has(pathname)) {
     const actor = runtimeIdentityProvider.resolveActor({ request: req, touch: writing });
-    if (writing && !actor.roles.includes("owner")) {
-      throw httpError(403, "测试账号现在只能查看，还不能做这一步。", { code: "team_tester_read_only" });
+    if (writing && !actor.roles.includes("owner") && TEAM_OWNER_ONLY_ROUTES.some(route => route.test(pathname))) {
+      throw httpError(403, TEAM_OWNER_ONLY_MESSAGE, { code: "team_owner_only" });
     }
   }
   if (req.method === "OPTIONS" && (pathname === "/api/extension/heartbeat" || /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/(?:claim|search-image)$/.test(pathname) || /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(pathname) || /^\/api\/seerfar-selection\/rounds\/[^/]+\/result$/.test(pathname))) {
@@ -5243,7 +5267,7 @@ async function handleApi(req, res, pathname) {
   const aDiscoveryRoute = pathname.match(/^\/api\/product-discovery\/(create|start|authorize|continue|select|decline)$/);
   if (req.method === 'GET' && pathname === '/api/product-discovery' || req.method === 'POST' && aDiscoveryRoute) {
     const actor = runtimeIdentityProvider.resolveActor({request:req});
-    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actsForTeam(actor)) {
       throw httpError(403, '请先登录主人身份后查看商品发现计划。');
     }
     try {
@@ -5270,7 +5294,7 @@ async function handleApi(req, res, pathname) {
   // Display-only: translated titles are shown beside the provider's own title and never overwrite a saved field.
   if (req.method === 'POST' && pathname === '/api/product-discovery/translate') {
     const actor = runtimeIdentityProvider.resolveActor({request:req});
-    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actsForTeam(actor)) {
       throw httpError(403, '请先登录主人身份后查看商品发现计划。');
     }
     try {
@@ -5294,7 +5318,7 @@ async function handleApi(req, res, pathname) {
   // Reference only: an A-stage purchase ceiling from official inputs. It never replaces the formal B profit conclusion.
   if (req.method === 'POST' && pathname === '/api/product-discovery/estimate') {
     const actor = runtimeIdentityProvider.resolveActor({request:req});
-    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actsForTeam(actor)) {
       throw httpError(403, '请先登录主人身份后查看商品发现计划。');
     }
     try {
@@ -5313,7 +5337,7 @@ async function handleApi(req, res, pathname) {
   if (pathname === '/api/seerfar-selection' && req.method === 'GET' ||
       pathname === '/api/seerfar-selection/rounds' && req.method === 'POST') {
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actsForTeam(actor)) {
       throw httpError(403, '请先登录主人身份后再看 Seerfar 榜单。');
     }
     try {
@@ -5344,7 +5368,7 @@ async function handleApi(req, res, pathname) {
   const storeProfileRoute = pathname.match(/^\/api\/store-profiles(?:\/([a-z]+))?$/);
   if (storeProfileRoute && (req.method === 'GET' && !storeProfileRoute[1] || req.method === 'POST' && storeProfileRoute[1])) {
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actsForTeam(actor)) {
       throw httpError(403, '请先登录主人身份后再看店铺档案。');
     }
     if (!seerfarSelectionConfig.config) throw httpError(503, '店铺档案配置读不出来。', { code: 'store_profile_config_unavailable' });
@@ -5368,7 +5392,7 @@ async function handleApi(req, res, pathname) {
   // 读本店近 8 周按 SKU 的销量（只读 Seller API），挑出"本店爆款找相似"的种子。
   if (req.method === 'POST' && pathname === '/api/seerfar-selection/store-sales') {
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actsForTeam(actor)) {
       throw httpError(403, '请先登录主人身份后再读本店销量。');
     }
     const input = await readJsonRequestBody(req, { maxBytes: 1024, requireJsonContentType: true });
@@ -5385,7 +5409,7 @@ async function handleApi(req, res, pathname) {
   const imageSearchRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/supplier-image-search(?:\/(authorize))?$/);
   if (imageSearchRoute && (req.method === 'GET' && !imageSearchRoute[2] || req.method === 'POST' && imageSearchRoute[2])) {
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actsForTeam(actor)) {
       throw httpError(403, '请先登录主人身份后查看1688图搜准备。');
     }
     try {
@@ -5416,7 +5440,7 @@ async function handleApi(req, res, pathname) {
   const aProductDetailRoute=pathname.match(/^\/api\/candidates\/([^/]+)\/product-details(?:\/(authorize|continue))?$/);
   if(aProductDetailRoute && (req.method==='GET'&&!aProductDetailRoute[2] || req.method==='POST'&&aProductDetailRoute[2])) {
     const actor=runtimeIdentityProvider.resolveActor({request:req});
-    if(actor.source!=='authenticated_identity_provider'||actor.actorType!=='human'||!actor.roles.includes('owner')) {
+    if(actor.source!=='authenticated_identity_provider'||actor.actorType!=='human'||!actsForTeam(actor)) {
       throw httpError(403,'请先登录主人身份后查看商品详情准备。');
     }
     const candidateId=decodeURIComponent(aProductDetailRoute[1]);
@@ -5446,7 +5470,7 @@ async function handleApi(req, res, pathname) {
   const accountPreparationRoute=pathname.match(/^\/api\/account-preparations\/(create|authorize|continue|select-warehouse)$/);
   if(req.method==='GET'&&pathname==='/api/account-preparations'||req.method==='POST'&&accountPreparationRoute) {
     const actor=runtimeIdentityProvider.resolveActor({request:req});
-    if(actor.source!=='authenticated_identity_provider'||actor.actorType!=='human'||!actor.roles.includes('owner'))throw httpError(403,'请先登录主人身份后准备账户。');
+    if(actor.source!=='authenticated_identity_provider'||actor.actorType!=='human'||!actsForTeam(actor))throw httpError(403,'请先登录主人身份后准备账户。');
     if(req.method==='POST') {
       if(String(req.headers['content-type']||'').split(';')[0].trim().toLowerCase()!=='application/json')throw httpError(415,'账户准备只接受当前确认卡提交。');
       const origin=String(req.headers.origin||'');
@@ -5598,7 +5622,7 @@ async function handleApi(req, res, pathname) {
     }
     // 只主人触发，绝不自动：没有登录身份的调用到不了任何只读提供器。
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "B_EVIDENCE_REFRESH_OWNER_REQUIRED", message: "请先登录主人身份后重读费用证据。", platformWrites: 0 });
     }
     const snapshot = await readCandidateData(candidateId);
@@ -6040,7 +6064,7 @@ async function handleApi(req, res, pathname) {
         { code: "ozon_page_read_input_invalid" });
     }
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       throw httpError(403, "请先登录主人身份后再读这个 Ozon 页面。", { code: "ozon_page_read_owner_required" });
     }
     const queued = await enqueueOzonPageReadJob({
@@ -6419,7 +6443,7 @@ async function handleApi(req, res, pathname) {
       throw httpError(400, "找同款请求的字段无效", { code: `${prefix}_input_invalid` });
     }
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       throw httpError(403, "请先登录主人身份后再找同款。",
         kind.key === "ozon" ? { code: "ozon_match_owner_required" } : { code: "image_match_owner_required" });
     }
@@ -6543,7 +6567,7 @@ async function handleApi(req, res, pathname) {
       throw httpError(400, "核实历史采集记录只接受当前数据修订号和一个固定的确认选项", { code: "source_capture_review_input_invalid" });
     }
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       throw httpError(403, "请先登录主人身份后核实这条采集记录。", { code: "source_capture_review_owner_required" });
     }
     const acknowledgement = input.acknowledgement ?? "no_result_received";
@@ -6605,7 +6629,7 @@ async function handleApi(req, res, pathname) {
       throw httpError(400, "重新采集只接受当前数据修订号和一个固定的理由选项", { code: "source_capture_recapture_input_invalid" });
     }
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       throw httpError(403, "请先登录主人身份后重新采集这个1688页面。", { code: "source_capture_recapture_owner_required" });
     }
     const candidateId = decodeURIComponent(sourceCaptureRecaptureRoute[1]);
@@ -6916,7 +6940,7 @@ async function handleApi(req, res, pathname) {
   const workflowEliminationRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/workflow\/(eliminate|restore)$/);
   if (req.method === "POST" && workflowEliminationRoute) {
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       throw httpError(403, "请先登录主人身份后淘汰或恢复商品。");
     }
     const candidateId = decodeURIComponent(workflowEliminationRoute[1]);
@@ -6979,7 +7003,7 @@ async function handleApi(req, res, pathname) {
   const supplierDraftRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/supplier-draft$/);
   if (supplierDraftRoute && ["GET", "POST"].includes(req.method)) {
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       throw httpError(403, "请先登录主人身份后填写找货资料。");
     }
     const candidateId = decodeURIComponent(supplierDraftRoute[1]);
@@ -7060,7 +7084,7 @@ async function handleApi(req, res, pathname) {
   const skuChoiceRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/sku-choice$/);
   if (req.method === "POST" && skuChoiceRoute) {
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       throw httpError(403, "请先登录主人身份后选规格。");
     }
     const candidateId = decodeURIComponent(skuChoiceRoute[1]);
@@ -7151,7 +7175,7 @@ async function handleApi(req, res, pathname) {
   const cargoFactsRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/cargo-facts$/);
   if (req.method === "POST" && cargoFactsRoute) {
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       throw httpError(403, "请先登录主人身份后确认运输属性。");
     }
     const candidateId = decodeURIComponent(cargoFactsRoute[1]);
@@ -7223,7 +7247,7 @@ async function handleApi(req, res, pathname) {
   const extraHandlingFeesRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/extra-handling-fees$/);
   if (req.method === "POST" && extraHandlingFeesRoute) {
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       throw httpError(403, `请先登录主人身份后确认${EXTRA_HANDLING_FEE_LABEL}。`);
     }
     const candidateId = decodeURIComponent(extraHandlingFeesRoute[1]);
@@ -7285,7 +7309,7 @@ async function handleApi(req, res, pathname) {
   const skuUniformSupplyRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/sku-uniform-supply$/);
   if (req.method === "POST" && skuUniformSupplyRoute) {
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       throw httpError(403, `请先登录主人身份后声明${SKU_UNIFORM_SUPPLY_LABEL}。`);
     }
     const candidateId = decodeURIComponent(skuUniformSupplyRoute[1]);
@@ -7351,7 +7375,7 @@ async function handleApi(req, res, pathname) {
   const supplierDraftDimensionsRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/supplier-draft-dimensions$/);
   if (req.method === "POST" && supplierDraftDimensionsRoute) {
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       throw httpError(403, "请先登录主人身份后再改包装尺寸。");
     }
     const candidateId = decodeURIComponent(supplierDraftDimensionsRoute[1]);
@@ -7449,6 +7473,11 @@ async function handleApi(req, res, pathname) {
           bStarted: false,
           c1Created: false
         });
+      }
+      // Asking for a capture (above) and eliminating are anyone's; confirming supply, and the profit step submitted with
+      // it, stays with the bosses.
+      if (!runtimeIdentityProvider.resolveActor({ request: req }).roles.includes("owner")) {
+        throw httpError(403, TEAM_OWNER_ONLY_MESSAGE, { code: "team_owner_only" });
       }
     }
     const timestamp = now();
@@ -7786,7 +7815,7 @@ async function handleApi(req, res, pathname) {
       return json(res, 400, { code: "B_EXACT_RECALCULATION_INPUT_INVALID", message: "请从当前商品卡提交正式复算。", externalRequests: 0 });
     }
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "B_EXACT_RECALCULATION_OWNER_REQUIRED", message: "请先登录主人身份后复算。", externalRequests: 0 });
     }
     let transaction;
@@ -7823,7 +7852,7 @@ async function handleApi(req, res, pathname) {
       return json(res, 400, { code: "C1_KEYWORD_HANDOFF_RETRY_INPUT_INVALID", message: "请从当前商品卡继续准备文案。", externalRequests: 0 });
     }
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "C1_DRAFT_AUTHENTICATED_OWNER_REQUIRED", message: "请先登录主人身份后继续准备文案。", externalRequests: 0 });
     }
     let transaction;
@@ -7860,7 +7889,7 @@ async function handleApi(req, res, pathname) {
       return json(res, 400, { code: "C1_DRAFT_RESULT_READ_INPUT_INVALID", message: "读取结果必须准确引用当前已保存任务。", externalRequests: 0 });
     }
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "C1_DRAFT_AUTHENTICATED_OWNER_REQUIRED", message: "请先登录主人身份后读取本次文案结果。", externalRequests: 0 });
     }
     const snapshot = await readCandidateData(input.candidateId);
@@ -7901,7 +7930,7 @@ async function handleApi(req, res, pathname) {
       return json(res, 400, { code: "C1_DRAFT_SAVED_CONTINUATION_INPUT_INVALID", message: "继续请求必须准确引用当前已保存任务。", externalRequests: 0 });
     }
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "C1_DRAFT_AUTHENTICATED_OWNER_REQUIRED", message: "请先登录主人身份后继续已许可任务。", externalRequests: 0 });
     }
     const snapshot = await readCandidateData(input.candidateId);
@@ -7928,7 +7957,7 @@ async function handleApi(req, res, pathname) {
     const input = await requestBody(req);
     if (input?.candidateId !== c1PaidDraftAuthorizationRoute[1]) throw httpError(400, "许可与当前商品不一致，未保存");
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "C1_DRAFT_AUTHENTICATED_OWNER_REQUIRED", message: "请先登录主人身份，再确认本件商品的一次付费调用。", externalRequests: 0 });
     }
     let transaction;
@@ -7969,7 +7998,7 @@ async function handleApi(req, res, pathname) {
     const input = await requestBody(req);
     if (input?.candidateId !== c1EditorialReviewRoute[1]) throw httpError(400, "修订确认与当前商品不一致，未保存");
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "C1_EDITORIAL_REVIEW_AUTHENTICATED_OWNER_REQUIRED", message: "请先登录主人身份，再确认修订文案。" });
     }
     let transaction;
@@ -7994,7 +8023,7 @@ async function handleApi(req, res, pathname) {
     const input = await requestBody(req);
     if (input?.candidateId !== c1ContentReviewRoute[1]) throw httpError(400, "确认与当前商品不一致，未保存");
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "C1_CONTENT_REVIEW_AUTHENTICATED_OWNER_REQUIRED", message: "请先登录主人身份，再确认商品内容。" });
     }
     if (c1EditorialProposalBundle?.request?.sourceIdentity?.candidateId === input.candidateId) {
@@ -8022,7 +8051,7 @@ async function handleApi(req, res, pathname) {
     const input = await requestBody(req);
     if (input?.candidateId !== c1RightsReviewRoute[1]) throw httpError(400, "声明与当前商品不一致，未保存");
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "C1_RIGHTS_OWNER_REQUIRED", message: "请先登录主人身份后保存本件商品声明", externalRequests: 0 });
     }
     let transaction;
@@ -8084,7 +8113,7 @@ async function handleApi(req, res, pathname) {
     const input = await requestBody(req);
     if (input?.candidateId !== c1FinalPlanRevisionRoute[1] || Object.keys(input).some(key => !["candidateId", "skuPackageId", "dataRevision"].includes(key))) throw httpError(400, "新方案准备只接受当前商品、SKU及修订号");
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "C1_FINAL_REVISION_OWNER_REQUIRED", message: "请先登录主人身份后准备新版方案。",
         paidCalls: 0, externalRequests: 0, platformWrites: 0 });
     }
@@ -8146,7 +8175,7 @@ async function handleApi(req, res, pathname) {
     if (input?.candidateId !== c1ContinuePreparationRoute[1]) throw httpError(400, "请求与当前商品不一致，未执行");
     if (!Number.isInteger(input.dataRevision)) throw httpError(400, "继续准备必须提供当前数据修订号");
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "C1_CONTINUE_OWNER_REQUIRED", message: "请先登录主人身份后继续准备文案素材", externalRequests: 0 });
     }
     const snapshot = await readCandidateData(input.candidateId);
@@ -8258,7 +8287,7 @@ async function handleApi(req, res, pathname) {
     if (input?.candidateId !== c1SupplyAttributeBackfillRoute[1]) throw httpError(400, "请求与当前商品不一致，未执行");
     if (!Number.isInteger(input.dataRevision)) throw httpError(400, "补齐供应属性必须提供当前数据修订号");
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "C1_SUPPLY_ATTRIBUTE_BACKFILL_OWNER_REQUIRED", message: "请先登录主人身份后再补齐供应属性", externalRequests: 0 });
     }
     const snapshot = await readCandidateData(input.candidateId);
@@ -8291,7 +8320,7 @@ async function handleApi(req, res, pathname) {
     if (input?.candidateId !== c1RefreshSchemaRoute[1]) throw httpError(400, "请求与当前商品不一致，未执行");
     if (!Number.isInteger(input.dataRevision)) throw httpError(400, "重读类目资料必须提供当前数据修订号");
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "C1_FROZEN_SCHEMA_REFRESH_OWNER_REQUIRED", message: "请先登录主人身份后再重读类目资料", externalRequests: 0 });
     }
     const snapshot = await readCandidateData(input.candidateId);
@@ -8367,7 +8396,7 @@ async function handleApi(req, res, pathname) {
     if (input?.candidateId !== c1OzonAttributeProposalRoute[1]) throw httpError(400, "请求与当前商品不一致，未执行");
     if (!Number.isInteger(input.dataRevision)) throw httpError(400, "生成属性建议必须提供当前数据修订号");
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "C1_OZON_ATTRIBUTE_PROPOSAL_OWNER_REQUIRED", message: "请先登录主人身份后再生成属性建议", externalRequests: 0 });
     }
     const snapshot = await readCandidateData(input.candidateId);
@@ -8555,7 +8584,7 @@ async function handleApi(req, res, pathname) {
   const c1OzonAttributesRoute = pathname.match(/^\/api\/candidates\/([^/]+)\/lifecycle\/c1\/ozon-attributes$/);
   if (req.method === "GET" && c1OzonAttributesRoute) {
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "C1_OZON_ATTRIBUTE_MAPPING_OWNER_REQUIRED", message: "请先登录主人身份后再查看Ozon属性", externalRequests: 0 });
     }
     const snapshot = await readCandidateData(c1OzonAttributesRoute[1]);
@@ -8585,7 +8614,7 @@ async function handleApi(req, res, pathname) {
     if (!Number.isInteger(input.dataRevision)) throw httpError(400, "保存属性映射必须提供当前数据修订号");
     if (!Array.isArray(input.mappings) || input.mappings.length === 0) throw httpError(400, "至少要有一条属性映射");
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "C1_OZON_ATTRIBUTE_MAPPING_OWNER_REQUIRED", message: "请先登录主人身份后再保存属性映射", externalRequests: 0 });
     }
     const snapshot = await readCandidateData(input.candidateId);
@@ -8643,7 +8672,7 @@ async function handleApi(req, res, pathname) {
     const origin = String(req.headers.origin || "");
     if (origin && !allowedReviewOrigins.has(origin)) throw httpError(403, "账户核验拒绝其他网页来源");
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       throw httpError(403, "请先登录主人身份后确认本次账户读取");
     }
     const input = await requestBody(req);
@@ -8782,7 +8811,7 @@ async function handleApi(req, res, pathname) {
       throw httpError(400, "继续请求必须准确引用当前已保存任务");
     }
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       throw httpError(403, "请先登录主人身份后继续已保存任务");
     }
     const before = await readCandidateData(input.candidateId), candidate = before.candidates.find(item => item.id === input.candidateId);
@@ -8948,7 +8977,7 @@ async function handleApi(req, res, pathname) {
     const origin = String(req.headers.origin || '');
     if (origin && !allowedReviewOrigins.has(origin)) throw httpError(403, '共享素材拒绝其他网页来源');
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actor.roles.includes("owner")) {
+    if (actor.source !== "authenticated_identity_provider" || actor.actorType !== "human" || !actsForTeam(actor)) {
       return json(res, 403, { code: "C2_LINK_OWNER_REQUIRED", message: "只有主人可以选择同批已上传素材", platformWrites: 0 });
     }
     if (c2UploadInProgress) throw httpError(409, "本机正在处理另一份素材", { code: "c2_upload_busy" });
@@ -9206,7 +9235,7 @@ async function handleApi(req, res, pathname) {
   const preparationRoute=pathname.match(/^\/api\/sibling-batches\/([^/]+)\/(preparation|preparation-draft|preparation-assets\/([^/]+))$/);
   if(preparationRoute && ['GET','POST'].includes(req.method)) {
     const actor=runtimeIdentityProvider.resolveActor({request:req});
-    if(actor.source!=='authenticated_identity_provider' || actor.actorType!=='human' || !actor.roles.includes('owner'))throw httpError(403,'请先登录主人身份读取或保存整批草稿');
+    if(actor.source!=='authenticated_identity_provider' || actor.actorType!=='human' || !actsForTeam(actor))throw httpError(403,'请先登录主人身份读取或保存整批草稿');
     const origin=String(req.headers.origin||'');
     if(origin && !allowedReviewOrigins.has(origin))throw httpError(403,'整批草稿拒绝其他网页来源');
     const parentId=decodeURIComponent(preparationRoute[1]);
@@ -9244,7 +9273,7 @@ async function handleApi(req, res, pathname) {
     const origin = String(req.headers.origin || '');
     if (origin && !allowedReviewOrigins.has(origin)) throw httpError(403, '批量经营草稿拒绝其他网页来源');
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actsForTeam(actor)) {
       throw httpError(403, '请先登录主人身份保存本批库存');
     }
     const input = await readJsonRequestBody(req, { maxBytes: 65536, requireJsonContentType: true });
@@ -9264,7 +9293,7 @@ async function handleApi(req, res, pathname) {
   const siblingExecutionRoute = pathname.match(/^\/api\/sibling-batches\/([^/]+)\/execution$/);
   if (req.method === 'GET' && siblingExecutionRoute) {
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actsForTeam(actor)) {
       throw httpError(403, '请先登录主人身份查看本批执行结果');
     }
     let parentId;
@@ -9295,7 +9324,7 @@ async function handleApi(req, res, pathname) {
   if(req.method==='GET'&&batchExecutionRoute){
     const actor=runtimeIdentityProvider.resolveActor({request:req});
     if(actor.source!=='authenticated_identity_provider'||actor.actorType!=='human'||
-        !actor.roles.includes('owner'))throw httpError(403,'请先登录主人身份查看生产批次');
+        !actsForTeam(actor))throw httpError(403,'请先登录主人身份查看生产批次');
     let batchId;
     try{batchId=decodeURIComponent(batchExecutionRoute[1]);}
     catch{throw httpError(400,'生产批次身份无效');}
@@ -9311,7 +9340,7 @@ async function handleApi(req, res, pathname) {
     if(origin&&!allowedReviewOrigins.has(origin))throw httpError(403,'生产批次拒绝其他网页来源');
     const actor=runtimeIdentityProvider.resolveActor({request:req});
     if(actor.source!=='authenticated_identity_provider'||actor.actorType!=='human'||
-        !actor.roles.includes('owner'))throw httpError(403,'请先登录主人身份恢复未发出的库存续作');
+        !actsForTeam(actor))throw httpError(403,'请先登录主人身份恢复未发出的库存续作');
     let batchId;
     try{batchId=decodeURIComponent(batchResumeRoute[1]);}
     catch{throw httpError(400,'生产批次身份无效');}
@@ -10402,7 +10431,7 @@ async function handleApi(req, res, pathname) {
     const origin = String(req.headers.origin || '');
     if (origin && !allowedReviewOrigins.has(origin)) throw httpError(403, '整批颜色事实确认拒绝其他网页来源');
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actsForTeam(actor)) {
       throw httpError(403, '请先登录主人身份后确认整批颜色事实');
     }
     const input = await readJsonRequestBody(req, { maxBytes: 65536, requireJsonContentType: true });
@@ -10441,7 +10470,7 @@ async function handleApi(req, res, pathname) {
     const origin = String(req.headers.origin || '');
     if (origin && !allowedReviewOrigins.has(origin)) throw httpError(403, '整批素材确认拒绝其他网页来源');
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actsForTeam(actor)) {
       throw httpError(403, '请先登录主人身份后确认整批素材');
     }
     const input = await readJsonRequestBody(req, { maxBytes: 65536, requireJsonContentType: true });
@@ -10532,7 +10561,7 @@ async function handleApi(req, res, pathname) {
     const origin = String(req.headers.origin || '');
     if (origin && !allowedReviewOrigins.has(origin)) throw httpError(403, '追加规格拒绝其他网页来源');
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actsForTeam(actor)) {
       throw httpError(403, '请先登录主人身份后准备规格清单');
     }
     const parentCandidateId = decodeURIComponent(siblingBatchRoute[1]);
@@ -10563,7 +10592,7 @@ async function handleApi(req, res, pathname) {
     const origin = String(req.headers.origin || '');
     if (origin && !allowedReviewOrigins.has(origin)) throw httpError(403, '追加规格拒绝其他网页来源');
     const actor = runtimeIdentityProvider.resolveActor({ request: req });
-    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actor.roles.includes('owner')) {
+    if (actor.source !== 'authenticated_identity_provider' || actor.actorType !== 'human' || !actsForTeam(actor)) {
       throw httpError(403, '请先登录主人身份后追加规格');
     }
     const parentCandidateId = decodeURIComponent(siblingSkuRoute[1]);

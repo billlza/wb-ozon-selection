@@ -1,5 +1,6 @@
 import FormRevisionNotice, { useCandidateForm, useSubmit } from "./FormRevisionNotice.jsx";
 import { productionAuthorizationInputFromCard } from "../productionAuthorizationInput.js";
+import { BOSS_ONLY_NOTE } from "../ownerAccess.js";
 
 export default function ProductionOwnerDecisionForm({ candidate, identity, onSave, showReadinessReason = true }) {
   const sku = candidate.lifecycleV11.skuPackage;
@@ -35,7 +36,7 @@ export default function ProductionOwnerDecisionForm({ candidate, identity, onSav
     {showReadinessReason ? <p>{readiness.reason}</p> : null}
     <FormRevisionNotice guard={guard} disabled={saving} />
     {sourceChanged ? <p role="alert">商品资料已更新，旧输入仍保留。<button type="button" onClick={guard.reload}>核对后载入新版</button></p> : null}
-    {identity?.canSaveProductionOwnerDecision !== true ? <p role="status">正式主人身份尚不可用，不能保存生产授权。</p> : null}
+    {identity?.canSaveProductionOwnerDecision !== true ? <p role="status">{identity?.authenticated === true ? BOSS_ONLY_NOTE : "正式主人身份尚不可用，不能保存生产授权。"}</p> : null}
     {readiness.ready ? <fieldset disabled={saving}>
       <p>店铺：{preparation.store.displayName} · 供应规格：{sku.supplierSkuId} · 最终图片：{card.c2Assets.finalUploads.length} 张。</p>
       <label>本店商品货号<input required value={form.merchantSku} onChange={event => field("merchantSku", event.target.value)} autoComplete="off" /></label>

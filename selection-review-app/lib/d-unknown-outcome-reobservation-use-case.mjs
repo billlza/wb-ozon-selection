@@ -1,4 +1,4 @@
-import { authorizeOperation, createOperationAuditEvent } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles, createOperationAuditEvent } from './runtime-identity.mjs';
 import { assertBusinessStateRepositoryBoundary } from './business-state-repository.mjs';
 import { reobserveDUnknownOutcomeInDocument, createDPlatformObservationScope,
   D_UNKNOWN_OUTCOME_REOBSERVATION_FIELD } from './d-platform-observation-contract.mjs';
@@ -33,7 +33,7 @@ export function createDUnknownOutcomeReobservationUseCase({ repository, serverCl
   }
   return Object.freeze({
     async reobserve({ actor, input }) {
-      authorizeOperation({ actor, requiredRoles: ['owner'] });
+      authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
       if (actor.actorType !== 'human' || actor.source !== 'authenticated_identity_provider') {
         throw new DUnknownOutcomeReobservationError('OWNER_REQUIRED', '请先登录主人身份再重新观察。');
       }

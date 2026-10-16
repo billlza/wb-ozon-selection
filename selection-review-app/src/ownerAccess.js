@@ -56,3 +56,5 @@ export function teamNewPasswordInput({ newPassword, repeatedPassword }) {
 }
 
 export const TEAM_ROLE_LABELS = Object.freeze({ boss: "老板", tester: "测试" });
+// What a confirmation button the tester cannot press says instead (the owner kept these three for the bosses, 2026-10-16).
+export const BOSS_ONLY_NOTE = "这一步要老板来做：确认供货、确认利润和许可上架只有老板能做。";

@@ -5,7 +5,7 @@ import { assertValidLifecyclePackage } from "./product-lifecycle-schema.mjs";
 import { assertValidC1ProductPlan, assertC1RightsReviewStage, normalizeC1SourceIdentity, replaceC1ProductPlanForRightsReview } from "./c1-product-plan.mjs";
 import { C1SkuRightsReviewError, createC1SkuRightsReviewRecord, buildC1SkuRightsReviewRecordView } from "./c1-sku-rights-review.mjs";
 import { isCanonicalFrozenRef, fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
-import { createActorContext } from "./runtime-identity.mjs";
+import { createActorContext, teamOperationRoles } from "./runtime-identity.mjs";
 import { sameStoreRef } from "./store-binding.mjs";
 import { gate1AutopilotMayAct, isGate1AutopilotActor } from "./gate1-autopilot.mjs";
 import { gate1RightsDeclarationCurrent, gate1RightsOwnerDeclaration } from "./gate1-rights-declaration.mjs";
@@ -101,13 +101,13 @@ export function createC1SkuRightsReviewUseCase({ repository, runtimeMode, server
   if (typeof serverClock !== "function") reject("C1_RIGHTS_SERVER_CLOCK_REQUIRED");
   return Object.freeze({
     async submit({ actor, input }) {
-      if (actor?.actorType !== "human" || actor.source !== "authenticated_identity_provider" || !Array.isArray(actor.roles) || !actor.roles.includes("owner")) {
+      if (actor?.actorType !== "human" || actor.source !== "authenticated_identity_provider" || !teamOperationRoles(actor).some(role => actor.roles.includes(role))) {
         reject("C1_RIGHTS_OWNER_REQUIRED");
       }
       const owner = createActorContext(actor);
       assertInput(input);
       const frozen = structuredClone(input);
-      return executeBusinessMutation({ repository, runtimeMode, actor: owner, requiredRoles: ["owner"],
+      return executeBusinessMutation({ repository, runtimeMode, actor: owner, requiredRoles: teamOperationRoles(actor),
         action: "c1_sku_rights_review_submit", candidateId: frozen.candidateId, skuPackageId: frozen.skuPackageId,
         expectedRevision: frozen.expectedRevision, idempotencyKey: frozen.idempotencyKey,
         inputFingerprint: fingerprintCanonicalRecord({ input: frozen, declaredByUserId: owner.userId }),

@@ -25,7 +25,7 @@ export function LocalOwnerAccessView({ state, saving, password, repeatedPassword
   if (access.status === "authenticated") return showAuthenticated ? <>
     <section className="local-owner-access">
       {team ? <><b>已登录：{access.user.displayName}（{TEAM_ROLE_LABELS[access.user.role]}）</b>
-        <span>{access.user.role === "boss" ? "商品确认仍以当前方案和服务端权限为准。" : "测试账号现在只能查看，还不能做操作。"}</span></>
+        <span>{access.user.role === "boss" ? "商品确认仍以当前方案和服务端权限为准。" : "测试账号什么都能做，只有确认供货、确认利润和许可上架要老板来做。"}</span></>
         : <><b>主人已登录</b><span>商品确认仍以当前方案和服务端权限为准。</span></>}
       <button type="button" className="button secondary" disabled={saving} onClick={onSubmit}>{saving ? "正在退出…" : "退出登录"}</button>
     </section>

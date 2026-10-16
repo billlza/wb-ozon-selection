@@ -1,4 +1,4 @@
-import { authorizeOperation } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
 import { fingerprintCanonicalRecord } from './production-contract-primitives.mjs';
 import { assertOzonAccountDiscoveryBinding, OzonAccountReadError } from './ozon-account-read-contract.mjs';
 import { OZON_ACCOUNT_OFFICIAL_CONTRACT_REFS } from './ozon-account-read-preparation.mjs';
@@ -38,7 +38,7 @@ export function createConfiguredOzonAccountDiscoveryRuntime({configuration,repos
   }
   return Object.freeze({
     view({document,actor}) {
-      authorizeOperation({actor,requiredRoles:['owner']});
+      authorizeOperation({actor,requiredRoles: teamOperationRoles(actor)});
       if(actor.actorType!=='human'||actor.source!=='authenticated_identity_provider')throw new OzonAccountReadError('AUTHENTICATED_OWNER_REQUIRED');
       if(services.size>0)return services.values().next().value.view({document,actor});
       const saved=document.runtime.ozonAccountPreparations;

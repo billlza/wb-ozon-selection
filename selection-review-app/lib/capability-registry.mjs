@@ -509,8 +509,8 @@ export const CAPABILITY_NODES = Object.freeze([
     integrationStatus: "partial", runtimeScope: "local_development",
     baselineHealth: { state: "risk", reason: "本地身份和 Worker 注册表存在，但没有中央身份、租约和多机验收。" },
     stopConditions: "身份、角色、能力或心跳不满足时不得领取或执行。",
-    breakpoint: "本地主人认证已接入可替换提供器；团队账号登录（老板和测试各自的登录名和密码，账号存在 Postgres）已接入，但中央模式还没开；多Worker尚未接通。",
-    nextStep: "放开测试账号能做的操作，再完成租约与中央模式。",
+    breakpoint: "本地主人认证已接入可替换提供器；团队账号登录（老板和测试各自的登录名和密码，账号存在 Postgres）已接入，测试能做除确认供货、确认利润、许可上架以外的操作，但中央模式还没开；找新品批次和账户准备仍按人分开；多Worker尚未接通。",
+    nextStep: "完成租约与中央模式；找新品批次和账户准备要不要团队共用，等主人定。",
     position: { x: 960, y: 180 },
     codeRefs: [
       capabilityRef("lib/runtime-identity.mjs", "createActorContext", "运行身份"),
@@ -522,7 +522,7 @@ export const CAPABILITY_NODES = Object.freeze([
       capabilityRef("src/components/TeamAccountPanel.jsx", "TeamAccountView", "改自己的密码；老板给别人重设密码")],
     testRefs: [capabilityRef("tests/runtime-identity-software-job.test.mjs", "test(", "身份与作业测试"),
       capabilityRef("tests/team-accounts.test.mjs", "test(", "团队账号、登录、改密码和命令行测试"),
-      capabilityRef("tests/team-accounts-db.test.mjs", "test(", "真 Postgres 上的团队账号和登录拦截测试")],
+      capabilityRef("tests/team-accounts-db.test.mjs", "test(", "真 Postgres 上的团队账号、登录拦截和老板才能做的确认")],
     artifactRefs: ["lib/runtime-identity-provider.mjs", "lib/runtime-configuration.mjs", "lib/local-owner-identity.mjs",
       "lib/scrypt-verifier.mjs", "lib/team-account-admin.mjs", "scripts/manage-team-accounts.mjs",
       "src/components/LocalOwnerAccessPanel.jsx", "src/ownerAccess.js", "src/runtimeArchitectureView.js", "src/headerStatusView.js"]

@@ -1,6 +1,6 @@
 import { c1CopyFields } from './sibling-preparation-consistency.mjs';
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from './business-state-repository.mjs';
-import { authorizeOperation, assertSafeBusinessMutationCandidate } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles, assertSafeBusinessMutationCandidate } from './runtime-identity.mjs';
 import { sameStoreRef } from './store-binding.mjs';
 import { createC1SkuRightsReviewRecord, resolveC1SkuRightsReviewForFacts } from './c1-sku-rights-review.mjs';
 import { verifyC1ProductFacts } from './c1-product-plan.mjs';
@@ -65,7 +65,7 @@ function mapColors(candidate, dictionarySource, evidencePacks, ownerId, at, valu
 }
 
 function validateInput(actor, input, serverClock, requireConfirmation) {
-  authorizeOperation({ actor, requiredRoles: ['owner'] });
+  authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
   if (actor.actorType !== 'human' || actor.source !== 'authenticated_identity_provider' ||
       typeof serverClock !== 'function' || !input || !text(input.parentCandidateId) ||
       !Number.isSafeInteger(input.parentRevision) || (requireConfirmation && input.confirmed !== true) ||

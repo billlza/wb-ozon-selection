@@ -117,7 +117,8 @@ export default function App() {
   const [accountPreparationError,setAccountPreparationError]=useState(null);
   const [accountRefresh,setAccountRefresh]=useState(0);
   const accountReads=useRef(createLatestRead());
-  const accountOwner=state.runtimeArchitecture?.currentUser?.authenticated===true&&state.runtimeArchitecture.currentUser.roles.includes('owner');
+  // Anyone signed in to do the work: the owner, a boss, or the tester (operator), who does everything but the three confirmations.
+  const accountOwner=state.runtimeArchitecture?.currentUser?.authenticated===true&&['owner','operator'].some(role=>state.runtimeArchitecture.currentUser.roles.includes(role));
   const accountOwnerId=accountOwner?state.runtimeArchitecture.currentUser.userId:null;
   // 录入流水线：工作台开着的这一页替录入泵把排好的作业编号递给插件（src/intakeJobBridge.js）；主人登录后才递。
   useEffect(() => {

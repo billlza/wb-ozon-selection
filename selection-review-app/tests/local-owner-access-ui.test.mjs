@@ -203,7 +203,7 @@ test("actual access views distinguish loading, first setup, login, authenticated
   const boss = render({ status: "loaded", access: teamAccess("authenticated") }, true);
   assert.match(boss, /已登录：老板甲（老板）/); assert.match(boss, /退出登录/); assert.match(boss, /改我的密码/); assert.match(boss, /给别人重设密码/);
   const tester = render({ status: "loaded", access: teamAccess("authenticated", { userId: "team-user:synthetic-tester", displayName: "测试丙", role: "tester" }) }, true);
-  assert.match(tester, /已登录：测试丙（测试）/); assert.match(tester, /只能查看/); assert.match(tester, /改我的密码/); assert.doesNotMatch(tester, /给别人重设密码/);
+  assert.match(tester, /已登录：测试丙（测试）/); assert.match(tester, /要老板来做/); assert.match(tester, /改我的密码/); assert.doesNotMatch(tester, /给别人重设密码/);
   // App reads only the extension-version cache during its browser initializer; SSR runs no effects or requests.
   const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
   Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: { getItem: () => null } } });

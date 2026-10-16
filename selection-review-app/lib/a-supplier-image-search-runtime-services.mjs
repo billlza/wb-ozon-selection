@@ -1,4 +1,4 @@
-import { authorizeOperation } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
 import { isCanonicalFrozenRef } from './production-contract-primitives.mjs';
 
 export class SupplierImageSearchPreparationError extends Error {
@@ -22,7 +22,7 @@ export function supplierImageSearchAvailability() {
 }
 
 function assertPreparationInput({ document, actor, candidateId, expectedRevision }) {
-  authorizeOperation({ actor, requiredRoles: ['owner'] });
+  authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
   if (actor.actorType !== 'human' || actor.source !== 'authenticated_identity_provider') {
     throw new SupplierImageSearchPreparationError('AUTHENTICATED_OWNER_REQUIRED');
   }

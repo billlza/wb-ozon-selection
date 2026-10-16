@@ -1,4 +1,4 @@
-import { authorizeOperation } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
 import { ADiscoveryError, assertADiscoveryBatch, assertADiscoveryReceipt, readADiscoveryMarketResult } from './a-discovery-contract.mjs';
 import { isADiscoverySoftwareJob } from './software-job-contract.mjs';
 import { isCanonicalFrozenRef } from './production-contract-primitives.mjs';
@@ -93,7 +93,7 @@ export function createADiscoveryTitleTranslationUseCase({ repository, serverCloc
     ? Math.min(translator.maxTitlesPerCall, DISCOVERY_TITLE_TRANSLATION_MAX_TITLES) : DISCOVERY_TITLE_TRANSLATION_MAX_TITLES;
   return Object.freeze({
     async translateBatch({ actor, input }) {
-      authorizeOperation({ actor, requiredRoles: ['owner'] });
+      authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
       requireValue(actor.actorType === 'human' && actor.source === 'authenticated_identity_provider', 'AUTHENTICATED_OWNER_REQUIRED');
       requireValue(closed(input, ['batchId', 'expectedRevision']) && isCanonicalFrozenRef(input.batchId) &&
         Number.isSafeInteger(input.expectedRevision) && input.expectedRevision >= 0, 'INPUT_INVALID');

@@ -1,6 +1,6 @@
 import {assertSiblingPreparationImageSelection} from './sibling-preparation-consistency.mjs';
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from './business-state-repository.mjs';
-import { authorizeOperation } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
 import { assertCurrentC2UploadDraft } from './c2-upload-draft.mjs';
 import { prepareC2FinalUploadManifest, confirmC2SoftwareFinalUploads } from './c2-software-orchestrator.mjs';
 import { createFinalProductPlanConfirmationCard } from './final-product-plan-confirmation-card.mjs';
@@ -26,7 +26,7 @@ export function isSiblingBatchC2Replay(document, input, actor) {
 export async function commitSiblingBatchC2Final({ repository, runtimeMode, actor, input, verifiedAssets, serverClock }) {
   assertBusinessStateRepositoryBoundary(repository);
   if (runtimeMode === 'central_test' || runtimeMode === 'central_production') assertCentralPersistenceBoundary(repository);
-  authorizeOperation({ actor, requiredRoles: ['owner'] });
+  authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
   if (actor.actorType !== 'human' || actor.source !== 'authenticated_identity_provider' ||
       !input || input.confirmed !== true || !Number.isSafeInteger(input.parentRevision) ||
       typeof input.parentCandidateId !== 'string' || !Array.isArray(input.members) ||

@@ -1,4 +1,4 @@
-import { authorizeOperation, createOperationAuditEvent } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles, createOperationAuditEvent } from './runtime-identity.mjs';
 import { assertBusinessStateRepositoryBoundary } from './business-state-repository.mjs';
 import { reconcileDUnknownOutcomeFromPlatformStateInDocument, createDPlatformObservationScope, importedProductObservation,
   dPlatformStateReconciliationsFor, D_PLATFORM_STATE_RECONCILIATION_LIMIT } from './d-platform-observation-contract.mjs';
@@ -30,7 +30,7 @@ export function createDPlatformStateReconciliationUseCase({ repository, serverCl
   }
   return Object.freeze({
     async reconcile({ actor, input }) {
-      authorizeOperation({ actor, requiredRoles: ['owner'] });
+      authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
       if (actor.actorType !== 'human' || actor.source !== 'authenticated_identity_provider') {
         throw new DPlatformStateReconciliationError('OWNER_REQUIRED', '请先登录主人身份再按平台现状收口。');
       }

@@ -1,7 +1,7 @@
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from './business-state-repository.mjs';
 import { merchantSkuClaimsForStore } from './business-mutation-transaction.mjs';
 import { prepareProductionCommercialDraft } from './production-commercial-draft.mjs';
-import { assertSafeBusinessMutationCandidate, authorizeOperation, createOperationAuditEvent } from './runtime-identity.mjs';
+import { assertSafeBusinessMutationCandidate, authorizeOperation, teamOperationRoles, createOperationAuditEvent } from './runtime-identity.mjs';
 import { sameStoreRef } from './store-binding.mjs';
 
 const centralModes = new Set(['central_test', 'central_production']);
@@ -11,7 +11,7 @@ const validText = value => typeof value === 'string' && value.trim().length > 0;
 export async function saveSiblingBatchCommercialDrafts({ repository, runtimeMode, actor, input, serverClock }) {
   assertBusinessStateRepositoryBoundary(repository);
   if (centralModes.has(runtimeMode)) assertCentralPersistenceBoundary(repository);
-  authorizeOperation({ actor, requiredRoles: ['owner'] });
+  authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
   if (actor.actorType !== 'human' || actor.source !== 'authenticated_identity_provider' || typeof serverClock !== 'function') {
     throw new Error('SIBLING_BATCH_COMMERCIAL_OWNER_REQUIRED');
   }

@@ -1,6 +1,6 @@
 import { executeBusinessMutation } from "./business-mutation-transaction.mjs";
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from "./business-state-repository.mjs";
-import { authorizeOperation } from "./runtime-identity.mjs";
+import { authorizeOperation, teamOperationRoles } from "./runtime-identity.mjs";
 import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
 import { verifyC1ProductFacts } from "./c1-product-plan.mjs";
 import { resolveC1SkuRightsReviewForFacts } from "./c1-sku-rights-review.mjs";
@@ -35,11 +35,11 @@ export function createC1FactsVerificationUseCase({ repository, runtimeMode, serv
           keys.filter(key => key !== "expectedRevision").some(key => typeof input[key] !== "string" || !input[key].trim())) {
         throw new C1FactsVerificationError("C1_FACTS_VERIFICATION_INPUT_INVALID");
       }
-      authorizeOperation({ actor, requiredRoles: ["owner"] });
+      authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
       if (actor.actorType !== "human" || actor.source !== "authenticated_identity_provider") {
         throw new C1FactsVerificationError("C1_FACTS_VERIFICATION_AUTHENTICATED_OWNER_REQUIRED");
       }
-      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: ["owner"],
+      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: teamOperationRoles(actor),
         action: "c1_verify_facts_from_owner_declaration", candidateId: input.candidateId, skuPackageId: input.skuPackageId,
         expectedRevision: input.expectedRevision, idempotencyKey: input.idempotencyKey,
         inputFingerprint: fingerprintCanonicalRecord(input), auditEventId: input.auditEventId,

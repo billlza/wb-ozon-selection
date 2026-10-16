@@ -1,5 +1,5 @@
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from './business-state-repository.mjs';
-import { authorizeOperation } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
 import { sameStoreRef } from './store-binding.mjs';
 import { fingerprintCanonicalRecord, assertNoProductionSecrets } from './production-contract-primitives.mjs';
 import { siblingPlatform } from './sibling-supply-preparation.mjs';
@@ -47,7 +47,7 @@ export function validatePreparationValues(values, family, catalog) {
 export async function saveSiblingPreparationDraft({ repository, runtimeMode, actor, input, catalog, serverClock }) {
   assertBusinessStateRepositoryBoundary(repository);
   if (['central_test', 'central_production'].includes(runtimeMode)) assertCentralPersistenceBoundary(repository);
-  authorizeOperation({ actor, requiredRoles: ['owner'] });
+  authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
   if (actor.actorType !== 'human' || actor.source !== 'authenticated_identity_provider' || typeof serverClock !== 'function' ||
       !input || Object.keys(input).sort().join() !== 'expectedDraftRevision,idempotencyKey,memberRevisions,parentCandidateId,parentRevision,values' ||
       !Number.isSafeInteger(input.expectedDraftRevision) || input.expectedDraftRevision < 0 || !Number.isSafeInteger(input.parentRevision) || input.parentRevision < 0 || !text(input.parentCandidateId) || !input.parentCandidateId ||

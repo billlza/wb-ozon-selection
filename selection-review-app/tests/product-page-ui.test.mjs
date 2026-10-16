@@ -1563,6 +1563,12 @@ test('对标就是主人在「做这件」卡上认的那个 Ozon 同款时，�
   assert.match(bound, /8XL · 黄色 先上，其余 1 个变体排队等同一张卡追加。/u);
   assert.match(bound, /还没记下的额外操作费（¥0\.00）和运输属性先照上面记下/u);
   assert.doesNotMatch(bound, /RENDER_MUST_NOT_START_WORK/u);
+  assert.doesNotMatch(bound, /要老板来做/u);
+  // 测试账号看得到同一张卡，但确认供货是老板的：按钮不给点，旁边说清楚为什么。
+  const tester = await render({ ...base, productionIdentity: { authenticated: true, roles: ['operator'], canConfirmSupplyAndProfit: false },
+    view: { ...base.view, gate1V1: { decision: { decision: 'accept', picks: { ozon: { id: '3605840795' } } } } } });
+  assert.match(tester, /<button type="button" class="button primary" disabled[^>]*>确认这套供货，往下做<\/button>/u);
+  assert.match(tester, /这一步要老板来做：确认供货、确认利润和许可上架只有老板能做。/u);
 
   // 主人在卡上没点「做这件」（或者认的是别的同款），可比同类那个勾照旧在。
   const unbound = await render({ ...base, view: { ...base.view,

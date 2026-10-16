@@ -1,4 +1,4 @@
-import { authorizeOperation } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles } from './runtime-identity.mjs';
 import { ADiscoveryError, assertADiscoveryBatch } from './a-discovery-contract.mjs';
 import { isCanonicalFrozenRef } from './production-contract-primitives.mjs';
 import { resolveLifecycleBProfitRule } from './lifecycle-b-evidence-runtime.mjs';
@@ -216,7 +216,7 @@ export function createADiscoveryEstimateUseCase({ repository, serverClock, rules
 
   return Object.freeze({
     async estimateBatch({ actor, input }) {
-      authorizeOperation({ actor, requiredRoles: ['owner'] });
+      authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
       requireValue(actor.actorType === 'human' && actor.source === 'authenticated_identity_provider', 'AUTHENTICATED_OWNER_REQUIRED');
       requireValue(closed(input, ['batchId', 'expectedRevision']) && isCanonicalFrozenRef(input.batchId) &&
         Number.isSafeInteger(input.expectedRevision) && input.expectedRevision >= 0, 'INPUT_INVALID');

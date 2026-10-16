@@ -1,7 +1,7 @@
 import { completeC1FinalPlanRevision } from "./c1-final-plan-revision-preparation.mjs";
 import { executeBusinessMutation } from "./business-mutation-transaction.mjs";
 import { assertBusinessStateRepositoryBoundary, assertCentralPersistenceBoundary } from "./business-state-repository.mjs";
-import { authorizeOperation } from "./runtime-identity.mjs";
+import { authorizeOperation, teamOperationRoles } from "./runtime-identity.mjs";
 import { fingerprintCanonicalRecord } from "./production-contract-primitives.mjs";
 import { fingerprintC2SourceC1 } from "./c2-asset-lifecycle.mjs";
 import { createC2SoftwareContainer } from "./c2-software-orchestrator.mjs";
@@ -156,14 +156,14 @@ export function createC1ContentReviewUseCase({ repository, runtimeMode, serverCl
     async confirm({ actor, input }) {
       input = structuredClone(input); actor = structuredClone(actor);
       assertInput(input);
-      authorizeOperation({ actor, requiredRoles: ["owner"] });
+      authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
       if (actor.actorType !== "human" || actor.source !== "authenticated_identity_provider") {
         throw new C1ContentReviewError("C1_CONTENT_REVIEW_AUTHENTICATED_OWNER_REQUIRED");
       }
       const snapshot = await repository.readSnapshot();
       const target = snapshot.candidates.find(candidate => candidate.id === input.candidateId);
       if (!target?.lifecycleV11?.skuPackage) throw new C1ContentReviewError("C1_CONTENT_REVIEW_CANDIDATE_NOT_FOUND");
-      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: ["owner"],
+      return executeBusinessMutation({ repository, runtimeMode, actor, requiredRoles: teamOperationRoles(actor),
         action: "c1_confirm_saved_content", candidateId: input.candidateId,
         skuPackageId: target.lifecycleV11.skuPackage.skuPackageId, expectedRevision: input.expectedRevision,
         idempotencyKey: input.idempotencyKey,

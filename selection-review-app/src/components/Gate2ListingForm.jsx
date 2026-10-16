@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useSubmit } from "./FormRevisionNotice.jsx";
 import { productionAuthorizationInputFromCard } from "../productionAuthorizationInput.js";
+import { BOSS_ONLY_NOTE } from "../ownerAccess.js";
 
 /**
  * 「上架」那一下。主人在卡上看完，填货号、（多个仓库时）选仓库、勾一句、点一次。服务端依次保存图片确认（文案由软件
@@ -34,7 +35,7 @@ export default function Gate2ListingForm({ candidate, identity, listing }) {
   }
   return <form className="production-owner-decision-form gate2-listing-form" onSubmit={list}>
     <b>上架</b>
-    {identity?.canSaveProductionOwnerDecision !== true ? <p role="status">要先登录主人身份才能上架。</p> : null}
+    {identity?.canSaveProductionOwnerDecision !== true ? <p role="status">{identity?.authenticated === true ? BOSS_ONLY_NOTE : "要先登录主人身份才能上架。"}</p> : null}
     {readiness.ready ? <fieldset disabled={saving}>
       <p>店铺：{store}{bindings.length === 1 ? ` · 仓库：${bindings[0].warehouseName}` : ""}</p>
       {bindings.length > 1 ? <label>仓库<select required value={bindingId} onChange={event => { setBindingId(event.target.value); setConfirmed(false); }}>

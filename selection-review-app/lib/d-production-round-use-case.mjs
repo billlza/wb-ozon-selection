@@ -1,4 +1,4 @@
-import { authorizeOperation, createOperationAuditEvent } from './runtime-identity.mjs';
+import { authorizeOperation, teamOperationRoles, createOperationAuditEvent } from './runtime-identity.mjs';
 import { assertBusinessStateRepositoryBoundary } from './business-state-repository.mjs';
 import { enqueueDProductionRoundInDocument } from './d-e-software-job-handoff.mjs';
 
@@ -18,7 +18,7 @@ export function createDProductionRoundUseCase({ repository, serverClock }) {
   if (typeof serverClock !== 'function') throw new Error('D_PRODUCTION_ROUND_DEPENDENCY_INVALID');
   return Object.freeze({
     async dispatch({ actor, input }) {
-      authorizeOperation({ actor, requiredRoles: ['owner'] });
+      authorizeOperation({ actor, requiredRoles: teamOperationRoles(actor) });
       if (actor.actorType !== 'human' || actor.source !== 'authenticated_identity_provider') {
         throw new DProductionRoundError('OWNER_REQUIRED', '请先登录主人身份再派新一轮生产作业。');
       }
