@@ -232,10 +232,12 @@ test("one service process per stored document: a second process is refused until
   const second = createPostgresBusinessStateRepository({ store: database.store() });
   const lease = await first.holdProcessLease({ onLost: () => assert.fail("not lost") });
   await assert.rejects(second.holdProcessLease({ onLost: () => {} }), /BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_HELD/);
-  // Holding the lease does not stop the holder's own writes.
+  // The holder's own writes pass the database's check that its lease session still holds the lease.
   assert.equal(await first.transact(bump(3)), 3);
   await lease.release();
+  await assert.rejects(first.transact(bump(4)), /BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_LOST/);
   const next = await second.holdProcessLease({ onLost: () => assert.fail("not lost") });
+  assert.equal(await second.transact(bump(5)), 5);
   await next.release();
 });
 
@@ -248,10 +250,13 @@ test("a process whose lease connection ends is told, and another process can tak
   await holder.holdProcessLease({ onLost: lost });
   assert.equal(await database.endLeaseConnection(), 1);
   await told;
-  const next = await createPostgresBusinessStateRepository({ store: database.store() }).holdProcessLease({ onLost: () => {} });
-  await next.release();
-  // The holder's pool replaced the dropped connection: its writes still go through.
-  assert.equal(await holder.transact(bump(4)), 4);
+  // The holder's other connections still work, but its writes are fenced off from now on.
+  await assert.rejects(holder.transact(bump(4)), /BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_LOST/);
+  const successor = createPostgresBusinessStateRepository({ store: database.store() });
+  const successorLease = await successor.holdProcessLease({ onLost: () => {} });
+  assert.equal(await successor.transact(bump(5)), 5);
+  assert.equal((await holder.readSnapshot()).candidates[0].dataRevision, 5);
+  await successorLease.release();
 });
 
 test("a connection dropped in the middle of a write fails that write, not the process", async t => {

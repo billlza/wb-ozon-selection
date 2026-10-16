@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import test from "node:test";
 
 import {
@@ -22,18 +23,23 @@ const DATABASE_URL = "postgres://review:not-a-real-password@db.internal.example:
 
 // Answers the store's statements by kind and keeps one row; a ROLLBACK that goes through restores the row as it was at
 // BEGIN. Failures are injected per kind.
-function fakePool({ row = null, fail = {} } = {}) {
+function fakePool({ row = null, fail = {}, lease = { acquired: true, held: true } } = {}) {
   const statements = [];
   const released = [];
   let current = row;
   let atBegin = row;
   async function answer(sql, params = []) {
     const text = sql.replace(/\s+/gu, " ").trim();
-    const kind = text.startsWith("CREATE TABLE") ? "CREATE" : text.startsWith("SELECT document, revision") ? "SELECT_FOR_UPDATE"
+    const kind = text.includes("pg_try_advisory_lock") ? "LEASE" : text.includes("pg_locks") ? "LEASE_CHECK"
+      : text.includes("pg_advisory_unlock") ? "UNLOCK"
+      : text.startsWith("CREATE TABLE") ? "CREATE" : text.startsWith("SELECT document, revision") ? "SELECT_FOR_UPDATE"
       : text.endsWith("FOR SHARE") ? "SELECT_FOR_SHARE" : text.startsWith("SELECT revision") ? "SELECT" : text.split(" ")[0];
     statements.push({ kind, text, params });
     const failure = Array.isArray(fail[kind]) ? fail[kind].shift() : fail[kind];
     if (failure) throw typeof failure === "function" ? failure() : failure;
+    if (kind === "LEASE") return { rows: [{ acquired: lease.acquired, pid: 42 }] };
+    if (kind === "LEASE_CHECK") return { rows: [{ held: lease.held && params[2] === 42 }] };
+    if (kind === "UNLOCK") return { rows: [{}] };
     if (kind === "BEGIN") atBegin = current;
     if (kind === "ROLLBACK") current = atBegin;
     if (kind === "SELECT_FOR_SHARE") return { rows: current ? [{ revision: String(current.revision), text: JSON.stringify(current.document) }] : [] };
@@ -53,9 +59,9 @@ function fakePool({ row = null, fail = {} } = {}) {
     }
     return { rows: [], rowCount: 0 };
   }
-  const client = { query: answer, release(error) { released.push(error ?? null); } };
+  const client = Object.assign(new EventEmitter(), { query: answer, release(error) { released.push(error ?? null); } });
   const pool = { query: answer, async connect() { return client; } };
-  return { pool, statements, released, kinds: () => statements.map(statement => statement.kind) };
+  return { pool, client, lease, statements, released, kinds: () => statements.map(statement => statement.kind) };
 }
 
 test("Postgres store validates its inputs and never builds SQL from values", async () => {
@@ -281,6 +287,45 @@ test("the Postgres repository holds one service-process lease or refuses to star
   await assert.rejects(createPostgresBusinessStateStore({ pool: fakePool().pool }).acquireProcessLease({}), /LEASE_LOST_HANDLER_REQUIRED/);
   // The single-process JSON and memory adapters have no lease; the server skips it for them.
   assert.equal("holdProcessLease" in createMemoryBusinessStateRepository({ meta: { version: 2 }, candidates: [] }), false);
+});
+
+test("a store holding the process lease writes only while the database confirms its lease session still holds it", async () => {
+  const fake = fakePool({ row: { document: { meta: { version: 2 }, counter: 1 }, revision: 1 } });
+  const store = createPostgresBusinessStateStore({ pool: fake.pool });
+  const bump = ({ document, replace }) => replace({ ...document, counter: document.counter + 1 });
+  await store.runLocked({}, bump);
+  assert.equal(fake.kinds().includes("LEASE_CHECK"), false);
+  let lost = 0;
+  const lease = await store.acquireProcessLease({ onLost: () => { lost += 1; } });
+  await assert.rejects(store.acquireProcessLease({ onLost: () => {} }), /LEASE_ALREADY_TAKEN/);
+  await store.runLocked({}, bump);
+  assert.deepEqual(fake.kinds().slice(-5), ["BEGIN", "SELECT_FOR_UPDATE", "LEASE_CHECK", "UPDATE", "COMMIT"]);
+  assert.deepEqual(fake.statements.at(-3).params, [1_397_904_945, "business-state", 42]);
+
+  // The lease session lost the lock before this process heard about it: the write stops under the row lock.
+  fake.lease.held = false;
+  await assert.rejects(store.runLocked({}, bump), /BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_LOST/);
+  assert.deepEqual(fake.kinds().slice(-4), ["BEGIN", "SELECT_FOR_UPDATE", "LEASE_CHECK", "ROLLBACK"]);
+  // From then on the store refuses at once, without asking the database.
+  const asked = fake.statements.length;
+  await assert.rejects(store.runLocked({}, bump), /PROCESS_LEASE_LOST/);
+  assert.equal(fake.statements.length, asked);
+  assert.equal(lost, 0);
+  await lease.release();
+  assert.equal(fake.kinds().at(-1), "UNLOCK");
+
+  // When the lease connection itself ends, the holder is told and its writes stop.
+  const dropped = fakePool({ row: { document: { meta: { version: 2 }, counter: 1 }, revision: 1 } });
+  const droppedStore = createPostgresBusinessStateStore({ pool: dropped.pool });
+  let told = 0;
+  await droppedStore.acquireProcessLease({ onLost: () => { told += 1; } });
+  dropped.client.emit("error", new Error("terminating connection due to administrator command"));
+  dropped.client.emit("end");
+  assert.equal(told, 1);
+  await assert.rejects(droppedStore.runLocked({}, bump), /PROCESS_LEASE_LOST/);
+
+  const busy = fakePool({ lease: { acquired: false, held: false } });
+  assert.equal(await createPostgresBusinessStateStore({ pool: busy.pool }).acquireProcessLease({ onLost: () => {} }), null);
 });
 
 test("a missing Postgres document is an error unless initialization is allowed, and reading never creates it", async () => {

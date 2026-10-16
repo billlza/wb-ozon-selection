@@ -60,6 +60,10 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
   if (!validTimeouts(timeouts)) throw new Error("POSTGRES_BUSINESS_STATE_TIMEOUTS_INVALID");
   let poolReady = pool === null ? null : Promise.resolve(pool);
   let schemaReady = null;
+  // Set once this store takes the process lease. From then on a write goes through only while the lease is held: the
+  // flag drops as soon as the lease connection ends, and under the row lock the database confirms the lease session
+  // still holds it, so a process that lost its lease cannot write after another process took over.
+  let lease = null;
 
   function connectedPool() {
     poolReady ??= import("pg").then(({ default: pg }) => {
@@ -95,6 +99,19 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
         client.release(error);
       }
     };
+  }
+
+  async function assertLeaseHeld(client) {
+    if (lease === null) return;
+    if (lease.held) {
+      const { rows: [{ held }] } = await client.query(
+        `SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND granted AND pid = $3 AND objsubid = 2
+           AND classid = $1::integer::oid AND objid = (${PROCESS_LEASE_KEY}::bigint & 4294967295)::oid) AS held`,
+        [PROCESS_LEASE_LOCK_CLASS, documentId, lease.pid]);
+      if (held) return;
+      lease.held = false;
+    }
+    throw new Error("BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_LOST");
   }
 
   async function selectForUpdate(client) {
@@ -156,6 +173,7 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
      */
     async runLocked({ initialDocument = null } = {}, work) {
       if (typeof work !== "function") throw new Error("POSTGRES_BUSINESS_STATE_WORK_REQUIRED");
+      if (lease !== null && !lease.held) throw new Error("BUSINESS_STATE_REPOSITORY_PROCESS_LEASE_LOST");
       await ensureSchema();
       const connection = await checkOut();
       const { client } = connection;
@@ -174,6 +192,7 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
           row = await selectForUpdate(client);
           if (row === null) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_MISSING");
         }
+        await assertLeaseHeld(client);
         let replacement = null;
         result = await work({ document: row.document, replace(document) { replacement = document; } });
         if (replacement === null) {
@@ -242,10 +261,11 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
     /**
      * Holds the document for one service process: a session advisory lock on a connection kept for the life of the
      * process. Returns null while another process holds it. The lock lives only as long as that connection, so `onLost`
-     * is called if the connection ends before `release()`.
+     * is called if the connection ends before `release()`. Once the lease ends, this store refuses every further write.
      */
     async acquireProcessLease({ onLost } = {}) {
       if (typeof onLost !== "function") throw new Error("POSTGRES_BUSINESS_STATE_LEASE_LOST_HANDLER_REQUIRED");
+      if (lease !== null) throw new Error("POSTGRES_BUSINESS_STATE_LEASE_ALREADY_TAKEN");
       const client = await (await connectedPool()).connect();
       let state = "acquiring";
       const detach = () => {
@@ -258,14 +278,17 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
         state = "ended";
         detach();
         client.release(new Error("POSTGRES_PROCESS_LEASE_CONNECTION_ENDED"));
-        if (wasHeld) onLost();
+        if (!wasHeld) return;
+        lease.held = false;
+        onLost();
       }
       client.on("error", ended);
       client.on("end", ended);
-      let acquired;
+      let acquired, pid;
       try {
-        ({ rows: [{ acquired }] } = await client.query(
-          `SELECT pg_try_advisory_lock($1, ${PROCESS_LEASE_KEY}) AS acquired`, [PROCESS_LEASE_LOCK_CLASS, documentId]));
+        ({ rows: [{ acquired, pid }] } = await client.query(
+          `SELECT pg_try_advisory_lock($1, ${PROCESS_LEASE_KEY}) AS acquired, pg_backend_pid() AS pid`,
+          [PROCESS_LEASE_LOCK_CLASS, documentId]));
       } catch (error) {
         if (state !== "ended") {
           state = "ended";
@@ -282,10 +305,12 @@ export function createPostgresBusinessStateStore({ pool = null, connectionString
         return null;
       }
       state = "held";
+      lease = { pid, held: true };
       return Object.freeze({
         async release() {
           if (state !== "held") return;
           state = "ended";
+          lease.held = false;
           detach();
           let unlockError;
           try {
