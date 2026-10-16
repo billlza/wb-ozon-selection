@@ -79,7 +79,9 @@ export function createRuntimeHealth({ filePath, storageAdapter = 'json', timeout
 }
 
 // Database adapters: readiness is one fresh repository read (the row's revision is re-queried each time) under the same
-// deadline and admission rules; no worker thread, because the database already parses and bounds the read.
+// deadline and admission rules; no worker thread, because the database already parses and bounds the read. A read
+// cannot be cancelled once sent, so admission stays taken until it settles: a stalled database holds one read, not one
+// per probe. Shutdown does not wait for it.
 export function createRepositoryRuntimeHealth({ readSnapshot, timeoutMs = RUNTIME_READINESS_TIMEOUT_MS, clock = () => performance.now() } = {}) {
   if (typeof readSnapshot !== 'function' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 ||
       timeoutMs > RUNTIME_READINESS_TIMEOUT_MS) throw failure('configuration_invalid');
@@ -90,7 +92,7 @@ export function createRepositoryRuntimeHealth({ readSnapshot, timeoutMs = RUNTIM
     if (active) throw failure('busy');
     let complete;
     const operation = { cancel: null, done: new Promise(resolve => { complete = resolve; }) }; active = operation;
-    const started = clock(); let timer, abort;
+    const started = clock(); let timer, abort, read, readSettled = false;
     try {
       const dataVersion = await new Promise((resolve, reject) => {
         let settled = false;
@@ -102,11 +104,12 @@ export function createRepositoryRuntimeHealth({ readSnapshot, timeoutMs = RUNTIM
         abort = () => operation.cancel('cancelled');
         signal?.addEventListener('abort', abort, { once: true });
         timer = setTimeout(() => operation.cancel('timeout'), timeoutMs);
-        Promise.resolve().then(readSnapshot).then(document => {
+        const settle = (error, value) => { readSettled = true; finish(error, value); };
+        read = Promise.resolve().then(readSnapshot).then(document => {
           if (document?.meta?.version !== 2 || !Array.isArray(document.candidates)) throw failure('data_invalid');
-          finish(null, document.meta.version);
-        }, error => finish(failure(error?.message === 'BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID' ? 'data_invalid' : 'data_unavailable')))
-          .catch(error => finish(error.code ? error : failure('data_invalid')));
+          settle(null, document.meta.version);
+        }, error => settle(failure(error?.message === 'BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID' ? 'data_invalid' : 'data_unavailable')))
+          .catch(error => settle(error.code ? error : failure('data_invalid')));
         if (signal?.aborted) abort();
       });
       if (phase !== 'ready') throw failure('closed');
@@ -114,8 +117,9 @@ export function createRepositoryRuntimeHealth({ readSnapshot, timeoutMs = RUNTIM
       return { dataVersion, fresh: true, durationMs: clock() - started };
     } finally {
       clearTimeout(timer); signal?.removeEventListener('abort', abort);
-      if (active === operation) active = null;
       complete();
+      const release = () => { if (active === operation) active = null; };
+      if (readSettled) release(); else (read ?? Promise.resolve()).then(release);
     }
   }
   return Object.freeze({

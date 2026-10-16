@@ -183,6 +183,27 @@ test("Postgres snapshots re-check the revision every read, re-parse only after a
   assert.deepEqual([store.calls.reads, store.calls.documentTransfers], [3, 2]);
 });
 
+test("a read that finishes after a newer read answers from the snapshot it asked about", async () => {
+  const documents = { 1: { meta: { version: 2 }, candidates: [{ id: "C-1", dataRevision: 1 }] },
+    2: { meta: { version: 2 }, candidates: [{ id: "C-1", dataRevision: 2 }] } };
+  const answers = [];
+  const store = { readDocument: ({ knownRevision }) => new Promise(resolve => answers.push({ knownRevision, resolve })),
+    async runLocked() { throw new Error("NOT_USED"); } };
+  const repository = createPostgresBusinessStateRepository({ store });
+  const first = repository.readSnapshot();
+  answers.shift().resolve({ revision: "1", document: structuredClone(documents[1]) });
+  await first;
+  const slower = repository.readSnapshot();
+  const faster = repository.readSnapshot();
+  const [slowerQuery, fasterQuery] = answers.splice(0);
+  assert.deepEqual([slowerQuery.knownRevision, fasterQuery.knownRevision], ["1", "1"]);
+  // Another process wrote revision 2 between the two queries; the faster one sees it and replaces the cache first.
+  fasterQuery.resolve({ revision: "2", document: structuredClone(documents[2]) });
+  assert.equal((await faster).candidates[0].dataRevision, 2);
+  slowerQuery.resolve({ revision: "1" });
+  assert.equal((await slower).candidates[0].dataRevision, 1);
+});
+
 test("a missing Postgres document is an error unless initialization is allowed, and reading never creates it", async () => {
   const missing = createFakePostgresBusinessStateStore();
   await assert.rejects(createPostgresBusinessStateRepository({ store: missing }).readSnapshot(), /BUSINESS_STATE_REPOSITORY_DOCUMENT_MISSING/);
@@ -265,4 +286,30 @@ test("Postgres readiness fails on its deadline instead of waiting for a stuck da
   health.markListening();
   await assert.rejects(health.ready(), readinessFailure("timeout"));
   await health.close();
+});
+
+test("a timed-out readiness read keeps admission until the database answers, so probes never pile up", async () => {
+  let reads = 0;
+  let release;
+  const health = createRepositoryRuntimeHealth({ readSnapshot: () => {
+    reads += 1;
+    return new Promise(resolve => { release = resolve; });
+  }, timeoutMs: 20 });
+  health.markListening();
+  await assert.rejects(health.ready(), readinessFailure("timeout"));
+  await assert.rejects(health.ready(), readinessFailure("busy"));
+  await assert.rejects(health.ready(), readinessFailure("busy"));
+  assert.equal(reads, 1);
+  release({ meta: { version: 2 }, candidates: [] });
+  await new Promise(resolve => setImmediate(resolve));
+  const next = health.ready();
+  await new Promise(resolve => setImmediate(resolve));
+  release({ meta: { version: 2 }, candidates: [] });
+  assert.equal((await next).dataVersion, 2);
+  assert.equal(reads, 2);
+  // Shutdown does not wait for a database that never answers.
+  const stuck = health.ready();
+  await assert.rejects(stuck, readinessFailure("timeout"));
+  await health.close();
+  await assert.rejects(health.ready(), readinessFailure("closed"));
 });

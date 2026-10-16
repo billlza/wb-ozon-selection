@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-15T23:51:36.156Z",
+  "frozenAt": "2026-10-16T00:00:29.383Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 1004,
-      "sha256": "d977731b874f1f74148864dd13b9ae751fcb4fa7f58d4e75a29a858c9eb07dd6",
+      "sha256": "7034d4596d008efac8e51d14693791f5134bdca261125a14a57d113a19ee1358",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -192,7 +192,7 @@
       },
       {
         "path": "lib/business-state-repository.mjs",
-        "sha256": "14698d72ee7294df2842116449328fc58e0a2a2fe6007b5dcf4759a97d2341f6"
+        "sha256": "ed9d9b6115e1e469d79850c5b7194a551070f868a9994ab742fce50e6ddca6da"
       },
       {
         "path": "lib/c1-ai-draft-contract.mjs",
@@ -1132,7 +1132,7 @@
       },
       {
         "path": "lib/runtime-health.mjs",
-        "sha256": "6bc425a5648157e09bd042507017bd2ae51dd57afb6115cfa21ac901735bd628"
+        "sha256": "da4845c227b4fd45e74014e538b07a2fe8b7c2dd4ae52d2515632e9db80ca726"
       },
       {
         "path": "lib/runtime-identity-provider.mjs",
@@ -3628,7 +3628,7 @@
       },
       {
         "path": "tests/postgres-business-state-store.test.mjs",
-        "sha256": "84b7c3fa130e7b4e9b0ffa3d6fda9a50a6840fb185ff9c1b1466d97c2ad91ffe"
+        "sha256": "5f38fd0b2e9fb033c99fdf6998bab4da9aa26974e88dad79b5a2adf0e44e27ee"
       },
       {
         "path": "tests/product-core-family.test.mjs",

@@ -335,15 +335,17 @@ export function createPostgresBusinessStateRepository({ store, initializeIfMissi
     adapter: "postgres",
     concurrencyScope: "database_transaction",
     snapshotReader: async () => {
-      const row = await store.readDocument({ knownRevision: snapshotCache?.revision ?? null });
+      // Answer from the entry this read asked about: a concurrent read may replace the shared cache meanwhile.
+      const asked = snapshotCache;
+      const row = await store.readDocument({ knownRevision: asked?.revision ?? null });
       if (row === null) {
         snapshotCache = null;
         if (!initializeIfMissing) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_MISSING");
         return readProductionDocument(startingDocument());
       }
       if (!Object.hasOwn(row, "document")) {
-        if (snapshotCache?.revision !== row.revision) throw new Error("BUSINESS_STATE_REPOSITORY_SNAPSHOT_REVISION_INVALID");
-        return clone(snapshotCache.document);
+        if (asked?.revision !== row.revision) throw new Error("BUSINESS_STATE_REPOSITORY_SNAPSHOT_REVISION_INVALID");
+        return clone(asked.document);
       }
       snapshotCache = null;
       if (!validDocument(row.document)) throw new Error("BUSINESS_STATE_REPOSITORY_DOCUMENT_INVALID");
