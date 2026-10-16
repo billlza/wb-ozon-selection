@@ -509,7 +509,7 @@ export const CAPABILITY_NODES = Object.freeze([
     integrationStatus: "partial", runtimeScope: "local_development",
     baselineHealth: { state: "risk", reason: "本地身份和 Worker 注册表存在，但没有中央身份、租约和多机验收。" },
     stopConditions: "身份、角色、能力或心跳不满足时不得领取或执行。",
-    breakpoint: "本地主人认证已接入可替换提供器；团队账号登录（老板和测试各自的登录名和密码，账号存在 Postgres）已接入，测试能做除确认供货、确认利润、许可上架以外的操作，找新品批次、详情准备和账户准备团队共用；团队账号下每台装插件的电脑各有一把钥匙，插件每次回传都带着，哪台领的作业只能由哪台交回。插件还只连 127.0.0.1:4317，中央模式还没开。",
+    breakpoint: "本地主人认证已接入可替换提供器；团队账号登录（老板和测试各自的登录名和密码，账号存在 Postgres）已接入，测试能做除确认供货、确认利润、许可上架以外的操作，找新品批次、详情准备和账户准备团队共用；团队账号下每台装插件的电脑各有一把钥匙，插件每次回传都带着，哪台领的作业只能由哪台交回。插件还只连本机的工作台，中央模式还没开。",
     nextStep: "插件里能填服务地址；完成作业租约与中央模式。",
     position: { x: 960, y: 180 },
     codeRefs: [

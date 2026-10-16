@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   assertTrustedApiRequest,
+  isExtensionEndpoint,
   isTrustedInternalApiRequest,
   normalizeAllowedChromeExtensionOrigins,
   normalizeHttpErrorResponse,
@@ -229,4 +230,27 @@ test("扩展API默认不信任任意chrome-extension来源，只接受显式白�
       "content-type": "application/json"
     }
   }), /已配置的本机Chrome扩展来源/);
+});
+
+test("插件回传的每条路由都按插件来源核对，Seerfar 一轮的结果也在里面", () => {
+  const extension = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const request = (pathname, origin) => assertTrustedApiRequest({
+    method: "POST",
+    pathname,
+    trustedServiceOrigins: ["http://127.0.0.1:4317"],
+    allowedReviewOrigins: ["http://127.0.0.1:4317"],
+    allowedExtensionOrigins: [extension],
+    headers: { host: "127.0.0.1:4317", origin, "content-type": "application/json", "sec-fetch-site": "same-origin" }
+  });
+  const pluginRoutes = ["/api/extension/heartbeat", "/api/extension/capture-jobs/job-1/claim", "/api/extension/capture-jobs/job-1/search-image",
+    "/api/candidates/C-1/source-capture/result", "/api/candidates/C-1/sales-capture/result", "/api/candidates/C-1/image-match/result",
+    "/api/candidates/C-1/ozon-match/result", "/api/seerfar-selection/rounds/round-1/result"];
+  for (const pathname of pluginRoutes) {
+    assert.equal(isExtensionEndpoint(pathname), true, pathname);
+    assert.equal(request(pathname, extension), true, pathname);
+    assert.throws(() => request(pathname, "http://127.0.0.1:4317"), /已配置的本机Chrome扩展来源/u, pathname);
+  }
+  // Starting a round stays the review page's.
+  assert.equal(isExtensionEndpoint("/api/seerfar-selection/rounds"), false);
+  assert.equal(request("/api/seerfar-selection/rounds", "http://127.0.0.1:4317"), true);
 });

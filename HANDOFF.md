@@ -170,6 +170,7 @@
 - 插件回传（心跳、领作业、以图搜取图、各类结果、Seerfar 一轮的结果）在团队账号下都要带 `Authorization: Bearer <钥匙>`，没带或不对回 401（`WORKSTATION_KEY_REQUIRED`、`WORKSTATION_KEY_REJECTED`）。领作业时记下「插件来源 + 这台电脑」（原来只记来源，字段从 `claimedExtensionOrigin` 改名 `claimedBy`），交结果时必须是同一台，别的电脑交回 409 `capture_extension_origin_mismatch`，什么都不改。
 - 插件 1.4.2 → 1.5.0（`manifest.json`、`server.mjs` 的 `REQUIRED_SOURCE_CAPTURE_EXTENSION_VERSION`、`src/extensionStatus.js`）：存钥匙、带钥匙；服务回 401 时说「这台电脑还没加进来」（`workstation_not_added`），和 403「不认这个插件」分开；状态里告诉页面它拿着哪台电脑的钥匙，钥匙本身不回给页面。合进 main、Mac 升级后要到 chrome://extensions 重新加载插件。
 - 谁在线：心跳只记在服务进程内存里，重启后半分钟内就又齐了；只用来显示，不派也不收作业。
+- 顺手修了：Seerfar 一轮的结果从加上起就交不回来。请求边界（`lib/http-api-boundary.mjs` 的 `isExtensionEndpoint`）的插件路由单里漏了 `/api/seerfar-selection/rounds/<id>/result`，插件交结果被当成网页请求、回 403，插件那边显示「插件身份未获服务端允许」。现在补上了，`server.mjs` 也改用同一份路由单，不再各写一份。
 - 还没做：插件还只连 `http://127.0.0.1:4317`（下一步 3b 让插件能填服务地址）；作业租约、中央模式能起来是 3c。开着的工作台页面仍会把排着的录入作业递给自己那台的插件，哪台先领到就是哪台的。
 - 测试：`tests/workstation-access.test.mjs`（发钥匙、核对、移除、在线、上限）；`tests/workstation-extension.test.mjs`（插件存钥匙、每次带上、401 和 403 分开、桥接不回传钥匙）；`tests/workstation-ui.test.mjs`（页面交钥匙、电脑名单的样子）；`tests/workstations-db.test.mjs` 要真数据库，起一个团队账号的服务：没钥匙不收，A 台领的作业 B 台交不了、A 台能交，移除后 A 的钥匙失效，归在 `DATABASE_TESTS`。
 

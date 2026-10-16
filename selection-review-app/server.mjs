@@ -219,6 +219,7 @@ import { sameSharedState, withPartitionedRecords } from "./lib/business-state-pa
 import { createSelectionReviewRuntimeConfiguration, createDPlatformObservationPolicyResolver } from "./lib/runtime-configuration.mjs";
 import {
   assertTrustedApiRequest,
+  isExtensionEndpoint,
   isTrustedInternalApiRequest,
   normalizeHttpErrorResponse,
   parseHttpRequestTarget,
@@ -5136,10 +5137,7 @@ async function handleApi(req, res, pathname) {
     const input = await readJsonRequestBody(req, { maxBytes: 8192, requireJsonContentType: true });
     return json(res, 200, await runtimeIdentityProvider.resetPassword({ request: req, input }));
   }
-  const extensionCallback = pathname === "/api/extension/heartbeat" ||
-    /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/(?:claim|search-image)$/.test(pathname) ||
-    /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(pathname) ||
-    /^\/api\/seerfar-selection\/rounds\/[^/]+\/result$/.test(pathname);
+  const extensionCallback = isExtensionEndpoint(pathname);
   const writing = ["POST", "PUT", "PATCH", "DELETE"].includes(req.method);
   const internalRequest = isTrustedInternalApiRequest(req.headers, internalApiRequestToken);
   if (runtimeIdentityProvider.providerType === "local_owner_password" && writing && !extensionCallback && !internalRequest) {
@@ -5176,7 +5174,7 @@ async function handleApi(req, res, pathname) {
     if (workstationAction[1] === "add") return json(res, 201, await workstationAccess.add({ actor, name: input.name }));
     return json(res, 200, { workstation: await workstationAccess.remove({ workstationId: input.workstationId }) });
   }
-  if (req.method === "OPTIONS" && (pathname === "/api/extension/heartbeat" || /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/(?:claim|search-image)$/.test(pathname) || /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(pathname) || /^\/api\/seerfar-selection\/rounds\/[^/]+\/result$/.test(pathname))) {
+  if (req.method === "OPTIONS" && extensionCallback) {
     const headers = chromeExtensionCors(req);
     if (!headers["Access-Control-Allow-Origin"]) throw httpError(403, "只接受本机Chrome扩展回传");
     res.writeHead(204, headers);

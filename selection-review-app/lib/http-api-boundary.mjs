@@ -109,10 +109,12 @@ export function parseHttpRequestTarget(rawTarget, hostHeader, { fallbackHost = "
   return Object.freeze({ requestUrl, pathname });
 }
 
-function isExtensionEndpoint(pathname) {
+/** Every route the plugin calls. A Seerfar round's result was left out, so the plugin could never hand one in (403). */
+export function isExtensionEndpoint(pathname) {
   return pathname === "/api/extension/heartbeat" ||
     /^\/api\/extension\/capture-jobs\/[A-Za-z0-9_-]{1,160}\/(?:claim|search-image)$/.test(String(pathname || "")) ||
-    /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(String(pathname || ""));
+    /^\/api\/candidates\/[^/]+\/(?:source-capture|sales-capture|image-match|ozon-match)\/result$/.test(String(pathname || "")) ||
+    /^\/api\/seerfar-selection\/rounds\/[^/]+\/result$/.test(String(pathname || ""));
 }
 
 function isBinaryBodyEndpoint(pathname) {

@@ -1,7 +1,7 @@
 {
   "snapshotVersion": "three-store-capability-snapshot-v2",
   "registryVersion": "three-store-capability-registry-v3",
-  "frozenAt": "2026-10-16T17:27:14.291Z",
+  "frozenAt": "2026-10-16T17:38:51.080Z",
   "purpose": "当前集成源码、归属及锚点的只读快照；历史观察单独保留，不代表当前运行或平台完成。",
   "numbering": {
     "frozen": true,
@@ -17,7 +17,7 @@
     "integration": {
       "status": "inspected",
       "artifactCount": 1022,
-      "sha256": "8fac02576eabeca4f06025d4dc80e540218c3109368f13d559c5d420349e3d61",
+      "sha256": "2d050f8c0f4974f124233ff1175260748476e10e2142f199f5c4d6860f329025",
       "digestPurpose": "detect accidental source drift"
     },
     "main": {
@@ -448,7 +448,7 @@
       },
       {
         "path": "lib/capability-registry.mjs",
-        "sha256": "50f2cde8ed752e0454f483bf9db359b4316c1f9cb9722fbd56d0cce739f1614d"
+        "sha256": "4bd70c38012cf0c4c520b2c4f92c3fe1a6f19a9fb1b36da03c20d96d81e2c0fc"
       },
       {
         "path": "lib/capture-evidence-sanitization.mjs",
@@ -688,7 +688,7 @@
       },
       {
         "path": "lib/http-api-boundary.mjs",
-        "sha256": "edff1bd9cb44d87a2d4f73a816a48be48b94ad797338e0ef758903db122cf88b"
+        "sha256": "99454c633becf7961d0a6acae28e11902a8cbdaf8fece65d67f6d3f75a64d655"
       },
       {
         "path": "lib/image-fingerprint.mjs",
@@ -1740,7 +1740,7 @@
       },
       {
         "path": "server.mjs",
-        "sha256": "0858bfb22f0fadec047a55999818135842aededd6ff506829221f652b3a625fe"
+        "sha256": "6acf202e0ebcf63da47671953aa19a8d2b90daed72eb404f21636ddf4aa04098"
       },
       {
         "path": "src/App.jsx",
@@ -3292,7 +3292,7 @@
       },
       {
         "path": "tests/http-api-boundary.test.mjs",
-        "sha256": "892a0144fbdc18103336c7a4719a6cf86d5e90406c4eea221f4c704b885b646b"
+        "sha256": "14ec45891989b1cee524a99b7543a9abfe58e09f6098e03042a68bc5680c8ac2"
       },
       {
         "path": "tests/image-fingerprint.test.mjs",
